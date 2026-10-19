@@ -16,6 +16,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -31,35 +33,24 @@ func adminRow(url string) *registrydomain.Registry {
 	return reg
 }
 
-func configNames(vars []registrydomain.MCPURLVariable) []string {
-	out := make([]string, 0, len(vars))
-	for _, v := range vars {
-		out = append(out, v.Name)
-	}
-	return out
-}
-
 // The admin row fixed the host, so the install asks only for the space.
 func TestInstall_DoesNotAskForAVariableTheAdminRowPins(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{adminRow("https://acme.kb.example.com/s/{space}/mcp")}}
 	installs := &fakeInstalls{}
 
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "kibana"))
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if got := configNames(res.ConfigVariables); !res.RequiresConfig || len(got) != 1 || got[0] != "space" {
-		t.Fatalf("want only the unpinned space requested, got %+v", res)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "kibana"))
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), `variable "space" must be set by an admin`) {
+		t.Fatalf("the remaining placeholder must be filled by an admin, got %v", err)
 	}
 	if len(installs.upserts) != 0 {
-		t.Fatalf("a requires-config result records nothing, got %+v", installs.upserts)
+		t.Fatalf("nothing is recorded, got %+v", installs.upserts)
 	}
 }
 
-// A pinned value the caller still sends is dropped, not validated and not
-// stored: the dial uses the admin row's URL whatever it is. The unpinned value
-// is stored and used as before.
+// Host and space are both registry variables. An employee who still sends
+// either is refused, and nothing is stored. Map iteration picks which name
+// the error quotes.
 func TestInstall_IgnoresAPinnedValueAndKeepsTheUnpinnedOne(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{adminRow("https://acme.kb.example.com/s/{space}/mcp")}}
@@ -67,16 +58,12 @@ func TestInstall_IgnoresAPinnedValueAndKeepsTheUnpinnedOne(t *testing.T) {
 	in := openReq(gw, "kibana")
 	in.Config = map[string]string{"host": "-not/a/host", "space": "default"}
 
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("an employee host or space must be refused, got %v", err)
 	}
-	if res.RequiresConfig || res.Status != installationdomain.StatusInstalled {
-		t.Fatalf("want an install, got %+v", res)
-	}
-	cfg := installs.upserts[0].Config
-	if len(cfg) != 1 || cfg["space"] != "default" {
-		t.Fatalf("want only the unpinned value stored, got %+v", cfg)
+	if len(installs.upserts) != 0 {
+		t.Fatalf("nothing is recorded, got %+v", installs.upserts)
 	}
 }
 
@@ -103,12 +90,9 @@ func TestInstall_TemplatedAdminRowStillAsksForEveryVariable(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{adminRow("https://{host}/s/{space}/mcp")}}
 
-	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), openReq(gw, "kibana"))
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if got := configNames(res.ConfigVariables); len(got) != 2 {
-		t.Fatalf("want both variables requested, got %v", got)
+	_, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), openReq(gw, "kibana"))
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "must be set by an admin") {
+		t.Fatalf("a catalog template must be filled by an admin, got %v", err)
 	}
 }
 
@@ -118,13 +102,10 @@ func TestInstall_WithoutAnAdminRowAsksForEveryVariable(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{}
 
-	res, err := newInstallerWithEnsurer(t, regs, &fakeInstalls{}, &fakeEnsurer{addTo: regs}).
+	_, err := newInstallerWithEnsurer(t, regs, &fakeInstalls{}, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), openReq(gw, "kibana"))
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if got := configNames(res.ConfigVariables); !res.RequiresConfig || len(got) != 2 || got[0] != "host" || got[1] != "space" {
-		t.Fatalf("want host and space requested, got %+v", res)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "must be set by an admin") {
+		t.Fatalf("a materialised template must be filled by an admin, got %v", err)
 	}
 }
 
@@ -137,21 +118,13 @@ func TestInstall_NamedInstanceDecidesWhatIsPinned(t *testing.T) {
 
 	in := openReq(gw, "kibana")
 	in.RegistryID = templated.ID
-	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if got := configNames(res.ConfigVariables); len(got) != 2 {
-		t.Fatalf("the templated instance pins nothing, got %v", got)
+	if _, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in); err == nil || !strings.Contains(err.Error(), `variable "host" must be set by an admin`) {
+		t.Fatalf("the templated instance must be filled by an admin, got %v", err)
 	}
 
 	in.RegistryID = pinned.ID
-	res, err = newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if got := configNames(res.ConfigVariables); len(got) != 1 || got[0] != "space" {
-		t.Fatalf("the pinned instance fixes the host, got %v", got)
+	if _, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in); err == nil || !strings.Contains(err.Error(), `variable "space" must be set by an admin`) {
+		t.Fatalf("the remaining placeholder must be filled by an admin, got %v", err)
 	}
 }
 
@@ -173,15 +146,9 @@ func TestInstall_ReinstallOverARowThatStoresAPinnedKey(t *testing.T) {
 	in := openReq(gw, "kibana")
 	in.Config = map[string]string{"space": "default"}
 
-	res, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !res.AlreadyInstalled || len(installs.upserts) != 1 || installs.upserts[0].ID != old.ID {
-		t.Fatalf("reinstall must refresh the existing row, got %+v upserts=%d", res, len(installs.upserts))
-	}
-	if cfg := installs.upserts[0].Config; cfg["space"] != "default" || cfg["host"] != "acme.kb.example.com" {
-		t.Fatalf("refreshed row keeps the unpinned value and the pinned key, got %+v", cfg)
+	_, err = newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), `variable "space" is set by an admin`) {
+		t.Fatalf("space is a registry variable, got %v", err)
 	}
 }
 
@@ -201,12 +168,9 @@ func TestInstall_ReinstallWithADifferentUnpinnedValueIsANewRow(t *testing.T) {
 	in := openReq(gw, "kibana")
 	in.Config = map[string]string{"space": "finance"}
 
-	res, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if res.AlreadyInstalled || installs.upserts[0].ID == old.ID {
-		t.Fatalf("a different space is a new instance, got %+v", res)
+	_, err = newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{row}}, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), `variable "space" is set by an admin`) {
+		t.Fatalf("a different space is a different registry row, got %v", err)
 	}
 }
 
@@ -261,8 +225,8 @@ func TestInstall_OAuthTemplateKeepsTheVariable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if got := configNames(res.ConfigVariables); !res.RequiresConfig || len(got) != 1 || got[0] != "domain" {
-		t.Fatalf("domain is still required by the oauth templates, got %+v", res)
+	if res.RequiresConfig || len(res.ConfigVariables) != 0 || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("the admin URL supplies domain even while the oauth templates name it, got %+v", res)
 	}
 }
 
@@ -281,7 +245,7 @@ func TestPrincipalPreview_PinnedVariableIsNeverMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Preview: %v", err)
 	}
-	if got := state.Installs[0].NeedsConfig; len(got) != 1 || got[0] != "space" {
-		t.Fatalf("want only space missing, got %v", got)
+	if got := state.Installs[0].NeedsConfig; len(got) != 0 {
+		t.Fatalf("a non-secret variable is not missing employee config, got %v", got)
 	}
 }

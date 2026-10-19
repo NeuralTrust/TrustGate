@@ -31,6 +31,42 @@ type MCPAuthCatalog interface {
 	SharedOAuthCredentials(code string) (clientID, clientSecret string, ok bool)
 }
 
+// RequireAdminBoundURLVariables rejects a registry save while a required
+// non-secret URL placeholder is still open. The admin form writes each value
+// into the server URL; the catalog OAuth templates keep the placeholder and
+// connect reads the value back from that URL. A secret credential is not
+// required here. A catalog code with no such variable, or a target that is
+// not a catalog entry, is left alone.
+func RequireAdminBoundURLVariables(target *domain.MCPTarget, catalog MCPAuthCatalog) error {
+	if target == nil || catalog == nil {
+		return nil
+	}
+	code := strings.TrimSpace(target.Code)
+	if code == "" {
+		return nil
+	}
+	entry, ok := catalog.GetByCode(code)
+	if !ok {
+		return nil
+	}
+	vars := catalogURLVarsAsRegistry(entry.URLVariables)
+	admin, _ := domain.AdminBoundValues(entry.URL, vars, target.URL)
+	var missing []string
+	for _, variable := range vars {
+		if variable.Secret || !variable.Required {
+			continue
+		}
+		if target.PinsURLVariable(variable.Name) || strings.TrimSpace(admin[variable.Name]) != "" {
+			continue
+		}
+		missing = append(missing, variable.Name)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: registry variable %s must be set on the registry", commonerrors.ErrValidation, strings.Join(missing, ", "))
+}
+
 func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCatalog) error {
 	if target == nil {
 		return nil

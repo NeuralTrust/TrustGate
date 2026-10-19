@@ -227,17 +227,17 @@ func TestInstallValuesCannotRetargetAfterDiscovery(t *testing.T) {
 			ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
 
 			gotSecret, contacted, err := flow.run(svc, ctx, ids.New[ids.GatewayKind](), reg)
-			if !errors.Is(err, ErrOAuthURLHost) || gotSecret != "" || contacted != "" {
-				t.Fatalf("secret = %q, contacted = %q, err = %v; want the first host refused", gotSecret, contacted, err)
+			if !errors.Is(err, ErrUpstreamSetupRequired) || gotSecret != "" || contacted != "" {
+				t.Fatalf("secret = %q, contacted = %q, err = %v; want the employee host ignored", gotSecret, contacted, err)
 			}
-			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), second) {
-				t.Fatalf("error leaks the secret or the second host: %v", err)
+			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), second) || strings.Contains(err.Error(), first) {
+				t.Fatalf("error leaks the secret or a host: %v", err)
 			}
 			if flip.calls != 1 {
 				t.Fatalf("install values read %d times, want the first resolution only", flip.calls)
 			}
-			if len(registrar.discovered) != 1 || registrar.discovered[0] != "https://"+first+"/mcp" {
-				t.Fatalf("discovered %v, want only the first host", registrar.discovered)
+			if len(registrar.discovered) != 0 {
+				t.Fatalf("discovered %v, want the employee host never contacted", registrar.discovered)
 			}
 			if registrar.hits != 0 || registrar.posted != "" {
 				t.Fatalf("second host saw %d requests, posted secret %q", registrar.hits, registrar.posted)
@@ -260,6 +260,7 @@ func TestInstallValuesKeepTheFirstResolution(t *testing.T) {
 		t.Run(flow.name, func(t *testing.T) {
 			t.Parallel()
 			reg := flippingManualRegistry()
+			reg.MCPTarget.URL = "https://" + first + "/mcp"
 			svc, flip, registrar := newFlippingService(reg, first, second, nil)
 			t.Cleanup(registrar.sink.Close)
 			ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
@@ -309,17 +310,17 @@ func TestRevocationUsesTheDiscoveryResolution(t *testing.T) {
 	t.Cleanup(registrar.sink.Close)
 
 	material, err := svc.RevocationMaterial(context.Background(), ids.New[ids.GatewayKind](), "alice", reg)
-	if !errors.Is(err, ErrOAuthURLHost) || material != nil {
-		t.Fatalf("material = %+v, err = %v; want the first host refused", material, err)
+	if !errors.Is(err, ErrUpstreamSetupRequired) || material != nil {
+		t.Fatalf("material = %+v, err = %v; want the employee host ignored", material, err)
 	}
-	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), second) {
-		t.Fatalf("error leaks the secret or the second host: %v", err)
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), second) || strings.Contains(err.Error(), first) {
+		t.Fatalf("error leaks the secret or a host: %v", err)
 	}
 	if flip.calls != 1 {
 		t.Fatalf("install values read %d times, want the first resolution only", flip.calls)
 	}
-	if len(registrar.discovered) != 1 || registrar.discovered[0] != "https://"+first+"/mcp" {
-		t.Fatalf("discovered %v, want only the first host", registrar.discovered)
+	if len(registrar.discovered) != 0 {
+		t.Fatalf("discovered %v, want the employee host never contacted", registrar.discovered)
 	}
 	if registrar.hits != 0 || registrar.posted != "" {
 		t.Fatalf("second host saw %d requests, posted secret %q", registrar.hits, registrar.posted)

@@ -28,8 +28,9 @@ import (
 func TestComposerTarget_RefusesPrivateOrMetadataHosts(t *testing.T) {
 	for _, host := range []string{"169.254.169.254", "metadata.google.internal", "localhost", "10.0.0.5", "vault.corp.internal"} {
 		reg := urlVarRegistry(t)
+		reg.MCPTarget.URL = "https://" + host + "/api/v2/databases/ANALYTICS/mcp"
 		finder := fakeInstallFinder{byCode: map[string]map[string]string{
-			"snowflake": {"account_url": host, "database": "ANALYTICS"},
+			"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
 		}}
 		c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder, nil)}
 		rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
@@ -43,8 +44,9 @@ func TestComposerTarget_RefusesPrivateOrMetadataHosts(t *testing.T) {
 
 func TestComposerTarget_ResolvedURLIsPrivateNetworkRestricted(t *testing.T) {
 	reg := urlVarRegistry(t)
+	reg.MCPTarget.URL = "https://acme.snowflakecomputing.com/api/v2/databases/ANALYTICS/mcp"
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{
-		"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
+		"snowflake": {"account_url": "evil.example", "database": "OTHER"},
 	}}
 	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder, nil)}
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
