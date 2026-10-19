@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -255,6 +257,59 @@ func redisFlag(v any) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+// HasDynamicClient reports whether a dynamic client is cached for this
+// gateway and catalog code. The key is gateway|provider, and provider is the
+// code plus a resource fingerprint, so the match is the code and the code
+// followed by "|", never a raw prefix of the code.
+func (s *ConnectStore) HasDynamicClient(ctx context.Context, gatewayID ids.GatewayID, code string) (bool, error) {
+	if s == nil || s.rdb == nil {
+		return false, errors.New("oauth connect store: redis unavailable")
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false, nil
+	}
+	gateway := gatewayID.String()
+	exact := clientPrefix + gateway + "|" + code
+	n, err := s.rdb.Exists(ctx, exact).Result()
+	if err != nil {
+		return false, fmt.Errorf("oauth connect store: dynamic client: %w", err)
+	}
+	if n > 0 {
+		return true, nil
+	}
+	pattern := clientPrefix + escapeRedisGlob(gateway) + "|" + escapeRedisGlob(code) + "|*"
+	var cursor uint64
+	for {
+		keys, next, err := s.rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return false, fmt.Errorf("oauth connect store: scan dynamic client: %w", err)
+		}
+		for _, key := range keys {
+			if dynamicClientForCode(key, gateway, code) {
+				return true, nil
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
+func dynamicClientForCode(key, gatewayID, code string) bool {
+	rest, ok := strings.CutPrefix(key, clientPrefix)
+	if !ok {
+		return false
+	}
+	prefix := gatewayID + "|" + code
+	return rest == prefix || strings.HasPrefix(rest, prefix+"|")
+}
+
+func escapeRedisGlob(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`).Replace(value)
 }
 
 func (s *ConnectStore) GetClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {

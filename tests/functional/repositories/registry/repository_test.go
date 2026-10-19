@@ -4,6 +4,7 @@ package registry_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -19,8 +20,128 @@ import (
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestRepository_CompareAndSwapMCPTarget(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "catalog-swap")
+	reg := mustMCP(t, gwID, "Amplitude", "shelf description", "https://mcp.example.com/old")
+	if err := r.Save(ctx, reg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	t.Run("admin update is preserved", func(t *testing.T) {
+		const adminURL = "https://admin.example/mcp"
+		hold := make(chan struct{})
+		adminErr := make(chan error, 1)
+		go func() {
+			adminErr <- database.WithTx(ctx, conn, func(tx pgx.Tx) error {
+				var locked int
+				if err := tx.QueryRow(ctx, `SELECT 1 FROM registries WHERE id = $1 AND gateway_id = $2 FOR UPDATE`, reg.ID, gwID).Scan(&locked); err != nil {
+					return err
+				}
+				close(hold)
+				raw, err := json.Marshal(&domain.MCPTarget{
+					URL:  adminURL,
+					Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone},
+				})
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, `
+					UPDATE registries
+					   SET name = $3, description = $4, mcp_target = $5, updated_at = $6
+					 WHERE id = $1 AND gateway_id = $2`,
+					reg.ID, gwID, "Renamed by admin", "admin description", raw, time.Now().UTC())
+				return err
+			})
+		}()
+		select {
+		case <-hold:
+		case <-time.After(5 * time.Second):
+			t.Fatal("admin update did not lock the row")
+		}
+		catalogURL := "https://mcp.example.com/catalog"
+		applied, err := r.CompareAndSwapMCPTarget(ctx, gwID, reg.ID, time.Now().UTC(), func(current *domain.MCPTarget) (*domain.MCPTarget, bool) {
+			if current == nil || current.URL != "https://mcp.example.com/old" {
+				return nil, false
+			}
+			next := *current
+			next.URL = catalogURL
+			return &next, true
+		})
+		if err != nil {
+			t.Fatalf("CompareAndSwapMCPTarget: %v", err)
+		}
+		if applied {
+			t.Fatal("swap applied over an admin edit")
+		}
+		if err := <-adminErr; err != nil {
+			t.Fatalf("admin update: %v", err)
+		}
+		got, err := r.FindByID(ctx, reg.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.Name != "Renamed by admin" || got.Description != "admin description" {
+			t.Fatalf("admin columns = %q %q", got.Name, got.Description)
+		}
+		if got.MCPTarget == nil || got.MCPTarget.URL != adminURL {
+			t.Fatalf("admin url lost: %+v", got.MCPTarget)
+		}
+	})
+
+	t.Run("swap writes only mcp_target", func(t *testing.T) {
+		fresh := mustMCP(t, gwID, "Keep me", "keep this description", "https://mcp.example.com/before")
+		if err := r.Save(ctx, fresh); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		writtenAt := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+		const nextURL = "https://mcp.example.com/after"
+		applied, err := r.CompareAndSwapMCPTarget(ctx, gwID, fresh.ID, writtenAt, func(current *domain.MCPTarget) (*domain.MCPTarget, bool) {
+			if current == nil || current.URL != "https://mcp.example.com/before" {
+				return nil, false
+			}
+			next := *current
+			next.URL = nextURL
+			return &next, true
+		})
+		if err != nil {
+			t.Fatalf("CompareAndSwapMCPTarget: %v", err)
+		}
+		if !applied {
+			t.Fatal("swap did not apply")
+		}
+		got, err := r.FindByID(ctx, fresh.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.Name != "Keep me" || got.Description != "keep this description" {
+			t.Fatalf("swap rewrote columns: %q %q", got.Name, got.Description)
+		}
+		if got.MCPTarget == nil || got.MCPTarget.URL != nextURL {
+			t.Fatalf("url = %+v", got.MCPTarget)
+		}
+		if !got.UpdatedAt.Equal(writtenAt) {
+			t.Fatalf("updated_at = %s, want %s", got.UpdatedAt, writtenAt)
+		}
+	})
+}
+
+func mustMCP(t *testing.T, gwID ids.GatewayID, name, description, url string) *domain.Registry {
+	t.Helper()
+	reg, err := domain.NewMCPRegistry(gwID, name, description, &domain.MCPTarget{
+		URL:  url,
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry: %v", err)
+	}
+	return reg
+}
 
 const testSecretKey = "functional-test-secret-0123456789abcdef"
 
