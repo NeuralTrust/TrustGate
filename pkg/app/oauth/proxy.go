@@ -886,8 +886,20 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		if rec.ExpiresAt.IsZero() || !p.now().Before(rec.ExpiresAt) {
 			return nil, oauthErr("invalid_grant", "session expired; sign in again")
 		}
+		if err := p.refuseRevokedSession(ctx, req.RefreshToken, rec); err != nil {
+			return nil, err
+		}
 		resp, err := p.refreshSession(ctx, *rec)
 		if err != nil {
+			// The new record was deleted inside the refresh. The token the
+			// client presented is still live when offboarding raced this call
+			// (it was unindexed, or the delete had not reached it yet). Drop
+			// it too, so the race does not leave a refresh token behind.
+			if isSessionRevoked(err) {
+				if delErr := p.store.DeleteSession(ctx, req.RefreshToken); delErr != nil {
+					return nil, fmt.Errorf("oauth: delete revoked session: %w", delErr)
+				}
+			}
 			return nil, err
 		}
 		// Rotate with a grace window rather than single-use: the old token keeps
@@ -974,6 +986,38 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
 		return nil, fmt.Errorf("oauth: rotate session: %w", err)
 	}
+	// Offboarding can land between the check in refresh and this write. The
+	// record just saved would otherwise be the next indexed session.
+	if err := p.refuseRevokedSession(ctx, newRefresh, &rec); err != nil {
+		return nil, err
+	}
 	resp["refresh_token"] = newRefresh
 	return resp, nil
+}
+
+// refuseRevokedSession rejects a default-IdP refresh whose login is not newer
+// than the subject's revocation marker, and deletes that record. A missing
+// marker is not a revocation. A Redis error reading the marker fails the
+// refresh and leaves the record in place, the same as a failed session load:
+// the token endpoint answers 500, not invalid_grant, and the client may retry.
+func (p *authProxy) refuseRevokedSession(ctx context.Context, refreshToken string, rec *SessionRecord) error {
+	if rec == nil || rec.AuthID != appauth.DefaultIdPAuthID().String() {
+		return nil
+	}
+	revokedAt, err := p.store.SubjectRevokedAt(ctx, rec.GatewayID, rec.Org, rec.Subject)
+	if err != nil {
+		return fmt.Errorf("oauth: load session revocation: %w", err)
+	}
+	if revokedAt.IsZero() || rec.LoginAt.After(revokedAt) {
+		return nil
+	}
+	if err := p.store.DeleteSession(ctx, refreshToken); err != nil {
+		return fmt.Errorf("oauth: delete revoked session: %w", err)
+	}
+	return oauthErr("invalid_grant", "session revoked; sign in again")
+}
+
+func isSessionRevoked(err error) bool {
+	var oe *OAuthError
+	return errors.As(err, &oe) && oe.Code == "invalid_grant" && oe.Description == "session revoked; sign in again"
 }

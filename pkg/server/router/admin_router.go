@@ -108,6 +108,7 @@ type AdminRouterDeps struct {
 	RotateAuth              *authhttp.RotateAuthHandler
 	UpdateAuthBudget        *authhttp.UpdateAuthBudgetHandler
 	UpdateAuthOwnerGroups   *authhttp.UpdateAuthOwnerGroupsHandler
+	DeleteSubjectSessions   *authhttp.DeleteSubjectSessionsHandler
 	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
@@ -273,6 +274,15 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		auths.Put("/:id/groups", r.deps.UpdateAuthOwnerGroups.Handle)
 	}
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
+	// One /subjects group for the console JWT (offboarding, and a subject
+	// groups update when that route is mounted beside this one). Gateway
+	// access is on the group. The route itself refuses a service credential:
+	// offboarding presents the console JWT, including SCIM and the membership
+	// reconcile, and that token is a human admin identity.
+	if r.deps.DeleteSubjectSessions != nil {
+		subjects := gw.Group("/:gateway_id/subjects", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
+		subjects.Delete("/:user_id/sessions", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.DeleteSubjectSessions.Handle)
+	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential
 	// is bound to one gateway and has no business reading platform-wide data.
