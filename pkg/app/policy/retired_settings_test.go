@@ -125,3 +125,23 @@ func TestUpdater_Update_KeepsKeysOfAPluginThatRetiresNone(t *testing.T) {
 	saved := updateRetired(t, storedPolicy(t, "plain", nil), apppolicy.UpdateInput{Settings: &stale})
 	assert.Equal(t, staleSettings(), saved)
 }
+
+// A live key stored beside retired ones survives the write path: only the keys
+// the plugin retires are dropped (failure_mode on trustguard).
+func TestCreator_Create_KeepsALiveKeyBesideRetiredOnes(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	var saved map[string]any
+	repo.EXPECT().Save(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, p *domain.Policy) { saved = p.Settings }).
+		Return(nil).Once()
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), retiredRegistryMock(t), newCacheManager(), newTestLogger(), nil)
+
+	in := validCreateInput(ids.New[ids.GatewayKind]())
+	in.Slug = "guard"
+	in.Settings = map[string]any{"collector_id": "keep", "failure_mode": "closed", "ON_ERROR": "fail_closed"}
+	_, err := creator.Create(context.Background(), in)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"collector_id": "keep", "failure_mode": "closed"}, saved)
+}

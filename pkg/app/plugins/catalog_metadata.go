@@ -857,7 +857,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. If TrustGuard is unavailable, slow or rejects the credentials, the request goes through uninspected and the event records failed_open. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block when the direction includes the response.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. With failure_mode open (default), if TrustGuard is unavailable, slow or rejects the credentials, the request goes through uninspected and the event records failed_open; with closed it is blocked in enforce and only recorded in observe. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block when the direction includes the response.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -879,6 +879,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
+				},
+				{
+					Key:         "failure_mode",
+					Label:       "Failure mode",
+					Type:        FieldTypeEnum,
+					Description: "What happens when TrustGuard cannot evaluate a request: open lets it through, closed blocks it (enforce) or records it (observe).",
+					Enum:        enumOptions("open", "closed"),
+					Default:     "open",
 				},
 			},
 		},

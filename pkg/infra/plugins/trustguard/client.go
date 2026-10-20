@@ -48,6 +48,9 @@ const (
 	// that runs out of time fails open inside the answer instead of outliving
 	// the call and turning into a gateway timeout (ENG-1671).
 	evaluateTimeoutHeader = "X-Evaluate-Timeout-Ms"
+	// failureModeHeader tells TrustGuard what to do with a detector that cannot
+	// run: open or closed. TrustGuard honours it only from TrustGate's token.
+	failureModeHeader = "X-Failure-Mode"
 
 	// peerService must match TrustGuard's own service.name, and evaluateSpanName
 	// stays a bounded label rather than the request target.
@@ -179,6 +182,11 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if traceID != "" {
 		req.Header.Set(traceIDHeader, traceID)
 	}
+	mode := body.FailureMode
+	if mode == "" {
+		mode = defaultFailureMode
+	}
+	req.Header.Set(failureModeHeader, mode)
 	if playground {
 		req.Header.Set(playgroundOriginHeader, "1")
 	}
