@@ -56,16 +56,21 @@ func TestEmptySurfaceInsteadOfError(t *testing.T) {
 			}
 		}
 	}
-	// No exposed registry is an empty surface only where the surface is per
-	// person; nothing bound for the application itself is a misconfiguration.
-	if emptySurfaceInsteadOfError(asApp, rc, ErrNoMCPRegistries) {
-		t.Fatal("a request running as the application must surface the error")
+	// Nothing bound is an empty surface for the application too: a client lists
+	// tools while connecting, and a fault there fails the connection. An
+	// unreachable upstream is still a fault when the request runs as the
+	// application, because registries were bound and could not be reached.
+	if !emptySurfaceInsteadOfError(asApp, rc, ErrNoMCPRegistries) {
+		t.Fatal("an application with nothing bound lists an empty surface")
 	}
 	if !emptySurfaceInsteadOfError(asPerson, rc, ErrNoMCPRegistries) {
 		t.Fatal("a person with nothing connected lists an empty surface")
 	}
 	if !emptySurfaceInsteadOfError(asApp, store, ErrNoMCPRegistries) {
 		t.Fatal("the Store is per person whoever is asking")
+	}
+	if emptySurfaceInsteadOfError(asApp, rc, ErrUpstreamUnavailable) {
+		t.Fatal("an unreachable upstream is still a fault for the application")
 	}
 	if !emptySurfaceInsteadOfError(asPerson, rc, ErrUpstreamUnavailable) {
 		t.Fatal("an unreachable upstream degrades to an empty surface for a person")
