@@ -137,17 +137,21 @@ func (d *RPCDispatcher) Dispatch(
 // (ENG-1787). The listing leaves it out, the inventory meta-tool says why, and a
 // call to one of its tools still answers the refusal.
 //
-// Anything else is about who is asking, not about how the consumer was
-// configured: a person — or an end user an application named — may simply have
-// connected nothing yet, and an empty list is the honest answer to "what can I
-// use". A request running as the application itself is a different matter: its
-// surface is what an admin bound, so an empty or unreachable one is a fault
-// worth reporting.
+// A person — or an end user an application named — may simply have connected
+// nothing yet, and an empty list is the honest answer to "what can I use".
+// Nothing attached at all is that same answer for the application itself: the
+// surface is empty, and a client that lists tools while connecting must not
+// fail the handshake. An unreachable upstream is still about who is asking.
+// Registries were bound and could not be reached, so a request running as the
+// application reports that fault; a person gets the empty list.
 func emptySurfaceInsteadOfError(ctx context.Context, consumer *appconsumer.RoutableConsumer, err error) bool {
 	if fixableByConnecting(err) {
 		return true
 	}
-	return perUserCaller(ctx, consumer) && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
+	if errors.Is(err, ErrNoMCPRegistries) {
+		return true
+	}
+	return perUserCaller(ctx, consumer) && errors.Is(err, ErrUpstreamUnavailable)
 }
 
 // perUserCaller reports whether somebody other than the application itself is
