@@ -214,6 +214,15 @@ type UsageConfig struct {
 	// ReadyTimeout is USAGE_READY_TIMEOUT: how long a starting plane stays not
 	// ready while it has no usage list before it serves without one and logs.
 	ReadyTimeout time.Duration
+	// GRPCAddr is USAGE_SYSTEM_GRPC_ADDR, the host:port of Usage System's
+	// UsageSync service. Empty means the control plane only serves the states
+	// cached in Redis.
+	GRPCAddr string
+	// GRPCInsecure is USAGE_SYSTEM_GRPC_INSECURE: plaintext for the in-cluster
+	// service instead of TLS.
+	GRPCInsecure bool
+	// GRPCToken is USAGE_SYSTEM_GRPC_TOKEN, sent as a bearer token on the stream.
+	GRPCToken string
 }
 
 // AdminM2MPublicKey is one verification key advertised by the credential
@@ -689,6 +698,9 @@ func LoadConfig() (*Config, error) {
 		Usage: UsageConfig{
 			Enabled:      getEnvBool("USAGE_SYSTEM_ENABLED", false),
 			ReadyTimeout: getEnvDuration("USAGE_READY_TIMEOUT", DefaultUsageReadyTimeout),
+			GRPCAddr:     strings.TrimSpace(getEnv("USAGE_SYSTEM_GRPC_ADDR", "")),
+			GRPCInsecure: getEnvBool("USAGE_SYSTEM_GRPC_INSECURE", false),
+			GRPCToken:    getEnv("USAGE_SYSTEM_GRPC_TOKEN", ""),
 		},
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so

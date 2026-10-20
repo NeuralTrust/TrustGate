@@ -7,17 +7,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	usagev1 "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 // usageAdminPortOffset keeps the usage-enforcing admin off the suite's admin
@@ -28,7 +32,7 @@ const usageStatesKey = "gt:usage:states"
 
 // startUsageAdmin runs an extra admin plane with Usage System enforcement on,
 // against the suite's database and Redis, and returns its config-sync port.
-func startUsageAdmin(t *testing.T) int {
+func startUsageAdmin(t *testing.T, extra ...string) int {
 	t.Helper()
 	httpPort := GlobalConfig.Server.AdminPort + usageAdminPortOffset
 	grpcPort := serverConfigSyncGRPCPort + usageAdminPortOffset
@@ -41,6 +45,7 @@ func startUsageAdmin(t *testing.T) int {
 		fmt.Sprintf("CONFIG_SYNC_GRPC_LISTEN_ADDR=:%d", grpcPort),
 		"USAGE_SYSTEM_ENABLED=true",
 	)
+	cmd.Env = append(cmd.Env, extra...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	prefix := fmt.Sprintf("[ADMIN-USAGE:%d] ", httpPort)
 	cmd.Stdout = io.MultiWriter(&prefixWriter{prefix: prefix, w: os.Stdout}, logs)
@@ -145,4 +150,115 @@ func TestUsageEnforcement_BlocksExhaustedTenantThroughTheDataPlane(t *testing.T)
 	require.NotNil(t, rpcErr, "refusal must be a JSON-RPC error: %v", refused)
 	data, _ := rpcErr["data"].(map[string]any)
 	assert.Equal(t, "insufficient_funds", data["code"], "refusal=%v", refused)
+}
+
+// fakeUsageSystem is an in-test UsageSync server: it answers every stream with
+// the current snapshot and pushes each change to the open streams.
+type fakeUsageSystem struct {
+	usagev1.UnimplementedUsageSyncServiceServer
+	mu      sync.Mutex
+	states  map[string]*usagev1.UsageState
+	asOf    int64
+	streams map[usagev1.UsageSyncService_SyncServer]chan *usagev1.UsageState
+}
+
+func startFakeUsageSystem(t *testing.T) (*fakeUsageSystem, string) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	fake := &fakeUsageSystem{
+		states:  map[string]*usagev1.UsageState{},
+		streams: map[usagev1.UsageSyncService_SyncServer]chan *usagev1.UsageState{},
+	}
+	srv := grpc.NewServer()
+	usagev1.RegisterUsageSyncServiceServer(srv, fake)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	return fake, lis.Addr().String()
+}
+
+func (f *fakeUsageSystem) Sync(stream usagev1.UsageSyncService_SyncServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	changes := make(chan *usagev1.UsageState, 16)
+	f.mu.Lock()
+	snapshot := &usagev1.Snapshot{AsOfVersion: f.asOf}
+	for _, st := range f.states {
+		if st.GetStatus() == usagev1.UsageStatus_USAGE_STATUS_EXHAUSTED {
+			snapshot.Exhausted = append(snapshot.Exhausted, st)
+		}
+	}
+	f.streams[stream] = changes
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(f.streams, stream)
+		f.mu.Unlock()
+	}()
+	go func() {
+		for {
+			if _, err := stream.Recv(); err != nil {
+				return
+			}
+		}
+	}()
+	if err := stream.Send(&usagev1.SyncResponse{Message: &usagev1.SyncResponse_Snapshot{Snapshot: snapshot}}); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case st := <-changes:
+			if err := stream.Send(&usagev1.SyncResponse{Message: &usagev1.SyncResponse_Change{Change: st}}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (f *fakeUsageSystem) set(tenant string, exhausted bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asOf++
+	st := &usagev1.UsageState{TenantId: tenant, Status: usagev1.UsageStatus_USAGE_STATUS_HEALTHY, Version: f.asOf}
+	if exhausted {
+		st.Status = usagev1.UsageStatus_USAGE_STATUS_EXHAUSTED
+		st.Reason = usagev1.ExhaustionReason_EXHAUSTION_REASON_FREE_LIMIT_REACHED
+	}
+	f.states[tenant] = st
+	for _, ch := range f.streams {
+		ch <- st
+	}
+}
+
+// TestUsageEnforcement_FollowsUsageSystemWithoutRestart drives the states from
+// a UsageSync server: a tenant is blocked once Usage System exhausts it and
+// served again once Usage System clears it, with no restart of any plane.
+func TestUsageEnforcement_FollowsUsageSystemWithoutRestart(t *testing.T) {
+	defer Track(t, "UsageEnforcement")()
+
+	tenant := uniqueName("usage-live")
+	gw := usageTenantGateway(t, tenant, "usage-live-marker")
+	fake, addr := startFakeUsageSystem(t)
+
+	grpcPort := startUsageAdmin(t, "USAGE_SYSTEM_GRPC_ADDR="+addr, "USAGE_SYSTEM_GRPC_INSECURE=true")
+	port := GlobalConfig.Server.ProxyPort + 131
+	overrides := append(dblessOverrides(filepath.Join(t.TempDir(), "snapshot.lkg"), dblessConfigSyncToken, uniqueName("usage-live-dp"), port),
+		fmt.Sprintf("CONFIG_SYNC_GRPC_ENDPOINT=localhost:%d", grpcPort))
+	base, _ := startDBLessProxyPlane(t, port, overrides)
+	require.True(t, pollDBLessReady(base, 30*time.Second), "data plane never became ready")
+	require.True(t, pollProxyServedAt(t, base, gw.apiKey, gw.path, "usage-live-marker", 30*time.Second), "tenant must be served before any block")
+
+	fake.set(tenant, true)
+	require.True(t, pollProxyStatusAt(t, base, gw.apiKey, gw.path, chatRequest(false), http.StatusPaymentRequired, 30*time.Second),
+		"the tenant must be blocked once Usage System exhausts it")
+	status, _, body := proxyPostAt(t, base, gw.apiKey, gw.path, chatRequest(false))
+	require.Equal(t, http.StatusPaymentRequired, status)
+	assert.Contains(t, string(body), "plan_limit")
+
+	fake.set(tenant, false)
+	require.True(t, pollProxyServedAt(t, base, gw.apiKey, gw.path, "usage-live-marker", 30*time.Second),
+		"the tenant must be served again once Usage System clears it, without a restart")
 }

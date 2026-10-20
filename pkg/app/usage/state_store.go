@@ -32,7 +32,14 @@ import (
 
 // Applier records usage states coming from Usage System.
 type Applier interface {
+	// Apply records individual state changes.
 	Apply(ctx context.Context, states []domain.TenantState) error
+	// ApplySnapshot records Usage System's full list of exhausted tenants as
+	// of asOfVersion.
+	ApplySnapshot(ctx context.Context, exhausted []domain.TenantState, asOfVersion int64) error
+	// Watermark is the highest version the store has applied, sent back to
+	// Usage System when a stream opens.
+	Watermark() int64
 }
 
 //go:generate mockery --name=Reader --dir=. --output=./mocks --filename=reader_mock.go --case=underscore --with-expecter
@@ -99,6 +106,35 @@ func (s *Store) Apply(ctx context.Context, states []domain.TenantState) error {
 		s.notify()
 	}
 	return nil
+}
+
+// ApplySnapshot records a full list of exhausted tenants. Listed tenants are
+// merged as in Apply. A held exhausted tenant missing from the list becomes
+// healthy at asOfVersion, unless the store holds a newer version for it, so a
+// list that is behind cannot undo a newer block. asOfVersion becomes the
+// watermark the store hands to the data planes.
+func (s *Store) ApplySnapshot(ctx context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
+	changed, err := s.mergeSnapshot(exhausted, asOfVersion)
+	if err != nil {
+		return err
+	}
+	becameReady := s.markReady()
+	for _, state := range changed {
+		if _, err := s.cache.Save(ctx, state); err != nil {
+			s.logger.WarnContext(ctx, "usage: cache state", slog.String("tenant_id", state.TenantID), slog.Any("error", err))
+		}
+	}
+	if len(changed) > 0 || becameReady {
+		s.notify()
+	}
+	return nil
+}
+
+// Watermark is the highest version the store has applied.
+func (s *Store) Watermark() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxVersion
 }
 
 // Restore loads the cached states. The store becomes ready once it succeeds.
@@ -175,9 +211,38 @@ func (s *Store) markReady() bool {
 	return s.ready.CompareAndSwap(false, true)
 }
 
+func (s *Store) mergeSnapshot(exhausted []domain.TenantState, asOfVersion int64) ([]domain.TenantState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	listed := make(map[string]struct{}, len(exhausted))
+	for _, state := range exhausted {
+		listed[state.TenantID] = struct{}{}
+	}
+	changed := s.mergeLocked(exhausted)
+	for tenantID, current := range s.states {
+		if _, ok := listed[tenantID]; ok || !current.Exhausted() || current.Version > asOfVersion {
+			continue
+		}
+		healthy, err := domain.NewTenantState(tenantID, domain.StatusHealthy, domain.ReasonNone, asOfVersion)
+		if err != nil {
+			return nil, fmt.Errorf("usage: unblock %s: %w", tenantID, err)
+		}
+		s.states[tenantID] = healthy
+		changed = append(changed, healthy)
+	}
+	if asOfVersion > s.maxVersion {
+		s.maxVersion = asOfVersion
+	}
+	return changed, nil
+}
+
 func (s *Store) merge(states []domain.TenantState) []domain.TenantState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.mergeLocked(states)
+}
+
+func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 	var changed []domain.TenantState
 	for _, state := range states {
 		if current, ok := s.states[state.TenantID]; ok && current.Version >= state.Version {

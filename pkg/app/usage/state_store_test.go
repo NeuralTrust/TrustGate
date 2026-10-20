@@ -192,3 +192,45 @@ func TestStoreBecomingReadyWakesSubscribersWithoutChanges(t *testing.T) {
 	default:
 	}
 }
+
+func TestStoreApplySnapshotUnblocksMissingTenantsAtTheWatermark(t *testing.T) {
+	t.Parallel()
+	cache := &memoryCache{}
+	store := NewStore(cache, nil)
+	ctx := context.Background()
+	if err := store.ApplySnapshot(ctx, []domain.TenantState{state(t, "a", true, 5), state(t, "b", true, 6)}, 6); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	if !store.Ready() || store.Watermark() != 6 {
+		t.Fatalf("ready=%v watermark=%d", store.Ready(), store.Watermark())
+	}
+	if err := store.Apply(ctx, []domain.TenantState{state(t, "c", true, 12)}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := store.ApplySnapshot(ctx, []domain.TenantState{state(t, "b", true, 6)}, 10); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	all := store.SnapshotFor("", true)
+	got := map[string]int64{}
+	for _, s := range all.Exhausted {
+		got[s.TenantID] = s.Version
+	}
+	if _, ok := got["a"]; ok {
+		t.Fatalf("a still exhausted after dropping out of the list: %+v", all)
+	}
+	if got["b"] != 6 || got["c"] != 12 {
+		t.Fatalf("exhausted = %v, want b@6 kept and c@12 kept (newer than the list)", got)
+	}
+	if store.Watermark() != 12 {
+		t.Fatalf("watermark = %d, want 12", store.Watermark())
+	}
+	unblocked := false
+	for _, saved := range cache.saved {
+		if saved.TenantID == "a" && !saved.Exhausted() && saved.Version == 10 {
+			unblocked = true
+		}
+	}
+	if !unblocked {
+		t.Fatalf("the unblock of a at 10 was not cached: %+v", cache.saved)
+	}
+}

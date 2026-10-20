@@ -88,3 +88,24 @@ func TestDataPlaneUsageReadinessFollowsTheSnapshotFlag(t *testing.T) {
 	enforcement.ApplySnapshot(usagedomain.Snapshot{})
 	assert.NoError(t, on(context.Background()))
 }
+
+func TestUsageSyncClientOnlyWithEnabledAndAddress(t *testing.T) {
+	t.Parallel()
+	store := appusage.NewStore(emptyStateCache{}, nil)
+	for _, tc := range []struct {
+		usage config.UsageConfig
+		want  bool
+	}{
+		{usage: config.UsageConfig{}, want: false},
+		{usage: config.UsageConfig{Enabled: true}, want: false},
+		{usage: config.UsageConfig{GRPCAddr: "usage-system:9090"}, want: false},
+		{usage: config.UsageConfig{Enabled: true, GRPCAddr: "usage-system:9090", GRPCInsecure: true}, want: true},
+	} {
+		client, err := provideUsageSyncClient(&config.Config{Usage: tc.usage}, store, slog.Default())
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, client != nil, "%+v", tc.usage)
+		if client != nil {
+			require.NoError(t, client.Close())
+		}
+	}
+}

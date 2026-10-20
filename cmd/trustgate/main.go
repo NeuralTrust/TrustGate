@@ -107,6 +107,9 @@ func main() {
 		if err := c.Invoke(modules.StartUsageRestore); err != nil {
 			log.Fatalf("failed to start usage restore: %v", err)
 		}
+		if err := c.Invoke(modules.StartUsageSync); err != nil {
+			log.Fatalf("failed to start usage sync: %v", err)
+		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
 			log.Fatalf("failed to start stored secrets backfill: %v", err)
@@ -140,6 +143,9 @@ func main() {
 		}
 		if err := c.Invoke(modules.StartUsageRestore); err != nil {
 			log.Fatalf("failed to start usage restore: %v", err)
+		}
+		if err := c.Invoke(modules.StartUsageSync); err != nil {
+			log.Fatalf("failed to start usage sync: %v", err)
 		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
