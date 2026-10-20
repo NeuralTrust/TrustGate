@@ -144,6 +144,12 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
+		// tools/list answers an empty Store with an empty surface. A tools/call
+		// name that is not a gateway tool is then unknown. A consumer that is
+		// not the Store still reports that nothing is attached.
+		if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+			return nil, &UnknownToolError{Name: name}
+		}
 		return nil, ErrNoMCPRegistries
 	}
 	// The exposed name carries its server. Servers that do not fit its prefix
