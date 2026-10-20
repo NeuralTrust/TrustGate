@@ -723,6 +723,7 @@ func (f *forwarder) finalizeStream(
 		remaining, pe := guard.Run(ctx, stream)
 		if pe != nil {
 			f.drainAsync(remaining)
+			retimeSpanAtHeadRefusal(span, startedAt)
 			return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
 		}
 		stream = remaining
@@ -874,6 +875,22 @@ func retimeSpanOnStreamEnd(
 			}
 		}
 	}
+}
+
+// retimeSpanAtHeadRefusal ends the provider LLM span where the head verdict
+// refused the stream, which is where the stream ended for the client. The head
+// drain and the guard's hold elapsed inside the span, and the metrics fold takes
+// the streamed policies' time back out of the attempt on exactly that premise
+// (providerLatency in pkg/app/metrics). Left at time-to-first-byte, the hold was
+// taken out of the upstream's share instead, clamping provider_ms to zero when
+// the hold was the longer of the two, and the remainder reported it as
+// gateway_ms. The drain the refusal hands off runs after the client got its
+// answer, so it is not counted.
+func retimeSpanAtHeadRefusal(span *trace.Span, startedAt time.Time) {
+	if span == nil {
+		return
+	}
+	span.SetLatency(time.Since(startedAt))
 }
 
 // drainAsync drains an abandoned provider stream in the background so the
