@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -39,15 +40,17 @@ type Service struct {
 	snapshotpb.UnimplementedConfigSyncServer
 	hub    *Hub
 	source SnapshotSource
+	gate   TokenGate
 	logger *slog.Logger
 }
 
-// NewService builds the ConfigSync server implementation.
-func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger) *Service {
+// NewService builds the ConfigSync server implementation. gate may be nil, in
+// which case open streams are never ended for a revoked token.
+func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, gate TokenGate) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{hub: hub, source: source, logger: logger}
+	return &Service{hub: hub, source: source, gate: gate, logger: logger}
 }
 
 // Sync registers the data plane's stream, pushes an immediate notice when the
@@ -64,9 +67,20 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		return status.Error(codes.InvalidArgument, "first Sync message must be Hello")
 	}
 	scope := ScopeFromContext(ctx)
-	conn := s.hub.register(scope, hello.GetInstanceId())
+	identity, ok := IdentityFromContext(ctx)
+	if !ok {
+		identity = configsyncrevocation.Identity{Scope: scope}
+	}
+	conn := s.hub.register(identity, hello.GetInstanceId())
 	defer s.hub.unregister(conn)
 	defer s.hub.markDisconnected(conn)
+	// The interceptor admitted this token before the stream registered. A
+	// revocation loaded in between is caught here: the refresher swaps the
+	// snapshot before it walks the hub, so a stream that registered after
+	// that walk sees the new snapshot now.
+	if s.gate != nil && s.gate.Revoked(identity) {
+		return errInvalidToken
+	}
 
 	if _, version, ok := s.source.SnapshotFor(scope); ok && version != hello.GetLastAppliedVersion() {
 		conn.enqueue(version)
@@ -90,6 +104,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-conn.revoked:
+			return errInvalidToken
 		case err := <-recvErr:
 			if errors.Is(err, io.EOF) {
 				return nil

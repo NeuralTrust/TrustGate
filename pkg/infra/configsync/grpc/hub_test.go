@@ -17,6 +17,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	"io"
 	"log/slog"
 	"sync"
@@ -65,7 +66,7 @@ func (s *recordingStore) snapshot() ([]string, []string, []string) {
 
 func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
 	h := NewHub(discardLogger(), nil)
-	conn := h.register("", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: ""}, "dp-1")
 	defer h.unregister(conn)
 
 	h.Broadcast("v1")
@@ -89,7 +90,7 @@ func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
 
 func TestHub_BroadcastNeverBlocksSlowConsumer(t *testing.T) {
 	h := NewHub(discardLogger(), nil)
-	conn := h.register("", "dp-slow")
+	conn := h.register(configsyncrevocation.Identity{Scope: ""}, "dp-slow")
 	defer h.unregister(conn)
 
 	done := make(chan struct{})
@@ -134,7 +135,7 @@ func TestHub_ConcurrentRegisterBroadcastAck(t *testing.T) {
 					return
 				default:
 				}
-				conn := h.register("", "dp")
+				conn := h.register(configsyncrevocation.Identity{Scope: ""}, "dp")
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -162,7 +163,7 @@ func TestHub_RegisterCarriesScopeAndMarksConnected(t *testing.T) {
 	store := &recordingStore{}
 	h := NewHub(discardLogger(), store)
 
-	conn := h.register("tenant-a", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
 	defer h.unregister(conn)
 
 	if conn.scope != "tenant-a" {
@@ -178,7 +179,7 @@ func TestHub_MarkAckPersistsAppliedVersion(t *testing.T) {
 	store := &recordingStore{}
 	h := NewHub(discardLogger(), store)
 
-	conn := h.register("tenant-a", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
 	defer h.unregister(conn)
 
 	h.markAck(conn, "v42")
@@ -196,7 +197,7 @@ func TestHub_MarkDisconnected(t *testing.T) {
 	store := &recordingStore{}
 	h := NewHub(discardLogger(), store)
 
-	conn := h.register("tenant-a", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
 	h.markDisconnected(conn)
 	h.unregister(conn)
 
@@ -210,7 +211,7 @@ func TestHub_StoreErrorsAreSwallowed(t *testing.T) {
 	store := &recordingStore{err: errors.New("db down")}
 	h := NewHub(discardLogger(), store)
 
-	conn := h.register("tenant-a", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
 	h.markAck(conn, "v1")
 	h.markDisconnected(conn)
 	h.unregister(conn)
@@ -224,7 +225,7 @@ func TestHub_StoreErrorsAreSwallowed(t *testing.T) {
 func TestHub_NilStoreIsNoOp(t *testing.T) {
 	h := NewHub(discardLogger(), nil)
 
-	conn := h.register("tenant-a", "dp-1")
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
 	h.markAck(conn, "v1")
 	h.markDisconnected(conn)
 	h.unregister(conn)
