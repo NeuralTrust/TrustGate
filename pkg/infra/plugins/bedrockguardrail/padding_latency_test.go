@@ -72,6 +72,8 @@ func (g *latencyGuardrail) ApplyGuardrail(
 // quotaGuardrail enforces the documented floor of the smallest-quota regions the
 // way AWS does: 25 text units a second with a burst of 25, throttling any call
 // that finds fewer units available.
+const quotaArrivalSlack = 20 * time.Millisecond
+
 type quotaGuardrail struct {
 	latencyGuardrail
 	bucket *rate.Limiter
@@ -87,10 +89,14 @@ func (g *quotaGuardrail) ApplyGuardrail(
 	// The spacer and this bucket are separate limiters on the same rate. A wait
 	// is an integer number of nanoseconds, so it can end a few microseconds
 	// before this bucket has the token, and AllowN counts that as a throttle.
-	// One text unit at this floor takes 40ms, so a millisecond of slack cannot
-	// hide a call the spacer failed to hold.
+	// The spacer also charges a call when it releases it and this bucket when
+	// it arrives, and the first call arrives last: it builds the cached client
+	// on the way. From then on this bucket runs that much behind the spacer,
+	// which a loaded runner under -race stretches past a millisecond. One text
+	// unit at this floor takes 40ms, so 20ms of slack still cannot hide a call
+	// the spacer failed to hold.
 	units := (len(textOf(in)) + 999) / 1000
-	if !g.bucket.AllowN(time.Now().Add(time.Millisecond), units) {
+	if !g.bucket.AllowN(time.Now().Add(quotaArrivalSlack), units) {
 		g.denied.Add(1)
 		return nil, g.err
 	}
