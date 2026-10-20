@@ -222,6 +222,13 @@ type ExternalFailure struct {
 	Err     error
 	Logger  *slog.Logger
 	Event   *metrics.EventContext
+	// FailClosed is a plugin's own opt-in (today only trustguard's
+	// failure_mode: closed): an availability failure is enforced like an input
+	// one, so a blocking mode refuses it and observe records it. Only the
+	// decision changes: the class stays the real one (availability), so the
+	// record still says the provider failed, not the request. It never changes
+	// an input failure, and every other plugin leaves it false.
+	FailClosed bool
 }
 
 // ExternalFailureOutcome is HandleExternalFailure's answer. Decision and Class
@@ -271,7 +278,7 @@ func HandleExternalFailure(f ExternalFailure) ExternalFailureOutcome {
 		Class:    class,
 		Result:   &Result{StatusCode: http.StatusOK},
 	}
-	if class == FailureClassInput && Blocks(f.Mode) {
+	if (class == FailureClassInput || f.FailClosed) && Blocks(f.Mode) {
 		outcome.Result = nil
 		if f.Finding != nil && IsMaskOverFinding(f.Detail) {
 			outcome.Decision = DecisionBlocked
@@ -410,8 +417,22 @@ func ExternalStreamOutcome(
 	block *SegmentVerdict,
 	err error,
 ) (*SegmentVerdict, error) {
+	return ExternalStreamOutcomeUnder(plugin, mode, reason, detail, block, false, err)
+}
+
+// ExternalStreamOutcomeUnder is ExternalStreamOutcome for a plugin that can be
+// told to fail closed (see ExternalFailure.FailClosed).
+func ExternalStreamOutcomeUnder(
+	plugin string,
+	mode policy.Mode,
+	reason FailureReason,
+	detail string,
+	block *SegmentVerdict,
+	failClosed bool,
+	err error,
+) (*SegmentVerdict, error) {
 	failure := newExternalStreamFailure(plugin, reason, detail, err)
-	if failure.Class != FailureClassInput {
+	if failure.Class != FailureClassInput && !failClosed {
 		return nil, failure
 	}
 	if !Blocks(mode) {
