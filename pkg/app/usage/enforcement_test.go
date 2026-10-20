@@ -15,6 +15,8 @@
 package usage
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -72,5 +74,52 @@ func TestEnforcementKeepsANewerBlockAgainstAnOlderList(t *testing.T) {
 	e.ApplySnapshot(domain.Snapshot{AsOfVersion: 40})
 	if _, ok := e.Exhausted("y"); !ok {
 		t.Fatal("an older list unblocked y")
+	}
+}
+
+// Readers never see a half-applied snapshot: a tenant blocked before the run
+// and never unblocked stays blocked on every read while snapshots land.
+func TestEnforcementReadsWhileSnapshotsApply(t *testing.T) {
+	t.Parallel()
+	e := NewEnforcement()
+	e.ApplySnapshot(domain.Snapshot{Exhausted: []domain.TenantState{exhausted(t, "stable", 1)}, AsOfVersion: 1})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errs := make(chan string, 4)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := e.Exhausted("stable"); !ok {
+					errs <- "stable read as healthy mid-apply"
+					return
+				}
+			}
+		}()
+	}
+	for v := int64(2); v < 200; v++ {
+		e.ApplySnapshot(domain.Snapshot{
+			Exhausted:   []domain.TenantState{exhausted(t, "stable", 1), exhausted(t, fmt.Sprintf("t%d", v), v)},
+			AsOfVersion: v,
+		})
+	}
+	close(stop)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if _, ok := e.Exhausted("t199"); !ok {
+		t.Fatal("last snapshot not applied")
+	}
+	if _, ok := e.Exhausted("t100"); ok {
+		t.Fatal("t100 still exhausted after it left the list")
 	}
 }
