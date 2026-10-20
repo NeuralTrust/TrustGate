@@ -16,12 +16,64 @@ package plugins
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
+
+// redisErrorCodes are the Redis error-reply codes CounterErrorClass reports by
+// name. Any other code is reported as "redis_other", so the class stays a
+// closed set whatever a server or proxy answers.
+var redisErrorCodes = map[string]struct{}{
+	"ASK": {}, "BUSY": {}, "CLUSTERDOWN": {}, "CROSSSLOT": {}, "ERR": {},
+	"EXECABORT": {}, "LOADING": {}, "MASTERDOWN": {}, "MISCONF": {},
+	"MOVED": {}, "NOAUTH": {}, "NOPERM": {}, "NOREPLICAS": {}, "NOSCRIPT": {},
+	"OOM": {}, "READONLY": {}, "TRYAGAIN": {}, "WRONGPASS": {}, "WRONGTYPE": {},
+}
+
+// redisReply is satisfied by the error a Redis client returns for an error
+// reply (go-redis marks those with a RedisError method), so the app layer can
+// recognise one without importing the client.
+type redisReply interface {
+	error
+	RedisError()
+}
+
+// CounterErrorClass names the kind of counter-store failure err is, from a
+// closed set that is safe to ship in telemetry: the lowercased code of a Redis
+// error reply ("readonly", "oom", "misconf", "noperm", "execabort", ...),
+// "redis_other" for a reply with any other code, "timeout", "connection" or
+// "unknown". It never returns the error text, which can carry key names. A nil
+// err yields "".
+func CounterErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	var reply redisReply
+	if errors.As(err, &reply) {
+		code, _, _ := strings.Cut(reply.Error(), " ")
+		if _, ok := redisErrorCodes[code]; ok {
+			return strings.ToLower(code)
+		}
+		return "redis_other"
+	}
+	var netErr net.Error
+	isNet := errors.As(err, &netErr)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), isNet && netErr.Timeout():
+		return "timeout"
+	case isNet, errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection"
+	default:
+		return "unknown"
+	}
+}
 
 // CounterFailure is one counter-store (Redis) read or record call's failure,
 // ready to be turned into a plugin outcome by HandleCounterFailure. It is the
@@ -57,9 +109,9 @@ type CounterFailure struct {
 // This only decides the outcome, sets the chain-level span decision via
 // SetDecisionFromOutcome, and emits the one Warn log the failure gets. The
 // caller still owns its own Data: it is responsible for setting
-// FailureReason (FailureCounterUnavailable) and FailureDetail (f.Detail), and
-// calling setExtras, before or after invoking this — but only when this
-// returns a nil error; see below.
+// FailureReason (FailureCounterUnavailable), FailureDetail (f.Detail) and
+// FailureErrorClass (CounterErrorClass(f.Err)), and calling setExtras, before
+// or after invoking this — but only when this returns a nil error; see below.
 //
 // A canceled or timed-out ctx is not an outage: it is the caller giving up on
 // the request for its own reasons (a client disconnect, an upstream deadline
@@ -96,7 +148,10 @@ func LogCounterFailure(f CounterFailure, decision string) {
 		attrs = append(attrs, slog.String("detail", f.Detail))
 	}
 	if f.Err != nil {
-		attrs = append(attrs, slog.Any("error", f.Err))
+		attrs = append(attrs,
+			slog.Any("error", f.Err),
+			slog.String("error_class", CounterErrorClass(f.Err)),
+		)
 	}
 	logger := f.Logger
 	if logger == nil {
