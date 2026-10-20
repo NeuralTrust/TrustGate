@@ -648,6 +648,35 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 	}
 }
 
+// Enginy self-registers through DCR as a public PKCE client. The entry sets no
+// scopes, so the connect asks for the server's scopes_supported, as other MCP
+// clients do; the workspace admin's policy decides what is granted.
+func TestNewMCPServerCatalog_IncludesEnginy(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	server, ok := cat.GetByCode("ai.enginy/mcp")
+	require.True(t, ok)
+	require.Equal(t, "Enginy", server.DisplayName)
+	require.Equal(t, "https://openapi.enginy.ai/mcp", server.URL)
+	require.Equal(t, "streamable-http", server.Transport)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.SelfService)
+	require.False(t, server.RequiresConfig)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, registrationAuto, server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.True(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Equal(t, "https://api.enginy.ai/authorize", server.OAuth.AuthorizeURL)
+	require.Equal(t, "https://api.enginy.ai/api/v1/mcp/oauth/token", server.OAuth.TokenURL)
+	require.Equal(t, "https://openapi.enginy.ai/mcp", server.OAuth.Resource)
+	require.Empty(t, server.OAuth.Scopes)
+}
+
 // Replicate publishes only an SSE endpoint. The catalog keeps the row and
 // hides it the same way the probe marks transport the gateway cannot dial.
 func TestNewMCPServerCatalog_HidesSSEUnsupportedReplicate(t *testing.T) {
