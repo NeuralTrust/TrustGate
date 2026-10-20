@@ -95,6 +95,7 @@ var vendorBrandIcons = map[string]string{ // #nosec G101 -- static brand icon as
 	"egnyte":                        "mcp/egnyte.svg",
 	"elastic":                       "mcp/elastic.svg",
 	"endorlabs":                     "mcp/endorlabs.png",
+	"enginy":                        "mcp/enginy.svg",
 	"exa":                           "mcp/exa.png",
 	"excalidraw":                    "mcp/excalidraw.svg",
 	"fathom":                        "mcp/fathom.png",
