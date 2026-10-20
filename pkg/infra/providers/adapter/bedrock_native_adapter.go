@@ -598,7 +598,15 @@ func (a *BedrockNativeAdapter) DecodeRequest(body []byte) (*CanonicalRequest, er
 	for i := range cr.Messages {
 		cr.Messages[i].Documents, cr.Messages[i].DocumentsFirst = nil, false
 	}
-	if extra := leftoverText(body, requestParts(cr)); extra != "" {
+	known := requestParts(cr)
+	for _, t := range cr.Tools {
+		if t.Name == converseToolPlaceholder && t.Description == converseToolPlaceholderDescription {
+			// The encoder's own text, not the client's: a leftover here would read as
+			// a message nobody wrote.
+			known = append(known, t.Description)
+		}
+	}
+	if extra := leftoverText(body, known); extra != "" {
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: roleUser, Content: extra})
 	}
 	return cr, nil

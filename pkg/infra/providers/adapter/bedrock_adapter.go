@@ -777,7 +777,7 @@ func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 		}
 		return &ConverseToolConfig{Tools: []ConverseTool{{ToolSpec: &ConverseToolSpec{
 			Name:        converseToolPlaceholder,
-			Description: "No tools are available for this request. Do not call this tool.",
+			Description: converseToolPlaceholderDescription,
 			InputSchema: ConverseToolInputSchema{JSON: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		}}}}
 	}
@@ -815,6 +815,9 @@ func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 // carries tool blocks but no tools, which Bedrock refuses without a
 // toolConfig.
 const converseToolPlaceholder = "no_tools_available"
+
+// converseToolPlaceholderDescription is the placeholder tool's description.
+const converseToolPlaceholderDescription = "No tools are available for this request. Do not call this tool."
 
 func conversationUsesTools(msgs []CanonicalMessage) bool {
 	for _, m := range msgs {

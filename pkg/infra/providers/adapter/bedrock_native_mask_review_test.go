@@ -201,3 +201,23 @@ func TestNativeMask_InPlace_ReplacementIsAProperlyEscapedJSONString(t *testing.T
 	tree := decodeTree(t, masked)
 	assert.Equal(t, "token <a \"b\" \\ c\nd & e> end", tree["messages"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"])
 }
+
+// An Anthropic invoke body whose history carries tool blocks but declares no
+// tools is re-encoded with a synthetic placeholder tool; that tool is the
+// encoder's, not the plugin's, so it must not read as a changed tool list.
+func TestNativeMask_InPlace_AnthropicToolHistoryWithoutToolsIsMasked(t *testing.T) {
+	t.Parallel()
+	original := []byte(`{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"mail ` + nativeMaskEmail + ` a hello"}]},` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01A","name":"send_mail","input":{"q":"x"}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01A","content":"sent"}]}]}`)
+	modified := pluginRewrite(t, original, nativeMaskEmail, "[EMAIL]")
+
+	masked, cause := NativeMasker{}.MaskRequestWhy(original, modified)
+	require.Empty(t, cause)
+	s := string(masked)
+	assert.Contains(t, s, `mail [EMAIL] a hello`)
+	assert.NotContains(t, s, nativeMaskEmail)
+	assert.NotContains(t, s, converseToolPlaceholder, "the placeholder is the encoder's and never reaches the wire")
+	assert.Contains(t, s, `"tool_use_id":"toolu_01A"`)
+}

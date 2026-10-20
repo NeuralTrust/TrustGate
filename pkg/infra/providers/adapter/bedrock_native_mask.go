@@ -125,11 +125,17 @@ func (m NativeMasker) MaskRequestWhy(original, modified []byte) ([]byte, MaskCau
 	if err != nil {
 		return nil, MaskCauseDecode
 	}
+	// A conversation with tool blocks and no tools is re-encoded with a
+	// placeholder tool the encoder invented. It is neither the client's nor the
+	// plugin's, so it is left out of every reading below.
+	dropEncoderPlaceholder(before)
+	dropEncoderPlaceholder(after)
 	decode := func(b []byte) (string, error) {
 		cr, err := a.DecodeRequest(b)
 		if err != nil {
 			return "", err
 		}
+		dropEncoderPlaceholder(cr)
 		return requestText(cr), nil
 	}
 	subs, hits, ok := deriveSubstitutions(requestText(before), requestText(after))
@@ -144,6 +150,9 @@ func (m NativeMasker) MaskRequestWhy(original, modified []byte) ([]byte, MaskCau
 		return nil, patchCause(err)
 	}
 	got, err := a.DecodeRequest(masked)
+	if err == nil {
+		dropEncoderPlaceholder(got)
+	}
 	switch {
 	case err != nil:
 		return nil, MaskCauseDecode
@@ -155,6 +164,23 @@ func (m NativeMasker) MaskRequestWhy(original, modified []byte) ([]byte, MaskCau
 		return nil, MaskCauseLeak
 	}
 	return masked, ""
+}
+
+// dropEncoderPlaceholder removes the tool converseToolConfigFrom declares for a
+// conversation with tool blocks and no tools. Only an exact match of name and
+// description goes, so a tool a client really declared stays.
+func dropEncoderPlaceholder(cr *CanonicalRequest) {
+	kept := cr.Tools[:0]
+	for _, t := range cr.Tools {
+		if t.Name == converseToolPlaceholder && t.Description == converseToolPlaceholderDescription {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	cr.Tools = kept
 }
 
 func patchCause(err error) MaskCause {
