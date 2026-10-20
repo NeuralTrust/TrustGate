@@ -653,10 +653,10 @@ func (r *credentialResolver) consentRequired(
 	var ticket string
 	var err error
 	if code := storeServerCode(rc, reg); code != "" {
-		// Pin the ticket to this instance. An empty id is read as the first
-		// row of the code, so a tools/call on instance B opened Connect for
-		// instance A (ENG-2471).
-		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, reg.ID.String())
+		// Pin the ticket to the persisted shelf. An empty id is read as the
+		// first row of the code, so a tools/call on instance B opened Connect
+		// for instance A (ENG-2471).
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, storeConnectInstanceID(reg))
 	} else {
 		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
 	}
@@ -671,6 +671,20 @@ func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Regis
 		return ""
 	}
 	return strings.TrimSpace(reg.MCPTarget.Code)
+}
+
+// storeConnectInstanceID is the registry id the connect page can resolve.
+// A per-install clone's own id is the installation row; ScopeKey names the
+// shelf (InstanceOf when set, otherwise ID). A pending stand-in has no
+// persisted registry yet, so the ticket stays unpinned.
+func storeConnectInstanceID(reg *registrydomain.Registry) string {
+	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Origin == registrydomain.MCPOriginPending {
+		return ""
+	}
+	if id := reg.ScopeKey(); !id.IsNil() {
+		return id.String()
+	}
+	return ""
 }
 
 func (r *credentialResolver) clientCredentials(

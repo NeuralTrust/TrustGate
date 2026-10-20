@@ -783,9 +783,16 @@ func (s *connectService) storeRegistry(
 	instanceID = strings.TrimSpace(instanceID)
 	if instanceID != "" {
 		for _, reg := range items {
-			if reg != nil && reg.ID.String() == instanceID {
-				return s.refreshCatalogInstance(ctx, gatewayID, reg)
+			if reg == nil || reg.ID.String() != instanceID {
+				continue
 			}
+			// The pin is a capability. It has to name this code's enabled
+			// registry; another code's id, or one an administrator turned
+			// off, does not attach.
+			if !reg.Enabled || (code != "" && registrydomain.StoreCode(reg) != code) {
+				return nil
+			}
+			return s.refreshCatalogInstance(ctx, gatewayID, reg)
 		}
 		return nil
 	}
