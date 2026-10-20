@@ -130,8 +130,9 @@ func TestNoneAccessRevokesListAndCallOnBothCredentials(t *testing.T) {
 			if n := accessServers(t, dispatcher, ctx, store); n != 0 {
 				t.Fatalf("server listing = %d, want 0", n)
 			}
-			if _, err := accessCall(dispatcher, ctx, store, "dynatrace_find-documents"); !errors.Is(err, ErrNoMCPRegistries) {
-				t.Fatalf("tools/call err = %v, want a denial", err)
+			_, err := accessCall(dispatcher, ctx, store, "dynatrace_find-documents")
+			if !errors.Is(err, ErrToolNotFound) || errors.Is(err, ErrNoMCPRegistries) {
+				t.Fatalf("tools/call err = %v, want Unknown tool", err)
 			}
 			if dialCount(dialer) != 0 || dynatraceUp.lastCall != "" || pagerdutyUp.lastCall != "" {
 				t.Fatalf("None must not dial upstream, dials=%d dynatrace=%q pagerduty=%q",

@@ -555,6 +555,59 @@ func TestDropAndReplace_ConcurrentClientsStayConsistent(t *testing.T) {
 	require.Greater(t, got.ClientSecretExpiresAt, time.Now().Unix())
 }
 
+func TestDiscover_BadUpstreamURLOmitsTheURL(t *testing.T) {
+	t.Parallel()
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("upstream was dialed")
+	})}
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), client)
+	for _, raw := range []string{
+		"http://user:s3cret@example.com/%zz?token=supersecret#frag",
+		"http://user:s3cret@/mcp?token=supersecret",
+		"https://svc:Ab/cd@host",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, err := r.Discover(context.Background(), raw)
+			require.Error(t, err)
+			msg := err.Error()
+			require.Equal(t, "oauth dcr: bad upstream url", msg)
+			require.NotContains(t, msg, "Ab")
+			require.NotContains(t, msg, raw)
+			require.NotContains(t, msg, "s3cret")
+			require.NotContains(t, msg, "supersecret")
+			require.NotContains(t, msg, "user:")
+			require.NotContains(t, msg, "token=")
+			require.NotContains(t, msg, "upstream was dialed")
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDiscover_NotDiscoverableOmitsQueryAndUserinfo(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	upstream := "http://user:s3cret@" + host + "/mcp?token=supersecret#frag"
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), srv.Client())
+	_, err := r.Discover(context.Background(), upstream)
+	require.ErrorIs(t, err, appoauth.ErrUpstreamNotDiscoverable)
+	msg := err.Error()
+	require.NotContains(t, msg, "s3cret")
+	require.NotContains(t, msg, "user:")
+	require.NotContains(t, msg, "?")
+	require.NotContains(t, msg, "token=")
+	require.NotContains(t, msg, "supersecret")
+	require.NotContains(t, msg, "#frag")
+	require.Contains(t, msg, "http://"+host+"/mcp")
+}
+
 func TestDiscover_SpoofedIssuerIsRefused(t *testing.T) {
 	t.Parallel()
 	var tokenHits atomic.Int64
