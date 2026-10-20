@@ -653,7 +653,10 @@ func (r *credentialResolver) consentRequired(
 	var ticket string
 	var err error
 	if code := storeServerCode(rc, reg); code != "" {
-		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, "")
+		// Pin the ticket to this instance. An empty id is read as the first
+		// row of the code, so a tools/call on instance B opened Connect for
+		// instance A (ENG-2471).
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, reg.ID.String())
 	} else {
 		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
 	}

@@ -70,3 +70,53 @@ func TestCredentialResolver_StoreConsentTicketNamesTheServer(t *testing.T) {
 		t.Fatalf("a non-Store consumer must not mint a server ticket, got %v", plain.serverTicketCodes)
 	}
 }
+
+// Two installs of one catalog code are two servers. A tools/call that needs
+// connect on instance B must mint a ticket pinned to B: the connect link is
+// that ticket, and an empty instance id makes the page focus whichever row of
+// the code comes first.
+func TestCredentialResolver_StoreConsentTicketPinsTheCalledInstance(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	instance := func(name, upstream string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			Code: "io.n8n/mcp",
+			URL:  upstream,
+			Auth: &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeForwarded, Provider: "io.n8n/mcp", ClientID: "id",
+				AuthorizeURL: "https://n8n.example/a", TokenURL: "https://n8n.example/t",
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry %s: %v", name, err)
+		}
+		return reg
+	}
+	instanceA := instance("n8n A", "https://a.n8n.example/mcp")
+	instanceB := instance("n8n B", "https://b.n8n.example/mcp")
+	if instanceA.ID == instanceB.ID {
+		t.Fatal("the two instances must have distinct ids")
+	}
+
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	ctx := principalCtx(&identity.Principal{Subject: "alice"})
+	connect := &stubConnect{ticket: "srv-ticket-b"}
+	r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+
+	err := r.Apply(ctx, store, instanceB, &Target{})
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError", err)
+	}
+	link := consent.Path + "/connect?ticket=" + consent.Ticket
+	if consent.Ticket != "srv-ticket-b" || link != appconsumer.MCPPath(consumerdomain.StoreSlug)+"/connect?ticket=srv-ticket-b" {
+		t.Fatalf("needs-connect link = %q, consent = %+v", link, consent)
+	}
+	if len(connect.serverTicketCodes) != 1 || connect.serverTicketCodes[0] != "io.n8n/mcp" {
+		t.Fatalf("ticket code = %v, want io.n8n/mcp", connect.serverTicketCodes)
+	}
+	if len(connect.serverTicketInstances) != 1 || connect.serverTicketInstances[0] != instanceB.ID.String() {
+		t.Fatalf("needs-connect ticket instance = %v, want instance B %s (instance A is %s)",
+			connect.serverTicketInstances, instanceB.ID, instanceA.ID)
+	}
+}
