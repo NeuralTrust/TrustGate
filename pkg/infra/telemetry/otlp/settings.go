@@ -90,6 +90,9 @@ type Settings struct {
 	// inherited from OTEL_EXPORTER_OTLP_ENDPOINT is the operator's choice (the
 	// in-cluster collector) and stays unguarded.
 	guarded bool
+	// ownHeaders makes the exporter send exactly Headers, so the SDK never
+	// fills them from OTEL_EXPORTER_OTLP_HEADERS.
+	ownHeaders bool
 	// insecureSet records that the decoded settings carried an insecure key, so
 	// an explicit false is told apart from an absent key whatever its case.
 	insecureSet bool
