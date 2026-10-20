@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package usage holds the usage record the gateway emits for every metered
+// Package usage holds the usage record the gateway emits for every billable
 // operation, apart from its observability events.
 package usage
 

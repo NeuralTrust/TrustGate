@@ -38,6 +38,9 @@ func UsageRecords(c *container.Container) error {
 		func(cfg *config.Config, e usagedomain.Emitter, outcomes usagedomain.OutcomeRecorder) appusage.RequestRecorder {
 			return appusage.NewRequestRecorder(cfg.UsageRecords.Enabled, e, outcomes)
 		},
+		func(cfg *config.Config, e usagedomain.Emitter, outcomes usagedomain.OutcomeRecorder) *appusage.TopicRecorder {
+			return appusage.NewTopicRecorder(cfg.UsageRecords.Enabled, e, outcomes)
+		},
 	} {
 		if err := c.Provide(provider); err != nil {
 			return err
