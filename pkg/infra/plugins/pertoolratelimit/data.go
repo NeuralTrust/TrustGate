@@ -47,10 +47,12 @@ type PerToolRateLimiterData struct {
 	CurrentCount  int    `json:"current_count"`
 	Behavior      string `json:"behavior"`
 	LimitExceeded bool   `json:"limit_exceeded"`
-	// FailureReason and FailureDetail are set only on a failed_open decision:
-	// the counter store (Redis) could not be read or written. FailureReason is
-	// always appplugins.FailureCounterUnavailable; FailureDetail names which
-	// call failed ("read" or "record").
-	FailureReason string `json:"failure_reason,omitempty"`
-	FailureDetail string `json:"failure_detail,omitempty"`
+	// FailureReason, FailureDetail and FailureErrorClass are set only on a
+	// failed_open decision: the counter store (Redis) could not be read or
+	// written. FailureReason is always appplugins.FailureCounterUnavailable;
+	// FailureDetail names which call failed ("read" or "record");
+	// FailureErrorClass is appplugins.CounterErrorClass of the error.
+	FailureReason     string `json:"failure_reason,omitempty"`
+	FailureDetail     string `json:"failure_detail,omitempty"`
+	FailureErrorClass string `json:"failure_error_class,omitempty"`
 }

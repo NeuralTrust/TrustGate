@@ -186,9 +186,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 // failure has almost nothing yet (just the dimension), while a record
 // failure after an exceeded read already carries RateLimitExceeded,
 // CurrentCount, Limit, Window and RetryAfter; this only adds
-// FailureReason/FailureDetail on top rather than discarding it for a bare
-// failure record. headers, when non-nil, are attached to the pass-through
-// result unchanged (the caller has already decided what they should say).
+// FailureReason/FailureDetail/FailureErrorClass on top rather than discarding
+// it for a bare failure record. headers, when non-nil, are attached to the
+// pass-through result unchanged (the caller has already decided what they
+// should say).
 //
 // A ctx the caller itself canceled (or let deadline out) is not a
 // counter-store outage — HandleCounterFailure reports that back as a non-nil
@@ -225,6 +226,7 @@ func (p *Plugin) counterUnavailable(
 	}
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	if data.RateLimitExceeded {
 		appplugins.SetDecision(in.Event, in.Mode)
 		result = &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}
@@ -264,10 +266,23 @@ func (p *Plugin) record(ctx context.Context, key string, now time.Time, window t
 	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart, 10))
 	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now.Unix()), Member: member})
 	pipe.Expire(ctx, key, window)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("rate_limiter: record request: %w", err)
+	if cmds, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("rate_limiter: record request: %w", queuedCause(cmds, err))
 	}
 	return nil
+}
+
+// queuedCause returns the error a MULTI/EXEC actually failed on. Redis refuses
+// a write it will not run (READONLY on a replica, OOM, MISCONF) as the command
+// is queued and then answers EXEC with a bare EXECABORT, which is all Exec
+// returns; the reason only survives on the queued command.
+func queuedCause(cmds []redis.Cmder, execErr error) error {
+	for _, cmd := range cmds {
+		if err := cmd.Err(); err != nil && !redis.HasErrorPrefix(err, "EXECABORT") {
+			return err
+		}
+	}
+	return execErr
 }
 
 func setLimitHeaders(headers map[string][]string, dimension string, limit int, count int64, reset time.Time) {

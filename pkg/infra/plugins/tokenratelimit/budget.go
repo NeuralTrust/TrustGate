@@ -358,8 +358,9 @@ func (p *Plugin) handleExceeded(
 // (subject to the ctx exception below) — our own infrastructure fails open in
 // every mode, including enforce, unlike a third-party guardrail. data is
 // whatever the caller already knows (provider, model, cost-cap telemetry);
-// this only adds FailureReason/FailureDetail on top of it, so that context is
-// not lost the way a bare TokenRateLimiterData would lose it.
+// this only adds FailureReason/FailureDetail/FailureErrorClass on top of it,
+// so that context is not lost the way a bare TokenRateLimiterData would lose
+// it.
 //
 // A ctx the caller itself canceled (or let deadline out) is not a
 // counter-store outage — HandleCounterFailure reports that back as a non-nil
@@ -389,6 +390,7 @@ func (p *Plugin) counterUnavailable(
 	data.Stage = string(stage)
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setTokenExtras(event, data)
 	return result, nil
 }
@@ -412,6 +414,7 @@ func failClosed(
 	data.Stage = string(policy.StagePreRequest)
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setTokenExtras(event, data)
 	appplugins.SetDecisionFromOutcome(event, decisionFailedClosed)
 	return budgetUnavailableError()

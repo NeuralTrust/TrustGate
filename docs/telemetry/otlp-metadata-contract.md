@@ -653,13 +653,24 @@ infrastructure is down. That case emits no `failed_open` decision, no `counter_u
 extras and no warning: the plugin's error simply propagates as it would have without this
 behavior.
 
-Their `extras` carry the same two keys the external guardrails use, plus whatever the call
-already knew before the counter store failed:
+Their `extras` carry the same two keys the external guardrails use, a third that says what
+the counter store answered, and whatever the call already knew before it failed:
 
 | Key | Meaning |
 |-----|---------|
 | `failure_reason` | Always `counter_unavailable` |
 | `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
+| `failure_error_class` | What kind of failure it was, from a closed set. A Redis error reply gives its code in lowercase: `readonly` (a replica), `oom`, `misconf`, `noperm`, `noauth`, `wrongpass`, `loading`, `busy`, `masterdown`, `execabort`, `noscript`, `wrongtype`, `moved`, `ask`, `clusterdown`, `crossslot`, `tryagain`, `noreplicas` or `err`; any other code gives `redis_other`. Otherwise `timeout`, `connection` or `unknown`. Never the error text itself |
+
+`failure_error_class` is what tells a counter store that refuses writes apart from one that is
+down, including on a hybrid data plane whose logs are not collected centrally. A Redis that answers reads
+but refuses writes (a replica, `maxmemory` reached under `noeviction`, a failing bgsave)
+refuses `rate_limiter`'s MULTI/EXEC write as each command is queued and answers EXEC with a
+bare `EXECABORT`. The class, and the logged error, carry the refused command's code
+(`readonly`, `oom`, `misconf`), not `execabort`. The `counter store call failed` warning
+carries the same value as `error_class`. On Redis older than 7, a write refused inside a Lua
+script (`token_rate_limiter`, `per_tool_rate_limiter`) comes back as a generic script error,
+so those two report `err` there instead of the refused command's code.
 
 For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count` and
 `limit` from the read that already succeeded, and `token_rate_limiter`'s keep `provider`,
