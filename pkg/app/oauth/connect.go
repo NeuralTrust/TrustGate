@@ -744,7 +744,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	// registry for that code so the forwarded-auth (OAuth) provider resolves.
 	if consumerdomain.IsStoreConsumer(rc.Consumer) &&
 		(strings.TrimSpace(ticket.Code) != "" || strings.TrimSpace(ticket.InstanceID) != "") {
-		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code, ticket.InstanceID); reg != nil {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, ticket.InstanceID); reg != nil {
 			rc.Registries = []*registrydomain.Registry{reg}
 		}
 	}
@@ -766,7 +766,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 func (s *connectService) storeRegistry(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	code, instanceID string,
+	principalSub, code, instanceID string,
 ) *registrydomain.Registry {
 	if s.registries == nil {
 		return nil
@@ -786,10 +786,14 @@ func (s *connectService) storeRegistry(
 			if reg == nil || reg.ID.String() != instanceID {
 				continue
 			}
-			// The pin is a capability. It has to name this code's enabled
-			// registry; another code's id, or one an administrator turned
-			// off, does not attach.
-			if !reg.Enabled || (code != "" && registrydomain.StoreCode(reg) != code) {
+			// The pin has to name this code. A caller cannot use a registry an
+			// administrator turned off. The shared-account ticket is minted
+			// for the instance itself, and that connect still opens when the
+			// instance is disabled.
+			if code != "" && registrydomain.StoreCode(reg) != code {
+				return nil
+			}
+			if !reg.Enabled && principalSub != registrydomain.SharedAccountSubject(reg.ID) {
 				return nil
 			}
 			return s.refreshCatalogInstance(ctx, gatewayID, reg)

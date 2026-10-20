@@ -1127,9 +1127,10 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 	}
 }
 
-// A Store ticket's instance pin is a capability for one enabled registry of
-// that code. Another code's id, or a registry an administrator turned off,
-// does not attach. An enabled registry of the named code still does.
+// A Store ticket's instance pin names one registry of that code. Another
+// code's id does not attach, and a caller cannot open a registry an
+// administrator turned off. The instance's own shared-account ticket can.
+// An enabled registry of the named code still connects.
 func TestConnectService_StoreTicketPinMatchesCodeAndEnabled(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
@@ -1155,6 +1156,7 @@ func TestConnectService_StoreTicketPinMatchesCodeAndEnabled(t *testing.T) {
 	disabled := *n8n
 	disabledTarget := *n8n.MCPTarget
 	disabledAuth := *auth
+	disabledAuth.Account = registrydomain.MCPAccountShared
 	disabledTarget.Auth = &disabledAuth
 	disabled.MCPTarget = &disabledTarget
 	disabled.ID = ids.New[ids.RegistryKind]()
@@ -1211,6 +1213,31 @@ func TestConnectService_StoreTicketPinMatchesCodeAndEnabled(t *testing.T) {
 		if _, err := startLocation(svc.Start(ctx, "https://gw.example.com", "https://gw.example.com", ticket, "io.n8n/mcp", tc.instance)); !errors.Is(err, oauth.ErrProviderNotFound) {
 			t.Fatalf("%s: Start = %v, want ErrProviderNotFound", tc.name, err)
 		}
+	}
+
+	// The admin's shared-account ticket is the instance's own subject. Turning
+	// the instance off does not empty that page; a caller's ticket still does.
+	shared, err := svc.CreateServerTicket(ctx, gw, registrydomain.SharedAccountSubject(disabled.ID), storePath, "io.n8n/mcp", disabled.ID.String())
+	if err != nil {
+		t.Fatalf("shared CreateServerTicket: %v", err)
+	}
+	page, err = svc.Page(ctx, shared)
+	if err != nil {
+		t.Fatalf("shared Page: %v", err)
+	}
+	if len(page.Providers) != 1 || page.Providers[0].Instance != disabled.ID.String() {
+		t.Fatalf("shared page providers = %+v, want the disabled instance", page.Providers)
+	}
+	wrongCode, err := svc.CreateServerTicket(ctx, gw, registrydomain.SharedAccountSubject(other.ID), storePath, "io.n8n/mcp", other.ID.String())
+	if err != nil {
+		t.Fatalf("shared wrong-code CreateServerTicket: %v", err)
+	}
+	page, err = svc.Page(ctx, wrongCode)
+	if err != nil {
+		t.Fatalf("shared wrong-code Page: %v", err)
+	}
+	if len(page.Providers) != 0 {
+		t.Fatalf("shared ticket for another code's instance attached %+v", page.Providers)
 	}
 }
 
