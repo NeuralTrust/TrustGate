@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"strings"
 	"testing"
 
@@ -1029,5 +1030,28 @@ func TestInstallMessage_TellsHowToGetTheNewTools(t *testing.T) {
 	}
 	if text := installMessage(&appstore.InstallResult{Name: "Linear", Pending: true}, "", ""); strings.Contains(text, "refresh") {
 		t.Fatalf("a pending request has no tools to refresh: %q", text)
+	}
+}
+
+func TestStoreToolCallMarksTheTraceAsMetaTool(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	d := NewRPCDispatcher(newTestComposer(&fakeDialer{}), NewPluginRunner(nil, nil), nil, nil, tool)
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+
+	rt := trace.New("store-call", trace.Metadata{})
+	ctx := trace.NewContext(selfServiceCtx(), rt)
+	if _, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_store_search","arguments":{"query":"git"}}`)); err != nil {
+		t.Fatalf("store search: %v", err)
+	}
+	if !rt.IsMetaTool() {
+		t.Fatal("a gateway tool call must mark the trace as a meta-tool call")
+	}
+
+	other := trace.New("ghost-call", trace.Metadata{})
+	if _, err := d.Dispatch(trace.NewContext(selfServiceCtx(), other), store, "", "tools/call", json.RawMessage(`{"name":"ghost"}`)); err == nil {
+		t.Fatal("a call to an unknown tool must fail")
+	}
+	if other.IsMetaTool() {
+		t.Fatal("a call to an upstream tool name must not be marked as a meta-tool call")
 	}
 }

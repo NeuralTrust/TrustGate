@@ -202,6 +202,12 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	return result, nil
 }
 
+func markMetaTool(ctx context.Context) {
+	if rt := trace.FromContext(ctx); rt != nil {
+		rt.MarkMetaTool()
+	}
+}
+
 func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any, error) {
 	var params struct {
 		Name      string          `json:"name"`
@@ -215,18 +221,21 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		return nil, err
 	}
 	if d.connections != nil && d.connections.Handles(params.Name) {
+		markMetaTool(ctx)
 		if !metaToolsPermitted(req.consumer) {
 			return nil, &ToolNotPermittedError{Tool: params.Name}
 		}
 		return d.connections.Call(ctx, req.consumer, req.baseURL, params.Name)
 	}
 	if d.inventory != nil && d.inventory.Handles(params.Name) {
+		markMetaTool(ctx)
 		if !metaToolsPermitted(req.consumer) {
 			return nil, &ToolNotPermittedError{Tool: params.Name}
 		}
 		return d.inventory.Call(ctx, req.consumer, params.Name, params.Arguments)
 	}
 	if d.store != nil && d.store.Handles(params.Name) {
+		markMetaTool(ctx)
 		if req.consumer == nil || !consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
 			return nil, &ToolNotPermittedError{Tool: params.Name}
 		}
