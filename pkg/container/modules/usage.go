@@ -26,6 +26,7 @@ import (
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrausage "github.com/NeuralTrust/TrustGate/pkg/infra/usage"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/usagesync"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
@@ -47,7 +48,35 @@ func Usage(c *container.Container) error {
 	if err := c.Provide(func(s *appusage.Store) appusage.Applier { return s }); err != nil {
 		return err
 	}
-	return c.Provide(func(s *appusage.Store) appusage.Reader { return s })
+	if err := c.Provide(func(s *appusage.Store) appusage.Reader { return s }); err != nil {
+		return err
+	}
+	return c.Provide(provideUsageSyncClient)
+}
+
+// provideUsageSyncClient builds the UsageSync client when Usage System is
+// enabled and its address is set; otherwise it returns nil and the control
+// plane serves the states cached in Redis.
+func provideUsageSyncClient(cfg *config.Config, store *appusage.Store, logger *slog.Logger) (*usagesync.Client, error) {
+	if !cfg.Usage.Enabled || cfg.Usage.GRPCAddr == "" {
+		return nil, nil
+	}
+	return usagesync.NewClient(cfg.Usage, store, logger)
+}
+
+// UsageSyncParams are the dependencies of StartUsageSync.
+type UsageSyncParams struct {
+	dig.In
+	Client *usagesync.Client
+}
+
+// StartUsageSync keeps the UsageSync stream open in the background for the
+// life of the process. It does nothing when the client is disabled.
+func StartUsageSync(p UsageSyncParams) {
+	if p.Client == nil {
+		return
+	}
+	go p.Client.Run(context.Background())
 }
 
 // UsageRestoreParams are the dependencies of StartUsageRestore.

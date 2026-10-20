@@ -1,0 +1,72 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copy of the contract owned by the private event-schemas repository
+// (proto/usage/v1). TrustGate is public and cannot depend on that module, so it
+// carries the same package and field numbers; `make check-usagesync-contract`
+// checks that the copy has not drifted.
+
+syntax = "proto3";
+
+package usage.v1;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1;usagev1";
+
+import "usage/v1/state.proto";
+
+// UsageSyncService streams usage status from Usage System to the TrustGate and
+// TrustGuard control planes. Each control plane replica holds its own stream.
+service UsageSyncService {
+  // Sync is opened by the control plane. Usage System answers the first
+  // request with a full snapshot, then sends only status changes, plus a full
+  // snapshot again every 5 minutes as a backstop.
+  rpc Sync(stream SyncRequest) returns (stream SyncResponse);
+}
+
+// SyncRequest is sent by the control plane.
+message SyncRequest {
+  oneof message {
+    Hello hello = 1;
+    Ack ack = 2;
+  }
+}
+
+// Hello opens or reopens the stream.
+message Hello {
+  // last_version is the highest version the control plane has applied; 0 on
+  // a cold start.
+  int64 last_version = 1;
+}
+
+// Ack confirms the highest version applied after a response.
+message Ack {
+  int64 version = 1;
+}
+
+// SyncResponse is sent by Usage System.
+message SyncResponse {
+  oneof message {
+    Snapshot snapshot = 1;
+    UsageState change = 2;
+  }
+}
+
+// Snapshot lists every EXHAUSTED tenant. A tenant missing from it is HEALTHY
+// unless the receiver holds a newer version than as_of_version for it.
+message Snapshot {
+  repeated UsageState exhausted = 1;
+  // as_of_version is the highest version committed when the snapshot was
+  // read.
+  int64 as_of_version = 2;
+}
