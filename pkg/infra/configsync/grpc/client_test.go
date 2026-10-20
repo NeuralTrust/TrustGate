@@ -121,7 +121,7 @@ func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {
 	src := &fakeSource{}
 	raw := bytes.Repeat([]byte("abcd"), (3*snapshotChunkSize)/4+3)
 	src.set(raw, "v-big")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 
 	got, version, notModified, err := client.Fetch(context.Background(), "")
@@ -142,7 +142,7 @@ func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {
 func TestClient_FetchNotModified(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 
 	_, version, notModified, err := client.Fetch(context.Background(), "v1")
@@ -189,7 +189,7 @@ func TestClient_WatchAckRoundTrip(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 	ctx := context.Background()
 
@@ -223,7 +223,7 @@ func TestClient_WatchReconnectsOnStreamBreak(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	hub := NewHub(discardLogger(), nil)
-	lis, gsrv := newBufServer(t, NewService(hub, src, discardLogger()))
+	lis, gsrv := newBufServer(t, NewService(hub, src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 	ctx := context.Background()
 

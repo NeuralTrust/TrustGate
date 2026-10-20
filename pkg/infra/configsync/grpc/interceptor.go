@@ -37,15 +37,16 @@ const (
 )
 
 type AuthInterceptor struct {
-	authenticator scopeAuthenticator
+	authenticator tokenAuthenticator
+	gate          TokenGate
 	logger        *slog.Logger
 }
 
-func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) (*AuthInterceptor, error) {
+func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger, gate TokenGate) (*AuthInterceptor, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	interceptor := &AuthInterceptor{logger: logger}
+	interceptor := &AuthInterceptor{gate: gate, logger: logger}
 	switch cfg.ConfigSync.AuthMode {
 	case config.ConfigSyncAuthModeSigned:
 		authenticator, err := newJWTAuthenticator(cfg.ConfigSync)
@@ -93,16 +94,19 @@ func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor
 }
 
 func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error) {
-	scope, err := a.authenticator.authenticate(bearerFromContext(ctx))
+	id, err := a.authenticator.verify(bearerFromContext(ctx))
 	if err != nil {
 		if errors.Is(err, errAuthNotConfigured) {
 			a.logger.Debug("config-sync auth is not configured; rejecting RPC",
 				slog.String("component", component))
 			return ctx, status.Error(codes.Unauthenticated, "config-sync auth is not configured")
 		}
-		return ctx, status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
+		return ctx, errInvalidToken
 	}
-	return WithScope(ctx, scope), nil
+	if a.gate != nil && !a.gate.Admit(ctx, id) {
+		return ctx, errInvalidToken
+	}
+	return WithIdentity(WithScope(ctx, id.Scope), id), nil
 }
 
 type scopedServerStream struct {

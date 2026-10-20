@@ -30,6 +30,7 @@ import (
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -122,6 +123,7 @@ type adminRouterParams struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+	RevokeConfigSyncTokens    *configsynchttp.RevokeTokensHandler
 
 	StoreRequests  *storehttp.RequestsHandler
 	StoreGrants    *storehttp.GrantsHandler
@@ -145,6 +147,11 @@ func ServerAdmin(c *container.Container) error {
 	}
 	if err := c.Provide(func(repo *configsyncconnrepo.Repository) *configsynchttp.ListConnectionsHandler {
 		return configsynchttp.NewListConnectionsHandler(repo)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(revoker appconfigsyncrevocation.Revoker) *configsynchttp.RevokeTokensHandler {
+		return configsynchttp.NewRevokeTokensHandler(revoker)
 	}); err != nil {
 		return err
 	}
@@ -206,6 +213,7 @@ func ServerAdmin(c *container.Container) error {
 				GetTrace: p.GetTrace,
 
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
+				RevokeConfigSyncTokens:    p.RevokeConfigSyncTokens,
 				StoreRequests:             p.StoreRequests,
 				StoreGrants:               p.StoreGrants,
 				StorePolicies:             p.StorePolicies,
