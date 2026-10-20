@@ -266,6 +266,26 @@ func (s *configureService) Submit(
 		}
 		ticket.Reason = reason
 	}
+	// A ticket pinned to an installation is refused before any value is read,
+	// so a foreign instance is not reported as a bad variable.
+	if strings.TrimSpace(ticket.InstanceID) != "" {
+		if _, err := s.instance(ctx, gatewayID, ticket); err != nil {
+			return nil, err
+		}
+	}
+	// A non-secret the catalog declares is set on the registry. Refuse it
+	// before the empty-form check, in declaration order, so a submit that
+	// sends one still says which variable an admin owns.
+	for _, variable := range entry.URLVariables {
+		if variable.Secret {
+			continue
+		}
+		name := strings.TrimSpace(variable.Name)
+		if name == "" || strings.TrimSpace(values[name]) == "" {
+			continue
+		}
+		return nil, fmt.Errorf("%w: variable %q is set by an admin on the registry", ErrConfigureInvalid, name)
+	}
 	// Nothing to fill and nothing to ask: the submit cannot store or file
 	// anything, so it must say so rather than confirm a write that never happened.
 	bound := s.servingTarget(ctx, gatewayID, ticket)
@@ -286,6 +306,9 @@ func (s *configureService) Submit(
 		val := strings.TrimSpace(raw)
 		if val == "" {
 			continue
+		}
+		if variable, known := catalogVariable(entry.URLVariables, k); known && !variable.Secret {
+			return nil, fmt.Errorf("%w: variable %q is set by an admin on the registry", ErrConfigureInvalid, k)
 		}
 		if bound.PinsURLVariable(k) && declares(entry.URLVariables, k) {
 			continue
@@ -429,11 +452,23 @@ func (s *configureService) servingTarget(
 func unpinnedVariables(vars []catalogdomain.MCPURLVariable, bound *registrydomain.MCPTarget) []catalogdomain.MCPURLVariable {
 	out := make([]catalogdomain.MCPURLVariable, 0, len(vars))
 	for _, v := range vars {
-		if !bound.PinsURLVariable(v.Name) {
-			out = append(out, v)
+		// A non-secret placeholder is a registry variable. The form collects
+		// only a per-user secret credential.
+		if !v.Secret || bound.PinsURLVariable(v.Name) {
+			continue
 		}
+		out = append(out, v)
 	}
 	return out
+}
+
+func catalogVariable(vars []catalogdomain.MCPURLVariable, name string) (catalogdomain.MCPURLVariable, bool) {
+	for _, variable := range vars {
+		if strings.TrimSpace(variable.Name) == name {
+			return variable, true
+		}
+	}
+	return catalogdomain.MCPURLVariable{}, false
 }
 
 func declares(vars []catalogdomain.MCPURLVariable, name string) bool {

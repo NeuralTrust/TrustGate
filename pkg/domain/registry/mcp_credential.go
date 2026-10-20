@@ -105,11 +105,12 @@ func ForwardedCredentialResource(reg *Registry) string {
 	return canonicalResource(resource)
 }
 
-// resolvedClosedResource fills resource from instance config when the catalog
-// marked it per-instance and every placeholder is a closed option with a
-// value. A shared account is never filled: the one token is saved and read
-// under the stored resource. Anything else returns false and the caller
-// fingerprints resource as written.
+// resolvedClosedResource fills resource from the server URL the admin saved
+// when the catalog marked it per-instance and that URL already has every
+// placeholder written out. A shared account is never filled: the one token
+// is saved and read under the stored resource. An open template, or a value
+// outside a declared option list, returns false and the caller fingerprints
+// resource as written.
 func resolvedClosedResource(reg *Registry, resource string) (string, bool) {
 	if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil || !strings.Contains(resource, "{") {
 		return "", false
@@ -121,21 +122,25 @@ func resolvedClosedResource(reg *Registry, resource string) (string, bool) {
 	if len(names) == 0 {
 		return "", false
 	}
+	// The admin form writes the region into the server URL. Installation
+	// config is a different principal's value and must not choose the
+	// credential this instance is stored under.
+	values, ok := AdminBoundValues(resource, reg.MCPTarget.URLVariables, reg.MCPTarget.URL)
+	if !ok {
+		return "", false
+	}
 	declared := make(map[string]MCPURLVariable, len(reg.MCPTarget.URLVariables))
 	for _, variable := range reg.MCPTarget.URLVariables {
 		declared[variable.Name] = variable
 	}
-	values := make(map[string]string, len(names))
 	for _, name := range names {
-		variable, known := declared[name]
-		if !known || !variable.HasOptions() {
+		val := strings.TrimSpace(values[name])
+		if val == "" {
 			return "", false
 		}
-		val := strings.TrimSpace(reg.MCPTarget.InstanceConfig[name])
-		if val == "" || !variable.AllowsValue(val) {
+		if variable, known := declared[name]; known && !variable.AllowsValue(val) {
 			return "", false
 		}
-		values[name] = val
 	}
 	resolved, err := ResolveURL(resource, reg.MCPTarget.URLVariables, values)
 	if err != nil || strings.ContainsAny(resolved, "{}") {

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -138,6 +139,17 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	msg.SessionRevocations = make([]*snapshotpb.SessionRevocation, 0, len(data.SessionRevocations))
+	for i := range data.SessionRevocations {
+		rev := data.SessionRevocations[i]
+		msg.SessionRevocations = append(msg.SessionRevocations, &snapshotpb.SessionRevocation{
+			GatewayId: rev.GatewayID,
+			Org:       rev.Org,
+			Subject:   rev.Subject,
+			RevokedAt: rev.RevokedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+
 	return msg, nil
 }
 
@@ -225,6 +237,20 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 			BurstPerMin:   int(c.GetBurstPerMin()),
 			QuotaPerMonth: int(c.GetQuotaPerMonth()),
 			MaxInstances:  int(c.GetMaxInstances()),
+		})
+	}
+
+	data.SessionRevocations = make([]readmodel.SessionRevocation, 0, len(msg.GetSessionRevocations()))
+	for _, rev := range msg.GetSessionRevocations() {
+		at, err := time.Parse(time.RFC3339Nano, rev.GetRevokedAt())
+		if err != nil {
+			return readmodel.Data{}, fmt.Errorf("configsnapshot: decode session revocation: %w", err)
+		}
+		data.SessionRevocations = append(data.SessionRevocations, readmodel.SessionRevocation{
+			GatewayID: rev.GetGatewayId(),
+			Org:       rev.GetOrg(),
+			Subject:   rev.GetSubject(),
+			RevokedAt: at,
 		})
 	}
 

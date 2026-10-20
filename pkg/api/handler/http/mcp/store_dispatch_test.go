@@ -196,9 +196,9 @@ func TestRPCGateway_Store_ToleratesNoRegistries(t *testing.T) {
 	require.Contains(t, toolNames(tools), appmcp.StoreSearchToolName)
 }
 
-// The no-registries tolerance is Store-only: a regular MCP consumer that has no
-// registries still gets the validation error (there is nothing else to serve).
-func TestRPCGateway_RegularConsumer_NoRegistriesStillErrors(t *testing.T) {
+// An application with nothing bound lists an empty tool surface. The Store's
+// own tools stay on the Store: this consumer is not one.
+func TestRPCGateway_RegularConsumer_NoRegistriesListsEmpty(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
@@ -211,8 +211,11 @@ func TestRPCGateway_RegularConsumer_NoRegistriesStillErrors(t *testing.T) {
 		Type: consumerdomain.TypeMCP,
 	}}
 
-	_, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
-	require.ErrorIs(t, err, appmcp.ErrNoMCPRegistries)
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
+	require.Empty(t, tools)
+	require.NotContains(t, toolNames(tools), appmcp.StoreSearchToolName)
 }
 
 // TestRPCGateway_Store_ConsentPendingListsEmptyPromptsAndResources guards the
@@ -257,9 +260,9 @@ func TestRPCGateway_Store_NoRegistriesListsEmptyPrompts(t *testing.T) {
 	require.Empty(t, prompts.(map[string]any)["prompts"])
 }
 
-// A regular (non-Store) consumer keeps failing loudly when no registry is
-// bound: only the consent case is softened there.
-func TestRPCGateway_RegularConsumer_NoRegistriesStillFailsPrompts(t *testing.T) {
+// An application with nothing bound lists empty prompts, the same way it lists
+// tools.
+func TestRPCGateway_RegularConsumer_NoRegistriesListsEmptyPrompts(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, appmcp.ErrNoMCPRegistries).Once()
@@ -268,6 +271,7 @@ func TestRPCGateway_RegularConsumer_NoRegistriesStillFailsPrompts(t *testing.T) 
 		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Type: consumerdomain.TypeMCP,
 	}}
 
-	_, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
-	require.ErrorIs(t, err, appmcp.ErrNoMCPRegistries)
+	prompts, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, prompts.(map[string]any)["prompts"])
 }

@@ -105,21 +105,37 @@ type CodeGrant struct {
 	// names who signed in for one of the gateway's own pages, and the token
 	// endpoint never exchanges it.
 	BrowserSignIn bool `json:"browser_sign_in,omitempty"`
+	// IssuedAt is when this code was issued, which is the login. Exchange
+	// copies it onto the session as LoginAt, so a revocation recorded after
+	// the login still covers the code. Zero is a code stored before the field
+	// existed; a marker then treats the login as missing and refuses it.
+	IssuedAt time.Time `json:"issued_at,omitempty"`
 }
 
 type SessionRecord struct {
 	// ClientID is the OAuth client the session was issued to, carried into
 	// every refreshed token so the app it names survives a refresh.
-	ClientID    string   `json:"client_id,omitempty"`
-	Subject     string   `json:"subject"`
-	Email       string   `json:"email,omitempty"`
-	Scopes      []string `json:"scopes,omitempty"`
-	GatewayID   string   `json:"gateway_id"`
-	AuthID      string   `json:"auth_id"`
-	Org         string   `json:"org,omitempty"`
-	Groups      []string `json:"groups,omitempty"`
-	StoreAccess string   `json:"store_access,omitempty"`
-	Audiences   []string `json:"audiences,omitempty"`
+	ClientID  string   `json:"client_id,omitempty"`
+	Subject   string   `json:"subject"`
+	Email     string   `json:"email,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	GatewayID string   `json:"gateway_id"`
+	AuthID    string   `json:"auth_id"`
+	Org       string   `json:"org,omitempty"`
+	// Groups is the effective membership minted into the session: the login
+	// claim union the directory list last pushed for this subject. Until the
+	// first push it is the login snapshot. A push never removes a name that
+	// was in that claim; such a name stays until the next login.
+	Groups []string `json:"groups,omitempty"`
+	// ClaimGroups is the platform token's groups claim, copied once at the
+	// code exchange. It is not rewritten by a directory push.
+	ClaimGroups []string `json:"claim_groups,omitempty"`
+	// ClaimSnapshot reports that ClaimGroups was recorded at login. A record
+	// from before that field existed has it false, and the first directory
+	// push treats Groups as that snapshot.
+	ClaimSnapshot bool     `json:"claim_snapshot,omitempty"`
+	StoreAccess   string   `json:"store_access,omitempty"`
+	Audiences     []string `json:"audiences,omitempty"`
 	// LoginAt is when the user last authenticated at the identity provider. The
 	// claims above are a snapshot taken at that moment; a refresh re-mints them
 	// without consulting the IdP.
@@ -150,6 +166,9 @@ type FlowStore interface {
 	SavePending(ctx context.Context, state string, p PendingAuthorization) error
 	TakePending(ctx context.Context, state string) (*PendingAuthorization, error)
 	SaveCode(ctx context.Context, code string, g CodeGrant) error
+	// GetCode reads a code grant without consuming it. A missing code is a nil
+	// grant and a nil error. TakeCode is the single use, and it stays atomic.
+	GetCode(ctx context.Context, code string) (*CodeGrant, error)
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
@@ -166,6 +185,39 @@ type FlowStore interface {
 	// either into invalid_grant — killing the whole session. It must only ever
 	// shorten the TTL, so replaying an old token cannot keep it alive.
 	RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error
+	// SubjectRevokedAt is the instant this subject's default-IdP sessions were
+	// revoked, or the zero time when no marker is stored. A store error is
+	// returned rather than the zero time, so the caller can fail the refresh
+	// the same way a failed session load fails it.
+	SubjectRevokedAt(ctx context.Context, gatewayID, org, subject string) (time.Time, error)
+	// DeleteSession removes one refresh record and its owner-index entry.
+	// A token that is already gone is success.
+	DeleteSession(ctx context.Context, refreshToken string) error
+}
+
+// SnapshotRevocations is the revocation marker in the config snapshot a data
+// plane is serving. RevokedAt reports it, or false when that snapshot has no
+// marker for the subject. A snapshot that is not loaded reports false: that
+// is not a revocation. A Redis error reading the process-local marker stays
+// the fail-closed path.
+//
+// Field 15 of the snapshot carries these rows. A data plane built before
+// that field ignores it and keeps serving; the revocation applies once that
+// plane runs a build that reads the field. Shipping the field does not block
+// a deploy of older data planes.
+type SnapshotRevocations interface {
+	RevokedAt(gatewayID, org, subject string) (time.Time, bool)
+}
+
+// SubjectSessions revokes the default identity provider's refresh records for
+// one subject. Personal keys, grants and other identity providers are not its
+// concern.
+type SubjectSessions interface {
+	// RevokeSubjectSessions removes the default-IdP refresh records for org,
+	// gatewayID and subject and drops their owner-index entries. Records for
+	// another org, gateway, subject or identity provider stay. No matching
+	// record is success and returns 0.
+	RevokeSubjectSessions(ctx context.Context, org, gatewayID, subject string) (int, error)
 }
 
 type AuthorizeRequest struct {

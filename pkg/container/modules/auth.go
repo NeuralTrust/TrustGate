@@ -20,18 +20,21 @@ import (
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	sessionrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/sessionrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/console"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	sessionrevocationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/sessionrevocation"
 )
 
 func Auth(c *container.Container) error {
@@ -65,6 +68,11 @@ func providePersonalKeyIssuer(c *container.Container) error {
 func provideAuthRepository(c *container.Container) error {
 	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender, sealer *crypto.FieldSealer, cfg *config.Config) *authrepo.Repository {
 		return authrepo.NewRepository(conn, appender, authrepo.WithFieldSealer(sealer, cfg.Server.StoredSecretsEncryptionEnabled))
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) sessionrevocation.Store {
+		return sessionrevocationrepo.NewRepository(conn, appender)
 	}); err != nil {
 		return err
 	}
@@ -162,6 +170,14 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(authhttp.NewUpdateAuthOwnerGroupsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(authhttp.NewUpdateSubjectGroupsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(func(sessions appoauth.SubjectSessions, revocations sessionrevocation.Store, sig snapshotSignalParams, logger *slog.Logger) *authhttp.DeleteSubjectSessionsHandler {
+		return authhttp.NewDeleteSubjectSessionsHandler(sessions, revocations, sig.Signaler, logger)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(authhttp.NewUpdateAuthBudgetHandler); err != nil {

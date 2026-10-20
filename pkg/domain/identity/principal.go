@@ -16,6 +16,8 @@ package identity
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -216,8 +218,13 @@ func GroupsFromClaims(claims map[string]any) []string {
 }
 
 // GroupsFromClaim normalizes string, string-slice, and JSON-array group claims.
+// A present value of any other shape, and each non-string array element, is
+// omitted and logged once per call with the claim name, the Go type, and how
+// many values were omitted. Group values are not logged. This package has no
+// log sampler.
 func GroupsFromClaim(value any) []string {
 	var values []string
+	var dropped int
 	switch v := value.(type) {
 	case string:
 		values = strings.Fields(v)
@@ -228,10 +235,18 @@ func GroupsFromClaim(value any) []string {
 		for _, item := range v {
 			if group, ok := item.(string); ok {
 				values = append(values, group)
+				continue
 			}
+			dropped++
 		}
 	default:
+		if value != nil {
+			warnDroppedGroups(value, 1)
+		}
 		return nil
+	}
+	if dropped > 0 {
+		warnDroppedGroups(value, dropped)
 	}
 
 	seen := make(map[string]struct{}, len(values))
@@ -251,6 +266,14 @@ func GroupsFromClaim(value any) []string {
 		return nil
 	}
 	return groups
+}
+
+func warnDroppedGroups(value any, dropped int) {
+	slog.Warn("identity: groups claim dropped unsupported values",
+		slog.String("claim", ClaimGroups),
+		slog.String("type", fmt.Sprintf("%T", value)),
+		slog.Int("dropped", dropped),
+	)
 }
 
 func EmailFromClaims(claims map[string]any) string {

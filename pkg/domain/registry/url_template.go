@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // urlTemplateToken matches one {name} placeholder in a URL template. Names are
@@ -431,4 +433,79 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// RejectURLUserinfo rejects a saved URL that carries userinfo. An admin row
+// is the only source of a non-secret host, so a user:password@host form must
+// not be stored.
+func RejectURLUserinfo(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.User == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: userinfo is not allowed", ErrURLTemplate)
+}
+
+// ValidateHostSuffixes checks whole-host values against the suffixes their
+// variable declares. A public suffix and a single label are not a bound, the
+// same rule connect uses. A variable with no usable suffix is not constrained
+// here; closed options are enforced by ValidateURLValues.
+func ValidateHostSuffixes(vars []MCPURLVariable, values map[string]string) error {
+	for _, variable := range vars {
+		suffixes := usableHostSuffixes(variable.HostSuffix)
+		if len(suffixes) == 0 {
+			continue
+		}
+		val := strings.TrimSpace(values[variable.Name])
+		if val == "" {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSuffix(val, "."))
+		if host == "" || publicSuffixName(host) || !hostMatchesSuffix(host, suffixes) {
+			return fmt.Errorf("%w: variable %q host %q is outside the declared host suffix", ErrURLTemplate, variable.Name, val)
+		}
+	}
+	return nil
+}
+
+func hostMatchesSuffix(host string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func usableHostSuffixes(in []string) []string {
+	var out []string
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		suffix := strings.ToLower(strings.TrimSpace(raw))
+		suffix = strings.TrimPrefix(suffix, "*.")
+		suffix = strings.Trim(suffix, ".")
+		if suffix == "" || strings.ContainsAny(suffix, "*{}/:@ ") || strings.Count(suffix, ".") < 1 || publicSuffixName(suffix) {
+			continue
+		}
+		if _, ok := seen[suffix]; ok {
+			continue
+		}
+		seen[suffix] = struct{}{}
+		out = append(out, suffix)
+	}
+	return out
+}
+
+// publicSuffixName reports whether host is a public suffix. A name under it
+// can be registered by anyone, so it is not a host suffix the gateway trusts.
+func publicSuffixName(host string) bool {
+	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "."))
+	if host == "" || strings.ContainsAny(host, "*{}/:@ ") || net.ParseIP(host) != nil {
+		return false
+	}
+	ps, icann := publicsuffix.PublicSuffix(host)
+	if ps != host {
+		return false
+	}
+	return icann || strings.Contains(host, ".")
 }

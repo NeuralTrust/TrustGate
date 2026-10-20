@@ -423,7 +423,9 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"status":"transform","transformed_payload":`+string(payload)+`,"findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii"},"outcome":{"action":"transform"}}],"trace_id":"tg-trace-3","request_id":"tg-req-3"}`)
 		return
 	}
-	_, _ = io.WriteString(w, `{"status":"allowed","findings":[],"trace_id":"tg-trace-2","request_id":"tg-req-2"}`)
+	// "allow" is the evaluate status. "allowed" is a gateway decision, not a
+	// status, and a blocking policy fail-closes on it.
+	_, _ = io.WriteString(w, `{"status":"allow","findings":[],"trace_id":"tg-trace-2","request_id":"tg-req-2"}`)
 }
 
 // TestTrustGuardStub_ResetClearsEveryKnob walks the stub's own fields by

@@ -272,8 +272,49 @@ func TestStoreSearchSurfacesGrantReadError(t *testing.T) {
 
 func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	if _, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil); err == nil {
-		t.Fatal("unknown store tool must error")
+	_, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil)
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) || unknown.Error() != "Unknown tool: trustgate_store_bogus" {
+		t.Fatalf("err = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrStoreToolUnavailable) {
+		t.Fatal("an unknown name must not be reported as an unavailable Store")
+	}
+	_, err = tool.Call(context.Background(), nil, "", StoreSearchToolName, nil)
+	if !errors.Is(err, ErrStoreToolUnavailable) || errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("missing caller = %v, want ErrStoreToolUnavailable", err)
+	}
+}
+
+func TestEmptyStoreCallIsUnknownToolAndStoreSearchStillRuns(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	d := NewRPCDispatcher(newTestComposer(&fakeDialer{}), NewPluginRunner(nil, nil), nil, nil, tool)
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+	ctx := selfServiceCtx()
+
+	_, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"ghost"}`))
+	var unknown *UnknownToolError
+	if !errors.As(err, &unknown) || unknown.Error() != "Unknown tool: ghost" {
+		t.Fatalf("empty Store tools/call = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrNoMCPRegistries) {
+		t.Fatal("empty Store tools/call must not be no MCP registries")
+	}
+
+	if _, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_store_search","arguments":{"query":"git"}}`)); err != nil {
+		t.Fatalf("store search on an empty Store: %v", err)
+	}
+
+	plain := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP, Active: true,
+	}}
+	_, err = d.Dispatch(ctx, plain, "", "tools/call", json.RawMessage(`{"name":"ghost"}`))
+	var plainUnknown *UnknownToolError
+	if !errors.As(err, &plainUnknown) || plainUnknown.Error() != "Unknown tool: ghost" {
+		t.Fatalf("consumer with no registries = %v, want Unknown tool", err)
+	}
+	if errors.Is(err, ErrNoMCPRegistries) {
+		t.Fatal("an application with nothing attached must not be reported as no MCP registries")
 	}
 }
 
@@ -419,11 +460,10 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 	}
 }
 
-// Installing is off for the person, but installing again is also how a server
-// they already have gets its connect link: that still answers, without
-// running the installer. Only something new is refused, with a reason they
-// can read.
-func TestStoreInstallPrincipalNoneStillConnectsAServerTheyHave(t *testing.T) {
+// None refuses the install tool even when the principal already holds the
+// server. The same refusal a new install gets is returned, and no connect
+// link is minted.
+func TestStoreInstallPrincipalNoneRefusesAServerTheyHave(t *testing.T) {
 	sandbox := ids.New[ids.RegistryKind]()
 	inst := &fakeInstaller{held: &appstore.InstallResult{
 		Code: "github", Name: "GitHub", Status: "installed", InstanceID: "row-1",
@@ -437,24 +477,17 @@ func TestStoreInstallPrincipalNoneStillConnectsAServerTheyHave(t *testing.T) {
 	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
 
 	raw, err := tool.Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
-
-	if err != nil {
-		t.Fatalf("connecting a server they have must answer, got %v", err)
-	}
-	if len(inst.installed) != 0 || inst.installedCall != 1 {
-		t.Fatalf("the installer must not run; installed=%v installedCall=%d", inst.installed, inst.installedCall)
-	}
-	sc := decodeStructured(t, raw)
-	if sc["already_installed"] != true || sc["connect_url"] == nil {
-		t.Fatalf("result must carry the connect link, got %+v", sc)
-	}
-	if connect.code != "github" || connect.instanceID != sandbox.String() {
-		t.Fatalf("the link must be pinned to the held instance's server, got %+v", connect)
-	}
-
-	_, err = storeToolWithInstaller(t, &fakeInstaller{}).Call(ctx, storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
 	if !errors.Is(err, ErrStoreInstallDisabled) {
-		t.Fatalf("a server they do not have is refused as disabled, got %v", err)
+		t.Fatalf("a held server under None must be refused as disabled, got %v", err)
+	}
+	if raw != nil {
+		t.Fatalf("refusal must not carry a result, got %s", raw)
+	}
+	if inst.installedCall != 0 || len(inst.installed) != 0 {
+		t.Fatalf("neither Installed nor Install may run, installedCall=%d installed=%v", inst.installedCall, inst.installed)
+	}
+	if connect.code != "" || connect.instanceID != "" {
+		t.Fatalf("no connect link may be minted, got %+v", connect)
 	}
 }
 
@@ -782,9 +815,17 @@ func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
 	if inst.lastRegistry != analytics {
 		t.Fatalf("the chosen instance must reach the installer as RegistryID, got %s", inst.lastRegistry)
 	}
-	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
-		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`)); err == nil {
-		t.Fatal("a malformed instance id must be refused")
+	before := len(inst.installed)
+	raw, err = tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`))
+	if err != nil {
+		t.Fatalf("a malformed instance id must be a tool error, not a Go error: %v", err)
+	}
+	if !resultIsError(t, raw) {
+		t.Fatal("a malformed instance id must set isError")
+	}
+	if len(inst.installed) != before {
+		t.Fatal("a malformed instance id must not be recorded")
 	}
 }
 

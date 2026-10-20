@@ -349,17 +349,14 @@ func (p *principalPreview) missingConfig(
 		if !v.Required {
 			continue
 		}
-		if v.Secret {
-			if p.vault == nil {
-				continue
-			}
-			key := registrydomain.URLVariableVaultProvider(in.CatalogCode, v.Name)
-			if _, err := p.vault.Find(ctx, gatewayID, principalSub, key); err != nil {
-				missing = append(missing, v.Name)
-			}
+		if !v.Secret {
 			continue
 		}
-		if strings.TrimSpace(in.Config[v.Name]) == "" {
+		if p.vault == nil {
+			continue
+		}
+		key := registrydomain.URLVariableVaultProvider(in.CatalogCode, v.Name)
+		if _, err := p.vault.Find(ctx, gatewayID, principalSub, key); err != nil {
 			missing = append(missing, v.Name)
 		}
 	}

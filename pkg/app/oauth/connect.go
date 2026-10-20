@@ -744,7 +744,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	// registry for that code so the forwarded-auth (OAuth) provider resolves.
 	if consumerdomain.IsStoreConsumer(rc.Consumer) &&
 		(strings.TrimSpace(ticket.Code) != "" || strings.TrimSpace(ticket.InstanceID) != "") {
-		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code, ticket.InstanceID); reg != nil {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, ticket.InstanceID); reg != nil {
 			rc.Registries = []*registrydomain.Registry{reg}
 		}
 	}
@@ -766,7 +766,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 func (s *connectService) storeRegistry(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	code, instanceID string,
+	principalSub, code, instanceID string,
 ) *registrydomain.Registry {
 	if s.registries == nil {
 		return nil
@@ -783,9 +783,20 @@ func (s *connectService) storeRegistry(
 	instanceID = strings.TrimSpace(instanceID)
 	if instanceID != "" {
 		for _, reg := range items {
-			if reg != nil && reg.ID.String() == instanceID {
-				return s.refreshCatalogInstance(ctx, gatewayID, reg)
+			if reg == nil || reg.ID.String() != instanceID {
+				continue
 			}
+			// The pin has to name this code. A caller cannot use a registry an
+			// administrator turned off. The shared-account ticket is minted
+			// for the instance itself, and that connect still opens when the
+			// instance is disabled.
+			if code != "" && registrydomain.StoreCode(reg) != code {
+				return nil
+			}
+			if !reg.Enabled && principalSub != registrydomain.SharedAccountSubject(reg.ID) {
+				return nil
+			}
+			return s.refreshCatalogInstance(ctx, gatewayID, reg)
 		}
 		return nil
 	}
@@ -901,22 +912,13 @@ func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
 	return providers
 }
 
-// forwardedVaultProvider is the credential key for this principal. A templated
-// registry with no instance config yet takes the principal's install values,
-// so the key matches the one the dial path computes from the scoped clone.
-func (s *connectService) forwardedVaultProvider(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) string {
-	return registrydomain.ForwardedVaultProviderFor(s.registryForVaultKey(ctx, gatewayID, principalSub, reg), nil)
-}
-
-func (s *connectService) registryForVaultKey(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) *registrydomain.Registry {
-	if s == nil || reg == nil || reg.MCPTarget == nil || len(reg.MCPTarget.InstanceConfig) > 0 || !reg.MCPTarget.HasURLVariables() {
-		return reg
-	}
-	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
-	if err != nil || len(values) == 0 {
-		return reg
-	}
-	return registrydomain.RegistryWithInstanceConfig(reg, values)
+// forwardedVaultProvider is the credential key for this registry. A closed
+// region the admin wrote into the server URL is part of the resource
+// fingerprint. An employee installation is not: two instances of one catalog
+// code would otherwise share, or swap, the account stored under the first
+// install Find returns.
+func (s *connectService) forwardedVaultProvider(_ context.Context, _ ids.GatewayID, _ string, reg *registrydomain.Registry) string {
+	return registrydomain.ForwardedVaultProvider(reg)
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {

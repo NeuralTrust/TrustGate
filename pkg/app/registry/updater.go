@@ -182,6 +182,9 @@ func applyMCPTargetUpdate(
 	if err := CanonicalizeMCPAuthFromCatalog(incoming, catalog); err != nil {
 		return err
 	}
+	if err := RequireAdminBoundURLVariables(incoming, catalog); err != nil {
+		return err
+	}
 	existing.MCPTarget = incoming
 	return nil
 }

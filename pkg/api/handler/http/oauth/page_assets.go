@@ -466,7 +466,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
-<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title>{{if .Waiting}}<meta http-equiv="refresh" content="{{.RetryAfter}};url={{.RetryURL}}">{{end}}<style>` + pageCSS + `#close-tab:disabled{opacity:.55;cursor:default}</style></head>
+<title>{{if .AwaitingAdmin}}Waiting for your admin{{else}}Connect {{.ServerName}}{{end}} - NeuralTrust TrustGate</title>{{if .Waiting}}<meta http-equiv="refresh" content="{{.RetryAfter}};url={{.RetryURL}}">{{end}}<style>` + pageCSS + `#close-tab:disabled{opacity:.55;cursor:default}</style></head>
 <body class="dotted"><div class="card flush">
 <div class="card-hero">
   <div class="pair">
@@ -485,13 +485,15 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
 {{else}}
   {{if .Linked}}<h1 class="title">{{.ServerName}} is connected</h1>
+  {{else if .AwaitingAdmin}}<h1 class="title">Waiting for your admin</h1>
   {{else if .NeedsReconnect}}<h1 class="title">Reconnect your {{.ServerName}} account</h1>
   {{else}}<h1 class="title">Connect your {{.ServerName}} account</h1>{{end}}
-  {{if .Description}}<p class="lede">{{.Description}}</p>
+  {{if .AwaitingAdmin}}<p class="lede">{{.ServerName}} uses one shared account for every caller and nobody has connected it. An administrator connects it in the console.</p>
+  {{else if .Description}}<p class="lede">{{.Description}}</p>
   {{else if .NeedsReconnect}}<p class="lede">{{.ServerName}} expired or revoked the stored credentials.</p>
   {{else}}<p class="lede">TrustGate connects to {{.ServerName}} on your behalf.</p>{{end}}
   {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-  {{if .AccessLabel}}<div class="access">
+  {{if and .AccessLabel (not .AwaitingAdmin)}}<div class="access">
     <span class="eyebrow">{{.AccessLabel}}</span>
     <div class="chips">{{range .Items}}<span class="chip">{{.}}</span>{{end}}{{if .ItemsMore}}<span class="chip more">+{{.ItemsMore}} more</span>{{end}}</div>
   </div>{{end}}
@@ -503,13 +505,15 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     {{if not .ResumeURL}}<span class="done-body" id="close-hint" hidden>This browser keeps open the tabs it did not open itself: switch back to {{if .AppName}}{{.AppName}}{{else}}your assistant{{end}}, and close this tab whenever you like.</span>{{end}}
   </div></div>
   {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}{{end}}
-  {{if .Owner.Name}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
+  {{if and .Owner.Name (not .AwaitingAdmin)}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
 </div>
 <div class="card-foot">
 {{if .Found}}
-  {{if .NeedsReconnect}}
+  {{if .AwaitingAdmin}}
+    {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+  {{else if .NeedsReconnect}}
     <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Reconnect {{.ServerName}}</button></form>
     {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
   {{else if .Linked}}

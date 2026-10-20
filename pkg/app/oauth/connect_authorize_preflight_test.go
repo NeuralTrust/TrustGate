@@ -562,6 +562,7 @@ func TestLegacyAuthorizePreflight_TemplatedHostIsNotProbed(t *testing.T) {
 
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	reg.MCPTarget.Code = legacyCode
 	store := newMemConnectStore()
 	legacy := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
@@ -899,6 +900,7 @@ func assertTemplatedMismatchUsesCurrent(t *testing.T) {
 
 	gw := ids.New[ids.GatewayKind]()
 	reg := templatedRegistry(t, gw)
+	reg.MCPTarget.URL = "https://good.example/mcp"
 	store := newMemConnectStore()
 	legacyKey := gw.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 	store.clients[legacyKey] = markedLegacy(oauth.RegisteredClient{})

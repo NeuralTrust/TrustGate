@@ -96,12 +96,19 @@ func (r *urlValueResolver) Values(
 	code := reg.MCPTarget.Code
 
 	values := map[string]string{}
+	// Non-secret placeholders are filled from the registry URL the admin saved.
+	// An installation row is not a source for them. Secret credentials are read
+	// from the vault below and never live in that row.
+	plain := nonSecretURLVariables(reg)
 	// A per-instance clone (the scoper's multi-instance exposure) carries this
 	// instance's own plain values as an overlay, since the by-code lookup below
 	// cannot tell two instances of the same code apart. When present it is
 	// authoritative for plain values; otherwise fall back to the single install.
 	if len(reg.MCPTarget.InstanceConfig) > 0 {
 		for k, v := range reg.MCPTarget.InstanceConfig {
+			if _, drop := plain[k]; drop {
+				continue
+			}
 			values[k] = v
 		}
 	} else {
@@ -109,6 +116,9 @@ func (r *urlValueResolver) Values(
 		switch {
 		case err == nil:
 			for k, v := range inst.Config {
+				if _, drop := plain[k]; drop {
+					continue
+				}
 				values[k] = v
 			}
 		case errors.Is(err, installationdomain.ErrNotFound):
@@ -140,4 +150,21 @@ func (r *urlValueResolver) Values(
 		}
 	}
 	return values, nil
+}
+
+func nonSecretURLVariables(reg *registrydomain.Registry) map[string]struct{} {
+	if reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	out := make(map[string]struct{}, len(reg.MCPTarget.URLVariables))
+	for _, variable := range reg.MCPTarget.URLVariables {
+		if variable.Secret {
+			continue
+		}
+		out[variable.Name] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

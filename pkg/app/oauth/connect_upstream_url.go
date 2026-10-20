@@ -109,17 +109,29 @@ func (s *connectService) resolveUpstream(
 	principalSub string,
 	reg *registrydomain.Registry,
 ) (upstreamResolution, error) {
-	if reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
-		raw := ""
-		if reg != nil && reg.MCPTarget != nil {
-			raw = reg.MCPTarget.URL
+	if reg == nil || reg.MCPTarget == nil {
+		return upstreamResolution{ready: true}, nil
+	}
+	admin := s.adminBoundValues(reg)
+	raw := reg.MCPTarget.URL
+	if !reg.MCPTarget.HasURLVariables() {
+		if strings.Contains(raw, "{") {
+			resolved, err := registrydomain.ResolveURL(raw, s.hostBoundURLVariables(reg), admin)
+			if err != nil {
+				return upstreamResolution{}, fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
+			}
+			if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
+				return upstreamResolution{}, err
+			}
+			return upstreamResolution{url: resolved, values: admin, ready: true}, nil
 		}
-		return upstreamResolution{url: raw, ready: true}, nil
+		return upstreamResolution{url: raw, values: admin, ready: true}, nil
 	}
 	values, err := s.principalURLValues(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return upstreamResolution{}, err
 	}
+	values = adminURLValues(values, reg.MCPTarget.URLVariables, admin)
 	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
 	if err != nil {
 		return upstreamResolution{}, fmt.Errorf("%w: %v", ErrUpstreamSetupRequired, err)
@@ -130,9 +142,61 @@ func (s *connectService) resolveUpstream(
 	return upstreamResolution{url: resolved, values: values, ready: true}, nil
 }
 
+// adminBoundValues is the non-secret placeholder map the admin wrote into the
+// registry URL. The create form substitutes those values into mcp_target.url
+// and stores nothing else. An employee installation is not a source.
+func (s *connectService) adminBoundValues(reg *registrydomain.Registry) map[string]string {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return nil
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok {
+		return nil
+	}
+	values, ok := registrydomain.AdminBoundValues(entry.URL, catalogRegistryURLVars(entry), reg.MCPTarget.URL)
+	if !ok {
+		return nil
+	}
+	return values
+}
+
+// adminURLValues drops non-secret registry variables supplied for the
+// principal and keeps the admin's. Secret credentials stay; they are the
+// caller's own and are not written into the registry URL.
+func adminURLValues(fromPrincipal map[string]string, declared []registrydomain.MCPURLVariable, admin map[string]string) map[string]string {
+	plain := make(map[string]struct{}, len(declared))
+	for _, variable := range declared {
+		if !variable.Secret {
+			plain[variable.Name] = struct{}{}
+		}
+	}
+	out := make(map[string]string, len(fromPrincipal))
+	for name, value := range fromPrincipal {
+		if _, drop := plain[name]; drop {
+			continue
+		}
+		out[name] = value
+	}
+	for name, value := range admin {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		out[name] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // principalURLValues is the per-user placeholder map the dial path uses:
 // instance config, replaced by the principal's stored values when those are
-// available. A nil target must not reach here.
+// available. Non-secret registry variables in that map are discarded by
+// adminURLValues. A nil target must not reach here.
 func (s *connectService) principalURLValues(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -662,6 +726,9 @@ func (s *connectService) hostBoundURLVariables(reg *registrydomain.Registry) []r
 		return nil
 	}
 	vars := reg.MCPTarget.URLVariables
+	if len(vars) == 0 {
+		vars = s.catalogDeclaredURLVariables(reg)
+	}
 	fromCatalog, ok := s.catalogHostSuffixes(reg)
 	if !ok || len(vars) == 0 {
 		return vars
@@ -677,6 +744,21 @@ func (s *connectService) hostBoundURLVariables(reg *registrydomain.Registry) []r
 // catalogHostSuffixes returns the catalog entry's suffixes by variable name,
 // read only from the entry for the registry's own code. ok is false when the
 // code is empty or not a catalog code.
+func (s *connectService) catalogDeclaredURLVariables(reg *registrydomain.Registry) []registrydomain.MCPURLVariable {
+	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	code := strings.TrimSpace(reg.MCPTarget.Code)
+	if code == "" {
+		return nil
+	}
+	entry, ok := s.catalog.GetByCode(code)
+	if !ok {
+		return nil
+	}
+	return catalogRegistryURLVars(entry)
+}
+
 func (s *connectService) catalogHostSuffixes(reg *registrydomain.Registry) (map[string][]string, bool) {
 	if s == nil || s.catalog == nil || reg == nil || reg.MCPTarget == nil {
 		return nil, false

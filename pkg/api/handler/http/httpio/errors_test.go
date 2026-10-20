@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -67,6 +68,21 @@ func TestMapDomainError(t *testing.T) {
 		{name: "budget on an application key → 422 application_key", err: authdomain.ErrApplicationKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "application_key", wantMsgPart: "token_rate_limiter"},
 		{name: "invalid key budget → 422", err: authdomain.ErrInvalidBudget, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid budget"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
+		{
+			name:        "invalid install config → 422 keeps the variable name",
+			err:         fmt.Errorf("%w: variable %q must be set by an admin on the registry", appstore.ErrConfigInvalid, "shop"),
+			wantStatus:  fiber.StatusUnprocessableEntity,
+			wantCode:    "invalid_install_config",
+			wantMsgPart: `variable "shop" must be set by an admin on the registry`,
+		},
+		{
+			name:          "secret supplied inline → 422 names the variable, not the value",
+			err:           fmt.Errorf("%w: %q is a secret and must be set through the configure form, not inline", appstore.ErrConfigInvalid, "token"),
+			wantStatus:    fiber.StatusUnprocessableEntity,
+			wantCode:      "invalid_install_config",
+			wantMsgPart:   `"token" is a secret`,
+			wantMsgAbsent: "sk-live-secret",
+		},
 		{name: "result too large → 422", err: commonerrors.ErrResultTooLarge, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "result_too_large", wantMsgPart: "pagination"},
 		{name: "upstream unavailable → 502", err: commonerrors.ErrUpstreamUnavailable, wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "endpoint and credentials"},
 		{name: "upstream unavailable with detail → 502 keeps detail", err: fmt.Errorf("%w: could not list the deployments on this Azure resource", commonerrors.ErrUpstreamUnavailable), wantStatus: fiber.StatusBadGateway, wantCode: "upstream_unavailable", wantMsgPart: "could not list the deployments"},

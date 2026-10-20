@@ -58,7 +58,11 @@ type authProxy struct {
 	// through the built-in default identity provider. Zero (the default) means
 	// none: the session is renewed by use, see sessionIdleLifetime.
 	defaultIdPSessionMaxAge time.Duration
-	now                     func() time.Time
+	// snapshotRevocations is the marker from the config snapshot this process
+	// is serving. Nil on a process that has no snapshot. The Redis marker and
+	// this one are both consulted; the later instant wins.
+	snapshotRevocations SnapshotRevocations
+	now                 func() time.Time
 }
 
 // operatorSessionLifetime is the absolute lifetime of a session brokered
@@ -91,6 +95,17 @@ func WithDefaultIdPSessionMaxAge(d time.Duration) ProxyOption {
 	return func(p *authProxy) {
 		if d > 0 {
 			p.defaultIdPSessionMaxAge = d
+		}
+	}
+}
+
+// WithSnapshotRevocations consults the config snapshot's revocation marker as
+// well as the Redis marker. The later instant wins. A nil lookup leaves the
+// Redis marker as the only one.
+func WithSnapshotRevocations(r SnapshotRevocations) ProxyOption {
+	return func(p *authProxy) {
+		if r != nil {
+			p.snapshotRevocations = r
 		}
 	}
 }
@@ -392,6 +407,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		grant.Audiences = cfg.Audiences
 		grant.Scopes = grantedScopes(token, pending.Scope)
 		grant.SessionMode = true
+		grant.IssuedAt = p.now()
 	}
 	if err := p.store.SaveCode(ctx, gwCode, grant); err != nil {
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
@@ -738,6 +754,12 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 	if req.Code == "" {
 		return nil, oauthErr("invalid_request", "code is required")
 	}
+	// The marker is read before the code is consumed. A Redis error on that
+	// read fails the exchange and leaves the code unused, so the client can
+	// retry. A code the marker already covers is refused the same way.
+	if err := p.refuseRevokedCode(ctx, req.Code); err != nil {
+		return nil, err
+	}
 	grant, err := p.store.TakeCode(ctx, req.Code)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load code grant: %w", err)
@@ -760,6 +782,19 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		return nil, oauthErr("invalid_grant", "PKCE verification failed")
 	}
 	if grant.SessionMode {
+		// The login is when the code was issued, not when the client exchanges
+		// it. A code lives five minutes, so an exchange after offboarding would
+		// otherwise stamp LoginAt in the future and slip past the marker.
+		loginAt := grant.IssuedAt
+		if loginAt.IsZero() {
+			loginAt = p.now()
+		}
+		// A revoke can land after the read above and before this take. Judge
+		// the grant that was consumed. IssuedAt is passed as stored, including
+		// a zero time, so the marker comparison is unchanged.
+		if err := p.refuseIfLoginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt); err != nil {
+			return nil, err
+		}
 		resp, err := p.mintSession(*grant)
 		if err != nil {
 			return nil, err
@@ -769,7 +804,6 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			return nil, err
 		}
 		refresh := gatewayRefreshPrefix + token
-		loginAt := p.now()
 		// A session without an absolute lifetime starts with one idle window;
 		// each refresh moves it ahead.
 		lifetime := p.sessionLifetime(grant.AuthID)
@@ -784,11 +818,17 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			GatewayID:   grant.GatewayID,
 			AuthID:      grant.AuthID,
 			Org:         grant.Org,
-			Groups:      grant.Groups,
+			Groups:      cloneGroups(grant.Groups),
 			StoreAccess: grant.StoreAccess,
 			Audiences:   grant.Audiences,
 			LoginAt:     loginAt,
 			ExpiresAt:   loginAt.Add(lifetime),
+		}
+		// The default IdP's groups claim is kept beside the effective list so a
+		// later directory push is added to it. A push cannot remove those names.
+		if grant.AuthID == appauth.DefaultIdPAuthID().String() {
+			rec.ClaimGroups = cloneGroups(grant.Groups)
+			rec.ClaimSnapshot = true
 		}
 		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
 			return nil, fmt.Errorf("oauth: persist session: %w", err)
@@ -886,8 +926,20 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		if rec.ExpiresAt.IsZero() || !p.now().Before(rec.ExpiresAt) {
 			return nil, oauthErr("invalid_grant", "session expired; sign in again")
 		}
+		if err := p.refuseRevokedSession(ctx, req.RefreshToken, rec); err != nil {
+			return nil, err
+		}
 		resp, err := p.refreshSession(ctx, *rec)
 		if err != nil {
+			// The new record was deleted inside the refresh. The token the
+			// client presented is still live when offboarding raced this call
+			// (it was unindexed, or the delete had not reached it yet). Drop
+			// it too, so the race does not leave a refresh token behind.
+			if isSessionRevoked(err) {
+				if delErr := p.store.DeleteSession(ctx, req.RefreshToken); delErr != nil {
+					return nil, fmt.Errorf("oauth: delete revoked session: %w", delErr)
+				}
+			}
 			return nil, err
 		}
 		// Rotate with a grace window rather than single-use: the old token keeps
@@ -945,6 +997,9 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 	if rec.AuthID == appauth.DefaultIdPAuthID().String() && !gatewayNamed(rec.GatewayID) {
 		return nil, oauthErr("invalid_grant", "session predates gateway binding; sign in again")
 	}
+	// A directory push that landed after this record was loaded has to win
+	// over the copy refresh is about to save. ExpiresAt is not part of that.
+	p.applyPushedDirectoryGroups(ctx, &rec)
 	resp, err := p.mintSession(CodeGrant{
 		ClientID:    rec.ClientID,
 		Subject:     rec.Subject,
@@ -974,6 +1029,88 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
 		return nil, fmt.Errorf("oauth: rotate session: %w", err)
 	}
+	// Offboarding can land between the check in refresh and this write. The
+	// record just saved would otherwise be the next indexed session.
+	if err := p.refuseRevokedSession(ctx, newRefresh, &rec); err != nil {
+		return nil, err
+	}
 	resp["refresh_token"] = newRefresh
 	return resp, nil
+}
+
+// refuseRevokedSession rejects a default-IdP refresh whose login is not newer
+// than the subject's revocation marker, and deletes that record. A missing
+// marker is not a revocation. A Redis error reading the marker fails the
+// refresh and leaves the record in place, the same as a failed session load:
+// the token endpoint answers 500, not invalid_grant, and the client may retry.
+func (p *authProxy) refuseRevokedSession(ctx context.Context, refreshToken string, rec *SessionRecord) error {
+	if rec == nil {
+		return nil
+	}
+	revoked, err := p.loginRevoked(ctx, rec.AuthID, rec.GatewayID, rec.Org, rec.Subject, rec.LoginAt)
+	if err != nil || !revoked {
+		return err
+	}
+	if err := p.store.DeleteSession(ctx, refreshToken); err != nil {
+		return fmt.Errorf("oauth: delete revoked session: %w", err)
+	}
+	return oauthErr("invalid_grant", "session revoked; sign in again")
+}
+
+// refuseRevokedCode applies the revocation marker to a code that is still
+// stored. It does not consume the code. A missing code is left for TakeCode
+// to report. A marker that cannot be read is returned so the caller fails
+// closed without burning the code.
+func (p *authProxy) refuseRevokedCode(ctx context.Context, code string) error {
+	grant, err := p.store.GetCode(ctx, code)
+	if err != nil {
+		return fmt.Errorf("oauth: load code grant: %w", err)
+	}
+	if grant == nil || !grant.SessionMode {
+		return nil
+	}
+	return p.refuseIfLoginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt)
+}
+
+// refuseIfLoginRevoked refuses a default-IdP login the revocation marker
+// covers. issuedAt is the code's issue time, not the exchange clock, and a
+// zero time is refused only when a marker exists. The comparison is
+// time.Time.After, so an equal instant is a refusal and the unit is nanoseconds.
+func (p *authProxy) refuseIfLoginRevoked(ctx context.Context, authID, gatewayID, org, subject string, issuedAt time.Time) error {
+	revoked, err := p.loginRevoked(ctx, authID, gatewayID, org, subject, issuedAt)
+	if err != nil || !revoked {
+		return err
+	}
+	return oauthErr("invalid_grant", "session revoked; sign in again")
+}
+
+// loginRevoked reports whether a default-IdP login at loginAt is covered by
+// the subject's revocation marker. The Redis marker and, when this process
+// serves a config snapshot, the snapshot marker are both read; the later
+// instant wins. A missing marker is not a revocation. A zero loginAt is
+// covered whenever a marker exists. A Redis error is returned so the caller
+// fails the request instead of treating the login as allowed. A snapshot that
+// is absent or has no row is not an error.
+func (p *authProxy) loginRevoked(ctx context.Context, authID, gatewayID, org, subject string, loginAt time.Time) (bool, error) {
+	if authID != appauth.DefaultIdPAuthID().String() {
+		return false, nil
+	}
+	revokedAt, err := p.store.SubjectRevokedAt(ctx, gatewayID, org, subject)
+	if err != nil {
+		return false, fmt.Errorf("oauth: load session revocation: %w", err)
+	}
+	if p.snapshotRevocations != nil {
+		if at, ok := p.snapshotRevocations.RevokedAt(gatewayID, org, subject); ok && at.After(revokedAt) {
+			revokedAt = at
+		}
+	}
+	if revokedAt.IsZero() || loginAt.After(revokedAt) {
+		return false, nil
+	}
+	return true, nil
+}
+
+func isSessionRevoked(err error) bool {
+	var oe *OAuthError
+	return errors.As(err, &oe) && oe.Code == "invalid_grant" && oe.Description == "session revoked; sign in again"
 }

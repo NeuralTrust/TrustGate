@@ -80,12 +80,29 @@ func TestGuardOutcomeDecision(t *testing.T) {
 		{status: statusReport, mode: policy.ModeEnforce, want: decisionReported},
 		{status: statusReport, mode: policy.ModeObserve, want: decisionReported},
 		{status: statusAllow, mode: policy.ModeEnforce, want: decisionAllowed},
+		{status: statusAllow, mode: policy.ModeObserve, want: decisionAllowed},
 		// No verdict expressed still passes.
 		{status: "", mode: policy.ModeEnforce, want: decisionAllowed},
-		// An unrecognised verdict is recorded rather than passed silently.
-		// "allowed" is a decision, not a status, so it lands here.
-		{status: "allowed", mode: policy.ModeEnforce, want: decisionReported},
-		{status: "something-new", mode: policy.ModeEnforce, want: decisionReported},
+		{status: "", mode: policy.ModeObserve, want: decisionAllowed},
+		// A Skip gate continues the request. Record it as allowed in every
+		// mode, the same way the stream leg lets a skip through.
+		{status: statusSkip, mode: policy.ModeEnforce, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeObserve, want: decisionAllowed},
+		{status: statusSkip, mode: policy.ModeThrottle, want: decisionAllowed},
+		// error used to hit the default, which forwards and records reported.
+		{status: statusError, mode: policy.ModeEnforce, want: decisionReported},
+		{status: statusError, mode: policy.ModeObserve, want: decisionReported},
+		// transform is applied before this function. Asked directly, it keeps
+		// the old default: recorded reported, not blocked.
+		{status: statusTransform, mode: policy.ModeEnforce, want: decisionReported},
+		{status: statusTransform, mode: policy.ModeObserve, want: decisionReported},
+		// "allowed" is a decision, not a status. A mode that blocks fail-closes
+		// it. Observe still only records it.
+		{status: "allowed", mode: policy.ModeEnforce, want: decisionBlocked},
+		{status: "allowed", mode: policy.ModeObserve, want: decisionReported},
+		{status: "something-new", mode: policy.ModeEnforce, want: decisionBlocked},
+		{status: "something-new", mode: policy.ModeObserve, want: decisionReported},
+		{status: "something-new", mode: policy.ModeThrottle, want: decisionBlocked},
 	}
 	for _, tc := range tests {
 		tc := tc

@@ -100,8 +100,9 @@ func TestPrincipalDisconnect_RefusesWithoutDeleting(t *testing.T) {
 func TestPrincipalDisconnect_PerUserRegionDeletesTheStoredToken(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	reg := pagerDutyShelf(t, gw)
-	eu := map[string]string{"host": "mcp.eu.pagerduty.com"}
-	key := registrydomain.ForwardedVaultProviderFor(reg, eu)
+	reg.MCPTarget.URL = "https://mcp.eu.pagerduty.com/mcp"
+	eu := map[string]string{"host": "mcp.pagerduty.com"}
+	key := registrydomain.ForwardedVaultProvider(reg)
 	require.Contains(t, key, "|b35ba3004532")
 	in := mustInstall(t, gw, "alice", "com.pagerduty/mcp")
 	in.RegistryID = reg.ID

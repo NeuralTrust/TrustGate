@@ -42,6 +42,19 @@ var _ appoauth.FlowStore = (*Store)(nil)
 
 type Store struct {
 	rdb *redis.Client
+	// sessionMaxAge is MCP_DEFAULT_IDP_SESSION_MAX_AGE. Zero means unset.
+	sessionMaxAge time.Duration
+}
+
+// SetDefaultIDPSessionMaxAge records MCP_DEFAULT_IDP_SESSION_MAX_AGE. A
+// revocation marker lives for the longer of the idle session lifetime and
+// this absolute cap. A non-positive value leaves the idle lifetime in place.
+// The DELETE that writes the marker runs in the admin process, so the cap is
+// the one configured there, not only on MCP.
+func (s *Store) SetDefaultIDPSessionMaxAge(d time.Duration) {
+	if d > 0 {
+		s.sessionMaxAge = d
+	}
 }
 
 func NewStore(rdb *redis.Client) *Store {
@@ -63,6 +76,22 @@ func (s *Store) TakePending(ctx context.Context, state string) (*appoauth.Pendin
 
 func (s *Store) SaveCode(ctx context.Context, code string, g appoauth.CodeGrant) error {
 	return s.save(ctx, codePrefix+code, g, codeTTL)
+}
+
+// GetCode reads a code grant and leaves it stored. TakeCode is what consumes it.
+func (s *Store) GetCode(ctx context.Context, code string) (*appoauth.CodeGrant, error) {
+	raw, err := s.rdb.Get(ctx, codePrefix+code).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth flow store: get code: %w", err)
+	}
+	var g appoauth.CodeGrant
+	if err := json.Unmarshal(raw, &g); err != nil {
+		return nil, fmt.Errorf("oauth flow store: decode code: %w", err)
+	}
+	return &g, nil
 }
 
 func (s *Store) TakeCode(ctx context.Context, code string) (*appoauth.CodeGrant, error) {
@@ -115,7 +144,10 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 			return errors.New("oauth flow store: session already expired")
 		}
 	}
-	return s.save(ctx, sessionKey(refreshToken), rec, ttl)
+	if err := s.save(ctx, sessionKey(refreshToken), rec, ttl); err != nil {
+		return err
+	}
+	return s.indexSession(ctx, refreshToken, rec, ttl)
 }
 
 func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
@@ -134,12 +166,21 @@ func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.
 }
 
 func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error {
+	// Read before shortening the TTL: a zero grace can drop the key, and the
+	// owner index is addressed by the gateway and subject stored on it.
+	rec, err := s.GetSession(ctx, refreshToken)
+	if err != nil {
+		return err
+	}
 	// EXPIRE LT only ever shortens the remaining TTL: replaying an already
 	// retired token cannot push its expiry out again.
 	if err := s.rdb.ExpireLT(ctx, sessionKey(refreshToken), grace).Err(); err != nil {
 		return fmt.Errorf("oauth flow store: retire session: %w", err)
 	}
-	return nil
+	if rec == nil {
+		return nil
+	}
+	return s.unindexSession(ctx, refreshToken, rec.GatewayID, rec.Subject)
 }
 
 func sessionKey(refreshToken string) string {

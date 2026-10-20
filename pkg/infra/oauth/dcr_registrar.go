@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -138,10 +139,23 @@ func (r *upstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*
 	return meta, nil
 }
 
+// upstreamURLForError is the URL written into a discover error: scheme, host
+// and path. Userinfo, query and fragment are omitted.
+func upstreamURLForError(u *url.URL) string {
+	clean := *u
+	clean.User = nil
+	clean.RawQuery = ""
+	clean.Fragment = ""
+	clean.RawFragment = ""
+	return clean.String()
+}
+
 func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
 	u, err := url.Parse(upstreamURL)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("oauth dcr: bad upstream url %q", upstreamURL)
+		// url.Parse's text can quote part of a password (an unencoded / ? # is
+		// read as a port). The caller gets a fixed message.
+		return nil, errors.New("oauth dcr: bad upstream url")
 	}
 	origin := u.Scheme + "://" + u.Host
 
@@ -166,7 +180,7 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("%w (%s)", appoauth.ErrUpstreamNotDiscoverable, upstreamURL)
+		return nil, fmt.Errorf("%w (%s)", appoauth.ErrUpstreamNotDiscoverable, upstreamURLForError(u))
 	}
 
 	as := strings.TrimSpace(prm.AuthorizationServers[0])

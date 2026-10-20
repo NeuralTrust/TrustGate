@@ -327,8 +327,8 @@ func TestPrincipalPreview_NamesTheSettingsAnInstallStillNeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Preview: %v", err)
 	}
-	if got := state.Installs[0].NeedsConfig; len(got) != 1 || got[0] != "database" {
-		t.Fatalf("want the one missing required value, got %v", got)
+	if got := state.Installs[0].NeedsConfig; len(got) != 0 {
+		t.Fatalf("a non-secret registry variable is not the employee's to finish, got %v", got)
 	}
 	if got := state.Installs[1].NeedsConfig; len(got) != 0 {
 		t.Fatalf("a server that declares nothing needs nothing, got %v", got)
@@ -389,8 +389,9 @@ func pagerDutyShelf(t *testing.T, gw ids.GatewayID) *registrydomain.Registry {
 func TestPrincipalPreview_PerUserRegionShowsConnected(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	reg := pagerDutyShelf(t, gw)
-	eu := map[string]string{"host": "mcp.eu.pagerduty.com"}
-	key := registrydomain.ForwardedVaultProviderFor(reg, eu)
+	reg.MCPTarget.URL = "https://mcp.eu.pagerduty.com/mcp"
+	eu := map[string]string{"host": "mcp.pagerduty.com"}
+	key := registrydomain.ForwardedVaultProvider(reg)
 	if !strings.Contains(key, "|b35ba3004532") {
 		t.Fatalf("eu key = %s", key)
 	}

@@ -119,7 +119,8 @@ type InstallResult struct {
 	RequiresAdminSetup bool
 	// RequiresInstanceChoice is true when the admin has connected several
 	// instances of this server that the principal may use and the install did not
-	// say which. No install is recorded; the caller picks one of InstanceChoices
+	// say which. An instance whose required admin URL variable is still unfilled
+	// is omitted. No install is recorded; the caller picks one of InstanceChoices
 	// and re-invokes with its id.
 	RequiresInstanceChoice bool
 	InstanceChoices        []InstanceChoice
@@ -140,10 +141,9 @@ type Installer interface {
 	Instances(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) ([]*installationdomain.Installation, error)
 	// Installed answers an install of a server the principal already has,
 	// without writing anything or deciding access again: the instance they
-	// hold, as an install result, so its connect link can be handed out. It is
-	// how an installed server gets connected where installing is not open to
-	// the principal (Store access None): connecting what they already have is
-	// not installing. ErrNotInstalled when there is no single such instance.
+	// hold, as an install result. ErrNotInstalled when there is no single
+	// such instance. Store access None does not use it: that mode refuses
+	// the install tool before a connect link is minted.
 	Installed(ctx context.Context, in InstallRequest) (*InstallResult, error)
 	// Uninstall removes an install. When instanceID is set it removes that one
 	// instance (which must belong to code); otherwise it removes the sole
@@ -318,6 +318,24 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if err != nil {
 		return nil, err
 	}
+	// A choice or a request has not picked the row it will dial. The admin URL
+	// is required only when this call records an install against one instance.
+	// A non-self-service server whose existing row still has that placeholder
+	// is the same state as no row: report admin setup and leave the row alone.
+	if len(decision.choices) == 0 && !decision.requiresAdminSetup &&
+		decision.status != installationdomain.StatusPendingApproval {
+		if err := rejectUnfilledAdminVariables(entry.URL, catalogURLVariables(entry.URLVariables), boundTarget(decision.bound)); err != nil {
+			if catalogNeedsAdminCredential(entry) {
+				return &InstallResult{
+					Code:               code,
+					Name:               displayName(entry, code),
+					RequiresAuth:       entry.RequiresAuth,
+					RequiresAdminSetup: true,
+				}, nil
+			}
+			return nil, err
+		}
+	}
 	i.refreshBoundCatalog(ctx, in.GatewayID, code, &decision)
 	if decision.requiresAdminSetup {
 		return &InstallResult{
@@ -468,7 +486,11 @@ func planInstallConfig(
 	provided map[string]string,
 	bound *registrydomain.MCPTarget,
 ) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
-	declared := unpinnedURLVariables(catalogURLVariables(entry.URLVariables), bound)
+	all := catalogURLVariables(entry.URLVariables)
+	if err := rejectSuppliedNonSecrets(all, provided); err != nil {
+		return nil, nil, nil, err
+	}
+	declared := unpinnedURLVariables(all, bound)
 	pinned := make(map[string]struct{})
 	for _, v := range entry.URLVariables {
 		if bound.PinsURLVariable(v.Name) {
@@ -504,20 +526,57 @@ func planInstallConfig(
 		stored[k] = val
 	}
 	for _, v := range declared {
-		if !v.Required {
+		if !v.Required || !v.Secret {
 			continue
 		}
-		switch {
-		case v.Secret:
-			secretRequired = append(secretRequired, v)
-		case strings.TrimSpace(stored[v.Name]) == "":
-			missingPlain = append(missingPlain, v)
-		}
+		secretRequired = append(secretRequired, v)
 	}
 	if len(stored) == 0 {
 		stored = nil
 	}
 	return stored, missingPlain, secretRequired, nil
+}
+
+// rejectSuppliedNonSecrets refuses a non-secret registry variable from the
+// caller. The value belongs on the registry row. A secret credential is the
+// caller's own and is not refused here.
+func rejectSuppliedNonSecrets(declared []registrydomain.MCPURLVariable, provided map[string]string) error {
+	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
+	for _, variable := range declared {
+		byName[variable.Name] = variable
+	}
+	for name, raw := range provided {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		variable, known := byName[name]
+		if !known || variable.Secret {
+			continue
+		}
+		return fmt.Errorf("%w: variable %q is set by an admin on the registry", ErrConfigInvalid, name)
+	}
+	return nil
+}
+
+// rejectUnfilledAdminVariables refuses an install while a required non-secret
+// placeholder is still open on the registry. The admin create form writes
+// those values into the server URL; an employee cannot supply them later.
+func rejectUnfilledAdminVariables(catalogURL string, declared []registrydomain.MCPURLVariable, bound *registrydomain.MCPTarget) error {
+	rowURL := ""
+	if bound != nil {
+		rowURL = bound.URL
+	}
+	admin, _ := registrydomain.AdminBoundValues(catalogURL, declared, rowURL)
+	for _, variable := range declared {
+		if variable.Secret || !variable.Required {
+			continue
+		}
+		if bound.PinsURLVariable(variable.Name) || strings.TrimSpace(admin[variable.Name]) != "" {
+			continue
+		}
+		return fmt.Errorf("%w: variable %q must be set by an admin on the registry", ErrConfigInvalid, variable.Name)
+	}
+	return nil
 }
 
 // installDecision is the outcome of applying the Store access model to one
@@ -706,13 +765,36 @@ func (i *installer) decideAmong(
 	}
 
 	// Instances exist: the usable ones are all of them for a code holder, else
-	// those granted individually.
+	// those granted individually. A row whose required admin URL variable is
+	// still unfilled is not usable, so it is neither auto-selected nor listed
+	// as a choice. The explicit-instance branch above still binds a named
+	// unfilled row, and Install refuses it with rejectUnfilledAdminVariables.
 	usable := instances
 	if !codeGranted {
 		usable = usable[:0:0]
 		for _, reg := range instances {
 			if grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
 				usable = append(usable, reg)
+			}
+		}
+	}
+	if len(usable) > 1 {
+		declared := catalogURLVariables(entry.URLVariables)
+		filled := make([]*registrydomain.Registry, 0, len(usable))
+		for _, reg := range usable {
+			if rejectUnfilledAdminVariables(entry.URL, declared, boundTarget(reg)) != nil {
+				continue
+			}
+			filled = append(filled, reg)
+		}
+		switch {
+		case len(filled) > 0:
+			usable = filled
+		case catalogNeedsAdminCredential(entry):
+			return installDecision{requiresAdminSetup: true}, nil
+		default:
+			if err := rejectUnfilledAdminVariables(entry.URL, declared, boundTarget(usable[0])); err != nil {
+				return installDecision{}, err
 			}
 		}
 	}
