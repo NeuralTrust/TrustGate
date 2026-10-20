@@ -29,7 +29,6 @@ import (
 const (
 	defaultBatchSize     = 512
 	defaultFlushInterval = time.Second
-	exportTimeout        = 30 * time.Second
 	dropLogEvery         = 1000
 )
 
@@ -51,7 +50,7 @@ type queueProcessor struct {
 	closed  bool
 	queue   chan sdklog.Record
 	flushes chan chan struct{}
-	stop    chan context.Context
+	stop    chan time.Time
 	stopped chan struct{}
 }
 
@@ -69,7 +68,7 @@ func newQueueProcessor(
 		interval:  defaultFlushInterval,
 		queue:     make(chan sdklog.Record, queueSize),
 		flushes:   make(chan chan struct{}),
-		stop:      make(chan context.Context, 1),
+		stop:      make(chan time.Time, 1),
 		stopped:   make(chan struct{}),
 	}
 	go p.run()
@@ -81,18 +80,27 @@ func (p *queueProcessor) Enabled(context.Context, sdklog.EnabledParameters) bool
 }
 
 func (p *queueProcessor) OnEmit(_ context.Context, r *sdklog.Record) error {
+	if reason := p.enqueue(r); reason != "" {
+		p.drop(reason)
+	}
+	return nil
+}
+
+// enqueue returns why the record was not queued, or "" when it was. The drop
+// is reported by the caller once the lock is released, so a slow log write
+// never holds back Shutdown.
+func (p *queueProcessor) enqueue(r *sdklog.Record) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.closed {
-		p.drop("closed")
-		return nil
+		return "closed"
 	}
 	select {
 	case p.queue <- r.Clone():
+		return ""
 	default:
-		p.drop("queue_full")
+		return "queue_full"
 	}
-	return nil
 }
 
 func (p *queueProcessor) drop(reason string) {
@@ -129,7 +137,8 @@ func (p *queueProcessor) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	p.closed = true
-	p.stop <- ctx
+	deadline, _ := ctx.Deadline()
+	p.stop <- deadline
 	p.mu.Unlock()
 
 	select {
@@ -156,11 +165,22 @@ func (p *queueProcessor) run() {
 		case reply := <-p.flushes:
 			batch = p.drain(context.Background(), batch)
 			close(reply)
-		case ctx := <-p.stop:
-			p.drain(ctx, batch)
+		case deadline := <-p.stop:
+			p.drainUntil(deadline, batch)
 			return
 		}
 	}
+}
+
+// drainUntil exports what is left by the shutdown deadline; a zero deadline
+// means Shutdown was given none.
+func (p *queueProcessor) drainUntil(deadline time.Time, batch []sdklog.Record) {
+	ctx, cancel := context.Background(), context.CancelFunc(func() {})
+	if !deadline.IsZero() {
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+	}
+	defer cancel()
+	p.drain(ctx, batch)
 }
 
 func (p *queueProcessor) drain(ctx context.Context, batch []sdklog.Record) []sdklog.Record {
@@ -181,8 +201,6 @@ func (p *queueProcessor) export(ctx context.Context, batch []sdklog.Record) []sd
 	if len(batch) == 0 {
 		return batch
 	}
-	ctx, cancel := context.WithTimeout(ctx, exportTimeout)
-	defer cancel()
 	if err := p.exporter.Export(ctx, batch); err != nil {
 		p.outcomes.Outcome(usagedomain.OutcomeExportFailed, len(batch))
 		p.logger.Warn("usage records export failed",

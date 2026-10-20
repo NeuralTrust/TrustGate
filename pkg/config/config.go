@@ -88,6 +88,7 @@ const (
 	defaultMetricsEnabled       = true
 	defaultUsageRecordsEnabled  = false
 	defaultUsageRecordsQueue    = 65536
+	maxUsageRecordsQueue        = 1 << 20
 	defaultMetricsQueueSize     = 1000
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
@@ -1477,8 +1478,8 @@ func (c *Config) validateUsageRecords() error {
 	if !c.UsageRecords.Enabled {
 		return nil
 	}
-	if c.UsageRecords.QueueSize <= 0 {
-		return fmt.Errorf("%w: USAGE_RECORDS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
+	if c.UsageRecords.QueueSize <= 0 || c.UsageRecords.QueueSize > maxUsageRecordsQueue {
+		return fmt.Errorf("%w: USAGE_RECORDS_QUEUE_SIZE must be between 1 and %d", errors.ErrInvalidConfig, maxUsageRecordsQueue)
 	}
 	if strings.TrimSpace(c.UsageRecords.OTLP.Endpoint) == "" && strings.TrimSpace(c.Telemetry.OTLP.Endpoint) == "" {
 		return fmt.Errorf("%w: USAGE_RECORDS_ENABLED requires USAGE_RECORDS_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT", errors.ErrInvalidConfig)

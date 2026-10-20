@@ -42,8 +42,8 @@ func TestStandaloneSettings(t *testing.T) {
 		want     Settings
 	}{
 		{
-			name:     "everything from the operator",
-			env: operator,
+			name: "everything from the operator",
+			env:  operator,
 			want: Settings{
 				Endpoint: "http://collector:4318/v1/logs", Protocol: ProtocolHTTP, Signal: SignalLogs,
 				Headers: map[string]string{"authorization": "operator"}, Timeout: 7 * time.Second,
@@ -70,7 +70,7 @@ func TestStandaloneSettings(t *testing.T) {
 			env:      operator,
 			want: Settings{
 				Endpoint: "https://ingest.example.com/v1/logs", Protocol: ProtocolHTTP, Signal: SignalLogs,
-				Timeout: 7 * time.Second, Compression: defaultCompression, ownHeaders: true,
+				Timeout: defaultTimeout, Compression: defaultCompression, ownHeaders: true,
 			},
 		},
 		{
