@@ -144,7 +144,11 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, ErrNoMCPRegistries
+		// Listing answers nothing attached with an empty surface. A tools/call
+		// name that is not a gateway tool is then unknown, on the Store and on
+		// an application. Gateway tools are answered before Resolve, and
+		// nothing here dials an upstream.
+		return nil, &UnknownToolError{Name: name}
 	}
 	// The exposed name carries its server. Servers that do not fit its prefix
 	// are not dialed: dialing them minted a connect ticket for whichever

@@ -453,6 +453,132 @@ func TestCodeIssuedBeforeRevokeIsRefusedAtExchange(t *testing.T) {
 	}
 }
 
+// A marker that cannot be read fails the exchange and leaves the code stored,
+// so the same code exchanges once the read succeeds.
+func TestExchangeMarkerReadErrorLeavesCodeRetryable(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	issued := time.Now().Add(-time.Minute).UTC()
+	if err := store.SaveCode(ctx, "retry-code", sessionCode("user-1", issued)); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	gate := &failingRevocationRead{Store: store, err: errors.New("redis: transient")}
+	proxy := newRevokeProxy(t, gate)
+	req := exchangeSessionCode("retry-code")
+
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", req)
+	var oauthErr *appoauth.OAuthError
+	if err == nil || errors.As(err, &oauthErr) {
+		t.Fatalf("marker read error = %v, want a store error", err)
+	}
+	if !mr.Exists("oauth:code:retry-code") {
+		t.Fatal("marker read error consumed the code")
+	}
+
+	gate.err = nil
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", req)
+	if err != nil {
+		t.Fatalf("retry after the marker read recovers: %v", err)
+	}
+	if resp["token_type"] != "Bearer" {
+		t.Fatalf("retry response: %#v", resp)
+	}
+	refresh, _ := resp["refresh_token"].(string)
+	saved, err := store.GetSession(ctx, refresh)
+	if err != nil || saved == nil || !saved.LoginAt.Equal(issued) {
+		t.Fatalf("session login = %+v err %v, want the code issue time", saved, err)
+	}
+	if mr.Exists("oauth:code:retry-code") {
+		t.Fatal("a successful retry must consume the code")
+	}
+}
+
+// The marker can be written after the pre-check and before TakeCode. The
+// consumed code is still refused, including when its issue time equals the marker.
+func TestCodeRevokedDuringTakeIsRefused(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	issued := time.Date(2026, 10, 19, 13, 4, 5, 123456789, time.UTC)
+	if err := store.SaveCode(ctx, "racing", sessionCode("user-1", issued)); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	proxy := newRevokeProxy(t, &markerOnTake{Store: store, mr: mr, at: issued})
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", exchangeSessionCode("racing"))
+	requireInvalidGrant(t, err)
+	if mr.Exists("oauth:code:racing") {
+		t.Fatal("TakeCode did not consume the code")
+	}
+	for _, key := range mr.Keys() {
+		if strings.HasPrefix(key, "oauth:session:") {
+			t.Fatalf("exchange minted a session: %s", key)
+		}
+	}
+}
+
+// Equality is a refusal. One nanosecond later is allowed, so the comparison
+// is strict and keeps the marker's nanoseconds.
+func TestRevocationComparisonKeepsNanoseconds(t *testing.T) {
+	t.Parallel()
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	issued := time.Date(2026, 10, 19, 13, 4, 5, 123456789, time.UTC)
+	if err := mr.Set(revocationMarkerKey, issued.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+	proxy := newRevokeProxy(t, store)
+	if err := store.SaveCode(ctx, "equal", sessionCode("user-1", issued)); err != nil {
+		t.Fatalf("save equal code: %v", err)
+	}
+	_, err := proxy.Exchange(ctx, "http://gw.example.com", exchangeSessionCode("equal"))
+	requireInvalidGrant(t, err)
+
+	later := issued.Add(time.Nanosecond)
+	if err := store.SaveCode(ctx, "after", sessionCode("user-1", later)); err != nil {
+		t.Fatalf("save later code: %v", err)
+	}
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", exchangeSessionCode("after"))
+	if err != nil {
+		t.Fatalf("a code one nanosecond after the marker must exchange: %v", err)
+	}
+	refresh, _ := resp["refresh_token"].(string)
+	saved, err := store.GetSession(ctx, refresh)
+	if err != nil || saved == nil || !saved.LoginAt.Equal(later) {
+		t.Fatalf("session login = %+v err %v, want %v", saved, err, later)
+	}
+}
+
+// A code stored before issue times existed has a zero IssuedAt. That login is
+// refused when a marker exists, and exchanged when it does not.
+func TestCodeWithNoIssueTimeIsRefusedOnlyWhenMarkerExists(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	open, _ := newSessionStore(t)
+	if err := open.SaveCode(ctx, "legacy", sessionCode("user-1", time.Time{})); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := newRevokeProxy(t, open).Exchange(ctx, "http://gw.example.com", exchangeSessionCode("legacy")); err != nil {
+		t.Fatalf("a code with no issue time and no marker must exchange: %v", err)
+	}
+
+	closed, mr := newSessionStore(t)
+	if err := mr.Set(revocationMarkerKey, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+	if err := closed.SaveCode(ctx, "legacy", sessionCode("user-1", time.Time{})); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	_, err := newRevokeProxy(t, closed).Exchange(ctx, "http://gw.example.com", exchangeSessionCode("legacy"))
+	requireInvalidGrant(t, err)
+	for _, key := range mr.Keys() {
+		if strings.HasPrefix(key, "oauth:session:") {
+			t.Fatalf("a code with no issue time minted a session: %s", key)
+		}
+	}
+}
+
 func TestRevocationMarkerTTLIsTheLongerSessionLifetime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -477,6 +603,15 @@ func TestRevocationMarkerTTLIsTheLongerSessionLifetime(t *testing.T) {
 
 const revocationMarkerKey = "oauth:sessions-revoked:gw-1:org-1:user-1"
 
+func exchangeSessionCode(code string) appoauth.TokenRequest {
+	return appoauth.TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         code,
+		RedirectURI:  "https://app.example/cb",
+		CodeVerifier: "client-verifier",
+	}
+}
+
 func sessionCode(subject string, issued time.Time) appoauth.CodeGrant {
 	sum := sha256.Sum256([]byte("client-verifier"))
 	return appoauth.CodeGrant{
@@ -490,6 +625,33 @@ func sessionCode(subject string, issued time.Time) appoauth.CodeGrant {
 		SessionMode:   true,
 		IssuedAt:      issued,
 	}
+}
+
+type failingRevocationRead struct {
+	*infraoauth.Store
+	err error
+}
+
+func (f *failingRevocationRead) SubjectRevokedAt(ctx context.Context, gatewayID, org, subject string) (time.Time, error) {
+	if f.err != nil {
+		return time.Time{}, f.err
+	}
+	return f.Store.SubjectRevokedAt(ctx, gatewayID, org, subject)
+}
+
+// markerOnTake writes the revocation marker while the code is consumed, in
+// the window between the pre-check and the decision on the taken grant.
+type markerOnTake struct {
+	*infraoauth.Store
+	mr *miniredis.Miniredis
+	at time.Time
+}
+
+func (m *markerOnTake) TakeCode(ctx context.Context, code string) (*appoauth.CodeGrant, error) {
+	if err := m.mr.Set(revocationMarkerKey, m.at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+	return m.Store.TakeCode(ctx, code)
 }
 
 type revokeDuringSave struct {

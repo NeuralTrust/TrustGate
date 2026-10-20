@@ -70,3 +70,138 @@ func TestCredentialResolver_StoreConsentTicketNamesTheServer(t *testing.T) {
 		t.Fatalf("a non-Store consumer must not mint a server ticket, got %v", plain.serverTicketCodes)
 	}
 }
+
+// Two installs of one catalog code are two servers. A tools/call that needs
+// connect on instance B must mint a ticket pinned to B: the connect link is
+// that ticket, and an empty instance id makes the page focus whichever row of
+// the code comes first.
+func TestCredentialResolver_StoreConsentTicketPinsTheCalledInstance(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	instance := func(name, upstream string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			Code: "io.n8n/mcp",
+			URL:  upstream,
+			Auth: &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeForwarded, Provider: "io.n8n/mcp", ClientID: "id",
+				AuthorizeURL: "https://n8n.example/a", TokenURL: "https://n8n.example/t",
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry %s: %v", name, err)
+		}
+		return reg
+	}
+	instanceA := instance("n8n A", "https://a.n8n.example/mcp")
+	instanceB := instance("n8n B", "https://b.n8n.example/mcp")
+	if instanceA.ID == instanceB.ID {
+		t.Fatal("the two instances must have distinct ids")
+	}
+
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	ctx := principalCtx(&identity.Principal{Subject: "alice"})
+	connect := &stubConnect{ticket: "srv-ticket-b"}
+	r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+
+	err := r.Apply(ctx, store, instanceB, &Target{})
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError", err)
+	}
+	link := consent.Path + "/connect?ticket=" + consent.Ticket
+	if consent.Ticket != "srv-ticket-b" || link != appconsumer.MCPPath(consumerdomain.StoreSlug)+"/connect?ticket=srv-ticket-b" {
+		t.Fatalf("needs-connect link = %q, consent = %+v", link, consent)
+	}
+	if len(connect.serverTicketCodes) != 1 || connect.serverTicketCodes[0] != "io.n8n/mcp" {
+		t.Fatalf("ticket code = %v, want io.n8n/mcp", connect.serverTicketCodes)
+	}
+	if len(connect.serverTicketInstances) != 1 || connect.serverTicketInstances[0] != instanceB.ID.String() {
+		t.Fatalf("needs-connect ticket instance = %v, want instance B %s (instance A is %s)",
+			connect.serverTicketInstances, instanceB.ID, instanceA.ID)
+	}
+}
+
+// A user with two installs of one code is handed a clone whose id is the
+// installation row and whose InstanceOf is the persisted shelf. The connect
+// page looks the pin up by registry id, so the ticket has to name shelf B.
+func TestCredentialResolver_StoreConsentTicketPinsTheShelfBehindTheClone(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	instance := func(name, upstream string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			Code: "io.n8n/mcp",
+			URL:  upstream,
+			Auth: &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeForwarded, Provider: "io.n8n/mcp", ClientID: "id",
+				AuthorizeURL: "https://n8n.example/a", TokenURL: "https://n8n.example/t",
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry %s: %v", name, err)
+		}
+		return reg
+	}
+	instanceA := instance("n8n A", "https://a.n8n.example/mcp")
+	instanceB := instance("n8n B", "https://b.n8n.example/mcp")
+	installRow := ids.New[ids.RegistryKind]()
+	clone := *instanceB
+	target := *instanceB.MCPTarget
+	clone.MCPTarget = &target
+	clone.ID = installRow
+	clone.InstanceOf = instanceB.ID
+	if clone.ScopeKey() != instanceB.ID || clone.ID == instanceB.ID {
+		t.Fatalf("clone scope = %s id = %s, want shelf %s", clone.ScopeKey(), clone.ID, instanceB.ID)
+	}
+
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	connect := &stubConnect{ticket: "srv-ticket-b"}
+	r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+	err := r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), store, &clone, &Target{})
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError", err)
+	}
+	if consent.Path+"/connect?ticket="+consent.Ticket != appconsumer.MCPPath(consumerdomain.StoreSlug)+"/connect?ticket=srv-ticket-b" {
+		t.Fatalf("needs-connect link ticket = %q path = %q", consent.Ticket, consent.Path)
+	}
+	if len(connect.serverTicketInstances) != 1 || connect.serverTicketInstances[0] != instanceB.ID.String() {
+		t.Fatalf("needs-connect ticket instance = %v, want shelf B %s (install row %s, instance A %s)",
+			connect.serverTicketInstances, instanceB.ID, installRow, instanceA.ID)
+	}
+}
+
+// A pending stand-in uses the installation id and is not in the registry
+// list yet. Pinning that id would make the connect page find nothing.
+func TestCredentialResolver_StoreConsentTicketLeavesAPendingShelfUnpinned(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "n8n", "", &registrydomain.MCPTarget{
+		Code: "io.n8n/mcp",
+		URL:  "https://n8n.example/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeForwarded, Provider: "io.n8n/mcp", ClientID: "id",
+			AuthorizeURL: "https://n8n.example/a", TokenURL: "https://n8n.example/t",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	reg.ID = ids.New[ids.RegistryKind]()
+	reg.InstanceOf = reg.ID
+	reg.MCPTarget.Origin = registrydomain.MCPOriginPending
+
+	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	connect := &stubConnect{ticket: "srv-ticket-pending"}
+	r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+	err = r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), store, reg, &Target{})
+	var consent *ConsentRequiredError
+	if !errors.As(err, &consent) {
+		t.Fatalf("error = %v, want ConsentRequiredError", err)
+	}
+	if consent.Ticket != "srv-ticket-pending" {
+		t.Fatalf("ticket = %q", consent.Ticket)
+	}
+	if len(connect.serverTicketInstances) != 1 || connect.serverTicketInstances[0] != "" {
+		t.Fatalf("pending shelf ticket instance = %v, want unpinned", connect.serverTicketInstances)
+	}
+}

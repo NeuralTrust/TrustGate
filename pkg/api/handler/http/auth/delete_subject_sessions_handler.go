@@ -53,15 +53,18 @@ func NewDeleteSubjectSessionsHandler(sessions appoauth.SubjectSessions, revocati
 	return &DeleteSubjectSessionsHandler{sessions: sessions, revocations: revocations, signaler: signaler, logger: logger}
 }
 
-// SubjectSessionsResponse is how many refresh records the call removed. Zero
-// means the subject has none; that is success.
+// SubjectSessionsResponse reports a completed revocation. Revoked is how many
+// refresh records this process deleted; zero means it had none. Recorded is
+// true once the durable revocation row is written, whether or not this process
+// deleted any records.
 type SubjectSessionsResponse struct {
-	Revoked int `json:"revoked"`
+	Revoked  int  `json:"revoked"`
+	Recorded bool `json:"recorded"`
 }
 
 // Handle godoc
 // @Summary      Revoke a subject's default-IdP sessions
-// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably and in Redis, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A subject with no indexed records on this process answers 200 {"revoked": 0}; revoked counts records deleted here. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
+// @Description  Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably and in Redis, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A successful call answers 200 with recorded true, including when this process deleted nothing: {"revoked": 0, "recorded": true}. revoked counts records deleted here. A failure to write the durable record answers 500 and does not delete records. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -116,5 +119,5 @@ func (h *DeleteSubjectSessionsHandler) Handle(c *fiber.Ctx) error {
 		)
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, SubjectSessionsResponse{Revoked: revoked})
+	return httpio.WriteOK(c, SubjectSessionsResponse{Revoked: revoked, Recorded: true})
 }
