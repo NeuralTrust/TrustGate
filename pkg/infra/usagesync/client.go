@@ -40,6 +40,11 @@ import (
 const (
 	minBackoff = time.Second
 	maxBackoff = 30 * time.Second
+
+	// maxMessageBytes lifts gRPC's 4 MiB receive default: a snapshot lists
+	// every exhausted tenant in one message, and one over the limit would
+	// fail every connect.
+	maxMessageBytes = 64 << 20
 )
 
 // StateSink receives the states read from the stream.
@@ -68,14 +73,7 @@ func NewClient(cfg config.UsageConfig, sink StateSink, logger *slog.Logger) (*Cl
 	if cfg.GRPCInsecure {
 		transport = insecure.NewCredentials()
 	}
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(transport),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
-	}
+	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(transport)}, streamDialOptions()...)
 	if cfg.GRPCToken != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(bearer{token: cfg.GRPCToken, secure: !cfg.GRPCInsecure}))
 	}
@@ -84,6 +82,17 @@ func NewClient(cfg config.UsageConfig, sink StateSink, logger *slog.Logger) (*Cl
 		return nil, fmt.Errorf("usagesync: dial %q: %w", cfg.GRPCAddr, err)
 	}
 	return newClient(conn, sink, logger), nil
+}
+
+func streamDialOptions() []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMessageBytes)),
+	}
 }
 
 func newClient(conn *grpc.ClientConn, sink StateSink, logger *slog.Logger) *Client {

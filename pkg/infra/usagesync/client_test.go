@@ -16,6 +16,7 @@ package usagesync
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -26,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	usagev1 "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1"
@@ -143,10 +145,10 @@ func startClient(t *testing.T, srv *fakeServer, sink StateSink) {
 	usagev1.RegisterUsageSyncServiceServer(gsrv, srv)
 	go func() { _ = gsrv.Serve(lis) }()
 	t.Cleanup(gsrv.Stop)
-	conn, err := grpc.NewClient("passthrough:///bufnet",
+	conn, err := grpc.NewClient("passthrough:///bufnet", append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}, streamDialOptions()...)...)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -206,5 +208,34 @@ func TestClientAppliesSnapshotAndChangesAndResyncsOnReconnect(t *testing.T) {
 	srv.mu.Unlock()
 	if len(acks) < 2 || acks[0] != 5 || acks[1] != 7 {
 		t.Fatalf("acks = %v, want 5 then 7", acks)
+	}
+}
+
+// A snapshot above gRPC's 4 MiB default must still be received: the list of
+// exhausted tenants travels in one message.
+func TestClientReceivesASnapshotAboveTheDefaultMessageLimit(t *testing.T) {
+	const tenants = 100_000
+	exhausted := make([]*usagev1.UsageState, 0, tenants)
+	for i := range tenants {
+		exhausted = append(exhausted, usageState(fmt.Sprintf("00000000-0000-4000-8000-%012d", i), true, int64(i+1)))
+	}
+	snapshot := &usagev1.SyncResponse{Message: &usagev1.SyncResponse_Snapshot{Snapshot: &usagev1.Snapshot{Exhausted: exhausted, AsOfVersion: tenants}}}
+	if size := proto.Size(snapshot); size <= 4<<20 {
+		t.Fatalf("snapshot is %d bytes; the test needs one above 4 MiB", size)
+	}
+	srv := &fakeServer{sessions: []func(usagev1.UsageSyncService_SyncServer) error{
+		func(stream usagev1.UsageSyncService_SyncServer) error {
+			if err := stream.Send(snapshot); err != nil {
+				return err
+			}
+			<-stream.Context().Done()
+			return nil
+		},
+	}}
+	sink := newRecordingSink()
+	startClient(t, srv, sink)
+	eventually(t, func() bool { return sink.Watermark() == tenants }, "the large snapshot was not applied")
+	if !sink.has("00000000-0000-4000-8000-000000099999") {
+		t.Fatal("the last tenant of the large snapshot is missing")
 	}
 }
