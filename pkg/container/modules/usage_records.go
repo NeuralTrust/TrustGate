@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -34,6 +35,9 @@ func UsageRecords(c *container.Container) error {
 		},
 		newUsageEmitter,
 		func(e *usageinfra.Emitter) usagedomain.Emitter { return e },
+		func(cfg *config.Config, e usagedomain.Emitter, outcomes usagedomain.OutcomeRecorder) appusage.RequestRecorder {
+			return appusage.NewRequestRecorder(cfg.UsageRecords.Enabled, e, outcomes)
+		},
 	} {
 		if err := c.Provide(provider); err != nil {
 			return err
