@@ -86,6 +86,9 @@ const (
 	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
+	defaultUsageRecordsEnabled  = false
+	defaultUsageRecordsQueue    = 65536
+	maxUsageRecordsQueue        = 1 << 20
 	defaultMetricsQueueSize     = 1000
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
@@ -184,6 +187,7 @@ type Config struct {
 	SessionStore        SessionStoreConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
+	UsageRecords        UsageRecordsConfig
 	TrafficLabels       TrafficLabelsConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
@@ -482,6 +486,15 @@ type OTLPConfig struct {
 	Compression     string
 }
 
+// UsageRecordsConfig drives the usage metering records. OTLP holds only the
+// USAGE_RECORDS_OTLP_* values; without an endpoint of its own the pipeline uses
+// the operator's OTEL_EXPORTER_OTLP_* collector, headers and transport.
+type UsageRecordsConfig struct {
+	Enabled   bool
+	QueueSize int
+	OTLP      OTLPConfig
+}
+
 type MetricsConfig struct {
 	Enabled       bool
 	QueueSize     int
@@ -678,6 +691,7 @@ func LoadConfig() (*Config, error) {
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
+		UsageRecords:        getUsageRecordsConfig(),
 		TrafficLabels:       getTrafficLabelsConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
@@ -933,6 +947,20 @@ func getTrafficLabelsConfig() TrafficLabelsConfig {
 		BatchMaxTexts:         getEnvInt("TRAFFIC_LABELS_BATCH_MAX_TEXTS", defaultTrafficLabelsBatchMaxTexts),
 		ClaimMinIdle:          getEnvDuration("TRAFFIC_LABELS_CLAIM_MIN_IDLE", defaultTrafficLabelsClaimMinIdle),
 		MaxAttempts:           getEnvInt("TRAFFIC_LABELS_MAX_ATTEMPTS", defaultTrafficLabelsMaxAttempts),
+	}
+}
+
+func getUsageRecordsConfig() UsageRecordsConfig {
+	return UsageRecordsConfig{
+		Enabled:   getEnvBool("USAGE_RECORDS_ENABLED", defaultUsageRecordsEnabled),
+		QueueSize: getEnvInt("USAGE_RECORDS_QUEUE_SIZE", defaultUsageRecordsQueue),
+		OTLP: OTLPConfig{
+			Endpoint: getEnv("USAGE_RECORDS_OTLP_ENDPOINT", ""),
+			Protocol: getEnv("USAGE_RECORDS_OTLP_PROTOCOL", ""),
+			Headers:  parseOTLPHeaders(getEnv("USAGE_RECORDS_OTLP_HEADERS", "")),
+			Timeout:  getEnvDuration("USAGE_RECORDS_OTLP_TIMEOUT", 0),
+			Insecure: getEnvBool("USAGE_RECORDS_OTLP_INSECURE", false),
+		},
 	}
 }
 
@@ -1419,6 +1447,9 @@ func (c *Config) Validate() error {
 	if c.Metrics.Enabled && c.Metrics.WorkerCount <= 0 {
 		return fmt.Errorf("%w: METRICS_WORKER_COUNT must be greater than zero", errors.ErrInvalidConfig)
 	}
+	if err := c.validateUsageRecords(); err != nil {
+		return err
+	}
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
@@ -1439,6 +1470,19 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *Config) validateUsageRecords() error {
+	if !c.UsageRecords.Enabled {
+		return nil
+	}
+	if c.UsageRecords.QueueSize <= 0 || c.UsageRecords.QueueSize > maxUsageRecordsQueue {
+		return fmt.Errorf("%w: USAGE_RECORDS_QUEUE_SIZE must be between 1 and %d", errors.ErrInvalidConfig, maxUsageRecordsQueue)
+	}
+	if strings.TrimSpace(c.UsageRecords.OTLP.Endpoint) == "" && strings.TrimSpace(c.Telemetry.OTLP.Endpoint) == "" {
+		return fmt.Errorf("%w: USAGE_RECORDS_ENABLED requires USAGE_RECORDS_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT", errors.ErrInvalidConfig)
 	}
 	return nil
 }

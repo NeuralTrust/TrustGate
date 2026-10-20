@@ -74,6 +74,7 @@ type RequestTrace struct {
 
 	pending  int64
 	emitOnce sync.Once
+	metaTool atomic.Bool
 
 	mu           sync.Mutex
 	endedAt      time.Time
@@ -130,6 +131,13 @@ func (t *RequestTrace) Done() {
 }
 
 func (t *RequestTrace) TraceID() string { return t.traceID }
+
+// MarkMetaTool records that the request was a call to one of the gateway's own
+// tools, answered without reaching any upstream server.
+func (t *RequestTrace) MarkMetaTool() { t.metaTool.Store(true) }
+
+// IsMetaTool reports whether MarkMetaTool was called.
+func (t *RequestTrace) IsMetaTool() bool { return t.metaTool.Load() }
 
 func (t *RequestTrace) Metadata() Metadata {
 	t.mu.Lock()

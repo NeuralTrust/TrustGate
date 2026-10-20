@@ -27,6 +27,7 @@ func TestNewRequest(t *testing.T) {
 	sets := []LabelSet{sentiment()}
 	req := NewRequest(RequestParams{
 		GatewayID:  "gw",
+		TenantID:   "tenant",
 		ConsumerID: "consumer",
 		TraceID:    "trace",
 		Text:       "where is my refund",
@@ -35,7 +36,7 @@ func TestNewRequest(t *testing.T) {
 		ReceivedAt: received,
 	})
 
-	if req.GatewayID != "gw" || req.ConsumerID != "consumer" || req.TraceID != "trace" {
+	if req.GatewayID != "gw" || req.TenantID != "tenant" || req.ConsumerID != "consumer" || req.TraceID != "trace" {
 		t.Fatalf("identifiers not carried: %+v", req)
 	}
 	if req.TextHash != HashText("where is my refund") {
