@@ -60,7 +60,6 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 
-		startTime := time.Now()
 		gatewayID := gatewayIDFromContext(c)
 		gw := gatewayFromContext(c)
 		exporters := gatewayExporters(gw)
@@ -68,6 +67,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		traceID := newTraceID()
 		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
+		startTime := requestTrace.StartedAt()
 		// Gating is set once here, before the trace is shared with any
 		// downstream goroutine (forwarder, plugins, finalizer).
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)

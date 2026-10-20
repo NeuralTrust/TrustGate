@@ -56,7 +56,6 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 
-		startTime := time.Now()
 		gatewayID := gatewayIDFromContext(c)
 		gw := gatewayFromContext(c)
 		exporters := gatewayExporters(gw)
@@ -64,6 +63,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		traceID := newTraceID()
 		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
+		startTime := requestTrace.StartedAt()
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 

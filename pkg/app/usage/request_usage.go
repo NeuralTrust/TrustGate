@@ -72,7 +72,7 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 	} else if served, ok := lastLLMAttrs(rt); ok && served.TierApplied {
 		smartRouting = 1
 	}
-	if !billableStatus(statusCode) {
+	if !BillableStatus(statusCode) {
 		return
 	}
 	record, err := usagedomain.NewRecord(usagedomain.Record{
@@ -98,9 +98,9 @@ func (r *requestRecorder) skip() {
 	}
 }
 
-// billableStatus mirrors the request count of the usage read model: refused
-// credentials, exhausted usage, rate limits and server errors are not billed.
-func billableStatus(code int) bool {
+// BillableStatus reports whether a request that ended with code is billed:
+// refused credentials, exhausted usage, rate limits and server errors are not.
+func BillableStatus(code int) bool {
 	switch code {
 	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusTooManyRequests:
 		return false

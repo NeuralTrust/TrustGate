@@ -22,6 +22,7 @@ const (
 	OutcomeShuttingDown  = "shutting_down"
 	OutcomeBodyTooLarge  = "body_too_large"
 	OutcomeSampledOut    = "sampled_out"
+	OutcomeNotServed     = "not_served"
 	OutcomeQueued        = "queued"
 	OutcomeNoText        = "no_text"
 	OutcomeQuotaExceeded = "quota_exceeded"
@@ -42,7 +43,7 @@ const (
 func Outcomes() []string {
 	return []string{
 		OutcomeAccepted, OutcomeBufferFull, OutcomeShuttingDown, OutcomeBodyTooLarge,
-		OutcomeSampledOut, OutcomeQueued, OutcomeNoText, OutcomeQuotaExceeded,
+		OutcomeSampledOut, OutcomeNotServed, OutcomeQueued, OutcomeNoText, OutcomeQuotaExceeded,
 		OutcomeQueueError, OutcomeClassified, OutcomeCacheHit, OutcomeFailed,
 		OutcomePoison, OutcomeUnconfigured, OutcomeInvalid, OutcomeUnpublishable,
 		OutcomePublishRetry, OutcomeOK, OutcomeError, OutcomeBackpressure,
