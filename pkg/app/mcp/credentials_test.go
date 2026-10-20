@@ -127,8 +127,11 @@ type stubConnect struct {
 	// serverTicketCodes records the catalog codes CreateServerTicket was asked
 	// for, so a test can tell a server-scoped (Store) ticket from a plain one.
 	serverTicketCodes []string
-	droppedClients    int
-	droppedSlot       string
+	// serverTicketInstances records the instance id each of those tickets was
+	// pinned to. Empty means the connect page focuses the first row of the code.
+	serverTicketInstances []string
+	droppedClients        int
+	droppedSlot           string
 }
 
 func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -136,8 +139,9 @@ func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, strin
 	return s.ticket, nil
 }
 
-func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, _, code, _ string) (string, error) {
+func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, _, code, instanceID string) (string, error) {
 	s.serverTicketCodes = append(s.serverTicketCodes, code)
+	s.serverTicketInstances = append(s.serverTicketInstances, instanceID)
 	return s.ticket, nil
 }
 
