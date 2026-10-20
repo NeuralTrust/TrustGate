@@ -20,7 +20,7 @@
         }
       ],
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -334,7 +334,7 @@
         }
       ],
       "requires_auth": false,
-      "self_service": true,
+      "self_service": false,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -7742,7 +7742,7 @@
         }
       ],
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12028,7 +12028,7 @@
         }
       ],
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14401,7 +14401,7 @@
         }
       ],
       "requires_auth": false,
-      "self_service": true,
+      "self_service": false,
       "relevance": 90,
       "tools": [
         {
@@ -16927,7 +16927,7 @@
         }
       ],
       "requires_auth": true,
-      "self_service": true,
+      "self_service": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,

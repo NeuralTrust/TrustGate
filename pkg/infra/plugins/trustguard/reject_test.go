@@ -134,6 +134,36 @@ func TestBlockBodyIncludesGateName(t *testing.T) {
 	}
 }
 
+func TestBlockBodyCopiesOnlyBlockOrAsk(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "block", status: statusBlock, want: statusBlock},
+		{name: "ask", status: statusAsk, want: statusAsk},
+		{name: "unknown", status: "blok", want: statusBlock},
+		{name: "empty", status: "", want: statusBlock},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := blockBody(&GuardResponse{Status: tc.status}, blockMessage, directionInput)
+			var body struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if body.Status != tc.want {
+				t.Fatalf("status = %q, want %q", body.Status, tc.want)
+			}
+		})
+	}
+}
+
 func TestClientBlockMessageFallsBackWithoutFindings(t *testing.T) {
 	t.Parallel()
 

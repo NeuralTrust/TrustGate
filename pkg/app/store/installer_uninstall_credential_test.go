@@ -647,3 +647,50 @@ func TestConcurrentUninstallOfSharedCredentialLeavesNothing(t *testing.T) {
 		t.Fatalf("deleteByID = %d, want both installs removed", installs.deleteByID)
 	}
 }
+
+type flakyDeleteInstalls struct {
+	*fakeInstalls
+	failures int
+}
+
+func (f *flakyDeleteInstalls) DeleteByID(ctx context.Context, gw ids.GatewayID, sub string, id ids.InstallationID) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("postgres unavailable")
+	}
+	return f.fakeInstalls.DeleteByID(ctx, gw, sub, id)
+}
+
+func TestUninstallRowDeleteErrorStillRevokesTheRemovedCredential(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := oauthRegistry("github", "GitHub", "github", "https://mcp.github.com/mcp")
+	provider := registrydomain.ForwardedVaultProvider(reg)
+	cred, err := vaultdomain.NewCredential(gw, "ana", provider, "", "access-token", "refresh-token", nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := &recordingVault{creds: map[string]*vaultdomain.Credential{credKey("ana", provider): cred}}
+	revoker := &fakeRevoker{}
+	row := installedRow("github", reg.ID)
+	rows := []*installationdomain.Installation{row}
+	installs := &flakyDeleteInstalls{fakeInstalls: &fakeInstalls{byCode: rows, byPrincipal: rows}, failures: 1}
+	inst := credentialInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{reg}}, installs, vault, revoker, nil)
+
+	err = inst.Uninstall(context.Background(), gw, "ana", "github", "")
+	if err == nil || !strings.Contains(err.Error(), "postgres unavailable") {
+		t.Fatalf("Uninstall error = %v, want the row delete error", err)
+	}
+	if revoker.calls != 1 || len(revoker.tokens) != 2 || revoker.tokens[1] != "refresh-token" {
+		t.Fatalf("revoker calls=%d tokens=%v, want the removed credential revoked", revoker.calls, revoker.tokens)
+	}
+
+	if err := inst.Uninstall(context.Background(), gw, "ana", "github", ""); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if row.Status != installationdomain.StatusRevoked {
+		t.Fatalf("installation status = %s, want revoked after the retry", row.Status)
+	}
+	if revoker.calls != 1 {
+		t.Fatalf("revoker calls = %d after the retry, want 1", revoker.calls)
+	}
+}

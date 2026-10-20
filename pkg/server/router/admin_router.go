@@ -108,6 +108,8 @@ type AdminRouterDeps struct {
 	RotateAuth              *authhttp.RotateAuthHandler
 	UpdateAuthBudget        *authhttp.UpdateAuthBudgetHandler
 	UpdateAuthOwnerGroups   *authhttp.UpdateAuthOwnerGroupsHandler
+	UpdateSubjectGroups     *authhttp.UpdateSubjectGroupsHandler
+	DeleteSubjectSessions   *authhttp.DeleteSubjectSessionsHandler
 	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
@@ -269,10 +271,25 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
 	auths.Post("/:id/rotate", r.deps.RotateAuth.Handle)
 	auths.Put("/:id/budget", r.deps.UpdateAuthBudget.Handle)
+	// A service credential with auths:write must not write groups onto someone
+	// else's session. Every caller of these two routes is a console JWT
+	// (a person, or the platform token the functional tests mint).
+	directoryGroups := r.deps.AdminAuthz.RequireInteractiveIdentity()
 	if r.deps.UpdateAuthOwnerGroups != nil {
-		auths.Put("/:id/groups", r.deps.UpdateAuthOwnerGroups.Handle)
+		auths.Put("/:id/groups", directoryGroups, r.deps.UpdateAuthOwnerGroups.Handle)
 	}
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
+	// One /subjects group. Gateway access is on the group. Both routes refuse
+	// a service credential: a groups push and offboarding present a console JWT.
+	if r.deps.UpdateSubjectGroups != nil || r.deps.DeleteSubjectSessions != nil {
+		subjects := gw.Group("/:gateway_id/subjects", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
+		if r.deps.UpdateSubjectGroups != nil {
+			subjects.Put("/:user_id/groups", directoryGroups, r.deps.UpdateSubjectGroups.Handle)
+		}
+		if r.deps.DeleteSubjectSessions != nil {
+			subjects.Delete("/:user_id/sessions", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.DeleteSubjectSessions.Handle)
+		}
+	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential
 	// is bound to one gateway and has no business reading platform-wide data.

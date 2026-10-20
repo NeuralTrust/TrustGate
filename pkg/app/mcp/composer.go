@@ -107,6 +107,11 @@ type binding struct {
 	registry *registrydomain.Registry
 	tool     Tool
 	exposed  string
+	// legacyLocal is the name v0.66.0 prefixed: the toolkit ExposeAs when one
+	// was set, otherwise the upstream name. It is captured before v2 naming
+	// replaces exposed. Empty on rows that exist only so prefix stripping sees
+	// the full upstream list.
+	legacyLocal string
 }
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
@@ -139,7 +144,11 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, ErrNoMCPRegistries
+		// Listing answers nothing attached with an empty surface. A tools/call
+		// name that is not a gateway tool is then unknown, on the Store and on
+		// an application. Gateway tools are answered before Resolve, and
+		// nothing here dials an upstream.
+		return nil, &UnknownToolError{Name: name}
 	}
 	// The exposed name carries its server. Servers that do not fit its prefix
 	// are not dialed: dialing them minted a connect ticket for whichever
@@ -169,12 +178,18 @@ func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer
 	// returned, including ones the toolkit will not publish, so hiding a
 	// sibling cannot point an existing name at a different upstream tool.
 	// Cross-server suffixes count published tools only.
-	chosen, ok, err := matchExposed(assignExposedNames(surfaces), name)
+	published := assignExposedNames(surfaces)
+	chosen, ok, err := matchExposed(published, name)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
 		return &ResolvedTool{Registry: chosen.registry, Tool: chosen.tool, Exposed: chosen.exposed}, nil
+	}
+	if legacy, ok := matchLegacyExposed(published, name); ok && !denied(surfaces, name) {
+		c.logger.Info("mcp composer: resolved a pre-v2 tool name",
+			"registry", legacy.registry.Name, "name", name, "exposed", legacy.exposed)
+		return &ResolvedTool{Registry: legacy.registry, Tool: legacy.tool, Exposed: legacy.exposed}, nil
 	}
 	if unscoped {
 		if denied(surfaces, name) {
@@ -234,6 +249,28 @@ func matchExposed(bindings []binding, name string) (binding, bool, error) {
 		seen = true
 	}
 	return found, seen, nil
+}
+
+// matchLegacyExposed returns the single published binding whose v0.66.0
+// spelling is name. That spelling is built from the toolkit ExposeAs when the
+// tool was renamed, and from the upstream name otherwise. It runs only after
+// no current name matched, so a v2 name always wins, a spelling two bindings
+// share resolves to neither, and Resolve skips it when a toolkit turned that
+// exact name away.
+func matchLegacyExposed(bindings []binding, name string) (binding, bool) {
+	var found binding
+	seen := false
+	for _, b := range bindings {
+		if b.legacyLocal == "" || legacyExposedName(b.legacyLocal, b.registry) != name {
+			continue
+		}
+		if seen {
+			return binding{}, false
+		}
+		found = b
+		seen = true
+	}
+	return found, seen
 }
 
 // denied reports whether a serving surface turned this exact name away. A
@@ -570,6 +607,9 @@ func assignExposedNames(surfaces []serverSurface) []binding {
 		selected := make(map[string]struct{}, len(surface.bindings))
 		for _, sel := range surface.bindings {
 			selected[sel.tool.Name] = struct{}{}
+			// exposed is still the toolkit's local name here: ExposeAs when
+			// set, otherwise the upstream name. v0.66.0 prefixed that.
+			sel.legacyLocal = sel.exposed
 			published = append(published, sel)
 		}
 		for _, tool := range surface.upstream {

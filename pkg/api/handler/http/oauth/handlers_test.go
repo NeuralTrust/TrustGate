@@ -72,6 +72,10 @@ func (s *memFlowStore) TakePending(context.Context, string) (*appoauth.PendingAu
 
 func (s *memFlowStore) SaveCode(context.Context, string, appoauth.CodeGrant) error { return nil }
 
+func (s *memFlowStore) GetCode(context.Context, string) (*appoauth.CodeGrant, error) {
+	return nil, nil
+}
+
 func (s *memFlowStore) TakeCode(context.Context, string) (*appoauth.CodeGrant, error) {
 	return nil, nil
 }
@@ -103,6 +107,12 @@ func (s *memFlowStore) GetSession(context.Context, string) (*appoauth.SessionRec
 }
 
 func (s *memFlowStore) RetireSession(context.Context, string, time.Duration) error { return nil }
+
+func (s *memFlowStore) SubjectRevokedAt(context.Context, string, string, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+func (s *memFlowStore) DeleteSession(context.Context, string) error { return nil }
 
 func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil, newMemFlowStore())

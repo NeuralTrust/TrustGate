@@ -16,9 +16,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -64,12 +67,9 @@ func TestInstallSameConfigRefreshesTheInstance(t *testing.T) {
 	installs := &fakeInstalls{byCode: rows}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "db3"}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !res.AlreadyInstalled || res.InstanceID != rows[3].ID.String() {
-		t.Fatalf("same-config install must refresh the existing instance, got %+v", res)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("employee config must not select an instance, got %v", err)
 	}
 }
 
@@ -204,6 +204,109 @@ func TestInstallSelectedCodeGrantStaticOnlyRequiresAdminSetup(t *testing.T) {
 	}
 }
 
+// These six catalog entries carry a non-secret URL variable. An employee
+// install with no admin row asks for that setup instead of failing as bad
+// config. Sending the variable is still refused: the admin writes it.
+func TestInstall_AdminOnlyURLVariableEntriesRequireAdminSetup(t *testing.T) {
+	cat, err := appcatalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	codes := []string{
+		"io.aha/mcp",
+		"com.algolia/mcp",
+		"com.gorgias/mcp",
+		"io.n8n/mcp",
+		"com.shopify/storefront",
+		"com.vanta/mcp",
+	}
+	for _, code := range codes {
+		t.Run(code, func(t *testing.T) {
+			gw := ids.New[ids.GatewayKind]()
+			regs := &fakeRegistries{}
+			ensurer := &fakeEnsurer{addTo: regs}
+			installs := &fakeInstalls{}
+			inst, err := NewInstaller(cat, regs, installs, nil, ensurer)
+			if err != nil {
+				t.Fatalf("NewInstaller: %v", err)
+			}
+			res, err := inst.Install(context.Background(), openReq(gw, code))
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if !res.RequiresAdminSetup || res.Status != "" || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
+				t.Fatalf("want requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+			}
+		})
+	}
+
+	// A store-origin row left over with the catalog template still in its URL
+	// still needs admin setup. The install reports the same result and does
+	// not rewrite the row.
+	for _, code := range codes {
+		t.Run(code+" placeholder registry", func(t *testing.T) {
+			entry, ok := cat.GetByCode(code)
+			if !ok {
+				t.Fatalf("catalog missing %s", code)
+			}
+			gw := ids.New[ids.GatewayKind]()
+			reg := shelfRegistry(code)
+			reg.MCPTarget.URL = entry.URL
+			reg.MCPTarget.Origin = registrydomain.MCPOriginStore
+			regs := &fakeRegistries{items: []*registrydomain.Registry{reg}}
+			ensurer := &fakeEnsurer{addTo: regs}
+			installs := &fakeInstalls{}
+			inst, err := NewInstaller(cat, regs, installs, nil, ensurer)
+			if err != nil {
+				t.Fatalf("NewInstaller: %v", err)
+			}
+			res, err := inst.Install(context.Background(), openReq(gw, code))
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if !res.RequiresAdminSetup || res.Status != "" || res.InstanceID != "" || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
+				t.Fatalf("want requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+			}
+			if regs.items[0].MCPTarget.URL != entry.URL {
+				t.Fatalf("registry URL = %q, want the placeholder left as stored", regs.items[0].MCPTarget.URL)
+			}
+		})
+	}
+
+	gw := ids.New[ids.GatewayKind]()
+	inst, err := NewInstaller(cat, &fakeRegistries{}, &fakeInstalls{}, nil, &fakeEnsurer{})
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	in := openReq(gw, "com.shopify/storefront")
+	in.Config = map[string]string{"shop": "allbirds"}
+	_, err = inst.Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("employee shop must be rejected, got %v", err)
+	}
+
+	// The same variable written into the registry URL is admin setup, so the
+	// install proceeds.
+	filled := shelfRegistry("com.shopify/storefront")
+	filled.MCPTarget.URL = "https://allbirds.myshopify.com/api/mcp"
+	filledRegs := &fakeRegistries{items: []*registrydomain.Registry{filled}}
+	filledInstalls := &fakeInstalls{}
+	filledInst, err := NewInstaller(cat, filledRegs, filledInstalls, nil, &fakeEnsurer{})
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	res, err := filledInst.Install(context.Background(), openReq(ids.New[ids.GatewayKind](), "com.shopify/storefront"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.RequiresAdminSetup || res.Status != installationdomain.StatusInstalled || len(filledInstalls.upserts) != 1 {
+		t.Fatalf("a filled shop must install, got %+v upserts=%d", res, len(filledInstalls.upserts))
+	}
+	if filled.MCPTarget.URL != "https://allbirds.myshopify.com/api/mcp" {
+		t.Fatalf("filled registry URL rewritten to %q", filled.MCPTarget.URL)
+	}
+}
+
 // A principal may hold as many instances of a server as their work needs — a
 // schema per team, an account per region. There is no ceiling: the grants say
 // what they may install, and that is the whole governance.
@@ -213,11 +316,136 @@ func TestInstallDoesNotCapTheNumberOfInstances(t *testing.T) {
 	installs := &fakeInstalls{byCode: liveRows("snowflake", 50, installationdomain.StatusInstalled)}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err == nil || !errors.Is(err, ErrConfigInvalid) || !strings.Contains(err.Error(), "is set by an admin") {
+		t.Fatalf("another database is another registry row, got %v", err)
+	}
+}
+
+// An enabled registry whose required admin URL variable is still the catalog
+// placeholder is not a usable instance. The oldest such row is not offered
+// first, and it is not installed unless the caller names it — naming it is
+// still the unfilled-variable refusal, with nothing recorded.
+func TestInstall_UnfilledAdminInstanceIsNotUsable(t *testing.T) {
+	cat, err := appcatalog.NewMCPServerCatalog(nil)
 	if err != nil {
-		t.Fatalf("Install: %v", err)
+		t.Fatalf("catalog: %v", err)
 	}
-	if res.Status != installationdomain.StatusInstalled || res.AlreadyInstalled {
-		t.Fatalf("the 51st instance must install like any other, got %+v", res)
+	const code = "io.n8n/mcp"
+	entry, ok := cat.GetByCode(code)
+	if !ok {
+		t.Fatalf("catalog missing %s", code)
 	}
+	instance := func(name, rawURL string) *registrydomain.Registry {
+		reg := namedRegistry(code, name)
+		reg.MCPTarget.URL = rawURL
+		return reg
+	}
+	install := func(t *testing.T, items []*registrydomain.Registry, in InstallRequest) (*InstallResult, *fakeInstalls, error) {
+		t.Helper()
+		regs := &fakeRegistries{items: items}
+		installs := &fakeInstalls{}
+		ensurer := &fakeEnsurer{}
+		inst, err := NewInstaller(cat, regs, installs, nil, ensurer)
+		if err != nil {
+			t.Fatalf("NewInstaller: %v", err)
+		}
+		res, err := inst.Install(context.Background(), in)
+		if len(ensurer.ensured) != 0 {
+			t.Fatalf("must not materialise, got %+v", ensurer.ensured)
+		}
+		return res, installs, err
+	}
+
+	// Oldest row first, so a choice that forgot to skip it would list it first.
+	t.Run("one configured instance", func(t *testing.T) {
+		gw := ids.New[ids.GatewayKind]()
+		def := instance("Default", entry.URL)
+		configured := instance("A", "https://a.example.com/mcp-server/http")
+		res, installs, err := install(t, []*registrydomain.Registry{def, configured}, openReq(gw, code))
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if res.RequiresAdminSetup || res.RequiresInstanceChoice || res.Status != installationdomain.StatusInstalled {
+			t.Fatalf("the configured instance must install, got %+v", res)
+		}
+		if len(installs.upserts) != 1 || installs.upserts[0].RegistryID != configured.ID || res.RegistryID != configured.ID {
+			t.Fatalf("install must bind to the configured instance, got %+v upserts=%+v", res, installs.upserts)
+		}
+		if def.MCPTarget.URL != entry.URL {
+			t.Fatalf("unfilled URL rewritten to %q", def.MCPTarget.URL)
+		}
+	})
+
+	t.Run("choice omits unfilled", func(t *testing.T) {
+		gw := ids.New[ids.GatewayKind]()
+		def := instance("Default", entry.URL)
+		a := instance("A", "https://a.example.com/mcp-server/http")
+		b := instance("B", "https://b.example.com/mcp-server/http")
+		res, installs, err := install(t, []*registrydomain.Registry{def, a, b}, openReq(gw, code))
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if !res.RequiresInstanceChoice || res.RequiresAdminSetup || len(res.InstanceChoices) != 2 {
+			t.Fatalf("expected a two-way choice, got %+v", res)
+		}
+		if res.InstanceChoices[0].RegistryID != a.ID || res.InstanceChoices[0].Name != "A" ||
+			res.InstanceChoices[1].RegistryID != b.ID || res.InstanceChoices[1].Name != "B" {
+			t.Fatalf("choices must be the configured instances in creation order, got %+v", res.InstanceChoices)
+		}
+		for _, choice := range res.InstanceChoices {
+			if choice.RegistryID == def.ID {
+				t.Fatalf("unfilled instance must be omitted, got %+v", res.InstanceChoices)
+			}
+		}
+		if len(installs.upserts) != 0 {
+			t.Fatalf("a choice result must record nothing, got %+v", installs.upserts)
+		}
+	})
+
+	t.Run("every instance unfilled", func(t *testing.T) {
+		gw := ids.New[ids.GatewayKind]()
+		def := instance("Default", entry.URL)
+		other := instance("Other", entry.URL)
+		res, installs, err := install(t, []*registrydomain.Registry{def, other}, openReq(gw, code))
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if !res.RequiresAdminSetup || res.RequiresInstanceChoice || res.Status != "" || res.InstanceID != "" || len(installs.upserts) != 0 {
+			t.Fatalf("want requires-admin-setup with no side effects, got %+v upserts=%d", res, len(installs.upserts))
+		}
+		if def.MCPTarget.URL != entry.URL || other.MCPTarget.URL != entry.URL {
+			t.Fatalf("placeholder URLs rewritten: %q %q", def.MCPTarget.URL, other.MCPTarget.URL)
+		}
+	})
+
+	t.Run("named unfilled instance", func(t *testing.T) {
+		gw := ids.New[ids.GatewayKind]()
+		def := instance("Default", entry.URL)
+		configured := instance("A", "https://a.example.com/mcp-server/http")
+		in := openReq(gw, code)
+		in.RegistryID = def.ID
+		res, installs, err := install(t, []*registrydomain.Registry{def, configured}, in)
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if !res.RequiresAdminSetup || res.RequiresInstanceChoice || res.Status != "" || res.InstanceID != "" || len(installs.upserts) != 0 {
+			t.Fatalf("naming the unfilled instance must need admin setup and record nothing, got %+v upserts=%d", res, len(installs.upserts))
+		}
+		if def.MCPTarget.URL != entry.URL {
+			t.Fatalf("unfilled URL rewritten to %q", def.MCPTarget.URL)
+		}
+
+		in.RegistryID = configured.ID
+		res, installs, err = install(t, []*registrydomain.Registry{def, configured}, in)
+		if err != nil {
+			t.Fatalf("Install named configured: %v", err)
+		}
+		if res.RequiresAdminSetup || res.RequiresInstanceChoice || res.Status != installationdomain.StatusInstalled {
+			t.Fatalf("the named configured instance must install, got %+v", res)
+		}
+		if len(installs.upserts) != 1 || installs.upserts[0].RegistryID != configured.ID {
+			t.Fatalf("named configured instance must be the only row, got %+v", installs.upserts)
+		}
+	})
 }

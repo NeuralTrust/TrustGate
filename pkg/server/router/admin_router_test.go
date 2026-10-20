@@ -15,12 +15,16 @@
 package router_test
 
 import (
+	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
@@ -80,4 +84,90 @@ func TestAdminRouterRefusesServiceCredentialsOnThePersonalKey(t *testing.T) {
 			assert.Contains(t, string(raw), "Use a credential scoped to this gateway", "a route guard answers before the handler")
 		}
 	}
+}
+
+func TestAdminRouterRefusesServiceCredentialsOnDirectoryGroups(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	write := middleware.RequiredScope(middleware.ResourceAuths, fiber.MethodPut)
+	token := "eyJhbGciOiJSUzI1NiJ9.e30.auths-write"
+	verifier := jwtmocks.NewServiceVerifier(t)
+	verifier.EXPECT().Enabled().Return(true)
+	verifier.EXPECT().Verify(mock.Anything).Return(&jwt.ServiceClaims{
+		TenantID: "t1", GatewayID: gatewayID.String(), Scopes: []string{write},
+	}, nil)
+	gateways := gatewaymocks.NewFinder(t)
+	gateways.EXPECT().FindByID(mock.Anything, gatewayID).
+		Return(&gatewaydomain.Gateway{ID: gatewayID, Metadata: gatewaydomain.WithTenantID(nil, "t1")}, nil)
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport:   middleware.NewTransport(),
+		AdminAuth:             middleware.NewAdminAuthMiddleware(nil, nil, verifier, false),
+		AdminAuthz:            middleware.NewAdminAuthzMiddleware(nil, gateways),
+		UpdateAuthOwnerGroups: authhttp.NewUpdateAuthOwnerGroupsHandler(nil, nil, nil, nil, nil),
+		UpdateSubjectGroups:   authhttp.NewUpdateSubjectGroupsHandler(nil, nil),
+	}).BuildRoutes(app))
+
+	routes := []string{
+		"/v1/gateways/" + gatewayID.String() + "/auths/" + ids.New[ids.AuthKind]().String() + "/groups",
+		"/v1/gateways/" + gatewayID.String() + "/subjects/user-1/groups",
+	}
+	for _, path := range routes {
+		req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(`{"groups":["eng"]}`))
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+token)
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		res, err := app.Test(req)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		assert.Equal(t, http.StatusForbidden, res.StatusCode, "%s: %s", path, raw)
+		assert.Contains(t, string(raw), "Use a credential scoped to this gateway")
+	}
+}
+
+// A service credential with auths:write is bound to one gateway. Offboarding
+// does not use it: the app sends the console JWT. The route must refuse the
+// machine token before the handler runs.
+func TestAdminRouterRefusesServiceCredentialsOnSubjectSessions(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	write := middleware.RequiredScope(middleware.ResourceAuths, fiber.MethodDelete)
+	token := "eyJhbGciOiJSUzI1NiJ9.e30.sessions"
+	verifier := jwtmocks.NewServiceVerifier(t)
+	verifier.EXPECT().Enabled().Return(true)
+	verifier.EXPECT().Verify(token).Return(&jwt.ServiceClaims{
+		TenantID: "t1", GatewayID: gatewayID.String(), Scopes: []string{write},
+	}, nil)
+	gateways := gatewaymocks.NewFinder(t)
+	gateways.EXPECT().FindByID(mock.Anything, gatewayID).
+		Return(&gatewaydomain.Gateway{ID: gatewayID, Metadata: gatewaydomain.WithTenantID(nil, "t1")}, nil)
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport: middleware.NewTransport(),
+		AdminAuth:           middleware.NewAdminAuthMiddleware(nil, nil, verifier, false),
+		AdminAuthz:          middleware.NewAdminAuthzMiddleware(nil, gateways),
+		DeleteSubjectSessions: authhttp.NewDeleteSubjectSessionsHandler(
+			subjectSessionsMustNotRun{},
+			nil,
+			nil,
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+		),
+	}).BuildRoutes(app))
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/gateways/"+gatewayID.String()+"/subjects/user-1/sessions", nil)
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+token)
+	res, err := app.Test(req)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	assert.Equal(t, http.StatusForbidden, res.StatusCode, string(raw))
+	assert.Contains(t, string(raw), "Use a credential scoped to this gateway")
+}
+
+type subjectSessionsMustNotRun struct{}
+
+func (subjectSessionsMustNotRun) RevokeSubjectSessions(context.Context, string, string, string) (int, error) {
+	return 0, errors.New("handler must not run")
 }

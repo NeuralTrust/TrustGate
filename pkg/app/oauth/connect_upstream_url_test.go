@@ -64,27 +64,30 @@ func awsRegistry() *registrydomain.Registry {
 // with "bad upstream url" however its values had been given.
 func TestDiscoverResolvesTheTemplateForThePrincipal(t *testing.T) {
 	registrar := &recordingRegistrar{}
-	s := &connectService{registrar: registrar, urlValues: staticURLValues{"ana": {"region": "eu-west-1"}}}
+	s := &connectService{registrar: registrar, urlValues: staticURLValues{"ana": {"region": "us-east-1"}}}
+	reg := awsRegistry()
+	reg.MCPTarget.URL = "https://aws-mcp.eu-west-1.api.aws/mcp"
 
-	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", awsRegistry(), upstreamResolution{}); err != nil {
+	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg, upstreamResolution{}); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	if len(registrar.discovered) != 1 || registrar.discovered[0] != "https://aws-mcp.eu-west-1.api.aws/mcp" {
-		t.Fatalf("discovered %v, want the resolved URL", registrar.discovered)
+		t.Fatalf("discovered %v, want the admin URL, not the install value", registrar.discovered)
 	}
 }
 
 func TestDiscoverReadsARegistryThatCarriesItsOwnValues(t *testing.T) {
 	registrar := &recordingRegistrar{}
-	s := &connectService{registrar: registrar}
+	s := &connectService{registrar: registrar, urlValues: staticURLValues{"ana": {"region": "eu-west-1"}}}
 	reg := awsRegistry()
-	reg.MCPTarget.InstanceConfig = map[string]string{"region": "us-east-1"}
+	reg.MCPTarget.URL = "https://aws-mcp.us-east-1.api.aws/mcp"
+	reg.MCPTarget.InstanceConfig = map[string]string{"region": "eu-west-1"}
 
 	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg, upstreamResolution{}); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 	if registrar.discovered[0] != "https://aws-mcp.us-east-1.api.aws/mcp" {
-		t.Fatalf("discovered %v", registrar.discovered)
+		t.Fatalf("discovered %v, want the admin URL", registrar.discovered)
 	}
 }
 
@@ -107,8 +110,9 @@ func TestDiscoverRefusesAPrivateResolvedHost(t *testing.T) {
 	registrar := &recordingRegistrar{}
 	s := &connectService{registrar: registrar, urlValues: staticURLValues{"ana": {"domain": "localhost"}}}
 	reg := &registrydomain.Registry{MCPTarget: &registrydomain.MCPTarget{
-		URL:          "https://{domain}/mcp",
-		URLVariables: []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
+		URL:            "https://localhost/mcp",
+		URLVariables:   []registrydomain.MCPURLVariable{{Name: "domain", Required: true}},
+		InstanceConfig: map[string]string{"domain": "example.com"},
 	}}
 
 	if _, err := s.discover(context.Background(), ids.New[ids.GatewayKind](), "ana", reg, upstreamResolution{}); err == nil {
