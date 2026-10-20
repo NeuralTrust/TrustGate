@@ -21,6 +21,8 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
 
 const (
@@ -125,7 +127,10 @@ func (d *Dispatcher) SnapshotAge() (time.Duration, bool) {
 // Restore loads the persisted snapshots into the holder so the admin serves
 // them until a compile succeeds. It never blocks past a bound and never fails:
 // a row it cannot trust is skipped with a WARN, and a store error leaves the
-// holder empty exactly as before. Call it once, before Run.
+// holder empty exactly as before. Revocations are seeded only when every row
+// is usable. A rejected row is omitted from that seed, and seeding anyway would
+// let the next failed read publish that gateway with its markers missing. Call
+// it once, before Run.
 func (d *Dispatcher) Restore(ctx context.Context) {
 	l := d.lkg
 	if l == nil {
@@ -143,21 +148,24 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 	}
 
 	type restored struct {
-		raw        []byte
-		version    string
-		compiledAt time.Time
+		raw         []byte
+		version     string
+		compiledAt  time.Time
+		revocations []readmodel.SessionRevocation
 	}
 	good := map[string]restored{}
+	rejected := false
 	for _, rec := range records {
-		raw, reason := d.openRecord(rec)
+		raw, revocations, reason := d.openRecord(rec)
 		if reason != "" {
+			rejected = true
 			recordLKGLoad(ctx, reason)
 			d.logger.Warn("persisted config snapshot row rejected",
 				slog.String("component", component),
 				slog.String("scope", rec.Scope), slog.String("reason", reason))
 			continue
 		}
-		good[rec.Scope] = restored{raw: raw, version: rec.Version, compiledAt: rec.CompiledAt}
+		good[rec.Scope] = restored{raw: raw, version: rec.Version, compiledAt: rec.CompiledAt, revocations: revocations}
 	}
 
 	global, ok := good[GlobalScope]
@@ -169,9 +177,11 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		return
 	}
 	scoped := make(map[string]ScopedSnapshot, len(good))
+	revocations := make([][]readmodel.SessionRevocation, 0, len(good))
 	oldest := global.compiledAt
 	for scope, r := range good {
 		l.persisted[scope] = r.version
+		revocations = append(revocations, r.revocations)
 		if scope == GlobalScope {
 			continue
 		}
@@ -179,6 +189,12 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		if r.compiledAt.Before(oldest) {
 			oldest = r.compiledAt
 		}
+	}
+	if rejected {
+		d.logger.Warn("persisted config snapshot row was rejected; session revocations were not seeded",
+			slog.String("component", component))
+	} else {
+		d.seedRestoredRevocations(revocations)
 	}
 	d.holder.SetPartitioned(global.raw, global.version, scoped)
 	l.servedAt.Store(oldest.UnixNano())
@@ -193,27 +209,83 @@ func (d *Dispatcher) Restore(ctx context.Context) {
 		slog.Duration("age", l.now().Sub(oldest)))
 }
 
-// openRecord returns the snapshot bytes of a trustworthy row, or the reason the
-// row is not trusted.
-func (d *Dispatcher) openRecord(rec LKGRecord) ([]byte, string) {
+// openRecord returns the snapshot bytes and revocation markers of a trustworthy
+// row, or the reason the row is not trusted. Only the markers are kept; the
+// decoded snapshot, including its catalog, is not retained.
+func (d *Dispatcher) openRecord(rec LKGRecord) ([]byte, []readmodel.SessionRevocation, string) {
 	l := d.lkg
 	if rec.KeyID != l.sealer.KeyID() {
-		return nil, "key_mismatch"
+		return nil, nil, "key_mismatch"
 	}
 	if l.now().Sub(rec.CompiledAt) > l.maxAge {
-		return nil, "expired"
+		return nil, nil, "expired"
 	}
 	raw, err := l.sealer.Open(rec.Scope, rec.Version, rec.Payload)
 	if err != nil {
-		return nil, "undecryptable"
+		return nil, nil, "undecryptable"
 	}
 	if d.codec.Version(raw) != rec.Version {
-		return nil, "checksum_mismatch"
+		return nil, nil, "checksum_mismatch"
 	}
-	if _, err := d.codec.Decode(raw); err != nil {
-		return nil, "incompatible_snapshot"
+	snap, err := d.codec.Decode(raw)
+	if err != nil {
+		return nil, nil, "incompatible_snapshot"
 	}
-	return raw, ""
+	return raw, snapshotRevocations(snap), ""
+}
+
+// seedRestoredRevocations copies markers out of the snapshots just restored so
+// the next compile can republish them when the revocation table cannot be read.
+func (d *Dispatcher) seedRestoredRevocations(groups [][]readmodel.SessionRevocation) {
+	seeder, ok := d.compiler.(sessionRevocationSeeder)
+	if !ok {
+		return
+	}
+	seeder.SeedSessionRevocations(revocationsFromRestored(groups))
+}
+
+// snapshotRevocations copies the markers off a decoded snapshot. The copy is
+// what Restore retains, so the snapshot and its catalog can be released.
+func snapshotRevocations(snap *readmodel.Snapshot) []readmodel.SessionRevocation {
+	if snap == nil {
+		return nil
+	}
+	rows := snap.Data().SessionRevocations
+	out := make([]readmodel.SessionRevocation, 0, len(rows))
+	for _, row := range rows {
+		if row.GatewayID == "" || row.Org == "" || row.Subject == "" || row.RevokedAt.IsZero() {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// revocationsFromRestored unions markers from the restored snapshots. The same
+// subject can ride the global snapshot and its scoped one; the later instant
+// wins, matching the table's upsert.
+func revocationsFromRestored(groups [][]readmodel.SessionRevocation) []readmodel.SessionRevocation {
+	type key struct {
+		gatewayID string
+		org       string
+		subject   string
+	}
+	byKey := make(map[key]readmodel.SessionRevocation)
+	for _, rows := range groups {
+		for _, row := range rows {
+			k := key{row.GatewayID, row.Org, row.Subject}
+			prev, ok := byKey[k]
+			if ok && !row.RevokedAt.After(prev.RevokedAt) {
+				continue
+			}
+			byKey[k] = row
+		}
+	}
+	out := make([]readmodel.SessionRevocation, 0, len(byKey))
+	for _, row := range byKey {
+		out = append(out, row)
+	}
+	return out
 }
 
 // compiledAt stamps a compile with the persistence clock.

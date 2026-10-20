@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -127,6 +128,10 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: publicMessage(err, msgInvalidConfigHint)}
+	case errors.Is(err, appstore.ErrConfigInvalid):
+		// Install config errors name the variable and the rule. They do not
+		// include the supplied value, so a secret passed inline cannot leak.
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_install_config", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrResultTooLarge):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: publicMessage(err, msgResultTooLargeHint)}
 	case errors.Is(err, commonerrors.ErrUpstreamUnavailable):

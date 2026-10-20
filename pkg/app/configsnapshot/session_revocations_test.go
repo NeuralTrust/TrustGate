@@ -29,9 +29,14 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	sessionrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/sessionrevocation"
+	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 type revocationsReader struct {
@@ -169,4 +174,203 @@ func TestCompileWithoutSessionRevocationsLeavesTheSnapshotWithoutThem(t *testing
 	assert.Empty(t, snap.Data().SessionRevocations)
 	_, ok := snap.SessionRevokedAt(capsAcme, "acme", "user-1")
 	assert.False(t, ok)
+}
+
+func TestCompileSessionRevocationReadErrorWithoutSeedFails(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev); _ = mp.Shutdown(context.Background()) })
+
+	readErr := errors.New("db down")
+	c := compilerWithRevocations(t, &revocationsReader{err: readErr}, 0)
+
+	snap, err := c.CompileFor(context.Background(), capsAcme)
+	require.ErrorIs(t, err, readErr)
+	assert.Nil(t, snap)
+
+	global, scoped, catalog, err := c.CompileAll(context.Background())
+	require.ErrorIs(t, err, readErr)
+	assert.Nil(t, global)
+	assert.Nil(t, scoped)
+	assert.Nil(t, catalog)
+
+	assert.EqualValues(t, 2, sessionRevocationErrors(t, reader, "fail_closed"))
+	assert.EqualValues(t, 0, sessionRevocationErrors(t, reader, "fallback"))
+}
+
+func TestCompileSessionRevocationReadErrorWithSeedKeepsPrior(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev); _ = mp.Shutdown(context.Background()) })
+
+	now := time.Now()
+	c := compilerWithRevocations(t, &revocationsReader{err: errors.New("db down")}, 0)
+	c.SeedSessionRevocations([]readmodel.SessionRevocation{
+		{GatewayID: capsAcme, Org: "acme", Subject: "user-1", RevokedAt: now.Add(-time.Hour)},
+		{GatewayID: capsAcme, Org: "acme", Subject: "old", RevokedAt: now.Add(-40 * 24 * time.Hour)},
+		{GatewayID: capsGlobex, Org: "globex", Subject: "user-2", RevokedAt: now.Add(-time.Minute)},
+	})
+
+	snap, err := c.CompileFor(context.Background(), capsAcme)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"user-1"}, subjects(snap.Data().SessionRevocations))
+
+	global, scoped, _, err := c.CompileAll(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"user-1"}, subjects(global.Data().SessionRevocations))
+	assert.Equal(t, []string{"user-1"}, subjects(scoped[capsAcme].Data().SessionRevocations))
+	assert.Equal(t, []string{"user-2"}, subjects(scoped[capsGlobex].Data().SessionRevocations))
+
+	assert.EqualValues(t, 2, sessionRevocationErrors(t, reader, "fallback"))
+	assert.EqualValues(t, 0, sessionRevocationErrors(t, reader, "fail_closed"))
+}
+
+func TestCompileSessionRevocationReadErrorWithEmptySeedPublishesNone(t *testing.T) {
+	t.Parallel()
+	c := compilerWithRevocations(t, &revocationsReader{err: errors.New("db down")}, 0)
+	c.SeedSessionRevocations(nil)
+
+	snap, err := c.CompileFor(context.Background(), capsAcme)
+	require.NoError(t, err)
+	assert.Empty(t, snap.Data().SessionRevocations)
+
+	global, scoped, _, err := c.CompileAll(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, global.Data().SessionRevocations)
+	assert.Empty(t, scoped[capsAcme].Data().SessionRevocations)
+}
+
+func TestRestoreSeedsSessionRevocations(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	listing := &revocationsReader{rows: revocationRows(now)}
+	store := newFakeLKGStore()
+	sealer, err := infrasnapshot.NewLKGSealer(lkgTestSecret(t))
+	require.NoError(t, err)
+	codec := infrasnapshot.NewCodec()
+
+	first := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, listing, 0),
+		codec,
+		appsnapshot.NewHolder(),
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	require.NoError(t, first.Dispatch(context.Background()))
+	require.NotZero(t, listing.calls)
+
+	failing := &revocationsReader{err: errors.New("db down")}
+	holder := appsnapshot.NewHolder()
+	restarted := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, failing, 0),
+		codec,
+		holder,
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	restarted.Restore(context.Background())
+	require.NoError(t, restarted.Dispatch(context.Background()))
+	require.NotZero(t, failing.calls, "the restarted compile must attempt the read and still publish")
+
+	globalRaw, _, ok := holder.Snapshot()
+	require.True(t, ok)
+	global, err := codec.Decode(globalRaw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"user-1"}, subjects(global.Data().SessionRevocations))
+
+	scopedRaw, _, ok := holder.SnapshotFor(capsGlobex)
+	require.True(t, ok)
+	scoped, err := codec.Decode(scopedRaw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"user-2"}, subjects(scoped.Data().SessionRevocations), "a hybrid gateway's marker is only in its scoped snapshot, so the seed has to come from that row")
+}
+
+func TestRestoreDoesNotSeedRevocationsWhenAScopedRowIsRejected(t *testing.T) {
+	t.Parallel()
+	listing := &revocationsReader{rows: revocationRows(time.Now())}
+	store := newFakeLKGStore()
+	sealer, err := infrasnapshot.NewLKGSealer(lkgTestSecret(t))
+	require.NoError(t, err)
+	codec := infrasnapshot.NewCodec()
+
+	firstHolder := appsnapshot.NewHolder()
+	first := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, listing, 0),
+		codec,
+		firstHolder,
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	require.NoError(t, first.Dispatch(context.Background()))
+	scopedRaw, _, ok := firstHolder.SnapshotFor(capsGlobex)
+	require.True(t, ok)
+	scoped, err := codec.Decode(scopedRaw)
+	require.NoError(t, err)
+	require.Equal(t, []string{"user-2"}, subjects(scoped.Data().SessionRevocations))
+
+	bad := store.row(capsGlobex)
+	bad.KeyID = "0000000000000000"
+	store.put(bad)
+
+	failing := &revocationsReader{err: errors.New("db down")}
+	holder := appsnapshot.NewHolder()
+	restarted := appsnapshot.NewDispatcher(
+		compilerWithRevocations(t, failing, 0),
+		codec,
+		holder,
+		&fakeBroadcaster{},
+		&fakeOutbox{},
+		nil,
+		appsnapshot.DispatcherConfig{},
+		appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{}),
+	)
+	restarted.Restore(context.Background())
+	_, _, globexRestored := holder.SnapshotFor(capsGlobex)
+	require.False(t, globexRestored)
+
+	dispatchErr := restarted.Dispatch(context.Background())
+	require.NotZero(t, failing.calls)
+	raw, _, served := holder.SnapshotFor(capsGlobex)
+	if served {
+		republished, decErr := codec.Decode(raw)
+		require.NoError(t, decErr)
+		assert.Contains(t, subjects(republished.Data().SessionRevocations), "user-2")
+	}
+	require.Error(t, dispatchErr)
+	assert.False(t, served, "a rejected hybrid row must not be republished without its markers")
+}
+
+func sessionRevocationErrors(t *testing.T, reader *sdkmetric.ManualReader, result string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	var count int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok || m.Name != "trustgate.configsnapshot.session_revocations.errors" {
+				continue
+			}
+			for _, dp := range sum.DataPoints {
+				got, _ := dp.Attributes.Value(attribute.Key("result"))
+				if got.AsString() == result {
+					count += dp.Value
+				}
+			}
+		}
+	}
+	return count
 }

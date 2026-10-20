@@ -49,6 +49,8 @@ type Store struct {
 // SetDefaultIDPSessionMaxAge records MCP_DEFAULT_IDP_SESSION_MAX_AGE. A
 // revocation marker lives for the longer of the idle session lifetime and
 // this absolute cap. A non-positive value leaves the idle lifetime in place.
+// The DELETE that writes the marker runs in the admin process, so the cap is
+// the one configured there, not only on MCP.
 func (s *Store) SetDefaultIDPSessionMaxAge(d time.Duration) {
 	if d > 0 {
 		s.sessionMaxAge = d
@@ -74,6 +76,22 @@ func (s *Store) TakePending(ctx context.Context, state string) (*appoauth.Pendin
 
 func (s *Store) SaveCode(ctx context.Context, code string, g appoauth.CodeGrant) error {
 	return s.save(ctx, codePrefix+code, g, codeTTL)
+}
+
+// GetCode reads a code grant and leaves it stored. TakeCode is what consumes it.
+func (s *Store) GetCode(ctx context.Context, code string) (*appoauth.CodeGrant, error) {
+	raw, err := s.rdb.Get(ctx, codePrefix+code).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth flow store: get code: %w", err)
+	}
+	var g appoauth.CodeGrant
+	if err := json.Unmarshal(raw, &g); err != nil {
+		return nil, fmt.Errorf("oauth flow store: decode code: %w", err)
+	}
+	return &g, nil
 }
 
 func (s *Store) TakeCode(ctx context.Context, code string) (*appoauth.CodeGrant, error) {

@@ -318,6 +318,21 @@ func TestPersonalKeyOpenAPIDocumentsTheSelfOnlyEndpoints(t *testing.T) {
 	assert.Contains(t, schemaByRef(t, document, rotate.Post.RequestBody.Content["application/json"].Schema.Ref).Properties, "expires_at")
 }
 
+func TestSubjectSessionsOpenAPIDocumentsRecorded(t *testing.T) {
+	document := loadOpenAPIDocument(t)
+	sessions, ok := document.Paths["/v1/gateways/{gateway_id}/subjects/{user_id}/sessions"]
+	require.True(t, ok)
+
+	for _, status := range []string{"200", "400", "401", "403", "422", "500"} {
+		_, ok := sessions.Delete.Responses[status]
+		assert.True(t, ok, "DELETE must document %s", status)
+	}
+	body := schemaByRef(t, document, sessions.Delete.Responses["200"].Content["application/json"].Schema.Ref)
+	assert.Contains(t, body.Properties, "recorded")
+	assert.Contains(t, body.Properties, "revoked")
+	assert.Contains(t, sessions.Delete.Description, `"recorded": true`)
+}
+
 // refOf extracts the $ref of a property, whether inline or wrapped in allOf
 // (swagger2openapi wraps referenced properties that carry a description).
 func refOf(t *testing.T, property json.RawMessage) string {
