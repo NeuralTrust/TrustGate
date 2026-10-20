@@ -69,18 +69,15 @@ func (r *recordingIntake) submitted() []trafficlabels.Candidate {
 type trafficLabelsSetup struct {
 	gateway *gatewaydomain.Gateway
 	// consumer is the resolved consumer; nil means the default labeled one.
-	consumer   *consumerdomain.Consumer
-	noConsumer bool
-	noTrace    bool
-	session    *infracontext.Session
-	maxBody    int
-	accept     bool
-	// status is what the handler answers; zero means 200.
-	status int
-	// rewrite replaces the request body inside the handler, like a plugin.
-	rewrite string
-	trace   *trace.RequestTrace
-	// telemetryOff leaves labels without a pipeline to publish to.
+	consumer     *consumerdomain.Consumer
+	noConsumer   bool
+	noTrace      bool
+	session      *infracontext.Session
+	maxBody      int
+	accept       bool
+	status       int
+	rewrite      string
+	trace        *trace.RequestTrace
 	telemetryOff bool
 	// outcomes are the Intake outcomes the middleware must record, in any order.
 	outcomes []string

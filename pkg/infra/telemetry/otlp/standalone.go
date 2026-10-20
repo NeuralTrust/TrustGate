@@ -25,8 +25,10 @@ import (
 // NewStandaloneLogExporter builds an OTLP log exporter for a pipeline of its
 // own. Without an endpoint in override it ships to the operator's collector
 // (env, the OTEL_EXPORTER_OTLP_* settings) with the operator's protocol,
-// headers and transport; with one, it sends only its own headers, copies none
-// of the operator's settings and takes the protocol from that endpoint.
+// headers and transport; with one, it sends only its own headers, takes its
+// own timeout and the protocol from that endpoint, and copies nothing from the
+// operator's configuration. TLS material the OTLP SDK reads from the
+// OTEL_EXPORTER_OTLP_* environment still applies.
 func NewStandaloneLogExporter(ctx context.Context, override, env config.OTLPConfig) (sdklog.Exporter, error) {
 	s := standaloneSettings(override, env)
 	if err := s.validate(); err != nil {
@@ -57,11 +59,11 @@ func standaloneSettings(override, env config.OTLPConfig) Settings {
 		if s.Compression == "" {
 			s.Compression = env.Compression
 		}
+		if s.Timeout <= 0 {
+			s.Timeout = env.Timeout
+		}
 	} else {
 		s.ownHeaders = true
-	}
-	if s.Timeout <= 0 {
-		s.Timeout = env.Timeout
 	}
 	if s.Protocol == "" {
 		s.Protocol = resolveProtocol(s.Endpoint)

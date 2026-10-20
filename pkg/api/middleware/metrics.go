@@ -16,6 +16,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -79,13 +80,15 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		}
 
 		streamed := false
+		returned := false
+		var err error
 		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(requestTrace, startTime, gatewayID, exporters))
 
 		defer func() {
 			if streamed {
 				return
 			}
-			statusCode := c.Response().StatusCode()
+			statusCode := finalStatus(c, returned, err)
 			var resp *infracontext.ResponseContext
 			if m.enabled() {
 				resp = m.buildResponseContext(c, gatewayID)
@@ -100,7 +103,8 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			requestTrace.Done()
 		}()
 
-		err := c.Next()
+		err = c.Next()
+		returned = true
 
 		if owned, _ := c.Locals(infracontext.StreamMetricsOwnedKey).(bool); owned {
 			streamed = true
@@ -137,8 +141,6 @@ func (m *MetricsMiddleware) streamFinalizer(
 	}
 }
 
-// complete runs once the request and its asynchronous spans are done. The
-// usage record does not depend on telemetry being enabled.
 func (m *MetricsMiddleware) complete(
 	requestTrace *trace.RequestTrace,
 	req *infracontext.RequestContext,
@@ -147,9 +149,7 @@ func (m *MetricsMiddleware) complete(
 	startTime, endTime time.Time,
 	exporters []telemetrydomain.ExporterConfig,
 ) {
-	if usageEnabled(m.usage) {
-		m.usage.Record(context.Background(), requestTrace, statusCode, startTime)
-	}
+	recordUsage(m.usage, requestTrace, statusCode, startTime)
 	if m.enabled() {
 		m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 	}
@@ -161,6 +161,29 @@ func (m *MetricsMiddleware) enabled() bool {
 
 func usageEnabled(r appusage.RequestRecorder) bool {
 	return r != nil && r.Enabled()
+}
+
+func recordUsage(r appusage.RequestRecorder, requestTrace *trace.RequestTrace, statusCode int, startTime time.Time) {
+	if usageEnabled(r) {
+		r.Record(context.Background(), requestTrace, statusCode, startTime)
+	}
+}
+
+// finalStatus is the status the client ends up with. It is read before the
+// outer middlewares finish: a panic is answered with 500 by PanicRecover, and
+// a returned error by fiber's error handler, both after this point.
+func finalStatus(c *fiber.Ctx, returned bool, err error) int {
+	if !returned {
+		return fiber.StatusInternalServerError
+	}
+	if err != nil {
+		var fiberErr *fiber.Error
+		if errors.As(err, &fiberErr) {
+			return fiberErr.Code
+		}
+		return fiber.StatusInternalServerError
+	}
+	return c.Response().StatusCode()
 }
 
 func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {

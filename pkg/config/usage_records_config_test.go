@@ -98,6 +98,15 @@ func TestLoadConfig_UsageRecordsValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "enabled with an oversized queue",
+			env: map[string]string{
+				"USAGE_RECORDS_ENABLED":       "true",
+				"USAGE_RECORDS_OTLP_ENDPOINT": "collector:4317",
+				"USAGE_RECORDS_QUEUE_SIZE":    "10000000",
+			},
+			wantErr: true,
+		},
+		{
 			name: "disabled ignores an empty queue",
 			env:  map[string]string{"USAGE_RECORDS_QUEUE_SIZE": "0"},
 		},

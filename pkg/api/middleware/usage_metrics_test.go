@@ -16,6 +16,9 @@ package middleware_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -179,4 +182,53 @@ func TestMCPMetricsMiddleware_SkipOptOutRecordsNoUsage(t *testing.T) {
 	_, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/mcp", nil))
 	require.NoError(t, err)
 	assert.Empty(t, calls())
+}
+
+func TestMetricsMiddleware_UsageSeesTheStatusTheClientGets(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler fiber.Handler
+		want    int
+	}{
+		{
+			name:    "panic recovered further out",
+			handler: func(*fiber.Ctx) error { panic("boom") },
+			want:    fiber.StatusInternalServerError,
+		},
+		{
+			name:    "returned fiber error",
+			handler: func(*fiber.Ctx) error { return fiber.NewError(fiber.StatusUnauthorized, "interaction required") },
+			want:    fiber.StatusUnauthorized,
+		},
+		{
+			name:    "returned plain error",
+			handler: func(*fiber.Ctx) error { return errors.New("upstream gone") },
+			want:    fiber.StatusInternalServerError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, mcp := range []bool{false, true} {
+				worker := appmetricsmocks.NewWorker(t)
+				rec, calls := expectUsage(t, true)
+				var mw fiber.Handler
+				if mcp {
+					mw = middleware.NewMCPMetricsMiddleware(worker, rec, &config.Config{}).Middleware()
+				} else {
+					mw = middleware.NewMetricsMiddleware(worker, rec, &config.Config{}).Middleware()
+				}
+				app := fiber.New()
+				app.Use(middleware.NewPanicRecoverMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil))).Middleware())
+				app.Use(mw)
+				app.Post("/v1/chat/completions", tt.handler)
+
+				resp, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil))
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, resp.StatusCode)
+				got := calls()
+				require.Len(t, got, 1)
+				assert.Equal(t, tt.want, got[0].status, "mcp=%v", mcp)
+			}
+		})
+	}
 }

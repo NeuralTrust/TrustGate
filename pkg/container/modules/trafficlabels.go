@@ -23,8 +23,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
-	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -169,7 +169,11 @@ func newLabelWorker(
 	usage *appusage.TopicRecorder,
 	cfg *config.Config,
 ) trafficlabels.Worker {
-	return trafficlabels.NewWorker(logger, stream, classifier, labelCache, sink, metrics, usage, trafficlabels.WorkerConfig{
+	var recorder trafficlabels.UsageRecorder
+	if usage != nil {
+		recorder = usage
+	}
+	return trafficlabels.NewWorker(logger, stream, classifier, labelCache, sink, metrics, recorder, trafficlabels.WorkerConfig{
 		Concurrency:   cfg.TrafficLabels.Concurrency,
 		BatchMaxTexts: cfg.TrafficLabels.BatchMaxTexts,
 		ClaimMinIdle:  cfg.TrafficLabels.ClaimMinIdle,

@@ -15,7 +15,6 @@
 package middleware
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -67,11 +66,13 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 
+		returned := false
+		var err error
 		defer func() {
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
-			statusCode := c.Response().StatusCode()
+			statusCode := finalStatus(c, returned, err)
 			var (
 				req  *infracontext.RequestContext
 				resp *infracontext.ResponseContext
@@ -82,9 +83,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			}
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
-				if usageEnabled(m.usage) {
-					m.usage.Record(context.Background(), requestTrace, statusCode, startTime)
-				}
+				recordUsage(m.usage, requestTrace, statusCode, startTime)
 				if m.telemetryEnabled {
 					m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 				}
@@ -92,7 +91,9 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			requestTrace.Done()
 		}()
 
-		return c.Next()
+		err = c.Next()
+		returned = true
+		return err
 	}
 }
 
