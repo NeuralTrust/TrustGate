@@ -378,6 +378,36 @@ func TestPlugin_PostResponse_CounterStoreRecordTokensFailureFailsOpen(t *testing
 	}
 }
 
+// redisReplyError stands in for the error go-redis returns for a Redis error
+// reply (it carries a RedisError method).
+type redisReplyError string
+
+func (e redisReplyError) Error() string { return string(e) }
+func (redisReplyError) RedisError()     {}
+
+// TestPlugin_PostResponse_RecordRefusedByRedisReportsTheCause covers a counter
+// store that refuses the recording script's write, as a replica does: the
+// request still passes and the failure names what Redis refused.
+func TestPlugin_PostResponse_RecordRefusedByRedisReportsTheCause(t *testing.T) {
+	refused := redisReplyError("READONLY You can't write against a read only replica. script: 9e8f, on @user_script:1.")
+	p := newTestPluginWithHook(t, breakRecords(refused))
+	settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 10}}
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePostResponse, settings, req, resp)
+	in.Mode = policy.ModeEnforce
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertTokenCounterFailedOpen(t, res, err, span, "record_tokens")
+	data, ok := span.Plugin.Extras.(TokenRateLimiterData)
+	require.True(t, ok)
+	assert.Equal(t, "readonly", data.FailureErrorClass)
+}
+
 // TestPlugin_PostResponse_CounterStoreRecordCostFailureFailsOpen is the same
 // record failure, for a dollar-unit budget's accrueDollars path.
 func TestPlugin_PostResponse_CounterStoreRecordCostFailureFailsOpen(t *testing.T) {

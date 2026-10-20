@@ -482,6 +482,7 @@ func TestPlugin_Execute_CounterStoreReadFailureFailsOpen(t *testing.T) {
 			require.True(t, ok, "extras should carry rate limiter data")
 			assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
 			assert.Equal(t, "read", data.FailureDetail)
+			assert.Equal(t, "connection", data.FailureErrorClass)
 		})
 	}
 }
@@ -568,6 +569,115 @@ func TestPlugin_Execute_CounterStoreRecordFailureAfterExceededReadKeepsModeDecis
 			assert.Equal(t, 1, data.Limit)
 			assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
 			assert.Equal(t, "record", data.FailureDetail)
+		})
+	}
+}
+
+// redisReplyError stands in for the error go-redis returns for a Redis error
+// reply (it carries a RedisError method).
+type redisReplyError string
+
+func (e redisReplyError) Error() string { return string(e) }
+func (redisReplyError) RedisError()     {}
+
+// rejectedWritesHook answers a MULTI/EXEC the way a real Redis does when it
+// refuses the writes as they are queued (a replica, OOM, MISCONF): each
+// refused command carries its own error, the rest are discarded, and Exec only
+// returns EXECABORT. Plain commands such as the ZCOUNT read go through.
+type rejectedWritesHook struct {
+	refused map[string]error
+}
+
+func (h rejectedWritesHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h rejectedWritesHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return next
+}
+func (h rejectedWritesHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		isRecord := false
+		for _, c := range cmds {
+			if c.Name() == "zadd" {
+				isRecord = true
+			}
+		}
+		if !isRecord {
+			return next(ctx, cmds)
+		}
+		abort := redisReplyError("EXECABORT Transaction discarded because of previous errors.")
+		for _, c := range cmds {
+			if err, ok := h.refused[c.Name()]; ok {
+				c.SetErr(err)
+				continue
+			}
+			c.SetErr(abort)
+		}
+		return abort
+	}
+}
+
+// TestPlugin_Execute_RecordRefusedByRedisReportsTheCause covers a counter
+// store that answers reads but refuses writes: the request still passes, and
+// the failure names what Redis refused rather than the EXECABORT that is all
+// the transaction itself returns.
+func TestPlugin_Execute_RecordRefusedByRedisReportsTheCause(t *testing.T) {
+	readOnly := redisReplyError("READONLY You can't write against a read only replica.")
+	oom := redisReplyError("OOM command not allowed when used memory > 'maxmemory'.")
+	tests := []struct {
+		name      string
+		refused   map[string]error
+		wantClass string
+		wantInErr string
+	}{
+		{
+			name:      "replica",
+			refused:   map[string]error{"zremrangebyscore": readOnly, "zadd": readOnly, "expire": readOnly},
+			wantClass: "readonly",
+			wantInErr: "READONLY",
+		},
+		{
+			name:      "out of memory",
+			refused:   map[string]error{"zadd": oom},
+			wantClass: "oom",
+			wantInErr: "OOM",
+		},
+	}
+
+	for _, tt := range tests {
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve} {
+			tt, mode := tt, mode
+			t.Run(tt.name+"/"+string(mode), func(t *testing.T) {
+				p, _ := newTestPlugin(t)
+				p.redis.AddHook(rejectedWritesHook{refused: tt.refused})
+
+				rt := trace.New("t", trace.Metadata{})
+				span := rt.StartSpan(trace.SpanPlugin, PluginName)
+				in := execInput(limitSettings(1, "1m"), consumerScope("c-1"))
+				in.Mode = mode
+				in.Event = metrics.NewEventContext(span)
+
+				res, err := p.Execute(context.Background(), in)
+				require.NoError(t, err, "a refused write must never reject the request")
+				require.NotNil(t, res)
+				assert.Equal(t, 200, res.StatusCode)
+
+				require.NotNil(t, span.Plugin)
+				assert.Equal(t, "failed_open", span.Plugin.Decision)
+				data, ok := span.Plugin.Extras.(RateLimiterData)
+				require.True(t, ok, "extras should carry rate limiter data")
+				assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+				assert.Equal(t, "record", data.FailureDetail)
+				assert.Equal(t, tt.wantClass, data.FailureErrorClass)
+			})
+		}
+
+		t.Run(tt.name+"/record error", func(t *testing.T) {
+			p, _ := newTestPlugin(t)
+			p.redis.AddHook(rejectedWritesHook{refused: tt.refused})
+
+			err := p.record(context.Background(), "ratelimit:plugin-1:consumer:c-1", time.Unix(1_700_000_000, 0), time.Minute)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantInErr, "the logged error must name what Redis refused")
+			assert.NotContains(t, err.Error(), "EXECABORT")
 		})
 	}
 }
