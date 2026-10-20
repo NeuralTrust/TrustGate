@@ -15,6 +15,7 @@
 package middleware
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -35,15 +37,17 @@ import (
 type MetricsMiddleware struct {
 	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
+	usage               appusage.RequestRecorder
 	telemetryEnabled    bool
 	enableRequestTraces bool
 	enablePluginTraces  bool
 }
 
-func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MetricsMiddleware {
+func NewMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRecorder, cfg *config.Config) *MetricsMiddleware {
 	return &MetricsMiddleware{
 		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
+		usage:               usage,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
 		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
@@ -52,7 +56,7 @@ func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *Metrics
 
 func (m *MetricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if !m.enabled() {
+		if !m.enabled() && !usageEnabled(m.usage) {
 			return c.Next()
 		}
 
@@ -69,7 +73,10 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		m.attachTrace(c, requestTrace)
 
-		req := m.buildRequestContext(c, gatewayID)
+		var req *infracontext.RequestContext
+		if m.enabled() {
+			req = m.buildRequestContext(c, gatewayID)
+		}
 
 		streamed := false
 		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(requestTrace, startTime, gatewayID, exporters))
@@ -78,13 +85,17 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			if streamed {
 				return
 			}
-			resp := m.buildResponseContext(c, gatewayID)
+			statusCode := c.Response().StatusCode()
+			var resp *infracontext.ResponseContext
+			if m.enabled() {
+				resp = m.buildResponseContext(c, gatewayID)
+				// Read the verified outcome at completion rather than when req was
+				// built, so it holds even if Metrics is ever mounted before Auth.
+				markPlaygroundVerified(c, req)
+			}
 			endTime := time.Now()
-			// Read the verified outcome at completion rather than when req was
-			// built, so it holds even if Metrics is ever mounted before Auth.
-			markPlaygroundVerified(c, req)
 			requestTrace.OnComplete(func() {
-				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+				m.complete(requestTrace, req, resp, statusCode, startTime, endTime, exporters)
 			})
 			requestTrace.Done()
 		}()
@@ -107,24 +118,49 @@ func (m *MetricsMiddleware) streamFinalizer(
 	exporters []telemetrydomain.ExporterConfig,
 ) infracontext.StreamMetricsFinalizer {
 	return func(req *infracontext.RequestContext, output []byte, statusCode int, headers map[string][]string) {
-		resp := &infracontext.ResponseContext{
-			GatewayID:  gatewayID,
-			RegistryID: req.RegistryID,
-			Headers:    cloneStreamHeaders(headers),
-			Body:       append([]byte(nil), output...),
-			StatusCode: statusCode,
-			Streaming:  true,
+		var resp *infracontext.ResponseContext
+		if m.enabled() {
+			resp = &infracontext.ResponseContext{
+				GatewayID:  gatewayID,
+				RegistryID: req.RegistryID,
+				Headers:    cloneStreamHeaders(headers),
+				Body:       append([]byte(nil), output...),
+				StatusCode: statusCode,
+				Streaming:  true,
+			}
 		}
 		endTime := time.Now()
 		requestTrace.OnComplete(func() {
-			m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+			m.complete(requestTrace, req, resp, statusCode, startTime, endTime, exporters)
 		})
 		requestTrace.Done()
 	}
 }
 
+// complete runs once the request and its asynchronous spans are done. The
+// usage record does not depend on telemetry being enabled.
+func (m *MetricsMiddleware) complete(
+	requestTrace *trace.RequestTrace,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	statusCode int,
+	startTime, endTime time.Time,
+	exporters []telemetrydomain.ExporterConfig,
+) {
+	if usageEnabled(m.usage) {
+		m.usage.Record(context.Background(), requestTrace, statusCode, startTime)
+	}
+	if m.enabled() {
+		m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+	}
+}
+
 func (m *MetricsMiddleware) enabled() bool {
 	return m.telemetryEnabled
+}
+
+func usageEnabled(r appusage.RequestRecorder) bool {
+	return r != nil && r.Enabled()
 }
 
 func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {
