@@ -166,6 +166,7 @@ const (
 	defaultConfigSyncAdminLKGMaxAge               = 7 * 24 * time.Hour
 	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
 	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
+	minConfigSyncTokenRevocationRefresh           = time.Second
 
 	configSyncKeyBytes = 32
 
@@ -1469,6 +1470,12 @@ func (cs ConfigSyncConfig) validateAuthMode() error {
 	}
 }
 
+// AcceptsSignedTokens reports whether the config-sync channel verifies signed
+// per-instance JWTs, which are the only tokens revocation applies to.
+func (cs ConfigSyncConfig) AcceptsSignedTokens() bool {
+	return cs.AuthMode == ConfigSyncAuthModeSigned || cs.AuthMode == ConfigSyncAuthModeComposite
+}
+
 // RevocationMode returns the token revocation mode, shadow when unset.
 func (cs ConfigSyncConfig) RevocationMode() string {
 	if cs.TokenRevocationMode == "" {
@@ -1493,8 +1500,8 @@ func (cs ConfigSyncConfig) validateTokenRevocation() error {
 		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_MODE must be %q, %q or %q", errors.ErrInvalidConfig,
 			ConfigSyncTokenRevocationOff, ConfigSyncTokenRevocationShadow, ConfigSyncTokenRevocationEnforce)
 	}
-	if cs.RevocationRefreshInterval() < 0 {
-		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
+	if cs.RevocationRefreshInterval() < minConfigSyncTokenRevocationRefresh {
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL must be at least %s, since each reload gets one interval to finish", errors.ErrInvalidConfig, minConfigSyncTokenRevocationRefresh)
 	}
 	return nil
 }

@@ -31,3 +31,8 @@ var ErrIntegrity = errors.New("configsync: snapshot integrity mismatch")
 // loop demotes them to WARN and simply reconnects, instead of raising ERROR
 // alarms on routine control-plane rollouts.
 var ErrTransportUnavailable = errors.New("configsync: transport unavailable")
+
+// ErrTransportUnauthenticated marks a config-sync transport that refused the
+// data plane's token. Retrying with the same token cannot succeed, so the
+// watch loop reports it once per streak and waits for the token to change.
+var ErrTransportUnauthenticated = errors.New("configsync: transport refused the token")

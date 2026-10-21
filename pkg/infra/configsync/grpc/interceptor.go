@@ -38,15 +38,15 @@ const (
 
 type AuthInterceptor struct {
 	authenticator tokenAuthenticator
-	gate          TokenGate
+	admitter      TokenAdmitter
 	logger        *slog.Logger
 }
 
-func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger, gate TokenGate) (*AuthInterceptor, error) {
+func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger, admitter TokenAdmitter) (*AuthInterceptor, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	interceptor := &AuthInterceptor{gate: gate, logger: logger}
+	interceptor := &AuthInterceptor{admitter: admitter, logger: logger}
 	switch cfg.ConfigSync.AuthMode {
 	case config.ConfigSyncAuthModeSigned:
 		authenticator, err := newJWTAuthenticator(cfg.ConfigSync)
@@ -103,7 +103,7 @@ func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error
 		}
 		return ctx, errInvalidToken
 	}
-	if a.gate != nil && !a.gate.Admit(ctx, id) {
+	if a.admitter != nil && !a.admitter.Admit(ctx, id) {
 		return ctx, errInvalidToken
 	}
 	return WithIdentity(WithScope(ctx, id.Scope), id), nil

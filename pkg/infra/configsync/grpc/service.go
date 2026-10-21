@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -28,6 +29,11 @@ import (
 const (
 	maxSnapshotBytes  = 256 << 20
 	snapshotChunkSize = 1 << 20
+	// defaultHelloTimeout bounds how long an admitted Sync stream may stay
+	// open before it says Hello. A data plane sends Hello right after opening
+	// the stream; until it does, the stream is not registered and a token
+	// revocation could not reach it.
+	defaultHelloTimeout = 10 * time.Second
 )
 
 type SnapshotSource interface {
@@ -38,19 +44,49 @@ type SnapshotSource interface {
 // and the server-streaming GetSnapshot bulk transfer.
 type Service struct {
 	snapshotpb.UnimplementedConfigSyncServer
-	hub    *Hub
-	source SnapshotSource
-	gate   TokenGate
-	logger *slog.Logger
+	hub          *Hub
+	source       SnapshotSource
+	revocations  RevocationChecker
+	logger       *slog.Logger
+	helloTimeout time.Duration
 }
 
-// NewService builds the ConfigSync server implementation. gate may be nil, in
-// which case open streams are never ended for a revoked token.
-func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, gate TokenGate) *Service {
+// NewService builds the ConfigSync server implementation. revocations may be
+// nil, in which case open streams are never ended for a revoked token.
+func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, revocations RevocationChecker) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{hub: hub, source: source, gate: gate, logger: logger}
+	return &Service{hub: hub, source: source, revocations: revocations, logger: logger, helloTimeout: defaultHelloTimeout}
+}
+
+func (s *Service) revoked(id configsyncrevocation.Identity) bool {
+	return s.revocations != nil && s.revocations.Revoked(id)
+}
+
+type received struct {
+	msg *snapshotpb.ClientMessage
+	err error
+}
+
+// recvHello waits for the stream's first message for at most helloTimeout.
+// Returning ends the RPC, which cancels the stream and unblocks the Recv.
+func (s *Service) recvHello(stream snapshotpb.ConfigSync_SyncServer) (*snapshotpb.ClientMessage, error) {
+	first := make(chan received, 1)
+	go func() {
+		msg, err := stream.Recv()
+		first <- received{msg: msg, err: err}
+	}()
+	timer := time.NewTimer(s.helloTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-first:
+		return r.msg, r.err
+	case <-timer.C:
+		return nil, status.Error(codes.DeadlineExceeded, "no Hello received on the Sync stream")
+	case <-stream.Context().Done():
+		return nil, stream.Context().Err()
+	}
 }
 
 // Sync registers the data plane's stream, pushes an immediate notice when the
@@ -58,7 +94,7 @@ func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, gate Token
 // messages while draining the DP's Acks.
 func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	ctx := stream.Context()
-	first, err := stream.Recv()
+	first, err := s.recvHello(stream)
 	if err != nil {
 		return err
 	}
@@ -78,7 +114,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	// revocation loaded in between is caught here: the refresher swaps the
 	// snapshot before it walks the hub, so a stream that registered after
 	// that walk sees the new snapshot now.
-	if s.gate != nil && s.gate.Revoked(identity) {
+	if s.revoked(identity) {
 		return errInvalidToken
 	}
 
@@ -124,6 +160,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 // otherwise streams a SnapshotHeader followed by fixed-size data chunks.
 func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapshotpb.ConfigSync_GetSnapshotServer) error {
 	scope := ScopeFromContext(stream.Context())
+	identity, _ := IdentityFromContext(stream.Context())
 	raw, version, ok := s.source.SnapshotFor(scope)
 	if !ok {
 		return status.Error(codes.Unavailable, "no snapshot available yet")
@@ -140,6 +177,11 @@ func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapsho
 		return err
 	}
 	for offset := 0; offset < len(raw); offset += snapshotChunkSize {
+		// GetSnapshot streams are not registered in the hub, so a revocation
+		// loaded mid-transfer is enforced here, before the next chunk.
+		if s.revoked(identity) {
+			return errInvalidToken
+		}
 		end := min(offset+snapshotChunkSize, len(raw))
 		chunk := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Data{Data: raw[offset:end]}}
 		if err := stream.Send(chunk); err != nil {

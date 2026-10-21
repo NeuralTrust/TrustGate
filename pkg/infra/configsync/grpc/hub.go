@@ -112,7 +112,8 @@ func (h *Hub) BroadcastScope(scope, version string) {
 }
 
 // CloseRevoked ends every registered Sync stream whose verified token satisfies
-// isRevoked and returns how many this call closed. The check keys on the token
+// isRevoked and returns how many this call closed. GetSnapshot transfers are
+// not registered; they check revocation before each chunk instead. The check keys on the token
 // the stream authenticated with, never on the instance id the DP announced.
 func (h *Hub) CloseRevoked(isRevoked func(configsyncrevocation.Identity) bool) int {
 	h.mu.Lock()

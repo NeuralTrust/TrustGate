@@ -211,9 +211,9 @@ func TestHub_CloseRevokedConcurrentWithRegister(t *testing.T) {
 	}
 }
 
-func newAuthedBufServer(t *testing.T, cfg config.ConfigSyncConfig, svc *Service, gate TokenGate) *bufconn.Listener {
+func newAuthedBufServer(t *testing.T, cfg config.ConfigSyncConfig, svc *Service, admitter TokenAdmitter) *bufconn.Listener {
 	t.Helper()
-	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger(), gate)
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger(), admitter)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
@@ -369,5 +369,70 @@ func TestService_EnforceNeverClosesSharedTokenStreams(t *testing.T) {
 	case code := <-recvCodeAsync(stream):
 		t.Fatalf("shared-token stream ended with %s", code)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// snapshotRecorder is a GetSnapshot server stream that counts data chunks and
+// runs onChunk after each one, so a test can land a revocation mid-transfer.
+type snapshotRecorder struct {
+	grpc.ServerStream
+	ctx     context.Context
+	chunks  int
+	onChunk func(chunks int)
+}
+
+func (r *snapshotRecorder) Context() context.Context { return r.ctx }
+
+func (r *snapshotRecorder) Send(chunk *snapshotpb.SnapshotChunk) error {
+	if chunk.GetData() != nil {
+		r.chunks++
+		r.onChunk(r.chunks)
+	}
+	return nil
+}
+
+func TestService_GetSnapshotStopsWhenTokenIsRevokedMidTransfer(t *testing.T) {
+	gate := appcsr.NewGate(appcsr.ModeEnforce, discardLogger())
+	src := &fakeSource{}
+	src.set(make([]byte, 3*snapshotChunkSize), "v1")
+	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), gate)
+	id := configsyncrevocation.Identity{Scope: "gw-1", JTI: "old", IssuedAt: 100, Signed: true, InstanceScoped: true}
+	stream := &snapshotRecorder{
+		ctx: WithIdentity(WithScope(context.Background(), id.Scope), id),
+		onChunk: func(chunks int) {
+			if chunks == 1 {
+				gate.Replace(configsyncrevocation.NewSnapshot(revokedJTI("gw-1", "old")))
+			}
+		},
+	}
+
+	err := svc.GetSnapshot(&snapshotpb.GetSnapshotRequest{}, stream)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("GetSnapshot = %v, want Unauthenticated once the token is revoked", err)
+	}
+	if stream.chunks != 1 {
+		t.Fatalf("sent %d data chunks, want 1: the transfer must stop at the next chunk", stream.chunks)
+	}
+}
+
+func TestService_SyncEndsWithoutHello(t *testing.T) {
+	svc := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil)
+	svc.helloTimeout = 50 * time.Millisecond
+	lis, _ := newBufServer(t, svc)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	stream, err := snapshotpb.NewConfigSyncClient(conn).Sync(context.Background())
+	if err != nil {
+		t.Fatalf("open sync: %v", err)
+	}
+	if code := recvCode(t, stream); code != codes.DeadlineExceeded {
+		t.Fatalf("stream without Hello ended with %s, want DeadlineExceeded", code)
 	}
 }
