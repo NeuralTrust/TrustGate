@@ -267,6 +267,32 @@ func TestExecuteNotConfiguredLeavesUninspectedTrafficAlone(t *testing.T) {
 	assertFailedOpen(t, res, span, failureReasonGatewayIDMissing)
 }
 
+// An LLM request with no provider cannot be decoded, so the leg is recorded as
+// a failure and the guard is not called. A skip would leave the span empty.
+func TestExecuteMissingProviderRecordsFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+			req := requestContext()
+			req.Provider = ""
+			event, span := newEvent()
+			res, err := p.Execute(context.Background(), execInputWithEvent(stage, policy.ModeEnforce, settings(""), req, nil, event))
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, failureReasonProviderMissing)
+			assert.Zero(t, f.count())
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.False(t, extras.Skipped)
+			assert.Empty(t, extras.SkipReason)
+			assert.Equal(t, stageDirection(stage), extras.Direction)
+		})
+	}
+}
+
 // TestExecuteUnparseableSettingsFailOpen: settings that do not parse must not cut
 // the request.
 func TestExecuteUnparseableSettingsFailOpen(t *testing.T) {
