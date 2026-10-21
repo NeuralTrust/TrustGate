@@ -320,6 +320,56 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 	}
 }
 
+func TestStreamGuard_HeadGateRateLimitKeepsStatusAndHeaders(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"error":"rate limit exceeded","reason":"quota"}`)
+	headers := map[string][]string{
+		"Retry-After":           {"7"},
+		"X-RateLimit-Limit":     {"60"},
+		"X-RateLimit-Remaining": {"0"},
+		"X-RateLimit-Reason":    {"quota"},
+	}
+	runner := &scriptedRunner{outcome: &appplugins.SegmentOutcome{
+		Block:      true,
+		Type:       "trustguard_rate_limited",
+		Message:    "rate limit exceeded",
+		Body:       body,
+		StatusCode: http.StatusTooManyRequests,
+		Headers:    headers,
+	}}
+	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, stageInputFixture(), streamGuardConfig{}, newGuardLogger())
+	out, pe := g.Run(context.Background(), invariantSource(t, g, openAIStreamLines(), nil))
+	checkInvariant(t, g)
+
+	require.NotNil(t, pe)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+	assert.Equal(t, "trustguard_rate_limited", pe.Type)
+	assert.Equal(t, body, pe.Body)
+	assert.Equal(t, []string{"7"}, pe.Headers["Retry-After"])
+	assert.Equal(t, []string{"60"}, pe.Headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"0"}, pe.Headers["X-RateLimit-Remaining"])
+	assert.Equal(t, []string{"quota"}, pe.Headers["X-RateLimit-Reason"])
+	assert.NotContains(t, pe.Headers, appplugins.BlockDirectionHeader)
+	require.Zero(t, g.releasedIdx, "a head-gate block must have written nothing")
+	drained, _ := collectGuardOutput(t, g, out)
+	require.Zero(t, g.releasedIdx, "draining the remainder must not release held events")
+	require.NotContains(t, drained, openAIStreamLines()[0], "the head must never reach the client")
+}
+
+func TestStreamGuard_HeadGateZeroStatusStaysForbidden(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{outcome: &appplugins.SegmentOutcome{
+		Block: true, Type: "guardrail_violation", Message: "nope",
+	}}
+	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, stageInputFixture(), streamGuardConfig{}, newGuardLogger())
+	_, pe := g.Run(context.Background(), invariantSource(t, g, openAIStreamLines(), nil))
+	require.NotNil(t, pe)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
+}
+
 // TestStreamGuard_PreludeIsClearedWithoutHoldingTheVerdict pins the fast-path.
 // An opaque event that opens a block carries no inspectable text, so it is
 // counted as cleared while the block still has no text and a wholly opaque

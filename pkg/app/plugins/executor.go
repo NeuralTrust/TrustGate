@@ -391,7 +391,8 @@ func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment 
 // whether the chain must stop. Both the cut and the rewrite are gated on
 // Blocks(entry.mode): an observe-mode entry contributes its findings and its
 // fingerprints, but never cuts the stream and never rewrites text the client is
-// about to read.
+// about to read. A block that carries its own HTTP status is the exception: it
+// is the buffered leg's refusal, and it cuts in every mode.
 //
 // Fingerprints are tagged with the entry here because here is where the entry
 // is known. The guard holds one set for the whole stream and a plugin answers
@@ -405,7 +406,7 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		outcome.Type = verdict.Type
 		outcome.Message = verdict.Message
 	}
-	if !Blocks(entry.mode) {
+	if !Blocks(entry.mode) && (!verdict.Block || verdict.StatusCode == 0) {
 		return false
 	}
 	if verdict.Block {
@@ -413,6 +414,8 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		outcome.Type = verdict.Type
 		outcome.Message = verdict.Message
 		outcome.Body = verdict.Body
+		outcome.StatusCode = verdict.StatusCode
+		outcome.Headers = verdict.Headers
 		outcome.HasTransform = false
 		outcome.Transformed = ""
 		return true

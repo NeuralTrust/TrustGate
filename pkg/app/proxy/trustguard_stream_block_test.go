@@ -153,6 +153,122 @@ func TestForward_StreamedTrustGuardBlockMatchesBufferedBody(t *testing.T) {
 	assert.Equal(t, []string{"application/json"}, streamed.Headers["Content-Type"])
 }
 
+func TestForward_StreamedTrustGuardRateLimitMatchesBuffered(t *testing.T) {
+	t.Parallel()
+	forwardTrustGuardRateLimit(t, policy.ModeEnforce)
+}
+
+func TestForward_StreamedTrustGuardRateLimitMatchesBufferedInObserve(t *testing.T) {
+	t.Parallel()
+	forwardTrustGuardRateLimit(t, policy.ModeObserve)
+}
+
+func forwardTrustGuardRateLimit(t *testing.T, mode policy.Mode) {
+	t.Helper()
+
+	// Not the flat plan shape (reason is not burst or quota), so the forwarder
+	// leaves the body as TrustGuard wrote it on both legs.
+	raw := []byte(`{"error":"rate limit exceeded","reason":"collector"}`)
+	allowRaw, err := json.Marshal(trustguard.GuardResponse{Status: "allow"})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/token":
+			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
+		case "/v1/evaluate":
+			var req struct {
+				Direction string `json:"direction"`
+			}
+			if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+				http.Error(w, decErr.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Direction == "output" {
+				w.Header().Set("Retry-After", "9")
+				w.Header().Set("X-RateLimit-Limit", "60")
+				w.Header().Set("X-RateLimit-Remaining", "0")
+				w.Header().Set("X-RateLimit-Reason", "collector")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write(raw)
+				return
+			}
+			_, _ = w.Write(allowRaw)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	plugin := trustguard.New(adapter.NewRegistry(), srv.URL, 5*time.Second, "test-client", "test-secret", newTestLogger())
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+	rc.Policies = []*policy.Policy{{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "trustguard",
+		Slug:     trustguard.PluginName,
+		Enabled:  true,
+		Priority: 1,
+		Mode:     mode,
+		Settings: map[string]any{
+			"collector_id": "11111111-1111-4111-8111-111111111111",
+			"direction":    "request_response",
+		},
+	}}
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(plugin))
+	rc.PolicyPlan = appplugins.NewStagePlan(reg, rc.Policies, newTestLogger())
+
+	bufferedBody := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4.1-nano","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`)
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"hello"}}]}`),
+		{},
+		[]byte("data: [DONE]"),
+		{},
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: http.StatusOK, Body: bufferedBody}, nil).
+		Once()
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: http.StatusOK, Stream: sseLinesStream(lines)}, nil).
+		Once()
+
+	fwd := forwarderWithPlugin(t, invoker, plugin, appproxy.WithStreamCodec(adapter.NewRegistry()))
+	buffered, err := fwd.Forward(t.Context(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   trustGuardChatRequest(false),
+	})
+	require.NoError(t, err)
+	streamed, err := fwd.Forward(t.Context(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   trustGuardChatRequest(true),
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusTooManyRequests, buffered.StatusCode)
+	require.Equal(t, http.StatusTooManyRequests, streamed.StatusCode)
+	require.Nil(t, streamed.Stream)
+	require.JSONEq(t, string(raw), string(buffered.Body))
+	require.JSONEq(t, string(buffered.Body), string(streamed.Body))
+	for _, name := range []string{"Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reason"} {
+		assert.Equal(t, buffered.Headers[name], streamed.Headers[name], name)
+	}
+	assert.Equal(t, []string{"9"}, streamed.Headers["Retry-After"])
+	assert.Equal(t, []string{"60"}, streamed.Headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"0"}, streamed.Headers["X-RateLimit-Remaining"])
+	assert.Equal(t, []string{"collector"}, streamed.Headers["X-RateLimit-Reason"])
+	assert.Empty(t, streamed.Headers[appplugins.BlockDirectionHeader])
+	assert.Empty(t, buffered.Headers[appplugins.BlockDirectionHeader])
+	assert.Equal(t, []string{"application/json"}, streamed.Headers["Content-Type"])
+	assert.Equal(t, []string{"application/json"}, buffered.Headers["Content-Type"])
+}
+
 func trustGuardChatRequest(stream bool) *infracontext.RequestContext {
 	body := `{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"hello"}]}`
 	if stream {

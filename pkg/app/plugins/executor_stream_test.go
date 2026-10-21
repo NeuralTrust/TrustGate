@@ -17,6 +17,7 @@ package plugins
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -197,6 +198,64 @@ func TestExecutor_RunStreamSegment_EmptyChain(t *testing.T) {
 	require.NotNil(t, out)
 	assert.False(t, out.Block)
 	assert.Empty(t, out.Fingerprints)
+}
+
+func TestExecutor_RunStreamSegment_RateLimitStatus(t *testing.T) {
+	body := []byte(`{"error":"rate limit exceeded","reason":"quota"}`)
+	headers := map[string][]string{
+		"Retry-After":           {"7"},
+		"X-RateLimit-Limit":     {"60"},
+		"X-RateLimit-Remaining": {"0"},
+		"X-RateLimit-Reason":    {"quota"},
+	}
+	verdict := &SegmentVerdict{
+		Block:      true,
+		Type:       "trustguard_rate_limited",
+		Message:    "rate limit exceeded",
+		Body:       body,
+		StatusCode: http.StatusTooManyRequests,
+		Headers:    headers,
+	}
+
+	t.Run("enforce", func(t *testing.T) {
+		exec, pols, _ := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeEnforce, verdict: verdict})
+		out, err := runSegment(t, exec, StageInput{
+			Stage:    policy.StagePreResponse,
+			Policies: pols,
+			Request:  &infracontext.RequestContext{},
+			Response: &infracontext.ResponseContext{},
+		}, segment(1, false))
+		require.NoError(t, err)
+		require.NotNil(t, out)
+		assert.True(t, out.Block)
+		assert.Equal(t, http.StatusTooManyRequests, out.StatusCode)
+		assert.Equal(t, "trustguard_rate_limited", out.Type)
+		assert.Equal(t, "rate limit exceeded", out.Message)
+		assert.Equal(t, body, out.Body)
+		assert.Equal(t, headers, out.Headers)
+	})
+
+	t.Run("observe", func(t *testing.T) {
+		exec, pols, inspectors := streamChain(t,
+			entrySpec{slug: "guard", mode: policy.ModeObserve, verdict: verdict},
+			entrySpec{slug: "later", mode: policy.ModeEnforce, verdict: &SegmentVerdict{Fingerprints: []string{"later"}}},
+		)
+		out, err := runSegment(t, exec, StageInput{
+			Stage:    policy.StagePreResponse,
+			Policies: pols,
+			Request:  &infracontext.RequestContext{},
+			Response: &infracontext.ResponseContext{},
+		}, segment(1, false))
+		require.NoError(t, err)
+		require.NotNil(t, out)
+		assert.True(t, out.Block)
+		assert.Equal(t, http.StatusTooManyRequests, out.StatusCode)
+		assert.Equal(t, "trustguard_rate_limited", out.Type)
+		assert.Equal(t, "rate limit exceeded", out.Message)
+		assert.Equal(t, body, out.Body)
+		assert.Equal(t, headers, out.Headers)
+		assert.Empty(t, inspectors["later"].seen, "a rate limit cuts the chain in observe")
+	})
 }
 
 func TestExecutor_RunStreamSegment_FiltersTheChain(t *testing.T) {
