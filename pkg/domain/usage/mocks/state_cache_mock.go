@@ -80,59 +80,49 @@ func (_c *StateCache_LoadAll_Call) RunAndReturn(run func(context.Context) ([]usa
 	return _c
 }
 
-// Save provides a mock function with given fields: ctx, state
-func (_m *StateCache) Save(ctx context.Context, state usage.TenantState) (bool, error) {
-	ret := _m.Called(ctx, state)
+// SaveAll provides a mock function with given fields: ctx, states
+func (_m *StateCache) SaveAll(ctx context.Context, states []usage.TenantState) error {
+	ret := _m.Called(ctx, states)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Save")
+		panic("no return value specified for SaveAll")
 	}
 
-	var r0 bool
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, usage.TenantState) (bool, error)); ok {
-		return rf(ctx, state)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, usage.TenantState) bool); ok {
-		r0 = rf(ctx, state)
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, []usage.TenantState) error); ok {
+		r0 = rf(ctx, states)
 	} else {
-		r0 = ret.Get(0).(bool)
+		r0 = ret.Error(0)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, usage.TenantState) error); ok {
-		r1 = rf(ctx, state)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
+	return r0
 }
 
-// StateCache_Save_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Save'
-type StateCache_Save_Call struct {
+// StateCache_SaveAll_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveAll'
+type StateCache_SaveAll_Call struct {
 	*mock.Call
 }
 
-// Save is a helper method to define mock.On call
+// SaveAll is a helper method to define mock.On call
 //   - ctx context.Context
-//   - state usage.TenantState
-func (_e *StateCache_Expecter) Save(ctx interface{}, state interface{}) *StateCache_Save_Call {
-	return &StateCache_Save_Call{Call: _e.mock.On("Save", ctx, state)}
+//   - states []usage.TenantState
+func (_e *StateCache_Expecter) SaveAll(ctx interface{}, states interface{}) *StateCache_SaveAll_Call {
+	return &StateCache_SaveAll_Call{Call: _e.mock.On("SaveAll", ctx, states)}
 }
 
-func (_c *StateCache_Save_Call) Run(run func(ctx context.Context, state usage.TenantState)) *StateCache_Save_Call {
+func (_c *StateCache_SaveAll_Call) Run(run func(ctx context.Context, states []usage.TenantState)) *StateCache_SaveAll_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(usage.TenantState))
+		run(args[0].(context.Context), args[1].([]usage.TenantState))
 	})
 	return _c
 }
 
-func (_c *StateCache_Save_Call) Return(_a0 bool, _a1 error) *StateCache_Save_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *StateCache_SaveAll_Call) Return(_a0 error) *StateCache_SaveAll_Call {
+	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *StateCache_Save_Call) RunAndReturn(run func(context.Context, usage.TenantState) (bool, error)) *StateCache_Save_Call {
+func (_c *StateCache_SaveAll_Call) RunAndReturn(run func(context.Context, []usage.TenantState) error) *StateCache_SaveAll_Call {
 	_c.Call.Return(run)
 	return _c
 }

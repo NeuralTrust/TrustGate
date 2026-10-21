@@ -17,6 +17,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 type fakeUsage struct {
@@ -66,14 +68,22 @@ func newFakeUsage(states ...usagedomain.TenantState) *fakeUsage {
 	return f
 }
 
-func (f *fakeUsage) SnapshotFor(tenantID string, all bool) usagedomain.Snapshot {
+func (f *fakeUsage) SnapshotAll() usagedomain.Snapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := usagedomain.Snapshot{AsOfVersion: f.asOf}
-	for id, s := range f.exhausted {
-		if all || id == tenantID {
-			out.Exhausted = append(out.Exhausted, s)
-		}
+	for _, s := range f.exhausted {
+		out.Exhausted = append(out.Exhausted, s)
+	}
+	return out
+}
+
+func (f *fakeUsage) SnapshotTenant(tenantID string) usagedomain.Snapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := usagedomain.Snapshot{AsOfVersion: f.asOf}
+	if s, ok := f.exhausted[tenantID]; ok && tenantID != "" {
+		out.Exhausted = append(out.Exhausted, s)
 	}
 	return out
 }
@@ -329,5 +339,33 @@ func TestClientWatchFeedsUsageToTheSink(t *testing.T) {
 	if got.AsOfVersion != 7 || len(got.Exhausted) != 1 || got.Exhausted[0].TenantID != "tenant-a" ||
 		got.Exhausted[0].Reason != usagedomain.ReasonFreeLimitReached {
 		t.Fatalf("snapshot = %+v", got)
+	}
+}
+
+func TestClientWatchReceivesAUsageMessageAboveTheDefaultLimit(t *testing.T) {
+	const tenants = 100_000
+	states := make([]usagedomain.TenantState, 0, tenants)
+	for i := range tenants {
+		states = append(states, exhaustedState(t, fmt.Sprintf("00000000-0000-4000-8000-%012d", i), int64(i+1)))
+	}
+	usage := newFakeUsage(states...)
+	msg, _ := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).usageSnapshotFor(context.Background(), "")
+	if size := proto.Size(msg); size <= 4<<20 {
+		t.Fatalf("usage message is %d bytes; the test needs one above 4 MiB", size)
+	}
+	src := &fakeSource{}
+	src.set([]byte("payload"), "v1")
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	client := dialClient(t, lis, "dp-1")
+	sink := &recordingSink{}
+	client.SetUsageSink(sink)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := client.Watch(ctx); err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	if sink.count() != 1 || len(sink.snapshots[0].Exhausted) != tenants {
+		t.Fatalf("sink got %d snapshots, want one with every tenant", sink.count())
 	}
 }

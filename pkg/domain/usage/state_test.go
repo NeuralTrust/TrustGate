@@ -57,3 +57,38 @@ func TestNewTenantState(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotChanges(t *testing.T) {
+	t.Parallel()
+	exhausted := func(tenant string, version int64) TenantState {
+		return TenantState{TenantID: tenant, Status: StatusExhausted, Reason: ReasonWalletEmpty, Version: version}
+	}
+	healthy := func(tenant string, version int64) TenantState {
+		return TenantState{TenantID: tenant, Status: StatusHealthy, Version: version}
+	}
+	held := map[string]TenantState{
+		"stale":   exhausted("stale", 5),
+		"newer":   exhausted("newer", 50),
+		"listed":  exhausted("listed", 8),
+		"healthy": healthy("healthy", 3),
+	}
+	snapshot := Snapshot{
+		AsOfVersion: 20,
+		Exhausted:   []TenantState{exhausted("listed", 7), exhausted("fresh", 12), exhausted("fresh", 11)},
+	}
+
+	got := snapshot.Changes(held)
+
+	want := []TenantState{exhausted("fresh", 12), healthy("stale", 20)}
+	if len(got) != len(want) {
+		t.Fatalf("changes = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("changes = %+v, want %+v", got, want)
+		}
+	}
+	if held["stale"].Version != 5 {
+		t.Fatal("Changes wrote into held")
+	}
+}
