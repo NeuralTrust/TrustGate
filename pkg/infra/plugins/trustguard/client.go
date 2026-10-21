@@ -95,7 +95,9 @@ func (e *rateLimitedError) Error() string {
 }
 
 // entitlementsUnavailableError is returned when TrustGuard evaluate cannot
-// resolve plan entitlements (HTTP 503). Must not fail-open.
+// resolve plan entitlements (HTTP 503). The plugin records the failure and
+// continues: the buffered leg forwards the request, and a streamed block is
+// allowed.
 type entitlementsUnavailableError struct {
 	body []byte
 }
@@ -106,9 +108,11 @@ func (e *entitlementsUnavailableError) Error() string {
 
 // authRejectedError is returned when TrustGuard deliberately refuses the
 // evaluate call (403, or 401 after token refresh) or the token call (400, 401,
-// 403). Must not fail-open: the guard is reachable and the plugin is
-// misconfigured or unauthorized. code is the OAuth error code the token
-// endpoint named, for the operator's log only; it never reaches the caller.
+// 403). The plugin records the failure and continues: the buffered leg
+// forwards the request, and a streamed block is allowed. The guard is
+// reachable and the plugin is misconfigured or unauthorized. code is the OAuth
+// error code the token endpoint named, for the operator's log only; it never
+// reaches the caller.
 type authRejectedError struct {
 	status int
 	code   string
