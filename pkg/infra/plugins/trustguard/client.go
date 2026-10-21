@@ -48,6 +48,9 @@ const (
 	// that runs out of time fails open inside the answer instead of outliving
 	// the call and turning into a gateway timeout (ENG-1671).
 	evaluateTimeoutHeader = "X-Evaluate-Timeout-Ms"
+	// failureModeHeader tells TrustGuard what to do with a detector that cannot
+	// run: open or closed. TrustGuard honours it only from TrustGate's token.
+	failureModeHeader = "X-Failure-Mode"
 
 	// peerService must match TrustGuard's own service.name, and evaluateSpanName
 	// stays a bounded label rather than the request target.
@@ -95,7 +98,9 @@ func (e *rateLimitedError) Error() string {
 }
 
 // entitlementsUnavailableError is returned when TrustGuard evaluate cannot
-// resolve plan entitlements (HTTP 503). Must not fail-open.
+// resolve plan entitlements (HTTP 503). The plugin records the failure and
+// continues: the buffered leg forwards the request, and a streamed block is
+// allowed.
 type entitlementsUnavailableError struct {
 	body []byte
 }
@@ -106,9 +111,11 @@ func (e *entitlementsUnavailableError) Error() string {
 
 // authRejectedError is returned when TrustGuard deliberately refuses the
 // evaluate call (403, or 401 after token refresh) or the token call (400, 401,
-// 403). Must not fail-open: the guard is reachable and the plugin is
-// misconfigured or unauthorized. code is the OAuth error code the token
-// endpoint named, for the operator's log only; it never reaches the caller.
+// 403). The plugin records the failure and continues: the buffered leg
+// forwards the request, and a streamed block is allowed. The guard is
+// reachable and the plugin is misconfigured or unauthorized. code is the OAuth
+// error code the token endpoint named, for the operator's log only; it never
+// reaches the caller.
 type authRejectedError struct {
 	status int
 	code   string
@@ -179,6 +186,11 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if traceID != "" {
 		req.Header.Set(traceIDHeader, traceID)
 	}
+	mode := body.FailureMode
+	if mode == "" {
+		mode = defaultFailureMode
+	}
+	req.Header.Set(failureModeHeader, mode)
 	if playground {
 		req.Header.Set(playgroundOriginHeader, "1")
 	}

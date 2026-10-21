@@ -14,7 +14,11 @@
 
 package grpc
 
-import "context"
+import (
+	"context"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
+)
 
 type scopeContextKeyType struct{}
 
@@ -27,4 +31,21 @@ func WithScope(ctx context.Context, scope string) context.Context {
 func ScopeFromContext(ctx context.Context) string {
 	scope, _ := ctx.Value(scopeContextKey).(string)
 	return scope
+}
+
+type identityContextKeyType struct{}
+
+var identityContextKey identityContextKeyType
+
+// WithIdentity returns a copy of ctx carrying the verified config-sync token
+// identity.
+func WithIdentity(ctx context.Context, id configsyncrevocation.Identity) context.Context {
+	return context.WithValue(ctx, identityContextKey, id)
+}
+
+// IdentityFromContext returns the verified config-sync token identity and
+// whether the context carries one.
+func IdentityFromContext(ctx context.Context) (configsyncrevocation.Identity, bool) {
+	id, ok := ctx.Value(identityContextKey).(configsyncrevocation.Identity)
+	return id, ok
 }

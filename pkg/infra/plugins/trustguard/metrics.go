@@ -37,7 +37,10 @@ const (
 	failureReasonEntitlementsUnavailable = "entitlements_unavailable"
 	failureReasonConfigInvalid           = "config_invalid"
 	failureReasonGatewayIDMissing        = "gateway_id_missing"
-	failureReasonPayloadUnreadable       = "payload_unreadable"
+	// failureReasonProviderMissing is an LLM request with no provider set, so
+	// the leg is not decoded and no evaluate call is made.
+	failureReasonProviderMissing   = "provider_missing"
+	failureReasonPayloadUnreadable = "payload_unreadable"
 	// failureReasonPayloadTooLarge is TrustGuard refusing the body for its size
 	// (HTTP 413): what the request carries, not the engine being unavailable.
 	failureReasonPayloadTooLarge = "payload_too_large"

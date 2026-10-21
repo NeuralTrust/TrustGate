@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -30,8 +31,8 @@ var (
 	errUnauthenticated   = errors.New("missing or invalid config-sync token")
 )
 
-type scopeAuthenticator interface {
-	authenticate(bearer string) (scope string, err error)
+type tokenAuthenticator interface {
+	verify(bearer string) (configsyncrevocation.Identity, error)
 }
 
 type sharedAuthenticator struct {
@@ -51,12 +52,12 @@ func newSharedAuthenticator(cfg config.ConfigSyncConfig) *sharedAuthenticator {
 
 func (s *sharedAuthenticator) configured() bool { return len(s.tokenDigests) > 0 }
 
-func (s *sharedAuthenticator) authenticate(bearer string) (string, error) {
+func (s *sharedAuthenticator) verify(bearer string) (configsyncrevocation.Identity, error) {
 	if !s.configured() {
-		return "", errAuthNotConfigured
+		return configsyncrevocation.Identity{}, errAuthNotConfigured
 	}
 	if bearer == "" {
-		return "", errUnauthenticated
+		return configsyncrevocation.Identity{}, errUnauthenticated
 	}
 	providedDigest := sha256.Sum256([]byte(bearer))
 	matched := 0
@@ -64,9 +65,9 @@ func (s *sharedAuthenticator) authenticate(bearer string) (string, error) {
 		matched |= subtle.ConstantTimeCompare(providedDigest[:], digest[:])
 	}
 	if matched != 1 {
-		return "", errUnauthenticated
+		return configsyncrevocation.Identity{}, errUnauthenticated
 	}
-	return "", nil
+	return configsyncrevocation.Identity{}, nil
 }
 
 type jwtAuthenticator struct {
@@ -98,32 +99,47 @@ func newJWTAuthenticator(cfg config.ConfigSyncConfig) (*jwtAuthenticator, error)
 	}, nil
 }
 
-func (j *jwtAuthenticator) authenticate(bearer string) (string, error) {
+func (j *jwtAuthenticator) verify(bearer string) (configsyncrevocation.Identity, error) {
 	if bearer == "" {
-		return "", errUnauthenticated
+		return configsyncrevocation.Identity{}, errUnauthenticated
 	}
 	for _, secret := range j.secrets {
 		claims := jwt.MapClaims{}
 		if _, err := j.parser.ParseWithClaims(bearer, claims, func(*jwt.Token) (any, error) { return secret, nil }); err != nil {
 			continue
 		}
-		scope := instanceScope(claims)
-		if scope == "" {
-			return "", errUnauthenticated
+		id := identityFromClaims(claims)
+		if id.Scope == "" {
+			return configsyncrevocation.Identity{}, errUnauthenticated
 		}
-		return scope, nil
+		return id, nil
 	}
-	return "", errUnauthenticated
+	return configsyncrevocation.Identity{}, errUnauthenticated
 }
 
-func instanceScope(claims jwt.MapClaims) string {
+func identityFromClaims(claims jwt.MapClaims) configsyncrevocation.Identity {
+	id := configsyncrevocation.Identity{Signed: true}
 	if instanceID, ok := claims["instance_id"].(string); ok && instanceID != "" {
-		return instanceID
+		id.Scope, id.InstanceScoped = instanceID, true
+	} else if scope, ok := claims["scope"].(string); ok {
+		id.Scope = scope
 	}
-	if scope, ok := claims["scope"].(string); ok {
-		return scope
+	id.JTI, _ = claims["jti"].(string)
+	id.IssuedAt = issuedAtUnix(claims)
+	return id
+}
+
+// issuedAtUnix reads iat without making it mandatory: a malformed or missing
+// iat only disables the issued-before rule for that token, it never rejects it.
+func issuedAtUnix(claims jwt.MapClaims) int64 {
+	iat, err := claims.GetIssuedAt()
+	if err != nil || iat == nil {
+		return 0
 	}
-	return ""
+	if unix := iat.Unix(); unix > 0 {
+		return unix
+	}
+	return 0
 }
 
 type compositeAuthenticator struct {
@@ -139,9 +155,9 @@ func newCompositeAuthenticator(cfg config.ConfigSyncConfig) (*compositeAuthentic
 	return &compositeAuthenticator{jwt: jwtAuth, shared: newSharedAuthenticator(cfg)}, nil
 }
 
-func (c *compositeAuthenticator) authenticate(bearer string) (string, error) {
-	if scope, err := c.jwt.authenticate(bearer); err == nil {
-		return scope, nil
+func (c *compositeAuthenticator) verify(bearer string) (configsyncrevocation.Identity, error) {
+	if id, err := c.jwt.verify(bearer); err == nil {
+		return id, nil
 	}
-	return c.shared.authenticate(bearer)
+	return c.shared.verify(bearer)
 }

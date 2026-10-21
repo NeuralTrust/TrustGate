@@ -750,8 +750,8 @@ func (p *Plugin) reject(ctx context.Context, tool string, ws *windowState, dimen
 // rate_limiter has (this plugin only ever runs in enforce), so the decision
 // is always failed_open; base, when non-nil, is prior state worth keeping in
 // the extras anyway (see spentTelemetry) — this only adds
-// FailureReason/FailureDetail on top of it, or of a fresh PerToolRateLimiterData
-// when base is nil.
+// FailureReason/FailureDetail/FailureErrorClass on top of it, or of a fresh
+// PerToolRateLimiterData when base is nil.
 //
 // A ctx the caller itself canceled (or let deadline out) is not a
 // counter-store outage — HandleCounterFailure reports that back as a non-nil
@@ -782,6 +782,7 @@ func (p *Plugin) counterUnavailable(
 	}
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setExtras(in.Event, data)
 	return result, nil
 }

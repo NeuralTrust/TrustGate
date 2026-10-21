@@ -25,9 +25,11 @@ import (
 	"testing"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
+	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
+	revokermocks "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation/mocks"
 	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -164,6 +166,39 @@ func TestAdminRouterRefusesServiceCredentialsOnSubjectSessions(t *testing.T) {
 	require.NoError(t, res.Body.Close())
 	assert.Equal(t, http.StatusForbidden, res.StatusCode, string(raw))
 	assert.Contains(t, string(raw), "Use a credential scoped to this gateway")
+}
+
+func TestAdminRouterRefusesServiceCredentialsOnConfigSyncRevocations(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	write := middleware.RequiredScope(middleware.ResourceGateways, fiber.MethodPost)
+	bearer := "eyJhbGciOiJSUzI1NiJ9.e30.revocations"
+	verifier := jwtmocks.NewServiceVerifier(t)
+	verifier.EXPECT().Enabled().Return(true)
+	verifier.EXPECT().Verify(bearer).Return(&jwt.ServiceClaims{
+		TenantID: "t1", GatewayID: gatewayID.String(), Scopes: []string{write},
+	}, nil)
+	gateways := gatewaymocks.NewFinder(t)
+	gateways.EXPECT().FindByID(mock.Anything, gatewayID).
+		Return(&gatewaydomain.Gateway{ID: gatewayID, Metadata: gatewaydomain.WithTenantID(nil, "t1")}, nil)
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport:    middleware.NewTransport(),
+		AdminAuth:              middleware.NewAdminAuthMiddleware(nil, nil, verifier, false),
+		AdminAuthz:             middleware.NewAdminAuthzMiddleware(nil, gateways),
+		RevokeConfigSyncTokens: configsynchttp.NewRevokeTokensHandler(revokermocks.NewRevoker(t)),
+	}).BuildRoutes(app))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/gateways/"+gatewayID.String()+"/config-sync/revocations",
+		strings.NewReader(`{"jtis":["a1"]}`))
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+bearer)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	assert.Equal(t, http.StatusForbidden, res.StatusCode, string(raw))
 }
 
 type subjectSessionsMustNotRun struct{}
