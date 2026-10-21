@@ -24,8 +24,17 @@ func All(plane string, dbless bool) []container.Option {
 	return append(opts, container.WithModule(adminReadiness(plane)), container.WithModule(usageForPlane(plane)))
 }
 
+// Plane names, as the binary's first argument gives them.
+const (
+	PlaneAdmin  = "admin"
+	PlaneProxy  = "proxy"
+	PlaneMCP    = "mcp"
+	PlaneRun    = "run"
+	PlaneWorker = "worker"
+)
+
 func isDataPlane(plane string) bool {
-	return plane == "proxy" || plane == "mcp" || plane == "worker"
+	return plane == PlaneProxy || plane == PlaneMCP || plane == PlaneWorker
 }
 
 func fullModules() []container.Option {

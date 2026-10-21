@@ -162,14 +162,15 @@ const (
 	defaultConfigSyncGRPCListenAddr       = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime    = 30 * time.Second
 	defaultConfigSyncGRPCKeepaliveTimeout = 10 * time.Second
-	// DefaultConfigSyncGRPCMaxRecvBytes matches the default
-	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES.
-	DefaultConfigSyncGRPCMaxRecvBytes       = 64 << 20
-	defaultConfigSyncGRPCMinBackoff         = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff         = 30 * time.Second
-	defaultConfigSyncOutboxRetention        = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows    int64 = 10000
-	defaultConfigSyncAdminLKGMaxAge         = 7 * 24 * time.Hour
+	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
+	// message limit and the data plane's default Sync receive limit: the usage
+	// list goes from one to the other in a single message.
+	defaultGRPCMaxMessageBytes             = 64 << 20
+	defaultConfigSyncGRPCMinBackoff        = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff        = 30 * time.Second
+	defaultConfigSyncOutboxRetention       = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows   int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge        = 7 * 24 * time.Hour
 
 	configSyncKeyBytes = 32
 
@@ -373,8 +374,8 @@ type ConfigSyncConfig struct {
 	// GRPCMaxRecvBytes is CONFIG_SYNC_GRPC_MAX_RECV_BYTES, the largest message a
 	// data plane accepts on the Sync stream. The usage list travels in one
 	// message, so it must be at least the control plane's
-	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES. Zero means
-	// DefaultConfigSyncGRPCMaxRecvBytes.
+	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES, and never below its 64 MiB default.
+	// Read it through MaxRecvBytes, which applies the default to a zero value.
 	GRPCMaxRecvBytes int
 	OutboxRetention  time.Duration
 	OutboxMaxRows    int64
@@ -474,7 +475,7 @@ const (
 
 	defaultUsageGRPCKeepaliveTime      = 30 * time.Second
 	defaultUsageGRPCKeepaliveTimeout   = 10 * time.Second
-	defaultUsageGRPCMaxMessageBytes    = 64 << 20
+	defaultUsageGRPCMaxMessageBytes    = defaultGRPCMaxMessageBytes
 	defaultUsageReconnectMinBackoff    = time.Second
 	defaultUsageReconnectMaxBackoff    = 30 * time.Second
 	defaultUsageCacheRestoreInterval   = 2 * time.Second
@@ -1271,7 +1272,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
 		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
-		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", DefaultConfigSyncGRPCMaxRecvBytes),
+		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
@@ -1472,6 +1473,14 @@ func DBLessDataPlaneEnabled() bool {
 	return getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled)
 }
 
+// MaxRecvBytes is the data plane's Sync receive limit, the default when unset.
+func (cs ConfigSyncConfig) MaxRecvBytes() int {
+	if cs.GRPCMaxRecvBytes == 0 {
+		return defaultGRPCMaxMessageBytes
+	}
+	return cs.GRPCMaxRecvBytes
+}
+
 func (cs ConfigSyncConfig) Validate() error {
 	if !cs.DataPlaneEnabled {
 		return nil
@@ -1495,8 +1504,8 @@ func (cs ConfigSyncConfig) Validate() error {
 	if cs.PollInterval <= 0 {
 		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
 	}
-	if cs.GRPCMaxRecvBytes < 0 {
-		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_MAX_RECV_BYTES must not be negative", errors.ErrInvalidConfig)
+	if cs.GRPCMaxRecvBytes != 0 && cs.GRPCMaxRecvBytes < defaultGRPCMaxMessageBytes {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_MAX_RECV_BYTES must be at least %d, the control plane's default usage message limit", errors.ErrInvalidConfig, defaultGRPCMaxMessageBytes)
 	}
 	return nil
 }

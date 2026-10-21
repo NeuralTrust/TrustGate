@@ -241,3 +241,20 @@ func TestUsageLoopsRetryFailedCacheWrites(t *testing.T) {
 	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
 	require.Eventually(t, func() bool { return cache.count() == 1 }, 2*time.Second, 5*time.Millisecond, "the failed write was never retried")
 }
+
+func TestUsageLoopsFlushPendingStatesOnStop(t *testing.T) {
+	t.Parallel()
+	cache := &flakyStateCache{failures: 1}
+	store := appusage.NewStore(cache, nil, time.Second)
+	usage := enabledUsage()
+	usage.CacheRetryInterval = time.Hour
+	loops := provideUsageLoops(&config.Config{Usage: usage}, store, nil, slog.Default())
+	loops.Start()
+
+	state, err := usagedomain.NewTenantState("tenant-a", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 2)
+	require.NoError(t, err)
+	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
+	require.Zero(t, cache.count(), "the first write fails")
+	loops.Stop()
+	require.Equal(t, 1, cache.count(), "Stop must write the pending state before Redis closes")
+}
