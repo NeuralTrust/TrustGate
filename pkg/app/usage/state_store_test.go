@@ -444,31 +444,44 @@ func TestStoreWritesLargeListsInChunks(t *testing.T) {
 	}
 }
 
-func TestStoreFinishesTheChunkInFlightOnShutdown(t *testing.T) {
+func TestStoreStillWritesWhatItWasHandedOnShutdown(t *testing.T) {
 	t.Parallel()
 	cache := &memoryCache{saveStarted: make(chan struct{}, 4), saveGate: make(chan struct{})}
 	store := NewStore(cache, nil, time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		_ = store.ApplySnapshot(ctx, manyStates(t, cacheChunk+10, 5), 5)
-		close(done)
-	}()
+	done := make(chan error, 1)
+	go func() { done <- store.ApplySnapshot(ctx, manyStates(t, cacheChunk+10, 5), 5) }()
 
 	<-cache.saveStarted
 	cancel()
 	close(cache.saveGate)
-	<-done
+	if err := <-done; err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
 
-	if got := len(cache.savedStates()); got != cacheChunk {
-		t.Fatalf("saved %d states, want the chunk in flight (%d) written despite the cancel", got, cacheChunk)
-	}
-	if calls := cache.saveCalls(); calls != 1 {
-		t.Fatalf("SaveAll calls = %d, want no new chunk started after the cancel", calls)
-	}
-	store.FlushPending(context.Background())
 	if got := len(cache.savedStates()); got != cacheChunk+10 {
-		t.Fatalf("saved %d states after the flush, want the rest written", got)
+		t.Fatalf("saved %d states, want all %d written despite the cancel", got, cacheChunk+10)
+	}
+}
+
+func TestStoreUnblockAtTheSameVersionSupersedesAPendingBlock(t *testing.T) {
+	t.Parallel()
+	cache := &memoryCache{saveErr: errors.New("redis down")}
+	store := NewStore(cache, nil, time.Second)
+	ctx := context.Background()
+
+	if err := store.Apply(ctx, []domain.TenantState{state(t, "a", true, 9)}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := store.ApplySnapshot(ctx, nil, 9); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	cache.setSaveErr(nil)
+	store.FlushPending(ctx)
+
+	saved := cache.savedStates()
+	if len(saved) != 1 || saved[0].Exhausted() || saved[0].Version != 9 {
+		t.Fatalf("saved = %+v, want a healthy at 9: the unblock applied after the failed block", saved)
 	}
 }
 

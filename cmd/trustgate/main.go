@@ -61,11 +61,11 @@ import (
 )
 
 const (
-	serverAdmin  = "admin"
-	serverProxy  = "proxy"
-	serverMCP    = "mcp"
-	serverRun    = "run"
-	serverWorker = "worker"
+	serverAdmin  = modules.PlaneAdmin
+	serverProxy  = modules.PlaneProxy
+	serverMCP    = modules.PlaneMCP
+	serverRun    = modules.PlaneRun
+	serverWorker = modules.PlaneWorker
 )
 
 // serverConfigSyncGRPC names the control-plane config-sync gRPC listener in the shared serve loop.

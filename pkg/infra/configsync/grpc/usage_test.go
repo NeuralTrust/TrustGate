@@ -226,8 +226,9 @@ func TestUsageSnapshotForScopes(t *testing.T) {
 		{name: "in-cluster data plane gets every tenant", gateways: gateways, scope: "", wantSent: true, want: []string{"tenant-a", "tenant-b"}},
 		{name: "hybrid gateway scope gets only its tenant", gateways: gateways, scope: gwA.ID.String(), wantSent: true, want: []string{"tenant-a"}},
 		{name: "tenant-wide scope gets that tenant", gateways: gateways, scope: "tenant-b", wantSent: true, want: []string{"tenant-b"}},
-		{name: "unknown gateway without a compiled scope sends nothing", gateways: gateways, scope: unknownGateway.String(), wantSent: false},
-		{name: "tenant-wide scope shaped like a gateway id gets that tenant", gateways: gateways, scope: unknownGateway.String(), compiled: true, wantSent: true},
+		{name: "unknown gateway sends nothing", gateways: gateways, scope: unknownGateway.String(), wantSent: false},
+		{name: "deleted gateway whose snapshot is still compiled sends nothing", gateways: gateways, scope: unknownGateway.String(), compiled: true, wantSent: false},
+		{name: "gateway scope without a resolver sends nothing", gateways: nil, scope: gwA.ID.String(), wantSent: false},
 		{name: "unresolvable scope sends nothing", gateways: failingGateways{}, scope: gwA.ID.String(), wantSent: false},
 	}
 	for _, tt := range tests {
@@ -401,13 +402,11 @@ func TestUsageSnapshotFromProtoKeepsListedTenantsBlocked(t *testing.T) {
 	}
 }
 
-func TestSyncSendsOwedUsageOnceTheScopeIsCompiled(t *testing.T) {
-	gateways := &fakeGateways{byID: map[ids.GatewayID]*gatewaydomain.Gateway{}}
-	tenantScope, err := ids.NewV7[ids.GatewayKind]()
-	if err != nil {
-		t.Fatalf("id: %v", err)
-	}
-	usage := newFakeUsage(exhaustedState(t, tenantScope.String(), 3))
+func TestSyncSendsOwedUsageOnceTheScopeResolves(t *testing.T) {
+	gw := tenantGateway(t, "tenant-a")
+	gateways := &flakyGateways{gw: gw, failing: true}
+	tenantScope := gw.ID
+	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3))
 	src := &fakeSource{}
 	hub := NewHub(discardLogger(), nil)
 	svc := NewService(hub, src, discardLogger(), WithUsage(usage, gateways))
@@ -450,10 +449,11 @@ func TestSyncSendsOwedUsageOnceTheScopeIsCompiled(t *testing.T) {
 	eventually(t, func() bool { return hub.ConnectionCount() == 1 }, "stream never registered")
 	select {
 	case msg := <-got:
-		t.Fatalf("sent %v for a scope that is neither a gateway nor compiled", msg)
+		t.Fatalf("sent %v while the gateway lookup fails", msg)
 	case <-time.After(200 * time.Millisecond):
 	}
 
+	gateways.recover()
 	src.set([]byte("scoped"), "v2")
 	hub.Broadcast("v2")
 	var sawNotice bool
@@ -466,7 +466,7 @@ func TestSyncSendsOwedUsageOnceTheScopeIsCompiled(t *testing.T) {
 				continue
 			}
 			if u := msg.GetUsage(); u != nil {
-				if !sawNotice || len(u.GetExhausted()) != 1 || u.GetExhausted()[0].GetTenantId() != tenantScope.String() {
+				if !sawNotice || len(u.GetExhausted()) != 1 || u.GetExhausted()[0].GetTenantId() != "tenant-a" {
 					t.Fatalf("usage = %v (after notice: %v), want the tenant's list after the notice", u, sawNotice)
 				}
 				return
@@ -475,4 +475,28 @@ func TestSyncSendsOwedUsageOnceTheScopeIsCompiled(t *testing.T) {
 			t.Fatal("the owed usage list never followed the notice")
 		}
 	}
+}
+
+type flakyGateways struct {
+	mu      sync.Mutex
+	gw      *gatewaydomain.Gateway
+	failing bool
+}
+
+func (f *flakyGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failing {
+		return nil, errors.New("postgres down")
+	}
+	if id == f.gw.ID {
+		return f.gw, nil
+	}
+	return nil, gatewaydomain.ErrNotFound
+}
+
+func (f *flakyGateways) recover() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failing = false
 }

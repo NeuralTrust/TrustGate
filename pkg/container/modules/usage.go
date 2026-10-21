@@ -133,14 +133,16 @@ func (l *UsageLoops) Start() {
 	}()
 }
 
-// Stop ends the loops, waits for them and closes the UsageSync connection.
-// Call it before Redis closes: the loops write to it until they return.
+// Stop ends the loops, waits for them, makes one last bounded attempt at the
+// states a failed write left behind, and closes the UsageSync connection.
+// Call it before Redis closes: all of this writes to it.
 func (l *UsageLoops) Stop() {
 	if l == nil || l.cancel == nil {
 		return
 	}
 	l.cancel()
 	l.wg.Wait()
+	l.store.FlushPending(context.Background())
 	if l.client != nil {
 		if err := l.client.Close(); err != nil {
 			l.logger.Warn("usagesync shutdown error", slog.String("error", err.Error()))
@@ -175,9 +177,9 @@ type postgresDataPlane bool
 func usageForPlane(plane string) container.Module {
 	return func(c *container.Container) error {
 		switch plane {
-		case "run":
+		case PlaneRun:
 			return c.Provide(provideLocalUsage)
-		case "admin":
+		case PlaneAdmin:
 			return nil
 		default:
 			return c.Provide(func() postgresDataPlane { return true })

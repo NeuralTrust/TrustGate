@@ -77,9 +77,6 @@ func (c *Client) SetUsageSink(sink UsageSink) {
 // exhausted tenant in one usage message, and a message over the limit would
 // break the whole stream, config notices included.
 func recvLimit(maxBytes int) grpc.DialOption {
-	if maxBytes <= 0 {
-		maxBytes = config.DefaultConfigSyncGRPCMaxRecvBytes
-	}
 	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBytes))
 }
 
@@ -98,7 +95,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 			Timeout:             cfg.GRPCKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
-		recvLimit(cfg.GRPCMaxRecvBytes),
+		recvLimit(cfg.MaxRecvBytes()),
 	}
 	conn, err := grpc.NewClient(cfg.GRPCEndpoint, opts...)
 	if err != nil {
