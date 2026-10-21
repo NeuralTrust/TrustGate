@@ -120,6 +120,7 @@ type AdminRouterDeps struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+	RevokeConfigSyncTokens    *configsynchttp.RevokeTokensHandler
 
 	// StoreRequests serves the MCP Store install-approval queue. Present only on
 	// the full plane; nil-guarded when absent.
@@ -289,6 +290,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.DeleteSubjectSessions != nil {
 			subjects.Delete("/:user_id/sessions", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.DeleteSubjectSessions.Handle)
 		}
+	}
+
+	// A service credential is refused on the revocation write, even when it is
+	// bound to this gateway: revoking a gateway's tokens is a console action.
+	if r.deps.RevokeConfigSyncTokens != nil {
+		configSync := gw.Group("/:gateway_id/config-sync", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceGateways))
+		configSync.Post("/revocations", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.RevokeConfigSyncTokens.Handle)
 	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential

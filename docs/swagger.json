@@ -1060,6 +1060,86 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/config-sync/revocations": {
+            "post": {
+                "description": "Records revocations for the config-sync tokens of one gateway. jtis revokes the listed token identifiers. issued_before revokes every token of the gateway whose iat is strictly earlier than that unix time in seconds. Send either field or both. A token whose iat equals issued_before is not revoked, so send the iat of the replacement token as issued_before. jtis takes 1 to 100 entries of at most 128 bytes of printable UTF-8 each. issued_before must be greater than zero and at most 5 seconds in the future, which only absorbs clock skew. Repeating a request is safe, and a stored issued_before mark never moves backwards: it cannot be lowered or removed. Replicas pick up a revocation within one refresh interval. Only tokens bound to an instance through the instance_id claim can be revoked; the shared config-sync token cannot. Revoked tokens are refused only when the control plane runs with CONFIG_SYNC_TOKEN_REVOCATION_MODE=enforce; in shadow mode they are logged and counted. Authentication is a console JWT, and a service credential is refused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config-sync"
+                ],
+                "summary": "Revoke config-sync tokens",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Revocation",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_request.RevokeTokensRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers": {
             "get": {
                 "description": "Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.",
@@ -4643,6 +4723,90 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/subjects/{user_id}/groups": {
+            "put": {
+                "description": "Adds the given directory groups to the login claim on the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path. The body is {\"groups\": [\"\u003cgroup\u003e\", ...]}. The result is the union of that claim and this list, deduplicated. An empty list leaves the claim groups in place. Names are trimmed, deduplicated and sorted, with the same bounds as a personal key's owner groups. A subject with no refresh records answers 200 {\"updated\": 0} and does not write a session. The call does not change session expiry and does not revoke a session. Authentication is a console JWT, the same interactive identity required for PUT /auths/{id}/groups. A service credential is refused. The org matched on each record is the console token's tenant_id.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Set directory groups on a subject's default-IdP sessions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Platform user id (session subject)",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Directory groups",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateSubjectGroupsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_auth.SubjectGroupsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/subjects/{user_id}/sessions": {
             "delete": {
                 "description": "Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably and in Redis, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A successful call answers 200 with recorded true, including when this process deleted nothing: {\"revoked\": 0, \"recorded\": true}. revoked counts records deleted here. A failure to write the durable record answers 500 and does not delete records. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.",
@@ -6078,6 +6242,21 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateSubjectGroupsRequest": {
+            "type": "object",
+            "properties": {
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "engineering",
+                        "sre"
+                    ]
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse": {
             "type": "object",
             "properties": {
@@ -6418,6 +6597,20 @@
                 },
                 "wire_format": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_request.RevokeTokensRequest": {
+            "type": "object",
+            "properties": {
+                "issued_before": {
+                    "type": "integer"
+                },
+                "jtis": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -9623,6 +9816,10 @@
                     "description": "AuthorizeURL / TokenURL are required for manual registration\n(Registration == \"manual\"), where the operator supplies a pre-registered\nclient_id/secret; they also serve as a discovery fallback otherwise.\nTokenURL is also required for GrantType \"client_credentials\".",
                     "type": "string"
                 },
+                "cross_domain_contact": {
+                    "description": "CrossDomainContact opts this entry into a catalog-pinned authorize or\ntoken host on a different literal domain from the MCP host, when both\nshare the tenant label. Seed only. A new entry needs a security review\nbefore this is set.",
+                    "type": "boolean"
+                },
                 "dcr": {
                     "description": "DCR reports whether the server supports OAuth Dynamic Client Registration\n(RFC 7591). A nil pointer means it could not be determined (e.g. a\ntenant-templated host that must be probed per-instance).",
                     "type": "boolean"
@@ -9781,6 +9978,13 @@
             "properties": {
                 "description": {
                     "type": "string"
+                },
+                "host_suffix": {
+                    "description": "HostSuffix lists the DNS suffixes a whole-host value must stay under\n(`vendor.com` or `*.vendor.com`). One vendor often has several zones, so\nthe list is the whole bound. Only vendor-run zones that do not serve\ntenant content belong here; a public suffix is ignored. An open variable\nwith an empty list is not a bound on the host.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "in": {
                     "description": "In is where the variable is substituted: \"path\" (default) or \"query\".",
@@ -10202,6 +10406,7 @@
                     "type": "string"
                 },
                 "registry_id": {
+                    "description": "RegistryID is the upstream registry. During the Store stand-in window,\nbefore the snapshot carries the registry a first install just created,\nit is the installation id; catalog_code still names the server.",
                     "type": "string"
                 },
                 "resource_uri": {
@@ -10477,6 +10682,14 @@
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_auth.SubjectGroupsResponse": {
+            "type": "object",
+            "properties": {
+                "updated": {
+                    "type": "integer"
                 }
             }
         },

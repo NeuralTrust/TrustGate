@@ -19,8 +19,10 @@ import (
 	"strings"
 	"testing"
 
+	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
@@ -219,6 +221,29 @@ func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {
 				}
 			}); err != nil {
 				t.Fatalf("Invoke(*appsnapshot.Holder): %v", err)
+			}
+		})
+	}
+}
+
+func TestDISmoke_ControlPlane_ResolvesConfigSyncRevocation(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
+	for _, plane := range []string{"admin", "run"} {
+		t.Run(plane, func(t *testing.T) {
+			c := &container.Container{Container: dig.New(dig.DryRun(true))}
+			for _, opt := range modules.All(plane, false) {
+				if err := opt(c); err != nil {
+					t.Fatalf("modules.All(%q, false): %v", plane, err)
+				}
+			}
+			if err := c.Invoke(func(
+				_ appconfigsyncrevocation.Revoker,
+				_ *configsynchttp.RevokeTokensHandler,
+				_ appconfigsyncrevocation.Refresher,
+				_ appconfigsyncrevocation.Gate,
+			) {
+			}); err != nil {
+				t.Fatalf("Invoke(config-sync revocation graph): %v", err)
 			}
 		})
 	}

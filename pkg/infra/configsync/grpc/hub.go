@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 )
 
 // storeWriteTimeout bounds a best-effort connection-store write so a stalled
@@ -40,10 +42,15 @@ type Hub struct {
 // connection is one registered DP Sync stream. notices carries at most the
 // latest pending version; lastAcked tracks the last version the DP reported for
 // observability only. scope is the verified, opaque tenant scope from the JWT.
+// identity is the verified token the stream opened with; revoked is closed
+// once that token is revoked, which ends the stream.
 type connection struct {
 	scope      string
+	identity   configsyncrevocation.Identity
 	instanceID string
 	notices    chan string
+	revoked    chan struct{}
+	revokeOnce sync.Once
 
 	ackMu     sync.Mutex
 	lastAcked string
@@ -58,8 +65,14 @@ func NewHub(logger *slog.Logger, store ConnectionStore) *Hub {
 	return &Hub{conns: make(map[*connection]struct{}), logger: logger, store: store}
 }
 
-func (h *Hub) register(scope, instanceID string) *connection {
-	conn := &connection{scope: scope, instanceID: instanceID, notices: make(chan string, 1)}
+func (h *Hub) register(id configsyncrevocation.Identity, instanceID string) *connection {
+	conn := &connection{
+		scope:      id.Scope,
+		identity:   id,
+		instanceID: instanceID,
+		notices:    make(chan string, 1),
+		revoked:    make(chan struct{}),
+	}
 	h.mu.Lock()
 	h.conns[conn] = struct{}{}
 	h.mu.Unlock()
@@ -98,6 +111,26 @@ func (h *Hub) BroadcastScope(scope, version string) {
 	}
 }
 
+// CloseRevoked ends every registered Sync stream whose verified token satisfies
+// isRevoked and returns how many this call closed. GetSnapshot transfers are
+// not registered; they check revocation before each chunk instead. The check keys on the token
+// the stream authenticated with, never on the instance id the DP announced.
+func (h *Hub) CloseRevoked(isRevoked func(configsyncrevocation.Identity) bool) int {
+	h.mu.Lock()
+	conns := make([]*connection, 0, len(h.conns))
+	for conn := range h.conns {
+		conns = append(conns, conn)
+	}
+	h.mu.Unlock()
+	closed := 0
+	for _, conn := range conns {
+		if isRevoked(conn.identity) && conn.revoke() {
+			closed++
+		}
+	}
+	return closed
+}
+
 // ConnectionCount reports the number of registered data-plane streams.
 func (h *Hub) ConnectionCount() int {
 	h.mu.Lock()
@@ -119,6 +152,15 @@ func (c *connection) enqueue(version string) {
 	case c.notices <- version:
 	default:
 	}
+}
+
+func (c *connection) revoke() bool {
+	revoked := false
+	c.revokeOnce.Do(func() {
+		close(c.revoked)
+		revoked = true
+	})
+	return revoked
 }
 
 func (c *connection) recordAck(version string) {

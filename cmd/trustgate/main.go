@@ -41,6 +41,7 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/docs"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -185,6 +186,7 @@ type adminParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	Revocations    appconfigsyncrevocation.Refresher
 	OpsSDK         *o11y.SDK
 }
 
@@ -236,6 +238,7 @@ type allParam struct {
 	Config         *config.Config
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	Revocations    appconfigsyncrevocation.Refresher
 	RateLimit      rateLimitParams
 	OpsSDK         *o11y.SDK
 }
@@ -250,10 +253,12 @@ func startSecretsBackfill(c *container.Container) (func(), error) {
 
 func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
+	stopRevocations := startTokenRevocation(p.Revocations)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
 	defer stopDispatcher()
+	defer stopRevocations()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
 		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
@@ -307,11 +312,13 @@ func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 
 func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
+	stopRevocations := startTokenRevocation(p.Revocations)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer stopDispatcher()
+	defer stopRevocations()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
@@ -396,6 +403,24 @@ func startDispatcher(dispatcher *appsnapshot.Dispatcher, logger *slog.Logger) fu
 		}
 	}()
 	dispatcher.Signal()
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+// startTokenRevocation loads the config-sync token revocations once, before the
+// gRPC listener serves, then keeps reloading them in its own goroutine. The
+// returned stop cancels the loop and joins it.
+func startTokenRevocation(refresher appconfigsyncrevocation.Refresher) func() {
+	refresher.Prime(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		refresher.Run(ctx)
+	}()
 	return func() {
 		cancel()
 		wg.Wait()
