@@ -24,3 +24,21 @@ type scoreResponse struct {
 	Score    float64  `json:"score"`
 	RawScore *float64 `json:"raw_score"`
 }
+
+// inputLimits are the per-request input limits the firewall publishes on
+// /v1/complexity/config. A nil limit means unbounded.
+type inputLimits struct {
+	MaxInputChars *int `json:"max_input_chars"`
+	MaxTextChars  *int `json:"max_text_chars"`
+}
+
+// effective returns the strictest limit in characters, or 0 when unbounded.
+func (l inputLimits) effective() int {
+	limit := 0
+	for _, v := range []*int{l.MaxInputChars, l.MaxTextChars} {
+		if v != nil && *v > 0 && (limit == 0 || *v < limit) {
+			limit = *v
+		}
+	}
+	return limit
+}

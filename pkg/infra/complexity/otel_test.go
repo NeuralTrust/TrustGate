@@ -55,6 +55,10 @@ func scoreHeaders(t *testing.T, ctx context.Context) http.Header {
 	t.Helper()
 	var got http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configPath { // background limits refresh, not the score call
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		got = r.Header.Clone()
 		w.WriteHeader(http.StatusOK)
 		require.NoError(t, json.NewEncoder(w).Encode(scoreResponse{Score: 0.5, RawScore: newFloat(0.5), Revision: "9619f81d9db28141fc1cc0a3833c8446260ce603"}))
