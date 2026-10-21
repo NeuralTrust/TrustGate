@@ -28,75 +28,83 @@ import (
 // fails alone instead of the whole list.
 const cacheChunk = 1000
 
-// cacheWriter writes usage states to the cache behind the store. States a
-// write could not store stay pending, latest version per tenant, until a later
-// write or flush stores them.
+// cacheWriter keeps the states waiting to be written to the cache, latest per
+// tenant, and writes them one flush at a time, so two writes for a tenant are
+// never in flight together and an older one cannot land after a newer one.
 type cacheWriter struct {
 	cache   domain.StateCache
 	timeout time.Duration
 	logger  *slog.Logger
+	wake    chan struct{}
 
+	flushMu sync.Mutex
 	mu      sync.Mutex
 	pending map[string]domain.TenantState
 }
 
 func newCacheWriter(cache domain.StateCache, timeout time.Duration, logger *slog.Logger) *cacheWriter {
-	return &cacheWriter{cache: cache, timeout: timeout, logger: logger, pending: make(map[string]domain.TenantState)}
+	return &cacheWriter{
+		cache:   cache,
+		timeout: timeout,
+		logger:  logger,
+		wake:    make(chan struct{}, 1),
+		pending: make(map[string]domain.TenantState),
+	}
 }
 
-// write stores changed, together with the states still pending, in chunks.
-// Each chunk is detached from ctx's cancellation and bounded by timeout, so a
-// shutdown still stores what was handed in. The first chunk that fails stops
-// the write and leaves itself and the rest pending: a hung cache costs one
-// timeout per write, not one per chunk.
-func (w *cacheWriter) write(ctx context.Context, changed []domain.TenantState) {
-	batch := w.take(changed)
+func (w *cacheWriter) enqueue(states []domain.TenantState) {
+	if len(states) == 0 {
+		return
+	}
+	w.put(states)
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// A chunk in flight is detached from ctx so a shutdown does not cut it, and
+// bounded by timeout so a hung cache costs one chunk; what is not written goes
+// back to pending unless a later enqueue superseded it.
+func (w *cacheWriter) flush(ctx context.Context) {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+	batch := w.takeAll()
 	for start := 0; start < len(batch); start += cacheChunk {
+		if ctx.Err() != nil {
+			w.put(batch[start:])
+			return
+		}
 		chunk := batch[start:min(start+cacheChunk, len(batch))]
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.timeout)
 		err := w.cache.SaveAll(writeCtx, chunk)
 		cancel()
 		if err != nil {
-			rest := batch[start:]
-			w.keep(rest)
-			w.logger.WarnContext(ctx, "usage: cache states, retrying later", slog.Int("states", len(rest)), slog.Any("error", err))
+			w.put(batch[start:])
+			w.logger.WarnContext(ctx, "usage: cache states, retrying later", slog.Int("states", len(batch)-start), slog.Any("error", err))
 			return
 		}
 	}
 }
 
-// take returns changed merged with the pending states. On equal versions the
-// state just applied wins: a snapshot's healthy record at as_of supersedes an
-// exhausted state still pending at that version.
-func (w *cacheWriter) take(changed []domain.TenantState) []domain.TenantState {
+func (w *cacheWriter) put(states []domain.TenantState) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if len(w.pending) == 0 {
-		return changed
-	}
-	latest := w.pending
-	w.pending = make(map[string]domain.TenantState)
-	for _, state := range changed {
-		if held, ok := latest[state.TenantID]; !ok || held.Version <= state.Version {
-			latest[state.TenantID] = state
-		}
-	}
-	batch := make([]domain.TenantState, 0, len(latest))
-	for _, state := range latest {
-		batch = append(batch, state)
-	}
-	sort.Slice(batch, func(i, j int) bool { return batch[i].TenantID < batch[j].TenantID })
-	return batch
-}
-
-// keep puts failed states back. A state another write queued meanwhile at the
-// same or a newer version was applied later, so it stays.
-func (w *cacheWriter) keep(failed []domain.TenantState) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, state := range failed {
-		if held, ok := w.pending[state.TenantID]; !ok || held.Version < state.Version {
+	for _, state := range states {
+		if held, ok := w.pending[state.TenantID]; !ok || state.Supersedes(held) {
 			w.pending[state.TenantID] = state
 		}
 	}
+}
+
+func (w *cacheWriter) takeAll() []domain.TenantState {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	batch := make([]domain.TenantState, 0, len(w.pending))
+	for _, state := range w.pending {
+		batch = append(batch, state)
+	}
+	w.pending = make(map[string]domain.TenantState)
+	sort.Slice(batch, func(i, j int) bool { return batch[i].TenantID < batch[j].TenantID })
+	return batch
 }

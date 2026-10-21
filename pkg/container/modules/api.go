@@ -187,9 +187,6 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewHybridGatewayGuardMiddleware); err != nil {
 		return err
 	}
-	if err := c.Provide(provideUsageGuard); err != nil {
-		return err
-	}
 	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
 		return err
 	}

@@ -37,14 +37,15 @@ import (
 // Nothing here runs unless USAGE_SYSTEM_ENABLED is set.
 func Usage(c *container.Container) error {
 	for _, provider := range []any{
-		func(client cache.Client) usagedomain.StateCache {
-			return infrausage.NewRedisStateCache(client.RedisClient())
+		func(client cache.Client, logger *slog.Logger) usagedomain.StateCache {
+			return infrausage.NewRedisStateCache(client.RedisClient(), logger)
 		},
 		provideUsageStore,
 		func(s *appusage.Store) appusage.Applier { return s },
 		func(s *appusage.Store) appusage.Reader { return s },
 		provideUsageSyncClient,
 		provideUsageLoops,
+		provideUsageGuard,
 	} {
 		if err := c.Provide(provider); err != nil {
 			return err
@@ -84,6 +85,7 @@ type UsageLoops struct {
 	logger *slog.Logger
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	stop   sync.Once
 }
 
 func provideUsageLoops(cfg *config.Config, store *appusage.Store, client *usagesync.Client, logger *slog.Logger) *UsageLoops {
@@ -93,8 +95,9 @@ func provideUsageLoops(cfg *config.Config, store *appusage.Store, client *usages
 	return &UsageLoops{cfg: cfg.Usage, store: store, client: client, logger: logger}
 }
 
-// Start launches the loops, including the one that writes again the states a
-// failed Redis write left behind.
+// Start launches the loops: the Redis restore, the UsageSync stream, and the
+// cache writer, which flushes queued states as they come, retries what a
+// failed write left behind and periodically rewrites every held state.
 func (l *UsageLoops) Start() {
 	if l == nil {
 		return
@@ -120,34 +123,47 @@ func (l *UsageLoops) Start() {
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
-		ticker := time.NewTicker(l.cfg.CacheRetryInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				l.store.FlushPending(ctx)
-			}
-		}
+		l.writeCache(ctx)
 	}()
 }
 
-// Stop ends the loops, waits for them, makes one last bounded attempt at the
-// states a failed write left behind, and closes the UsageSync connection.
-// Call it before Redis closes: all of this writes to it.
+func (l *UsageLoops) writeCache(ctx context.Context) {
+	retry := time.NewTicker(l.cfg.CacheRetryInterval)
+	defer retry.Stop()
+	resync := time.NewTicker(l.cfg.CacheResyncInterval)
+	defer resync.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-l.store.CacheWrites():
+		case <-retry.C:
+		case <-resync.C:
+			l.store.ResyncCache()
+		}
+		l.store.FlushPending(ctx)
+	}
+}
+
+// Stop ends the loops, waits for them, gives the states still queued for the
+// cache one last flush bounded by USAGE_CACHE_WRITE_TIMEOUT, and closes the
+// UsageSync connection. Call it before Redis closes; later calls do nothing.
 func (l *UsageLoops) Stop() {
 	if l == nil || l.cancel == nil {
 		return
 	}
-	l.cancel()
-	l.wg.Wait()
-	l.store.FlushPending(context.Background())
-	if l.client != nil {
-		if err := l.client.Close(); err != nil {
-			l.logger.Warn("usagesync shutdown error", slog.String("error", err.Error()))
+	l.stop.Do(func() {
+		l.cancel()
+		l.wg.Wait()
+		flushCtx, cancel := context.WithTimeout(context.Background(), l.cfg.CacheWriteTimeout)
+		l.store.FlushPending(flushCtx)
+		cancel()
+		if l.client != nil {
+			if err := l.client.Close(); err != nil {
+				l.logger.Warn("usagesync shutdown error", slog.String("error", err.Error()))
+			}
 		}
-	}
+	})
 }
 
 type adminUsageReadiness func(context.Context) error
@@ -159,15 +175,11 @@ func provideAdminUsageReadiness(cfg *config.Config, reader appusage.Reader, logg
 	return appusage.ReadinessCheck(reader.Ready, cfg.Usage.ReadyTimeout, logger)
 }
 
-// localUsage is the guard source of the run plane, which holds the usage
-// store itself instead of receiving the list from a control plane.
 type localUsage struct {
 	checker appusage.ExhaustionChecker
 	enabled func() bool
 }
 
-// postgresDataPlane marks a data plane backed by Postgres: no control plane
-// feeds it usage states, so it cannot enforce them.
 type postgresDataPlane bool
 
 // usageForPlane wires what a non DB-less plane does with usage beyond the
@@ -194,23 +206,17 @@ func provideLocalUsage(cfg *config.Config, store *appusage.Store) *localUsage {
 
 type usageGuardParams struct {
 	dig.In
-	Cfg         *config.Config
-	Logger      *slog.Logger
-	Enforcement *appusage.Enforcement                       `optional:"true"`
-	Snapshots   configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
-	Local       *localUsage                                 `optional:"true"`
-	Postgres    postgresDataPlane                           `optional:"true"`
+	Cfg      *config.Config
+	Logger   *slog.Logger
+	Local    *localUsage       `optional:"true"`
+	Postgres postgresDataPlane `optional:"true"`
 }
 
-// provideUsageGuard reads a DB-less data plane's list, under the control
-// plane's flag, or the run plane's own store. The admin plane serves no
-// gateway traffic, and a Postgres-backed data plane has no list: it logs at
-// boot when it is asked to enforce, so the gap is never silent.
+// provideUsageGuard serves the planes that are not DB-less: run reads its own
+// store, the admin plane serves no gateway traffic, and a Postgres-backed data
+// plane has no list, so it logs at boot when it is asked to enforce.
 func provideUsageGuard(p usageGuardParams) *middleware.UsageGuardMiddleware {
-	switch {
-	case p.Enforcement != nil && p.Snapshots != nil:
-		return middleware.NewUsageGuardMiddleware(p.Enforcement, usageEnforcementFlag(p.Snapshots))
-	case p.Local != nil:
+	if p.Local != nil {
 		return middleware.NewUsageGuardMiddleware(p.Local.checker, p.Local.enabled)
 	}
 	if bool(p.Postgres) && p.Cfg.Usage.Enabled {
@@ -219,11 +225,23 @@ func provideUsageGuard(p usageGuardParams) *middleware.UsageGuardMiddleware {
 	return middleware.NewUsageGuardMiddleware(nil, nil)
 }
 
+// provideDataPlaneUsage wires a DB-less data plane: its list, fed by the
+// control plane, and a guard that requires both the list and the snapshot
+// carrying the control plane's flag, so a graph missing either fails to boot
+// instead of serving exhausted tenants.
 func provideDataPlaneUsage(c *container.Container) error {
-	if err := c.Provide(appusage.NewEnforcement); err != nil {
-		return err
+	for _, provider := range []any{
+		appusage.NewEnforcement,
+		func(e *appusage.Enforcement) appusage.ExhaustionChecker { return e },
+		func(e *appusage.Enforcement, snapshots configsync.ConfigStore[*readmodel.Snapshot]) *middleware.UsageGuardMiddleware {
+			return middleware.NewUsageGuardMiddleware(e, usageEnforcementFlag(snapshots))
+		},
+	} {
+		if err := c.Provide(provider); err != nil {
+			return err
+		}
 	}
-	return c.Provide(func(e *appusage.Enforcement) appusage.ExhaustionChecker { return e })
+	return nil
 }
 
 func usageEnforcementFlag(store configsync.ConfigStore[*readmodel.Snapshot]) func() bool {

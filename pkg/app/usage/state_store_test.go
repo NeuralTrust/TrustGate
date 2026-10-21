@@ -142,17 +142,18 @@ func TestStoreApplyKeepsHighestVersion(t *testing.T) {
 	}
 
 	all := store.SnapshotAll()
-	if all.AsOfVersion != 7 || len(all.Exhausted) != 1 || all.Exhausted[0].TenantID != "a" || all.Exhausted[0].Version != 5 {
-		t.Fatalf("all = %+v, want only a@5 as of 7", all)
+	if len(all.Exhausted) != 1 || all.Exhausted[0].TenantID != "a" || all.Exhausted[0].Version != 5 {
+		t.Fatalf("all = %+v, want only a@5", all)
 	}
-	if one := store.SnapshotTenant("b"); len(one.Exhausted) != 0 || one.AsOfVersion != 7 {
-		t.Fatalf("b = %+v, want none as of 7", one)
+	if one := store.SnapshotTenant("b"); len(one.Exhausted) != 0 {
+		t.Fatalf("b = %+v, want none", one)
 	}
 	if one := store.SnapshotTenant("a"); len(one.Exhausted) != 1 {
 		t.Fatalf("a = %+v, want a", one)
 	}
-	if saved := cache.savedStates(); len(saved) != 3 {
-		t.Fatalf("cache saves = %d, want 3 (the stale state is not saved)", len(saved))
+	store.FlushPending(context.Background())
+	if saved := cache.savedStates(); len(saved) != 2 {
+		t.Fatalf("cache saves = %+v, want the latest state of a and b (the stale one is never queued)", saved)
 	}
 	if reason, ok := store.Exhausted("a"); !ok || reason != domain.ReasonWalletEmpty {
 		t.Fatalf("Exhausted(a) = %v %v, want wallet_empty", reason, ok)
@@ -160,8 +161,8 @@ func TestStoreApplyKeepsHighestVersion(t *testing.T) {
 	if _, ok := store.Exhausted("b"); ok {
 		t.Fatal("b reported exhausted after its unblock")
 	}
-	if one := store.SnapshotTenant(""); len(one.Exhausted) != 0 || one.AsOfVersion != 7 {
-		t.Fatalf("empty tenant = %+v, want none as of 7", one)
+	if one := store.SnapshotTenant(""); len(one.Exhausted) != 0 {
+		t.Fatalf("empty tenant = %+v, want none", one)
 	}
 }
 
@@ -197,8 +198,8 @@ func TestStoreRestoreUntilReadyRetries(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("RestoreUntilReady did not finish once the cache answered")
 	}
-	if got := store.SnapshotAll(); len(got.Exhausted) != 1 || got.AsOfVersion != 9 {
-		t.Fatalf("restored = %+v", got)
+	if got := store.SnapshotAll(); len(got.Exhausted) != 1 || got.AsOfVersion != 0 {
+		t.Fatalf("restored = %+v, want a listed with no as_of: the cache alone is not a complete list", got)
 	}
 }
 
@@ -248,7 +249,7 @@ func TestReadinessCheckCountsTheWaitFromTheFirstNotReadyProbe(t *testing.T) {
 func TestStoreEmptyRestoreWaitsForUsageSync(t *testing.T) {
 	t.Parallel()
 	store := NewStore(&memoryCache{}, nil, time.Second)
-	if err := store.Restore(context.Background(), true); err != nil {
+	if err := store.restore(context.Background(), true); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if store.Ready() {
@@ -262,7 +263,7 @@ func TestStoreEmptyRestoreWaitsForUsageSync(t *testing.T) {
 	}
 
 	cached := NewStore(&memoryCache{stored: []domain.TenantState{state(t, "a", true, 3)}}, nil, time.Second)
-	if err := cached.Restore(context.Background(), true); err != nil {
+	if err := cached.restore(context.Background(), true); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if !cached.Ready() {
@@ -280,7 +281,7 @@ func TestStoreRestoreSkipsStatesASnapshotAlreadyCovers(t *testing.T) {
 	store := NewStore(cache, nil, time.Second)
 	ctx := context.Background()
 	done := make(chan error, 1)
-	go func() { done <- store.Restore(ctx, true) }()
+	go func() { done <- store.restore(ctx, true) }()
 	<-cache.loadStart
 
 	if err := store.ApplySnapshot(ctx, nil, 60); err != nil {
@@ -299,25 +300,40 @@ func TestStoreRestoreSkipsStatesASnapshotAlreadyCovers(t *testing.T) {
 	}
 }
 
-func TestStoreWakesSubscribersBeforeWritingTheCache(t *testing.T) {
+func TestStoreApplyNeverWaitsOnTheCache(t *testing.T) {
 	t.Parallel()
 	cache := &memoryCache{saveGate: make(chan struct{})}
 	store := NewStore(cache, nil, time.Second)
 	changes, release := store.Subscribe()
 	defer release()
-	done := make(chan struct{})
-	go func() {
-		_ = store.Apply(context.Background(), []domain.TenantState{state(t, "a", true, 1)})
-		close(done)
-	}()
+	done := make(chan error, 1)
+	go func() { done <- store.Apply(context.Background(), []domain.TenantState{state(t, "a", true, 1)}) }()
 
 	select {
-	case <-changes:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("subscribers waited on the cache write")
+		t.Fatal("Apply waited on the cache")
 	}
+	select {
+	case <-changes:
+	default:
+		t.Fatal("subscribers were not woken")
+	}
+	select {
+	case <-store.CacheWrites():
+	default:
+		t.Fatal("the cache writer was not woken")
+	}
+	flushed := make(chan struct{})
+	go func() {
+		store.FlushPending(context.Background())
+		close(flushed)
+	}()
 	close(cache.saveGate)
-	<-done
+	<-flushed
 	if len(cache.savedStates()) != 1 {
 		t.Fatal("state not cached")
 	}
@@ -328,7 +344,7 @@ func TestStoreBecomingReadyWakesSubscribersWithoutChanges(t *testing.T) {
 	store := NewStore(&memoryCache{}, nil, time.Second)
 	changes, release := store.Subscribe()
 	defer release()
-	if err := store.Restore(context.Background(), false); err != nil {
+	if err := store.restore(context.Background(), false); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	select {
@@ -377,6 +393,7 @@ func TestStoreApplySnapshotUnblocksMissingTenantsAtTheWatermark(t *testing.T) {
 	if store.Watermark() != 12 {
 		t.Fatalf("watermark = %d, want 12", store.Watermark())
 	}
+	store.FlushPending(ctx)
 	unblocked := false
 	for _, saved := range cache.savedStates() {
 		if saved.TenantID == "a" && !saved.Exhausted() && saved.Version == 10 {
@@ -406,9 +423,11 @@ func TestStoreRetriesStatesAFailedWriteLeftBehind(t *testing.T) {
 	if err := store.Apply(ctx, []domain.TenantState{state(t, "a", true, 1)}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
+	store.FlushPending(ctx)
 	if err := store.Apply(ctx, []domain.TenantState{state(t, "a", false, 2), state(t, "b", true, 3)}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
+	store.FlushPending(ctx)
 	if got := cache.savedStates(); len(got) != 0 {
 		t.Fatalf("saved = %+v while the cache fails", got)
 	}
@@ -436,6 +455,7 @@ func TestStoreWritesLargeListsInChunks(t *testing.T) {
 	if err := store.ApplySnapshot(context.Background(), manyStates(t, 2*cacheChunk+1, 5), 5); err != nil {
 		t.Fatalf("ApplySnapshot: %v", err)
 	}
+	store.FlushPending(context.Background())
 	if calls := cache.saveCalls(); calls != 3 {
 		t.Fatalf("SaveAll calls = %d, want 3 chunks for %d states", calls, 2*cacheChunk+1)
 	}
@@ -444,23 +464,31 @@ func TestStoreWritesLargeListsInChunks(t *testing.T) {
 	}
 }
 
-func TestStoreStillWritesWhatItWasHandedOnShutdown(t *testing.T) {
+func TestStoreFlushStopsBetweenChunksOnceCancelled(t *testing.T) {
 	t.Parallel()
 	cache := &memoryCache{saveStarted: make(chan struct{}, 4), saveGate: make(chan struct{})}
 	store := NewStore(cache, nil, time.Second)
+	if err := store.ApplySnapshot(context.Background(), manyStates(t, cacheChunk+10, 5), 5); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- store.ApplySnapshot(ctx, manyStates(t, cacheChunk+10, 5), 5) }()
+	done := make(chan struct{})
+	go func() {
+		store.FlushPending(ctx)
+		close(done)
+	}()
 
 	<-cache.saveStarted
 	cancel()
 	close(cache.saveGate)
-	if err := <-done; err != nil {
-		t.Fatalf("ApplySnapshot: %v", err)
+	<-done
+	if got := len(cache.savedStates()); got != cacheChunk {
+		t.Fatalf("saved %d states, want only the chunk in flight (%d) once cancelled", got, cacheChunk)
 	}
 
+	store.FlushPending(context.Background())
 	if got := len(cache.savedStates()); got != cacheChunk+10 {
-		t.Fatalf("saved %d states, want all %d written despite the cancel", got, cacheChunk+10)
+		t.Fatalf("saved %d states after the next flush, want all %d", got, cacheChunk+10)
 	}
 }
 
@@ -473,6 +501,7 @@ func TestStoreUnblockAtTheSameVersionSupersedesAPendingBlock(t *testing.T) {
 	if err := store.Apply(ctx, []domain.TenantState{state(t, "a", true, 9)}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
+	store.FlushPending(ctx)
 	if err := store.ApplySnapshot(ctx, nil, 9); err != nil {
 		t.Fatalf("ApplySnapshot: %v", err)
 	}
@@ -518,6 +547,7 @@ func TestStoreStopsWritingAfterTheFirstFailedChunk(t *testing.T) {
 	if err := store.ApplySnapshot(context.Background(), manyStates(t, 2*cacheChunk+1, 5), 5); err != nil {
 		t.Fatalf("ApplySnapshot: %v", err)
 	}
+	store.FlushPending(context.Background())
 	if calls := cache.saveCalls(); calls != 1 {
 		t.Fatalf("SaveAll calls = %d, want 1: the write stops at the first failed chunk", calls)
 	}
@@ -526,5 +556,47 @@ func TestStoreStopsWritingAfterTheFirstFailedChunk(t *testing.T) {
 	store.FlushPending(context.Background())
 	if got := len(cache.savedStates()); got != 2*cacheChunk+1 {
 		t.Fatalf("saved %d states after the flush, want all %d", got, 2*cacheChunk+1)
+	}
+}
+
+func TestStoreListsClaimNoWatermarkBeforeTheFirstSnapshot(t *testing.T) {
+	t.Parallel()
+	store := NewStore(&memoryCache{stored: []domain.TenantState{state(t, "a", true, 9)}}, nil, time.Second)
+	ctx := context.Background()
+	if err := store.restore(ctx, true); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if all := store.SnapshotAll(); all.AsOfVersion != 0 || len(all.Exhausted) != 1 {
+		t.Fatalf("restored list = %+v, want a listed with as_of 0", all)
+	}
+	if store.Watermark() != 9 {
+		t.Fatalf("watermark = %d, want 9: Usage System still learns what the cache held", store.Watermark())
+	}
+	if err := store.ApplySnapshot(ctx, []domain.TenantState{state(t, "a", true, 9)}, 12); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	if all := store.SnapshotAll(); all.AsOfVersion != 12 {
+		t.Fatalf("list after the first snapshot = %+v, want as_of 12", all)
+	}
+}
+
+func TestStoreResyncCacheRewritesEveryHeldState(t *testing.T) {
+	t.Parallel()
+	cache := &memoryCache{}
+	store := NewStore(cache, nil, time.Second)
+	ctx := context.Background()
+	if err := store.ApplySnapshot(ctx, []domain.TenantState{state(t, "a", true, 3)}, 3); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	if err := store.Apply(ctx, []domain.TenantState{state(t, "b", false, 4)}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	store.FlushPending(ctx)
+	before := len(cache.savedStates())
+
+	store.ResyncCache()
+	store.FlushPending(ctx)
+	if got := len(cache.savedStates()) - before; got != 2 {
+		t.Fatalf("resync wrote %d states, want both held states, healthy ones included", got)
 	}
 }
