@@ -15,9 +15,16 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -140,5 +147,70 @@ func TestHandleCounterFailureCanceledContextIsNotAnOutage(t *testing.T) {
 				t.Fatalf("a canceled ctx must not set a decision, got %q", span.Plugin.Decision)
 			}
 		})
+	}
+}
+
+// redisReplyError stands in for the error go-redis returns for a Redis error
+// reply: CounterErrorClass recognises it by its RedisError method alone.
+type redisReplyError string
+
+func (e redisReplyError) Error() string { return string(e) }
+func (redisReplyError) RedisError()     {}
+
+func TestCounterErrorClass(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", err: nil, want: ""},
+		{name: "replica", err: redisReplyError("READONLY You can't write against a read only replica."), want: "readonly"},
+		{name: "wrapped oom", err: fmt.Errorf("rate_limiter: record request: %w", redisReplyError("OOM command not allowed when used memory > 'maxmemory'.")), want: "oom"},
+		{name: "bgsave failing", err: redisReplyError("MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk."), want: "misconf"},
+		{name: "acl", err: redisReplyError("NOPERM User reader has no permissions to run the 'multi' command"), want: "noperm"},
+		{name: "aborted transaction", err: redisReplyError("EXECABORT Transaction discarded because of previous errors."), want: "execabort"},
+		{name: "script on a replica", err: redisReplyError("READONLY You can't write against a read only replica. script: 9e8f, on @user_script:1."), want: "readonly"},
+		{name: "generic err", err: redisReplyError("ERR unknown command 'MULTI'"), want: "err"},
+		{name: "unlisted code", err: redisReplyError("SOMEPROXY refused ratelimit:plugin-1:consumer:c-1"), want: "redis_other"},
+		{name: "dial refused", err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}, want: "connection"},
+		{name: "read deadline", err: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, want: "timeout"},
+		{name: "context deadline", err: fmt.Errorf("count window: %w", context.DeadlineExceeded), want: "timeout"},
+		{name: "server hung up", err: io.EOF, want: "connection"},
+		{name: "plain error", err: errors.New("dial tcp: connection refused"), want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := CounterErrorClass(tt.err); got != tt.want {
+				t.Fatalf("CounterErrorClass(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogCounterFailureCarriesErrorClass(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	LogCounterFailure(CounterFailure{
+		Ctx:    context.Background(),
+		Plugin: "rate_limiter",
+		Stage:  policy.StagePreRequest,
+		Mode:   policy.ModeEnforce,
+		Detail: "record",
+		Err:    redisReplyError("READONLY You can't write against a read only replica."),
+		Logger: slog.New(slog.NewJSONHandler(&buf, nil)),
+	}, DecisionFailedOpen)
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log line is not JSON: %v (%q)", err, buf.String())
+	}
+	if line["error_class"] != "readonly" {
+		t.Fatalf("error_class = %v, want readonly (line %s)", line["error_class"], buf.String())
 	}
 }

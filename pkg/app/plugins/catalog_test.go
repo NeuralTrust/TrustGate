@@ -465,7 +465,16 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.Equal(t, FieldTypeString, collectorID.Type)
 	assert.True(t, collectorID.Required)
 
-	// A guardrail always fails open, so none of its failure controls is a setting.
+	failureMode, ok := fieldByKey(fields, "failure_mode")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, failureMode.Type)
+	assert.Equal(t, []string{"open", "closed"}, enumValues(failureMode.Enum))
+	// Must match the plugin's defaultFailureMode: open is today's behaviour.
+	assert.Equal(t, "open", failureMode.Default)
+	assert.False(t, failureMode.Required)
+	assert.NotEmpty(t, failureMode.Description)
+
+	// failure_mode is the only failure control a trustguard policy has; the retired ones are not settings.
 	for _, removed := range []string{"on_error", "on_timeout", "timeout", "on_mask_failure"} {
 		_, ok := fieldByKey(fields, removed)
 		assert.False(t, ok, "trustguard schema must not expose %s", removed)

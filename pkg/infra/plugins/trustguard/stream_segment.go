@@ -41,9 +41,18 @@ func (p *Plugin) inspectSegment(
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		// Settings that do not parse keep this entry off the stream chain
-		// (StreamSettings), so this covers only a caller that skipped that
-		// check. An error would stop the executor from running the rest of the
-		// chain, so it fails open here as it does in Execute.
+		// (StreamSettings) unless the policy is closed, so otherwise this covers
+		// only a caller that skipped that check. An error would stop the
+		// executor from running the rest of the chain, so it fails open here as
+		// it does in Execute. A closed policy is resolved like any other
+		// failure: refused in a mode that blocks, recorded in observe.
+		if p.failClosed(in) {
+			if seg.Closing {
+				p.recordStreamOutcome(ctx, in, seg)
+				return segmentAllow(), nil
+			}
+			return p.segmentGuardFailure(ctx, in, seg, failureReasonConfigInvalid, err)
+		}
 		if !seg.Closing {
 			recordEvaluateFailure(ctx, failureReasonConfigInvalid)
 		}
@@ -59,7 +68,10 @@ func (p *Plugin) inspectSegment(
 	if p.streamRetired(ctx, in, seg) {
 		return segmentAllow(), nil
 	}
-	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
+	if in.Request != nil && in.Request.Provider == "" {
+		return p.segmentGuardFailure(ctx, in, seg, failureReasonProviderMissing, nil)
+	}
+	if in.Request == nil || strings.TrimSpace(in.Request.GatewayID) == "" {
 		return segmentAllow(), nil
 	}
 
@@ -90,6 +102,7 @@ func (p *Plugin) inspectSegment(
 	// still sent and keeps its place.
 	block := p.nextStreamBlock(ctx, in, seg)
 	body := GuardRequest{
+		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
 		Payload:         payload,
 		Direction:       directionOutput,
@@ -190,6 +203,9 @@ func (p *Plugin) recordStreamOutcome(
 		return
 	}
 	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
+	if p.failClosed(in) && (data.FailedClosed || failure != nil) {
+		data.FailureMode = failureModeClosed
+	}
 	// A stream that was cut reports blocked even if earlier blocks failed
 	// open; those still count in trustguard_evaluate_failures_total.
 	failedOpen := failure != nil && data.Decision != decisionBlocked && data.Decision != decisionFailedClosed
@@ -389,7 +405,7 @@ func (p *Plugin) segmentFailureOf(
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	verdict, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err)
+	verdict, _ := appplugins.ExternalStreamOutcomeUnder(PluginName, in.Mode, sharedReason, detail, block, p.failClosed(in), err)
 	if block == nil && appplugins.Cancelled(ctx) {
 		// The client left mid-stream: the guard did not fail, so the outcome is
 		// unchanged but nothing is counted, logged or carried to the closing
@@ -630,7 +646,7 @@ func segmentVerdict(mode policy.Mode, seg appplugins.StreamSegment, resp *GuardR
 		}
 		return &appplugins.SegmentVerdict{HasTransform: true, Transformed: masked}, nil
 	case guardStatusBlock:
-		return segmentBlock(typeBlocked, clientBlockMessage(resp)), nil
+		return segmentPolicyBlock(resp), nil
 	case guardStatusAllow, guardStatusReport:
 		return segmentAllow(), nil
 	case guardStatusUnknown:
@@ -644,9 +660,18 @@ func segmentVerdict(mode policy.Mode, seg appplugins.StreamSegment, resp *GuardR
 // block does when the policy blocks, and otherwise lets the segment through.
 func unknownSegmentVerdict(mode policy.Mode, resp *GuardResponse) *appplugins.SegmentVerdict {
 	if appplugins.Blocks(mode) {
-		return segmentBlock(typeBlocked, clientBlockMessage(resp))
+		return segmentPolicyBlock(resp)
 	}
 	return segmentAllow()
+}
+
+// segmentPolicyBlock is a block verdict whose client body is blockBody, the
+// same refusal the buffered leg returns for this response.
+func segmentPolicyBlock(resp *GuardResponse) *appplugins.SegmentVerdict {
+	message := clientBlockMessage(resp)
+	verdict := segmentBlock(typeBlocked, message)
+	verdict.Body = blockBody(resp, message, directionOutput)
+	return verdict
 }
 
 func segmentAllow() *appplugins.SegmentVerdict {

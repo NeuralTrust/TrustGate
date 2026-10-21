@@ -208,26 +208,21 @@ func TestSegmentVerdicts(t *testing.T) {
 		}, appplugins.SegmentVerdict{}},
 		{"something-new blocks in blocking mode", policy.ModeEnforce, produced,
 			GuardResponse{Status: "something-new"},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+			wantPolicyBlock(GuardResponse{Status: "something-new"})},
 		{"report never blocks a block", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusReport, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{}},
 		{"error allows the block", policy.ModeEnforce, produced, GuardResponse{Status: statusError}, appplugins.SegmentVerdict{}},
 		{"block", policy.ModeEnforce, produced, GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}},
-			appplugins.SegmentVerdict{
-				Block:   true,
-				Type:    typeBlocked,
-				Message: "Request blocked by security policy: toxicity (Toxicity).",
-			}},
-		{"ask blocks like block", policy.ModeEnforce, produced, GuardResponse{Status: statusAsk}, appplugins.SegmentVerdict{
-			Block: true, Type: typeBlocked, Message: blockMessage,
-		}},
+			wantPolicyBlock(GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}})},
+		{"ask blocks like block", policy.ModeEnforce, produced, GuardResponse{Status: statusAsk},
+			wantPolicyBlock(GuardResponse{Status: statusAsk})},
 		{"transform carries the masked buffer", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "Hello [MASKED]"}},
 			appplugins.SegmentVerdict{HasTransform: true, Transformed: "Hello [MASKED]"}},
 		{"unknown status blocks in blocking mode", policy.ModeEnforce, produced,
 			GuardResponse{Status: "blok"},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+			wantPolicyBlock(GuardResponse{Status: "blok"})},
 		{"unknown status allows in observe mode", policy.ModeObserve, produced,
 			GuardResponse{Status: "blok"}, appplugins.SegmentVerdict{}},
 	}
@@ -257,6 +252,17 @@ func TestSegmentVerdicts(t *testing.T) {
 			require.ErrorIs(t, err, errTransformUnappliable)
 			assert.Nil(t, verdict)
 		})
+	}
+}
+
+// wantPolicyBlock is the block verdict whose body is the buffered refusal.
+func wantPolicyBlock(resp GuardResponse) appplugins.SegmentVerdict {
+	message := clientBlockMessage(&resp)
+	return appplugins.SegmentVerdict{
+		Block:   true,
+		Type:    typeBlocked,
+		Message: message,
+		Body:    blockBody(&resp, message, directionOutput),
 	}
 }
 
@@ -596,6 +602,37 @@ func TestInspectSegmentDeadlineCoversTheTokenFetch(t *testing.T) {
 	assert.Less(t, elapsed, 4*time.Second,
 		"the token leg is bounded by the stream guard timeout too, not by TRUSTGUARD_TIMEOUT")
 	assert.Empty(t, g.calls(), "evaluate is never reached without a token")
+}
+
+// A streamed block whose request has no provider is recorded on the closing
+// span, and the guard is not called.
+func TestInspectSegmentMissingProviderRecordsFailure(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	req := segmentRequest()
+	req.Provider = ""
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, streamingSettings(nil), req, nil, event)
+	ctx := segmentTraceContext()
+
+	verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+	require.NoError(t, err)
+	require.NotNil(t, verdict)
+	assert.False(t, verdict.Block)
+	assert.Empty(t, g.calls())
+
+	_, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: appplugins.StreamReport{Evals: 1}})
+	require.NoError(t, err)
+
+	attrs := span.PluginAttrsCopy()
+	data, ok := attrs.Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, failureReasonProviderMissing, data.FailureReason)
+	assert.Equal(t, decisionFailedOpen, data.Decision)
+	assert.Equal(t, decisionFailedOpen, attrs.Decision)
+	assert.False(t, data.Skipped)
 }
 
 func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {

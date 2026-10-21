@@ -399,7 +399,7 @@ dialect's content-filter terminator, and on the event the cut is visible only th
 
 `azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
 record a failure to reach a verdict the same way. Every failure has a **class**, and the class
-decides what it costs. There is no setting to change that (RUN-1813).
+decides what it costs. There is no setting to change that (RUN-1813), except `failure_mode: closed` on `trustguard` (ENG-2547), which makes an `availability` failure be refused in Enforce like an `input` one while keeping its class.
 
 | `failure_class` | What it depends on | Examples | Enforce or throttle | Observe |
 |-----------------|--------------------|----------|---------------------|---------|
@@ -452,6 +452,7 @@ Their `extras` carry these keys:
 | `failure_detail` | Optional. What was incomplete or refused: `filter_not_executed` (a Model Armor filter was skipped), `filter_not_in_template` (the template does not enable it), `invocation_partial` (Model Armor ran only some filters, every `block_on` filter among them: `availability`), `intervention_unparsed` (Bedrock intervened and no policy type the plugin reads explains it), `anonymize_no_output`, `anonymize_unsupported_format` or `anonymize_encode_failed` (a mask that could not be applied), `provider_rejected_input` (a 4xx the provider answers for the content; on `bedrock_guardrail` only a `ValidationException` that names a content member), `throttled` (the provider's rate limit answered: HTTP 429 on every guardrail, and on `bedrock_guardrail` also `ThrottlingException` and `ServiceQuotaExceededException`: `availability` when the first chunk, or the only chunk, is throttled (after one retry on the parallel guardrails), which makes every throttle of that evaluation `availability` too, and `input` as `throttled_oversize` on a later chunk only when the first chunk answered without a throttle, except on `bedrock_guardrail`, whose calls are spaced under the quota and whose throttle is always `availability`. A Bedrock call of at most 8 KiB is retried up to three attempts with exponential backoff inside its deadline and within a per-credential retry budget, and a retry the deadline leaves no time for does not spend that budget; a longer call is sent once. On a stream a throttled block does not count toward retiring the entry, and later blocks of a throttled stream are not retried. The SDK still retries a 5xx or a connection error), `chunk_limit` (the content splits into more chunks than the guardrail evaluates within half of its budget: refused before any call, `input`; for a TrustGuard stream block above one evaluate the reason is `stream_block_too_large`), `chunk_budget` (a chunk that was never sent for lack of time, or that waited behind the request's own earlier chunks and was cut by the evaluation's budget, while no call took longer than twice the reserve: the request's size used the time: `input`; on `bedrock_guardrail` also a request whose spacing and calls exceed half of the budget, refused before any call. When a provider was slow, a call ended on its own timeout or the client left, the failure is `availability` instead), `throttled_oversize` (a rate limit that survived the retry on a chunk other than the first of an evaluation of several chunks whose first chunk answered without a throttle, on every guardrail but `bedrock_guardrail`: the request's own calls are plausibly part of the quota that throttled it, and the provider's quota is not visible to the gateway: `input`), `provider_quota_exhausted` (an account out of credit or at its billing limit, which no request changes: reason `config_invalid`, `availability`, never `throttled`), `attachment_not_fetched` (TrustGuard: an attachment sent as a URL that could not be fetched, so the rest of the request was evaluated without it: reason `verdict_incomplete`, `availability`, recorded beside `attachments_not_fetched`), `answer_too_large` (a 2xx answer above the size the gateway reads for that call, on any call and not only a mask: 1 MiB, or for TrustGuard twice the payload sent plus 64 KiB; a provider answering with more than it was sent is read as `input`), `payload_too_large` (TrustGuard only: a 413, or buffered text above 8 MiB, counted unescaped with attachments excluded and refused before the call), `coverage_partial` (Bedrock guarded fewer characters than it was sent: `input`), `provider_config_rejected` (a 4xx that names the configuration, and on `bedrock_guardrail` every 4xx that does not name the content: `availability`), `unsupported_format` (a provider or format the gateway does not support), or the category the provider left unanswered |
 | `chunk_count` | `azure_content_safety`, `openai_moderation`, `bedrock_guardrail` and `google_model_armor`, additive. How many provider calls the content was split into; set only when it was more than one. The whole content is screened, with none of it left out |
 | `failure_class` | `availability` or `input` (above). Present on every failure, so one query separates "the provider is down" from "the client padded the input" across all four plugins without knowing their reasons |
+| `failure_mode` | `trustguard` only, additive. `closed` on a failure recorded by a policy whose `failure_mode` setting is `closed`; absent otherwise (open, the default), so open events are unchanged. It is not a class: `failure_class` stays the real one (`availability` for a TrustGuard outage), and `failure_mode: closed` with `decision: failed_closed` says an availability failure was refused in Enforce because the policy asked for it. In observe the same failure is `failed_open` and only recorded. A closed policy whose settings do not parse is read leniently for this key and is `config_invalid` / `availability` |
 | `earlier_failure_detail` | `google_model_armor` only, additive. The `failure_detail` the call had already recorded (a filter gap such as `filter_not_in_template`) when a mask that could not be applied took `failure_detail`, which stays the detail the class is read from |
 | `failure_policies` | `bedrock_guardrail` only. With `failure_detail: intervention_unparsed`, the policy assessments AWS returned that the plugin does not read (for example `automated_reasoning_policy`) |
 
@@ -653,13 +654,24 @@ infrastructure is down. That case emits no `failed_open` decision, no `counter_u
 extras and no warning: the plugin's error simply propagates as it would have without this
 behavior.
 
-Their `extras` carry the same two keys the external guardrails use, plus whatever the call
-already knew before the counter store failed:
+Their `extras` carry the same two keys the external guardrails use, a third that says what
+the counter store answered, and whatever the call already knew before it failed:
 
 | Key | Meaning |
 |-----|---------|
 | `failure_reason` | Always `counter_unavailable` |
 | `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
+| `failure_error_class` | What kind of failure it was, from a closed set. A Redis error reply gives its code in lowercase: `readonly` (a replica), `oom`, `misconf`, `noperm`, `noauth`, `wrongpass`, `loading`, `busy`, `masterdown`, `execabort`, `noscript`, `wrongtype`, `moved`, `ask`, `clusterdown`, `crossslot`, `tryagain`, `noreplicas` or `err`; any other code gives `redis_other`. Otherwise `timeout`, `connection` or `unknown`. Never the error text itself |
+
+`failure_error_class` is what tells a counter store that refuses writes apart from one that is
+down, including on a hybrid data plane whose logs are not collected centrally. A Redis that answers reads
+but refuses writes (a replica, `maxmemory` reached under `noeviction`, a failing bgsave)
+refuses `rate_limiter`'s MULTI/EXEC write as each command is queued and answers EXEC with a
+bare `EXECABORT`. The class, and the logged error, carry the refused command's code
+(`readonly`, `oom`, `misconf`), not `execabort`. The `counter store call failed` warning
+carries the same value as `error_class`. On Redis older than 7, a write refused inside a Lua
+script (`token_rate_limiter`, `per_tool_rate_limiter`) comes back as a generic script error,
+so those two report `err` there instead of the refused command's code.
 
 For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count` and
 `limit` from the read that already succeeded, and `token_rate_limiter`'s keep `provider`,

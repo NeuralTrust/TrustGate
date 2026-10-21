@@ -52,6 +52,7 @@ func TestStripRetiredGuardrailSettingsMigration(t *testing.T) {
 			('regex', 'regex_replace', '{"on_mask_failure": "block", "streaming": {"on_error": "fail_closed", "enabled": true, "GUARD_TIMEOUT": "1ms"}}'),
 			('other', 'rate_limiter', '`+staleGuardrailSettings+`'),
 			('clean', 'trustguard', '{"collector_id": "c", "streaming": {"enabled": false}}'),
+			('failure-mode', 'trustguard', '{"collector_id": "c", "failure_mode": "closed", "on_error": "fail_closed"}'),
 			('only-stale', 'bedrock_guardrail', '{"on_error": "fail_closed"}'),
 			('no-stream-object', 'trustguard', '{"streaming": "x", "on_error": "fail_closed"}')`)
 
@@ -73,6 +74,8 @@ func TestStripRetiredGuardrailSettingsMigration(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(staleGuardrailSettings), &other))
 	require.Equal(t, other, settingsOf(t, ctx, tx, "other"), "a plugin outside the list is untouched")
 	require.Equal(t, map[string]any{"collector_id": "c", "streaming": map[string]any{"enabled": false}}, settingsOf(t, ctx, tx, "clean"))
+	require.Equal(t, map[string]any{"collector_id": "c", "failure_mode": "closed"}, settingsOf(t, ctx, tx, "failure-mode"),
+		"failure_mode is a live key: the migration drops the retired ones around it and keeps it")
 	require.Equal(t, map[string]any{}, settingsOf(t, ctx, tx, "only-stale"), "a row left with nothing is an empty object, not NULL")
 	require.Equal(t, map[string]any{"streaming": "x"}, settingsOf(t, ctx, tx, "no-stream-object"), "a streaming value that is not an object is left alone")
 
