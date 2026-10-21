@@ -46,7 +46,7 @@ func TestRevoker_RejectsInvalidRequestsWithoutWriting(t *testing.T) {
 		{name: "no jtis and no mark", scope: "gw"},
 		{name: "empty jtis and no mark", scope: "gw", jtis: []string{}},
 		{name: "negative mark", scope: "gw", jtis: []string{"a1"}, issuedBefore: -1},
-		{name: "mark 61 seconds ahead", scope: "gw", issuedBefore: revokeNow.Unix() + 61},
+		{name: "mark 6 seconds ahead", scope: "gw", issuedBefore: revokeNow.Unix() + 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,9 +67,9 @@ func TestRevoker_AppliesValidRequestsOnce(t *testing.T) {
 		want         domain.Revocation
 	}{
 		{
-			name:         "mark exactly 60 seconds ahead is accepted",
-			issuedBefore: revokeNow.Unix() + 60,
-			want:         domain.Revocation{Scope: "gw", IssuedBefore: revokeNow.Unix() + 60},
+			name:         "mark exactly 5 seconds ahead is accepted",
+			issuedBefore: revokeNow.Unix() + 5,
+			want:         domain.Revocation{Scope: "gw", IssuedBefore: revokeNow.Unix() + 5},
 		},
 		{
 			name: "jtis only",

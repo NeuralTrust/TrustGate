@@ -58,6 +58,8 @@ func TestConfigSyncTokenRevocation_Validate(t *testing.T) {
 		{"enforce", ConfigSyncConfig{TokenRevocationMode: ConfigSyncTokenRevocationEnforce}, false},
 		{"unknown mode", ConfigSyncConfig{TokenRevocationMode: "strict"}, true},
 		{"negative interval", ConfigSyncConfig{TokenRevocationRefreshInterval: -time.Second}, true},
+		{"interval below one second", ConfigSyncConfig{TokenRevocationRefreshInterval: time.Millisecond}, true},
+		{"interval of one second", ConfigSyncConfig{TokenRevocationRefreshInterval: time.Second}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,5 +71,18 @@ func TestConfigSyncTokenRevocation_Validate(t *testing.T) {
 				t.Fatalf("error %v is not ErrInvalidConfig", err)
 			}
 		})
+	}
+}
+
+func TestConfigSyncConfig_AcceptsSignedTokens(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"":                          false,
+		ConfigSyncAuthModeShared:    false,
+		ConfigSyncAuthModeSigned:    true,
+		ConfigSyncAuthModeComposite: true,
+	} {
+		if got := (ConfigSyncConfig{AuthMode: mode}).AcceptsSignedTokens(); got != want {
+			t.Fatalf("AcceptsSignedTokens(%q) = %v, want %v", mode, got, want)
+		}
 	}
 }

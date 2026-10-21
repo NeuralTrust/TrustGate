@@ -251,6 +251,7 @@ func (w *Worker[T]) persist(v *Versioned[T]) {
 
 func (w *Worker[T]) watchLoop(ctx context.Context) {
 	backoff := w.minBackoff
+	refused := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -260,6 +261,22 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
+			// A refused token stays refused until it is replaced: report the
+			// streak once, retry at the slowest pace, and skip the catch-up
+			// converge, which the control plane would refuse too.
+			if errors.Is(err, ErrTransportUnauthenticated) {
+				if !refused {
+					w.logger.Error("config-sync token refused by the control plane; serving the last applied snapshot until the token is replaced",
+						slog.String("component", component), slog.String("error", err.Error()))
+					refused = true
+				}
+				backoff = w.maxBackoff
+				if !sleep(ctx, backoff) {
+					return
+				}
+				continue
+			}
+			refused = false
 			w.logWatchError(err)
 			if !sleep(ctx, backoff) {
 				return
@@ -276,6 +293,7 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 			continue
 		}
 		backoff = w.minBackoff
+		refused = false
 		if err := w.Converge(ctx); err != nil && ctx.Err() == nil {
 			w.logger.Error("converge after notification failed",
 				slog.String("component", component), slog.String("error", err.Error()))

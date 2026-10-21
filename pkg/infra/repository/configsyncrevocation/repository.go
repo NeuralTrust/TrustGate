@@ -72,6 +72,9 @@ func (r *Repository) Apply(ctx context.Context, rev domain.Revocation) error {
 }
 
 // Load returns every stored token revocation and every issued-before mark.
+// Rows are written only by explicit revocations, a mark and the earlier jtis of
+// one instance per rotation, so the full read each refresh stays small. Rows
+// are kept because a revoked token can live for years.
 func (r *Repository) Load(ctx context.Context) (domain.Revocations, error) {
 	if r.conn == nil || r.conn.Pool == nil {
 		return domain.Revocations{}, fmt.Errorf("configsyncrevocation: nil connection")

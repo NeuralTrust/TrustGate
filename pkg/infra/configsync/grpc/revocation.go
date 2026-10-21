@@ -26,11 +26,14 @@ import (
 // serve, so a revoked token cannot be told apart from a forged one.
 var errInvalidToken = status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
 
-// TokenGate decides whether a verified config-sync token may use the channel.
-// A nil TokenGate admits every verified token.
-type TokenGate interface {
-	// Admit reports whether the RPC may proceed with this token.
+// TokenAdmitter decides whether a verified config-sync token may open an RPC.
+// A nil TokenAdmitter admits every verified token.
+type TokenAdmitter interface {
 	Admit(ctx context.Context, id configsyncrevocation.Identity) bool
-	// Revoked reports whether an open stream with this token must end now.
+}
+
+// RevocationChecker reports whether a token that opened a stream has been
+// revoked since. A nil RevocationChecker never ends a stream.
+type RevocationChecker interface {
 	Revoked(id configsyncrevocation.Identity) bool
 }

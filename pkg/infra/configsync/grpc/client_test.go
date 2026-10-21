@@ -325,3 +325,17 @@ func firstConn(h *Hub) *connection {
 	}
 	return nil
 }
+
+func TestStreamErr_MarksRefusedTokens(t *testing.T) {
+	refused := status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
+	got := streamErr("open sync stream", refused)
+	if !errors.Is(got, configsync.ErrTransportUnauthenticated) {
+		t.Fatalf("streamErr(%v) = %v, want ErrTransportUnauthenticated", refused, got)
+	}
+	if errors.Is(got, configsync.ErrTransportUnavailable) {
+		t.Fatal("a refused token must not be treated as a self-healing disconnect")
+	}
+	if !errors.Is(got, refused) {
+		t.Fatal("streamErr must wrap the original error")
+	}
+}

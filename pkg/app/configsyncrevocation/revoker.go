@@ -23,9 +23,11 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 )
 
-// maxIssuedBeforeAhead bounds how far into the future an issued-before mark may
-// point, so a typo cannot revoke tokens that have not been minted yet.
-const maxIssuedBeforeAhead = 60 * time.Second
+// maxIssuedBeforeAhead only absorbs clock skew between the token issuer and
+// this control plane. Callers send the replacement token's own iat, which the
+// issuer already backdates, so a legitimate mark is never ahead of now; a mark
+// further ahead would also revoke tokens minted after the request.
+const maxIssuedBeforeAhead = 5 * time.Second
 
 //go:generate mockery --name=Revoker --dir=. --output=./mocks --filename=configsyncrevocation_revoker_mock.go --case=underscore --with-expecter
 

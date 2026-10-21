@@ -22,21 +22,18 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 )
 
-const (
-	// primeLoadTimeout bounds the boot load, which runs before the listeners
-	// serve, so a slow store delays startup by seconds at most.
-	primeLoadTimeout = 3 * time.Second
-	// maxLoadTimeout bounds one periodic reload so a stuck query cannot
-	// overlap the next tick.
-	maxLoadTimeout = 10 * time.Second
-)
+// primeLoadTimeout bounds the boot load, which runs before the listeners serve,
+// so a slow store delays startup by seconds at most. Periodic reloads get the
+// whole refresh interval instead, so a longer interval also allows a slower
+// store.
+const primeLoadTimeout = 3 * time.Second
 
 //go:generate mockery --name=StreamCloser --dir=. --output=./mocks --filename=configsyncrevocation_stream_closer_mock.go --case=underscore --with-expecter
 
 // StreamCloser ends the open config-sync streams whose token matches.
 type StreamCloser interface {
-	// CloseRevoked closes every open stream whose verified token satisfies
-	// isRevoked and returns how many it closed.
+	// CloseRevoked closes every open Sync stream whose verified token
+	// satisfies isRevoked and returns how many it closed.
 	CloseRevoked(isRevoked func(domain.Identity) bool) int
 }
 
@@ -57,7 +54,7 @@ var _ Refresher = (*refresher)(nil)
 
 type refresher struct {
 	store    domain.Store
-	gate     Gate
+	gate     SnapshotTarget
 	closer   StreamCloser
 	interval time.Duration
 	logger   *slog.Logger
@@ -66,7 +63,7 @@ type refresher struct {
 // NewRefresher returns a refresher that loads store into gate every interval.
 // In enforce mode, each successful load also closes, through closer, the open
 // streams whose token is now revoked.
-func NewRefresher(store domain.Store, gate Gate, closer StreamCloser, interval time.Duration, logger *slog.Logger) Refresher {
+func NewRefresher(store domain.Store, gate SnapshotTarget, closer StreamCloser, interval time.Duration, logger *slog.Logger) Refresher {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -91,7 +88,7 @@ func (r *refresher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.refresh(ctx, min(r.interval, maxLoadTimeout))
+			r.refresh(ctx, r.interval)
 		}
 	}
 }

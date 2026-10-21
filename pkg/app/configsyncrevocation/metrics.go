@@ -16,12 +16,10 @@ package configsyncrevocation
 
 import (
 	"context"
-	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/otelcount"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -39,29 +37,16 @@ const (
 	refreshError = "error"
 )
 
-// The instruments are resolved on each call: the SDK returns the same one for
-// the same name, and every caller is either rare (a revoked token, a closed
-// stream) or periodic (a refresh), so the lookup never sits on the hot path.
-func addCounter(ctx context.Context, name, description string, value int64, attrs ...attribute.KeyValue) {
-	counter, err := otel.Meter(meterName).Int64Counter(name, metric.WithDescription(description))
-	if err != nil {
-		slog.Warn("failed to create config-sync revocation counter",
-			slog.String("metric", name), slog.String("error", err.Error()))
-		return
-	}
-	counter.Add(ctx, value, metric.WithAttributes(attrs...))
-}
-
 func recordPresented(ctx context.Context, mode Mode, reason domain.Reason) {
-	addCounter(ctx, PresentedMetric, "revoked config-sync tokens presented, by mode and revocation rule", 1,
+	otelcount.Add(ctx, meterName, PresentedMetric, "revoked config-sync tokens presented, by mode and revocation rule", 1,
 		attribute.String("mode", string(mode)), attribute.String("reason", string(reason)))
 }
 
 func recordRefresh(ctx context.Context, result string) {
-	addCounter(ctx, RefreshMetric, "config-sync revocation reloads, by result", 1,
+	otelcount.Add(ctx, meterName, RefreshMetric, "config-sync revocation reloads, by result", 1,
 		attribute.String("result", result))
 }
 
 func recordStreamsClosed(ctx context.Context, closed int) {
-	addCounter(ctx, StreamsClosedMetric, "config-sync Sync streams closed because their token was revoked", int64(closed))
+	otelcount.Add(ctx, meterName, StreamsClosedMetric, "config-sync Sync streams closed because their token was revoked", int64(closed))
 }

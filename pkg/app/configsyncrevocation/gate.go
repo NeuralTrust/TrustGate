@@ -38,14 +38,8 @@ const (
 	ModeEnforce Mode = "enforce"
 )
 
-//go:generate mockery --name=Gate --dir=. --output=./mocks --filename=configsyncrevocation_gate_mock.go --case=underscore --with-expecter
-
-// Gate holds the replica's current revocation snapshot and applies the mode to
-// every verified config-sync token.
-type Gate interface {
-	// Admit reports whether the token may proceed. Off and shadow always
-	// admit; shadow also records a revoked token. Enforce refuses it.
-	Admit(ctx context.Context, id domain.Identity) bool
+// SnapshotTarget is the side of the gate the refresher drives.
+type SnapshotTarget interface {
 	// Revoked reports whether enforce mode would refuse the token right now.
 	// It records nothing, so it is safe to call for every open stream.
 	Revoked(id domain.Identity) bool
@@ -53,6 +47,17 @@ type Gate interface {
 	Replace(snapshot domain.Snapshot)
 	// Mode returns the mode the gate applies.
 	Mode() Mode
+}
+
+//go:generate mockery --name=Gate --dir=. --output=./mocks --filename=configsyncrevocation_gate_mock.go --case=underscore --with-expecter
+
+// Gate holds the replica's current revocation snapshot and applies the mode to
+// every verified config-sync token.
+type Gate interface {
+	SnapshotTarget
+	// Admit reports whether the token may proceed. Off and shadow always
+	// admit; shadow also records a revoked token. Enforce refuses it.
+	Admit(ctx context.Context, id domain.Identity) bool
 }
 
 var _ Gate = (*gate)(nil)

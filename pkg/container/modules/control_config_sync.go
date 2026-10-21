@@ -133,8 +133,8 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, logger *slog.Logger, gate configsyncgrpc.TokenGate) *configsyncgrpc.Service {
-		return configsyncgrpc.NewService(hub, holder, logger, gate)
+	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, logger *slog.Logger, revocations configsyncgrpc.RevocationChecker) *configsyncgrpc.Service {
+		return configsyncgrpc.NewService(hub, holder, logger, revocations)
 	}); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func ControlConfigSync(c *container.Container) error {
 	}
 	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) appconfigsyncrevocation.Gate {
 		mode := appconfigsyncrevocation.Mode(cfg.ConfigSync.RevocationMode())
-		if mode == appconfigsyncrevocation.ModeEnforce && !configSyncAcceptsJWT(cfg.ConfigSync.AuthMode) {
+		if mode == appconfigsyncrevocation.ModeEnforce && !cfg.ConfigSync.AcceptsSignedTokens() {
 			logger.Warn("config-sync token revocation is enforced but the control plane only accepts the shared token, which is never revoked",
 				slog.String("component", "configsync-revocation"),
 				slog.String("auth_mode", cfg.ConfigSync.AuthMode))
@@ -191,7 +191,12 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(g appconfigsyncrevocation.Gate) configsyncgrpc.TokenGate {
+	if err := c.Provide(func(g appconfigsyncrevocation.Gate) configsyncgrpc.TokenAdmitter {
+		return g
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(g appconfigsyncrevocation.Gate) configsyncgrpc.RevocationChecker {
 		return g
 	}); err != nil {
 		return err
@@ -287,8 +292,4 @@ func playgroundSnapshotKeys(cfg *config.Config) ([]readmodel.VerificationKey, er
 		})
 	}
 	return keys, nil
-}
-
-func configSyncAcceptsJWT(authMode string) bool {
-	return authMode == config.ConfigSyncAuthModeSigned || authMode == config.ConfigSyncAuthModeComposite
 }
