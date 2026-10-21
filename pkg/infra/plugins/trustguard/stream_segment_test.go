@@ -208,26 +208,21 @@ func TestSegmentVerdicts(t *testing.T) {
 		}, appplugins.SegmentVerdict{}},
 		{"something-new blocks in blocking mode", policy.ModeEnforce, produced,
 			GuardResponse{Status: "something-new"},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+			wantPolicyBlock(GuardResponse{Status: "something-new"})},
 		{"report never blocks a block", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusReport, Findings: []GuardFinding{finding}},
 			appplugins.SegmentVerdict{}},
 		{"error allows the block", policy.ModeEnforce, produced, GuardResponse{Status: statusError}, appplugins.SegmentVerdict{}},
 		{"block", policy.ModeEnforce, produced, GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}},
-			appplugins.SegmentVerdict{
-				Block:   true,
-				Type:    typeBlocked,
-				Message: "Request blocked by security policy: toxicity (Toxicity).",
-			}},
-		{"ask blocks like block", policy.ModeEnforce, produced, GuardResponse{Status: statusAsk}, appplugins.SegmentVerdict{
-			Block: true, Type: typeBlocked, Message: blockMessage,
-		}},
+			wantPolicyBlock(GuardResponse{Status: statusBlock, Findings: []GuardFinding{finding}})},
+		{"ask blocks like block", policy.ModeEnforce, produced, GuardResponse{Status: statusAsk},
+			wantPolicyBlock(GuardResponse{Status: statusAsk})},
 		{"transform carries the masked buffer", policy.ModeEnforce, produced,
 			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "Hello [MASKED]"}},
 			appplugins.SegmentVerdict{HasTransform: true, Transformed: "Hello [MASKED]"}},
 		{"unknown status blocks in blocking mode", policy.ModeEnforce, produced,
 			GuardResponse{Status: "blok"},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
+			wantPolicyBlock(GuardResponse{Status: "blok"})},
 		{"unknown status allows in observe mode", policy.ModeObserve, produced,
 			GuardResponse{Status: "blok"}, appplugins.SegmentVerdict{}},
 	}
@@ -257,6 +252,17 @@ func TestSegmentVerdicts(t *testing.T) {
 			require.ErrorIs(t, err, errTransformUnappliable)
 			assert.Nil(t, verdict)
 		})
+	}
+}
+
+// wantPolicyBlock is the block verdict whose body is the buffered refusal.
+func wantPolicyBlock(resp GuardResponse) appplugins.SegmentVerdict {
+	message := clientBlockMessage(&resp)
+	return appplugins.SegmentVerdict{
+		Block:   true,
+		Type:    typeBlocked,
+		Message: message,
+		Body:    blockBody(&resp, message, directionOutput),
 	}
 }
 

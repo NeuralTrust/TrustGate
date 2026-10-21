@@ -46,12 +46,6 @@ func requestWithPayloadMarker() *infracontext.RequestContext {
 	return req
 }
 
-// explicitBlockVerdict is what an explicit block with no findings returns, and
-// what an unrecognized status returns in a mode that blocks.
-func explicitBlockVerdict() appplugins.SegmentVerdict {
-	return appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}
-}
-
 func TestKnownVerdictsUnchangedInBlockingMode(t *testing.T) {
 	t.Parallel()
 
@@ -124,8 +118,8 @@ func TestKnownVerdictsUnchangedInBlockingMode(t *testing.T) {
 				want:   appplugins.SegmentVerdict{HasTransform: true, Transformed: "Hello [MASKED]"},
 				secret: "Hello world",
 			},
-			{name: "ask", resp: GuardResponse{Status: statusAsk}, want: explicitBlockVerdict(), secret: payloadMarker},
-			{name: "block", resp: GuardResponse{Status: statusBlock}, want: explicitBlockVerdict(), secret: payloadMarker},
+			{name: "ask", resp: GuardResponse{Status: statusAsk}, want: wantPolicyBlock(GuardResponse{Status: statusAsk}), secret: payloadMarker},
+			{name: "block", resp: GuardResponse{Status: statusBlock}, want: wantPolicyBlock(GuardResponse{Status: statusBlock}), secret: payloadMarker},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -163,7 +157,7 @@ func TestUnknownStatusBlockingModeBlocksAndWarns(t *testing.T) {
 		logs, verdict := inspectVerdict(t, policy.ModeEnforce,
 			appplugins.StreamSegment{Seq: 4, Accumulated: payloadMarker},
 			GuardResponse{Status: unknown})
-		assert.Equal(t, explicitBlockVerdict(), *verdict)
+		assert.Equal(t, wantPolicyBlock(GuardResponse{Status: unknown}), *verdict)
 		assertUnrecognizedWarn(t, logs, unknown)
 		assert.NotContains(t, logs, payloadMarker)
 		assert.Contains(t, logs, "seq=4")

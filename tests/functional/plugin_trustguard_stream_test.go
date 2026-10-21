@@ -259,8 +259,7 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 
 		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
 		assert.Equal(t, "application/json", headers.Get("Content-Type"))
-		assert.JSONEq(t, `{"error":"plugin_rejected","type":"trustguard_blocked",`+
-			`"message":"Request blocked by security policy: `+trustGuardBlockReason+`."}`, body)
+		assert.JSONEq(t, trustGuardBlockedClientBody, body)
 
 		for _, marker := range trustGuardStreamMarkers {
 			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
@@ -289,7 +288,8 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 // The request leg calls the guard first, but carries no stream envelope, so
 // BlockOnCall(1) — matched on stream seq, not on call order — targets the
 // head block regardless. Blocking the request leg instead would return a 403
-// that never inspected the stream; the body shape is what tells the two apart.
+// that never inspected the stream. The body is the buffered block body, with
+// direction output; the hit counts prove the request leg ran and the head blocked.
 func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
@@ -345,9 +345,8 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		body := string(raw)
 
 		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
-		assert.JSONEq(t, `{"error":"plugin_rejected","type":"trustguard_blocked",`+
-			`"message":"Request blocked by security policy: `+trustGuardBlockReason+`."}`, body,
-			"the head gate's body, which the request leg does not produce")
+		assert.JSONEq(t, trustGuardBlockedClientBody, body,
+			"the head gate returns the same body as a buffered block")
 		for _, marker := range trustGuardStreamMarkers {
 			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
 		}
