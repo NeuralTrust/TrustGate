@@ -59,7 +59,10 @@ func (p *Plugin) inspectSegment(
 	if p.streamRetired(ctx, in, seg) {
 		return segmentAllow(), nil
 	}
-	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
+	if in.Request != nil && in.Request.Provider == "" {
+		return p.segmentGuardFailure(ctx, in, seg, failureReasonProviderMissing, nil)
+	}
+	if in.Request == nil || strings.TrimSpace(in.Request.GatewayID) == "" {
 		return segmentAllow(), nil
 	}
 
