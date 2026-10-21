@@ -37,16 +37,6 @@ import (
 	usagev1 "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1"
 )
 
-const (
-	minBackoff = time.Second
-	maxBackoff = 30 * time.Second
-
-	// maxMessageBytes lifts gRPC's 4 MiB receive default: a snapshot lists
-	// every exhausted tenant in one message, and one over the limit would
-	// fail every connect.
-	maxMessageBytes = 64 << 20
-)
-
 // StateSink receives the states read from the stream.
 type StateSink interface {
 	Apply(ctx context.Context, states []domain.TenantState) error
@@ -58,9 +48,11 @@ type StateSink interface {
 // (re)connection sends the sink's watermark and receives a full snapshot, so a
 // change missed while disconnected is never lost.
 type Client struct {
-	conn   *grpc.ClientConn
-	sink   StateSink
-	logger *slog.Logger
+	conn       *grpc.ClientConn
+	sink       StateSink
+	logger     *slog.Logger
+	minBackoff time.Duration
+	maxBackoff time.Duration
 }
 
 // NewClient dials Usage System. The connection is lazy: nothing is sent until
@@ -73,7 +65,7 @@ func NewClient(cfg config.UsageConfig, sink StateSink, logger *slog.Logger) (*Cl
 	if cfg.GRPCInsecure {
 		transport = insecure.NewCredentials()
 	}
-	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(transport)}, streamDialOptions()...)
+	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(transport)}, streamDialOptions(cfg)...)
 	if cfg.GRPCToken != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(bearer{token: cfg.GRPCToken, secure: !cfg.GRPCInsecure}))
 	}
@@ -81,35 +73,35 @@ func NewClient(cfg config.UsageConfig, sink StateSink, logger *slog.Logger) (*Cl
 	if err != nil {
 		return nil, fmt.Errorf("usagesync: dial %q: %w", cfg.GRPCAddr, err)
 	}
-	return newClient(conn, sink, logger), nil
+	return newClient(conn, sink, logger, cfg.ReconnectMinBackoff, cfg.ReconnectMaxBackoff), nil
 }
 
-func streamDialOptions() []grpc.DialOption {
+func streamDialOptions(cfg config.UsageConfig) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
+			Time:                cfg.GRPCKeepaliveTime,
+			Timeout:             cfg.GRPCKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMessageBytes)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(cfg.GRPCMaxMessageBytes)),
 	}
 }
 
-func newClient(conn *grpc.ClientConn, sink StateSink, logger *slog.Logger) *Client {
-	return &Client{conn: conn, sink: sink, logger: logger}
+func newClient(conn *grpc.ClientConn, sink StateSink, logger *slog.Logger, minBackoff, maxBackoff time.Duration) *Client {
+	return &Client{conn: conn, sink: sink, logger: logger, minBackoff: minBackoff, maxBackoff: maxBackoff}
 }
 
 // Run keeps the stream open until ctx ends, reconnecting with jittered
 // exponential backoff. The wait resets after a stream that delivered data.
 func (c *Client) Run(ctx context.Context) {
-	wait := minBackoff
+	wait := c.minBackoff
 	for ctx.Err() == nil {
 		received, err := c.session(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		if received {
-			wait = minBackoff
+			wait = c.minBackoff
 		}
 		c.logger.WarnContext(ctx, "usagesync: stream ended, reconnecting", slog.Any("error", err), slog.Duration("retry_in", wait))
 		select {
@@ -117,7 +109,7 @@ func (c *Client) Run(ctx context.Context) {
 			return
 		case <-time.After(jitter(wait)):
 		}
-		wait = min(wait*2, maxBackoff)
+		wait = min(wait*2, c.maxBackoff)
 	}
 }
 

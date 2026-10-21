@@ -21,7 +21,7 @@ func All(plane string, dbless bool) []container.Option {
 		return dataPlaneModules()
 	}
 	opts := fullModules()
-	return append(opts, container.WithModule(adminReadiness(plane)))
+	return append(opts, container.WithModule(adminReadiness(plane)), container.WithModule(usageForPlane(plane)))
 }
 
 func isDataPlane(plane string) bool {

@@ -18,34 +18,40 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // ErrListNotReady is reported while a plane waits for its first usage list.
 var ErrListNotReady = errors.New("usage: no usage list yet")
 
-// ReadinessCheck keeps a plane not ready until ready reports true, so a new
-// pod does not serve exhausted tenants as if nobody were. After timeout it
-// gives up and reports ready, logging an error once: an unreachable Usage
-// System or cache must not stall every rollout.
+// ReadinessCheck keeps a plane not ready while ready reports false, so a new
+// pod does not serve exhausted tenants as if nobody were. The wait is counted
+// from the first probe that finds the plane not ready, not from boot, so a
+// data plane that only learns later that usage is enforced still waits. After
+// timeout it gives up and reports ready, logging an error once per wait: an
+// unreachable Usage System or cache must not stall every rollout.
 func ReadinessCheck(ready func() bool, timeout time.Duration, logger *slog.Logger) func(context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	started := time.Now()
-	var giveUp sync.Once
+	var waitingSince atomic.Int64
+	var gaveUp atomic.Bool
 	return func(ctx context.Context) error {
 		if ready() {
+			waitingSince.Store(0)
+			gaveUp.Store(false)
 			return nil
 		}
-		if time.Since(started) < timeout {
+		now := time.Now().UnixNano()
+		waitingSince.CompareAndSwap(0, now)
+		if time.Duration(now-waitingSince.Load()) < timeout {
 			return ErrListNotReady
 		}
-		giveUp.Do(func() {
+		if gaveUp.CompareAndSwap(false, true) {
 			logger.ErrorContext(ctx, "usage: serving without a usage list; exhausted tenants are not blocked until it arrives",
 				slog.Duration("waited", timeout))
-		})
+		}
 		return nil
 	}
 }

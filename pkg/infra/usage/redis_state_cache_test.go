@@ -32,37 +32,66 @@ func TestRedisStateCacheKeepsNewestVersion(t *testing.T) {
 	cache := NewRedisStateCache(client)
 	ctx := context.Background()
 
-	save := func(status domain.Status, reason domain.Reason, version int64) bool {
+	state := func(tenant string, status domain.Status, reason domain.Reason, version int64) domain.TenantState {
 		t.Helper()
-		state, err := domain.NewTenantState("tenant-a", status, reason, version)
+		got, err := domain.NewTenantState(tenant, status, reason, version)
 		if err != nil {
 			t.Fatalf("state: %v", err)
 		}
-		stored, err := cache.Save(ctx, state)
-		if err != nil {
-			t.Fatalf("Save: %v", err)
+		return got
+	}
+	saveAll := func(states ...domain.TenantState) {
+		t.Helper()
+		if err := cache.SaveAll(ctx, states); err != nil {
+			t.Fatalf("SaveAll: %v", err)
 		}
-		return stored
 	}
-	if !save(domain.StatusExhausted, domain.ReasonWalletEmpty, 10) {
-		t.Fatal("first save not stored")
+	saveAll(state("tenant-a", domain.StatusExhausted, domain.ReasonWalletEmpty, 10), state("tenant-b", domain.StatusExhausted, domain.ReasonFreeLimitReached, 4))
+	saveAll(state("tenant-a", domain.StatusHealthy, domain.ReasonNone, 9))
+	if got := server.HGet(StatesKey, "tenant-a"); got != "10|exhausted|wallet_empty" {
+		t.Fatalf("tenant-a = %q, an older version replaced a newer one", got)
 	}
-	if save(domain.StatusHealthy, domain.ReasonNone, 9) {
-		t.Fatal("older version replaced a newer one")
+	saveAll(state("tenant-a", domain.StatusHealthy, domain.ReasonNone, 10))
+	if got := server.HGet(StatesKey, "tenant-a"); got != "10|exhausted|wallet_empty" {
+		t.Fatalf("tenant-a = %q, the same version replaced the stored one", got)
 	}
-	if save(domain.StatusHealthy, domain.ReasonNone, 10) {
-		t.Fatal("same version replaced the stored one")
-	}
-	if !save(domain.StatusHealthy, domain.ReasonNone, 11) {
-		t.Fatal("newer version not stored")
-	}
+	saveAll(state("tenant-a", domain.StatusHealthy, domain.ReasonNone, 11), state("tenant-b", domain.StatusHealthy, domain.ReasonNone, 5))
 	server.HSet(StatesKey, "tenant-corrupt", "garbage")
 
 	states, err := cache.LoadAll(ctx)
 	if err != nil {
 		t.Fatalf("LoadAll: %v", err)
 	}
-	if len(states) != 1 || states[0].TenantID != "tenant-a" || states[0].Version != 11 || states[0].Exhausted() {
-		t.Fatalf("states = %+v, want tenant-a healthy at 11 and the corrupt entry skipped", states)
+	if len(states) != 2 {
+		t.Fatalf("states = %+v, want tenant-a and tenant-b with the corrupt entry skipped", states)
+	}
+	for _, got := range states {
+		want := map[string]int64{"tenant-a": 11, "tenant-b": 5}[got.TenantID]
+		if got.Version != want || got.Exhausted() {
+			t.Fatalf("states = %+v, want both healthy at their newest version", states)
+		}
+	}
+}
+
+func TestRedisStateCacheSavesAfterTheScriptCacheIsFlushed(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := NewRedisStateCache(client)
+	ctx := context.Background()
+	state, err := domain.NewTenantState("tenant-a", domain.StatusExhausted, domain.ReasonWalletEmpty, 3)
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+
+	if err := client.ScriptFlush(ctx).Err(); err != nil {
+		t.Fatalf("SCRIPT FLUSH: %v", err)
+	}
+	if err := cache.SaveAll(ctx, []domain.TenantState{state}); err != nil {
+		t.Fatalf("SaveAll on a Redis without the script: %v", err)
+	}
+	if got := server.HGet(StatesKey, "tenant-a"); got != "3|exhausted|wallet_empty" {
+		t.Fatalf("tenant-a = %q", got)
 	}
 }

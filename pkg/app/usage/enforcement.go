@@ -15,6 +15,7 @@
 package usage
 
 import (
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -34,14 +35,8 @@ type ExhaustionChecker interface {
 // locking; each snapshot that changes something publishes a new copy.
 type Enforcement struct {
 	writeMu  sync.Mutex
-	tenants  atomic.Pointer[map[string]enforcedState]
+	tenants  atomic.Pointer[map[string]domain.TenantState]
 	received atomic.Bool
-}
-
-type enforcedState struct {
-	exhausted bool
-	reason    domain.Reason
-	version   int64
 }
 
 var _ ExhaustionChecker = (*Enforcement)(nil)
@@ -49,52 +44,23 @@ var _ ExhaustionChecker = (*Enforcement)(nil)
 // NewEnforcement builds an empty Enforcement that has received no list yet.
 func NewEnforcement() *Enforcement {
 	e := &Enforcement{}
-	empty := make(map[string]enforcedState)
+	empty := make(map[string]domain.TenantState)
 	e.tenants.Store(&empty)
 	return e
 }
 
-// ApplySnapshot merges a usage snapshot. A listed tenant is applied when its
-// version is newer than the one held. A held exhausted tenant missing from the
-// list becomes healthy at the snapshot's AsOfVersion, unless the data plane
-// holds a newer version; keeping that healthy record is what stops a control
-// plane replica that is behind from blocking the tenant again.
+// ApplySnapshot merges a usage snapshot following domain.Snapshot.Changes.
+// The healthy records it keeps are what stop a control plane replica that is
+// behind from blocking a tenant again.
 func (e *Enforcement) ApplySnapshot(snapshot domain.Snapshot) {
-	listed := make(map[string]struct{}, len(snapshot.Exhausted))
 	e.writeMu.Lock()
 	current := *e.tenants.Load()
-	var next map[string]enforcedState
-	held := func(tenantID string) (enforcedState, bool) {
-		if next != nil {
-			state, ok := next[tenantID]
-			return state, ok
+	if changes := snapshot.Changes(current); len(changes) > 0 {
+		next := make(map[string]domain.TenantState, len(current)+len(changes))
+		maps.Copy(next, current)
+		for _, state := range changes {
+			next[state.TenantID] = state
 		}
-		state, ok := current[tenantID]
-		return state, ok
-	}
-	set := func(tenantID string, state enforcedState) {
-		if next == nil {
-			next = make(map[string]enforcedState, len(current)+len(snapshot.Exhausted))
-			for id, held := range current {
-				next[id] = held
-			}
-		}
-		next[tenantID] = state
-	}
-	for _, state := range snapshot.Exhausted {
-		listed[state.TenantID] = struct{}{}
-		if prev, ok := held(state.TenantID); ok && prev.version >= state.Version {
-			continue
-		}
-		set(state.TenantID, enforcedState{exhausted: true, reason: state.Reason, version: state.Version})
-	}
-	for tenantID, held := range current {
-		if _, ok := listed[tenantID]; ok || !held.exhausted || held.version > snapshot.AsOfVersion {
-			continue
-		}
-		set(tenantID, enforcedState{version: snapshot.AsOfVersion})
-	}
-	if next != nil {
 		e.tenants.Store(&next)
 	}
 	e.writeMu.Unlock()
@@ -108,8 +74,8 @@ func (e *Enforcement) Received() bool { return e.received.Load() }
 // is healthy.
 func (e *Enforcement) Exhausted(tenantID string) (domain.Reason, bool) {
 	state, ok := (*e.tenants.Load())[tenantID]
-	if !ok || !state.exhausted {
+	if !ok || !state.Exhausted() {
 		return domain.ReasonNone, false
 	}
-	return state.reason, true
+	return state.Reason, true
 }

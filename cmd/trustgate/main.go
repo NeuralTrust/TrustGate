@@ -105,12 +105,6 @@ func main() {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
-		if err := c.Invoke(modules.StartUsageRestore); err != nil {
-			log.Fatalf("failed to start usage restore: %v", err)
-		}
-		if err := c.Invoke(modules.StartUsageSync); err != nil {
-			log.Fatalf("failed to start usage sync: %v", err)
-		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
 			log.Fatalf("failed to start stored secrets backfill: %v", err)
@@ -141,12 +135,6 @@ func main() {
 	if plane == serverRun {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
-		}
-		if err := c.Invoke(modules.StartUsageRestore); err != nil {
-			log.Fatalf("failed to start usage restore: %v", err)
-		}
-		if err := c.Invoke(modules.StartUsageSync); err != nil {
-			log.Fatalf("failed to start usage sync: %v", err)
 		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
@@ -198,6 +186,7 @@ type adminParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	Usage          *modules.UsageLoops
 	OpsSDK         *o11y.SDK
 }
 
@@ -253,6 +242,7 @@ type allParam struct {
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
 	RateLimit      rateLimitParams
+	Usage          *modules.UsageLoops
 	OpsSDK         *o11y.SDK
 }
 
@@ -270,6 +260,8 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
 	defer stopDispatcher()
+	p.Usage.Start()
+	defer p.Usage.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
 		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
@@ -336,6 +328,8 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
+	p.Usage.Start()
+	defer p.Usage.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
 		namedServer{name: serverProxy, srv: p.Proxy},
