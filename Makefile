@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover check-usagesync-contract test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit mcp-catalog-probe \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -139,6 +139,10 @@ generate: ## Run go generate
 proto: ## Regenerate protobuf bindings from .proto files via buf
 	@$(info $(M) Generating protobuf bindings ...)
 	cd pkg/infra/configsnapshot/proto && go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate
+	cd pkg/infra/usagesync/proto && go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate
+
+check-usagesync-contract: ## Compare the usage.v1 copy with event-schemas (needs access to the private repo)
+	@scripts/check-usagesync-contract.sh
 
 tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)

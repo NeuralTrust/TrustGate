@@ -34,6 +34,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
@@ -63,6 +64,10 @@ type healthParams struct {
 	Store                  configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
 	Status                 *configsync.SnapshotStatus                  `optional:"true"`
 	AdminSnapshotReadiness adminSnapshotReadiness                      `optional:"true"`
+	AdminUsageReadiness    adminUsageReadiness                         `optional:"true"`
+	Enforcement            *appusage.Enforcement                       `optional:"true"`
+	Cfg                    *config.Config
+	Logger                 *slog.Logger
 	// Provider is only a dependency: it guarantees the SDK has installed the
 	// global MeterProvider before the snapshot gauges are registered.
 	Provider *o11y.Provider
@@ -75,9 +80,12 @@ func adminReadiness(plane string) container.Module {
 		if plane != "admin" && plane != "run" {
 			return nil
 		}
-		return c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
+		if err := c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
 			return d.Readiness
-		})
+		}); err != nil {
+			return err
+		}
+		return c.Provide(provideAdminUsageReadiness)
 	}
 }
 
@@ -134,9 +142,15 @@ func API(c *container.Container) error {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(p.Store)})
+			if p.Enforcement != nil {
+				checks = append(checks, apihandler.ReadinessCheck{Name: "usage_list", Ping: dataPlaneUsageReadiness(p.Store, p.Enforcement, p.Cfg, p.Logger)})
+			}
 		}
 		if p.AdminSnapshotReadiness != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "compiled_snapshot", Ping: p.AdminSnapshotReadiness})
+		}
+		if p.AdminUsageReadiness != nil {
+			checks = append(checks, apihandler.ReadinessCheck{Name: "usage_list", Ping: p.AdminUsageReadiness})
 		}
 		h := apihandler.NewHealthHandler(checks...)
 		if p.Status != nil {
@@ -171,6 +185,9 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewHybridGatewayGuardMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(provideUsageGuard); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {

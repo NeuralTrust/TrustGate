@@ -35,6 +35,56 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// UsageReason explains why a tenant is exhausted.
+type UsageReason int32
+
+const (
+	UsageReason_USAGE_REASON_UNSPECIFIED        UsageReason = 0
+	UsageReason_USAGE_REASON_FREE_LIMIT_REACHED UsageReason = 1
+	UsageReason_USAGE_REASON_WALLET_EMPTY       UsageReason = 2
+)
+
+// Enum value maps for UsageReason.
+var (
+	UsageReason_name = map[int32]string{
+		0: "USAGE_REASON_UNSPECIFIED",
+		1: "USAGE_REASON_FREE_LIMIT_REACHED",
+		2: "USAGE_REASON_WALLET_EMPTY",
+	}
+	UsageReason_value = map[string]int32{
+		"USAGE_REASON_UNSPECIFIED":        0,
+		"USAGE_REASON_FREE_LIMIT_REACHED": 1,
+		"USAGE_REASON_WALLET_EMPTY":       2,
+	}
+)
+
+func (x UsageReason) Enum() *UsageReason {
+	p := new(UsageReason)
+	*p = x
+	return p
+}
+
+func (x UsageReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_configsync_proto_enumTypes[0].Descriptor()
+}
+
+func (UsageReason) Type() protoreflect.EnumType {
+	return &file_configsync_proto_enumTypes[0]
+}
+
+func (x UsageReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageReason.Descriptor instead.
+func (UsageReason) EnumDescriptor() ([]byte, []int) {
+	return file_configsync_proto_rawDescGZIP(), []int{0}
+}
+
 type ClientMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Msg:
@@ -218,6 +268,7 @@ type ServerMessage struct {
 	// Types that are valid to be assigned to Msg:
 	//
 	//	*ServerMessage_Notice
+	//	*ServerMessage_Usage
 	Msg           isServerMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -269,6 +320,15 @@ func (x *ServerMessage) GetNotice() *VersionNotice {
 	return nil
 }
 
+func (x *ServerMessage) GetUsage() *UsageSnapshot {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_Usage); ok {
+			return x.Usage
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Msg interface {
 	isServerMessage_Msg()
 }
@@ -277,7 +337,133 @@ type ServerMessage_Notice struct {
 	Notice *VersionNotice `protobuf:"bytes,1,opt,name=notice,proto3,oneof"`
 }
 
+type ServerMessage_Usage struct {
+	Usage *UsageSnapshot `protobuf:"bytes,2,opt,name=usage,proto3,oneof"`
+}
+
 func (*ServerMessage_Notice) isServerMessage_Msg() {}
+
+func (*ServerMessage_Usage) isServerMessage_Msg() {}
+
+// UsageSnapshot lists every tenant whose usage is exhausted, as the control
+// plane knows it. A tenant missing from the list is healthy unless the data
+// plane already holds a newer version for it than as_of_version, so a stream
+// that reconnects to a control plane replica that is behind cannot undo a
+// newer block. The control plane sends one on connect and again after every
+// change; data planes that predate it ignore the message.
+type UsageSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Exhausted     []*TenantUsage         `protobuf:"bytes,1,rep,name=exhausted,proto3" json:"exhausted,omitempty"`
+	AsOfVersion   int64                  `protobuf:"varint,2,opt,name=as_of_version,json=asOfVersion,proto3" json:"as_of_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UsageSnapshot) Reset() {
+	*x = UsageSnapshot{}
+	mi := &file_configsync_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageSnapshot) ProtoMessage() {}
+
+func (x *UsageSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_configsync_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageSnapshot.ProtoReflect.Descriptor instead.
+func (*UsageSnapshot) Descriptor() ([]byte, []int) {
+	return file_configsync_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *UsageSnapshot) GetExhausted() []*TenantUsage {
+	if x != nil {
+		return x.Exhausted
+	}
+	return nil
+}
+
+func (x *UsageSnapshot) GetAsOfVersion() int64 {
+	if x != nil {
+		return x.AsOfVersion
+	}
+	return 0
+}
+
+// TenantUsage is the exhausted usage state of one tenant.
+type TenantUsage struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Reason   UsageReason            `protobuf:"varint,2,opt,name=reason,proto3,enum=snapshotpb.UsageReason" json:"reason,omitempty"`
+	// version comes from Usage System's global sequence and never decreases.
+	Version       int64 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TenantUsage) Reset() {
+	*x = TenantUsage{}
+	mi := &file_configsync_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantUsage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantUsage) ProtoMessage() {}
+
+func (x *TenantUsage) ProtoReflect() protoreflect.Message {
+	mi := &file_configsync_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantUsage.ProtoReflect.Descriptor instead.
+func (*TenantUsage) Descriptor() ([]byte, []int) {
+	return file_configsync_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TenantUsage) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *TenantUsage) GetReason() UsageReason {
+	if x != nil {
+		return x.Reason
+	}
+	return UsageReason_USAGE_REASON_UNSPECIFIED
+}
+
+func (x *TenantUsage) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
 
 type VersionNotice struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -288,7 +474,7 @@ type VersionNotice struct {
 
 func (x *VersionNotice) Reset() {
 	*x = VersionNotice{}
-	mi := &file_configsync_proto_msgTypes[4]
+	mi := &file_configsync_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -300,7 +486,7 @@ func (x *VersionNotice) String() string {
 func (*VersionNotice) ProtoMessage() {}
 
 func (x *VersionNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_configsync_proto_msgTypes[4]
+	mi := &file_configsync_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -313,7 +499,7 @@ func (x *VersionNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VersionNotice.ProtoReflect.Descriptor instead.
 func (*VersionNotice) Descriptor() ([]byte, []int) {
-	return file_configsync_proto_rawDescGZIP(), []int{4}
+	return file_configsync_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *VersionNotice) GetVersion() string {
@@ -333,7 +519,7 @@ type GetSnapshotRequest struct {
 
 func (x *GetSnapshotRequest) Reset() {
 	*x = GetSnapshotRequest{}
-	mi := &file_configsync_proto_msgTypes[5]
+	mi := &file_configsync_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -345,7 +531,7 @@ func (x *GetSnapshotRequest) String() string {
 func (*GetSnapshotRequest) ProtoMessage() {}
 
 func (x *GetSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_configsync_proto_msgTypes[5]
+	mi := &file_configsync_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -358,7 +544,7 @@ func (x *GetSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*GetSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_configsync_proto_rawDescGZIP(), []int{5}
+	return file_configsync_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetSnapshotRequest) GetAppliedVersion() string {
@@ -388,7 +574,7 @@ type SnapshotChunk struct {
 
 func (x *SnapshotChunk) Reset() {
 	*x = SnapshotChunk{}
-	mi := &file_configsync_proto_msgTypes[6]
+	mi := &file_configsync_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -400,7 +586,7 @@ func (x *SnapshotChunk) String() string {
 func (*SnapshotChunk) ProtoMessage() {}
 
 func (x *SnapshotChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_configsync_proto_msgTypes[6]
+	mi := &file_configsync_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -413,7 +599,7 @@ func (x *SnapshotChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotChunk.ProtoReflect.Descriptor instead.
 func (*SnapshotChunk) Descriptor() ([]byte, []int) {
-	return file_configsync_proto_rawDescGZIP(), []int{6}
+	return file_configsync_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SnapshotChunk) GetPayload() isSnapshotChunk_Payload {
@@ -468,7 +654,7 @@ type SnapshotHeader struct {
 
 func (x *SnapshotHeader) Reset() {
 	*x = SnapshotHeader{}
-	mi := &file_configsync_proto_msgTypes[7]
+	mi := &file_configsync_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -480,7 +666,7 @@ func (x *SnapshotHeader) String() string {
 func (*SnapshotHeader) ProtoMessage() {}
 
 func (x *SnapshotHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_configsync_proto_msgTypes[7]
+	mi := &file_configsync_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -493,7 +679,7 @@ func (x *SnapshotHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotHeader.ProtoReflect.Descriptor instead.
 func (*SnapshotHeader) Descriptor() ([]byte, []int) {
-	return file_configsync_proto_rawDescGZIP(), []int{7}
+	return file_configsync_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SnapshotHeader) GetVersion() string {
@@ -532,10 +718,18 @@ const file_configsync_proto_rawDesc = "" +
 	"instanceId\x120\n" +
 	"\x14last_applied_version\x18\x02 \x01(\tR\x12lastAppliedVersion\".\n" +
 	"\x03Ack\x12'\n" +
-	"\x0fapplied_version\x18\x01 \x01(\tR\x0eappliedVersion\"K\n" +
+	"\x0fapplied_version\x18\x01 \x01(\tR\x0eappliedVersion\"~\n" +
 	"\rServerMessage\x123\n" +
-	"\x06notice\x18\x01 \x01(\v2\x19.snapshotpb.VersionNoticeH\x00R\x06noticeB\x05\n" +
-	"\x03msg\")\n" +
+	"\x06notice\x18\x01 \x01(\v2\x19.snapshotpb.VersionNoticeH\x00R\x06notice\x121\n" +
+	"\x05usage\x18\x02 \x01(\v2\x19.snapshotpb.UsageSnapshotH\x00R\x05usageB\x05\n" +
+	"\x03msg\"j\n" +
+	"\rUsageSnapshot\x125\n" +
+	"\texhausted\x18\x01 \x03(\v2\x17.snapshotpb.TenantUsageR\texhausted\x12\"\n" +
+	"\ras_of_version\x18\x02 \x01(\x03R\vasOfVersion\"u\n" +
+	"\vTenantUsage\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12/\n" +
+	"\x06reason\x18\x02 \x01(\x0e2\x17.snapshotpb.UsageReasonR\x06reason\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x03R\aversion\")\n" +
 	"\rVersionNotice\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\"^\n" +
 	"\x12GetSnapshotRequest\x12'\n" +
@@ -550,7 +744,11 @@ const file_configsync_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
 	"\fnot_modified\x18\x02 \x01(\bR\vnotModified\x12\x1f\n" +
 	"\vtotal_bytes\x18\x03 \x01(\x03R\n" +
-	"totalBytes2\x9a\x01\n" +
+	"totalBytes*o\n" +
+	"\vUsageReason\x12\x1c\n" +
+	"\x18USAGE_REASON_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fUSAGE_REASON_FREE_LIMIT_REACHED\x10\x01\x12\x1d\n" +
+	"\x19USAGE_REASON_WALLET_EMPTY\x10\x022\x9a\x01\n" +
 	"\n" +
 	"ConfigSync\x12@\n" +
 	"\x04Sync\x12\x19.snapshotpb.ClientMessage\x1a\x19.snapshotpb.ServerMessage(\x010\x01\x12J\n" +
@@ -568,31 +766,38 @@ func file_configsync_proto_rawDescGZIP() []byte {
 	return file_configsync_proto_rawDescData
 }
 
-var file_configsync_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_configsync_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_configsync_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_configsync_proto_goTypes = []any{
-	(*ClientMessage)(nil),      // 0: snapshotpb.ClientMessage
-	(*Hello)(nil),              // 1: snapshotpb.Hello
-	(*Ack)(nil),                // 2: snapshotpb.Ack
-	(*ServerMessage)(nil),      // 3: snapshotpb.ServerMessage
-	(*VersionNotice)(nil),      // 4: snapshotpb.VersionNotice
-	(*GetSnapshotRequest)(nil), // 5: snapshotpb.GetSnapshotRequest
-	(*SnapshotChunk)(nil),      // 6: snapshotpb.SnapshotChunk
-	(*SnapshotHeader)(nil),     // 7: snapshotpb.SnapshotHeader
+	(UsageReason)(0),           // 0: snapshotpb.UsageReason
+	(*ClientMessage)(nil),      // 1: snapshotpb.ClientMessage
+	(*Hello)(nil),              // 2: snapshotpb.Hello
+	(*Ack)(nil),                // 3: snapshotpb.Ack
+	(*ServerMessage)(nil),      // 4: snapshotpb.ServerMessage
+	(*UsageSnapshot)(nil),      // 5: snapshotpb.UsageSnapshot
+	(*TenantUsage)(nil),        // 6: snapshotpb.TenantUsage
+	(*VersionNotice)(nil),      // 7: snapshotpb.VersionNotice
+	(*GetSnapshotRequest)(nil), // 8: snapshotpb.GetSnapshotRequest
+	(*SnapshotChunk)(nil),      // 9: snapshotpb.SnapshotChunk
+	(*SnapshotHeader)(nil),     // 10: snapshotpb.SnapshotHeader
 }
 var file_configsync_proto_depIdxs = []int32{
-	1, // 0: snapshotpb.ClientMessage.hello:type_name -> snapshotpb.Hello
-	2, // 1: snapshotpb.ClientMessage.ack:type_name -> snapshotpb.Ack
-	4, // 2: snapshotpb.ServerMessage.notice:type_name -> snapshotpb.VersionNotice
-	7, // 3: snapshotpb.SnapshotChunk.header:type_name -> snapshotpb.SnapshotHeader
-	0, // 4: snapshotpb.ConfigSync.Sync:input_type -> snapshotpb.ClientMessage
-	5, // 5: snapshotpb.ConfigSync.GetSnapshot:input_type -> snapshotpb.GetSnapshotRequest
-	3, // 6: snapshotpb.ConfigSync.Sync:output_type -> snapshotpb.ServerMessage
-	6, // 7: snapshotpb.ConfigSync.GetSnapshot:output_type -> snapshotpb.SnapshotChunk
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	2,  // 0: snapshotpb.ClientMessage.hello:type_name -> snapshotpb.Hello
+	3,  // 1: snapshotpb.ClientMessage.ack:type_name -> snapshotpb.Ack
+	7,  // 2: snapshotpb.ServerMessage.notice:type_name -> snapshotpb.VersionNotice
+	5,  // 3: snapshotpb.ServerMessage.usage:type_name -> snapshotpb.UsageSnapshot
+	6,  // 4: snapshotpb.UsageSnapshot.exhausted:type_name -> snapshotpb.TenantUsage
+	0,  // 5: snapshotpb.TenantUsage.reason:type_name -> snapshotpb.UsageReason
+	10, // 6: snapshotpb.SnapshotChunk.header:type_name -> snapshotpb.SnapshotHeader
+	1,  // 7: snapshotpb.ConfigSync.Sync:input_type -> snapshotpb.ClientMessage
+	8,  // 8: snapshotpb.ConfigSync.GetSnapshot:input_type -> snapshotpb.GetSnapshotRequest
+	4,  // 9: snapshotpb.ConfigSync.Sync:output_type -> snapshotpb.ServerMessage
+	9,  // 10: snapshotpb.ConfigSync.GetSnapshot:output_type -> snapshotpb.SnapshotChunk
+	9,  // [9:11] is the sub-list for method output_type
+	7,  // [7:9] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_configsync_proto_init() }
@@ -606,8 +811,9 @@ func file_configsync_proto_init() {
 	}
 	file_configsync_proto_msgTypes[3].OneofWrappers = []any{
 		(*ServerMessage_Notice)(nil),
+		(*ServerMessage_Usage)(nil),
 	}
-	file_configsync_proto_msgTypes[6].OneofWrappers = []any{
+	file_configsync_proto_msgTypes[8].OneofWrappers = []any{
 		(*SnapshotChunk_Header)(nil),
 		(*SnapshotChunk_Data)(nil),
 	}
@@ -616,13 +822,14 @@ func file_configsync_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_configsync_proto_rawDesc), len(file_configsync_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      1,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_configsync_proto_goTypes,
 		DependencyIndexes: file_configsync_proto_depIdxs,
+		EnumInfos:         file_configsync_proto_enumTypes,
 		MessageInfos:      file_configsync_proto_msgTypes,
 	}.Build()
 	File_configsync_proto = out.File

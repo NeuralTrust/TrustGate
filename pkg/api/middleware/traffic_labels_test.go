@@ -16,6 +16,7 @@ package middleware_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,12 +69,16 @@ func (r *recordingIntake) submitted() []trafficlabels.Candidate {
 type trafficLabelsSetup struct {
 	gateway *gatewaydomain.Gateway
 	// consumer is the resolved consumer; nil means the default labeled one.
-	consumer   *consumerdomain.Consumer
-	noConsumer bool
-	noTrace    bool
-	session    *infracontext.Session
-	maxBody    int
-	accept     bool
+	consumer     *consumerdomain.Consumer
+	noConsumer   bool
+	noTrace      bool
+	session      *infracontext.Session
+	maxBody      int
+	accept       bool
+	status       int
+	rewrite      string
+	trace        *trace.RequestTrace
+	telemetryOff bool
 	// outcomes are the Intake outcomes the middleware must record, in any order.
 	outcomes []string
 }
@@ -115,6 +120,7 @@ func newTrafficLabelsApp(t *testing.T, s trafficLabelsSetup) (*fiber.App, *recor
 	t.Helper()
 	intake := &recordingIntake{accept: s.accept}
 	cfg := &config.Config{TrafficLabels: config.TrafficLabelsConfig{IntakeMaxBodyBytes: s.maxBody}}
+	cfg.Telemetry.Enabled = !s.telemetryOff
 	recorder := labelmocks.NewRecorder(t)
 	for _, outcome := range s.outcomes {
 		recorder.EXPECT().Intake(outcome).Once()
@@ -136,7 +142,11 @@ func newTrafficLabelsApp(t *testing.T, s trafficLabelsSetup) (*fiber.App, *recor
 				ctx = appconsumer.WithConsumer(ctx, &appconsumer.RoutableConsumer{Consumer: consumer})
 			}
 			if !s.noTrace {
-				ctx = trace.NewContext(ctx, trace.New("trace-123", trace.Metadata{}))
+				rt := s.trace
+				if rt == nil {
+					rt = trace.New("trace-123", trace.Metadata{})
+				}
+				ctx = trace.NewContext(ctx, rt)
 			}
 			if s.session != nil {
 				ctx = infracontext.WithSession(ctx, *s.session)
@@ -146,7 +156,15 @@ func newTrafficLabelsApp(t *testing.T, s trafficLabelsSetup) (*fiber.App, *recor
 		},
 		mw.Middleware(),
 		func(c *fiber.Ctx) error {
-			return c.Status(fiber.StatusOK).Send(c.Body())
+			body := append([]byte(nil), c.Body()...)
+			if s.rewrite != "" {
+				c.Request().SetBodyString(s.rewrite)
+			}
+			status := s.status
+			if status == 0 {
+				status = fiber.StatusOK
+			}
+			return c.Status(status).Send(body)
 		},
 	)
 	return app, intake
@@ -184,6 +202,62 @@ func TestTrafficLabels_OffersChatRequestsOfEnabledGateways(t *testing.T) {
 	assert.Equal(t, consumer.ID.String(), got[0].ConsumerID)
 	assert.Equal(t, consumer.LabelSets, got[0].LabelSets)
 	assert.False(t, got[0].ReceivedAt.IsZero())
+}
+
+func TestTrafficLabels_CarriesTheTenantAndTheRequestStart(t *testing.T) {
+	t.Parallel()
+	gw := labeledGateway(true)
+	gw.Metadata = map[string]string{gatewaydomain.MetadataTenantIDKey: "tenant-1"}
+	rt := trace.New("trace-123", trace.Metadata{})
+	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{gateway: gw, accept: true, trace: rt, rewrite: `{"masked":true}`})
+
+	postTo(t, app, "/acme/v1/chat/completions", chatBody)
+
+	got := intake.submitted()
+	require.Len(t, got, 1)
+	assert.Equal(t, "tenant-1", got[0].TenantID)
+	assert.True(t, rt.StartedAt().Equal(got[0].ReceivedAt), "dated at the request start, like the request event")
+	assert.Equal(t, chatBody, string(got[0].Body), "the body is read before plugins can rewrite it")
+}
+
+func TestTrafficLabels_OffersNothingWithTelemetryOff(t *testing.T) {
+	t.Parallel()
+	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{gateway: labeledGateway(true), accept: true, telemetryOff: true})
+
+	postTo(t, app, "/acme/v1/chat/completions", chatBody)
+
+	assert.Empty(t, intake.submitted(), "labels nobody can receive are never classified")
+}
+
+func TestTrafficLabels_OffersOnlyServedRequests(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		status  int
+		offered bool
+	}{
+		{fiber.StatusOK, true},
+		{fiber.StatusForbidden, true},
+		{fiber.StatusBadRequest, true},
+		{fiber.StatusPaymentRequired, false},
+		{fiber.StatusTooManyRequests, false},
+		{fiber.StatusInternalServerError, false},
+		{fiber.StatusBadGateway, false},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.status), func(t *testing.T) {
+			t.Parallel()
+			setup := trafficLabelsSetup{gateway: labeledGateway(true), accept: true, status: tt.status}
+			if !tt.offered {
+				setup.outcomes = []string{trafficlabels.OutcomeNotServed}
+			}
+			app, intake := newTrafficLabelsApp(t, setup)
+
+			status, _ := postTo(t, app, "/acme/v1/chat/completions", chatBody)
+
+			assert.Equal(t, tt.status, status)
+			assert.Equal(t, tt.offered, len(intake.submitted()) == 1)
+		})
+	}
 }
 
 func TestTrafficLabels_SkipsWhatItMustNotClassify(t *testing.T) {

@@ -86,6 +86,9 @@ const (
 	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
+	defaultUsageRecordsEnabled  = false
+	defaultUsageRecordsQueue    = 65536
+	maxUsageRecordsQueue        = 1 << 20
 	defaultMetricsQueueSize     = 1000
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
@@ -184,6 +187,7 @@ type Config struct {
 	SessionStore        SessionStoreConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
+	UsageRecords        UsageRecordsConfig
 	TrafficLabels       TrafficLabelsConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
@@ -201,6 +205,28 @@ type Config struct {
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
 	AdminM2M            AdminM2MConfig
+	Usage               UsageConfig
+}
+
+// UsageConfig controls Usage System enforcement. It is off by default, and off
+// means today's behaviour: no usage states reach the data planes, nothing is
+// blocked for usage and readiness does not wait for a usage list. Only the
+// control plane reads it; data planes follow the flag in the snapshot.
+type UsageConfig struct {
+	// Enabled is USAGE_SYSTEM_ENABLED.
+	Enabled bool
+	// ReadyTimeout is USAGE_READY_TIMEOUT: how long a starting plane stays not
+	// ready while it has no usage list before it serves without one and logs.
+	ReadyTimeout time.Duration
+	// GRPCAddr is USAGE_SYSTEM_GRPC_ADDR, the host:port of Usage System's
+	// UsageSync service. Empty means the control plane only serves the states
+	// cached in Redis.
+	GRPCAddr string
+	// GRPCInsecure is USAGE_SYSTEM_GRPC_INSECURE: plaintext for the in-cluster
+	// service instead of TLS.
+	GRPCInsecure bool
+	// GRPCToken is USAGE_SYSTEM_GRPC_TOKEN, sent as a bearer token on the stream.
+	GRPCToken string
 }
 
 // AdminM2MPublicKey is one verification key advertised by the credential
@@ -360,6 +386,10 @@ type ServerConfig struct {
 // absent or invalid.
 const DefaultAdminTokenMaxTTL = time.Hour
 
+// DefaultUsageReadyTimeout bounds how long a plane waits for its first usage
+// list before it reports ready without one.
+const DefaultUsageReadyTimeout = 30 * time.Second
+
 type MCPDefaultIdPConfig struct {
 	Issuer       string
 	AuthorizeURL string
@@ -454,6 +484,15 @@ type OTLPConfig struct {
 	Timeout         time.Duration
 	Insecure        bool
 	Compression     string
+}
+
+// UsageRecordsConfig drives the usage metering records. OTLP holds only the
+// USAGE_RECORDS_OTLP_* values; without an endpoint of its own the pipeline uses
+// the operator's OTEL_EXPORTER_OTLP_* collector, headers and transport.
+type UsageRecordsConfig struct {
+	Enabled   bool
+	QueueSize int
+	OTLP      OTLPConfig
 }
 
 type MetricsConfig struct {
@@ -652,6 +691,7 @@ func LoadConfig() (*Config, error) {
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
+		UsageRecords:        getUsageRecordsConfig(),
 		TrafficLabels:       getTrafficLabelsConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
@@ -669,6 +709,13 @@ func LoadConfig() (*Config, error) {
 		RateLimit:           rateLimit,
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
+		Usage: UsageConfig{
+			Enabled:      getEnvBool("USAGE_SYSTEM_ENABLED", false),
+			ReadyTimeout: getEnvDuration("USAGE_READY_TIMEOUT", DefaultUsageReadyTimeout),
+			GRPCAddr:     strings.TrimSpace(getEnv("USAGE_SYSTEM_GRPC_ADDR", "")),
+			GRPCInsecure: getEnvBool("USAGE_SYSTEM_GRPC_INSECURE", false),
+			GRPCToken:    getEnv("USAGE_SYSTEM_GRPC_TOKEN", ""),
+		},
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.
@@ -900,6 +947,20 @@ func getTrafficLabelsConfig() TrafficLabelsConfig {
 		BatchMaxTexts:         getEnvInt("TRAFFIC_LABELS_BATCH_MAX_TEXTS", defaultTrafficLabelsBatchMaxTexts),
 		ClaimMinIdle:          getEnvDuration("TRAFFIC_LABELS_CLAIM_MIN_IDLE", defaultTrafficLabelsClaimMinIdle),
 		MaxAttempts:           getEnvInt("TRAFFIC_LABELS_MAX_ATTEMPTS", defaultTrafficLabelsMaxAttempts),
+	}
+}
+
+func getUsageRecordsConfig() UsageRecordsConfig {
+	return UsageRecordsConfig{
+		Enabled:   getEnvBool("USAGE_RECORDS_ENABLED", defaultUsageRecordsEnabled),
+		QueueSize: getEnvInt("USAGE_RECORDS_QUEUE_SIZE", defaultUsageRecordsQueue),
+		OTLP: OTLPConfig{
+			Endpoint: getEnv("USAGE_RECORDS_OTLP_ENDPOINT", ""),
+			Protocol: getEnv("USAGE_RECORDS_OTLP_PROTOCOL", ""),
+			Headers:  parseOTLPHeaders(getEnv("USAGE_RECORDS_OTLP_HEADERS", "")),
+			Timeout:  getEnvDuration("USAGE_RECORDS_OTLP_TIMEOUT", 0),
+			Insecure: getEnvBool("USAGE_RECORDS_OTLP_INSECURE", false),
+		},
 	}
 }
 
@@ -1386,6 +1447,9 @@ func (c *Config) Validate() error {
 	if c.Metrics.Enabled && c.Metrics.WorkerCount <= 0 {
 		return fmt.Errorf("%w: METRICS_WORKER_COUNT must be greater than zero", errors.ErrInvalidConfig)
 	}
+	if err := c.validateUsageRecords(); err != nil {
+		return err
+	}
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
@@ -1406,6 +1470,19 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *Config) validateUsageRecords() error {
+	if !c.UsageRecords.Enabled {
+		return nil
+	}
+	if c.UsageRecords.QueueSize <= 0 || c.UsageRecords.QueueSize > maxUsageRecordsQueue {
+		return fmt.Errorf("%w: USAGE_RECORDS_QUEUE_SIZE must be between 1 and %d", errors.ErrInvalidConfig, maxUsageRecordsQueue)
+	}
+	if strings.TrimSpace(c.UsageRecords.OTLP.Endpoint) == "" && strings.TrimSpace(c.Telemetry.OTLP.Endpoint) == "" {
+		return fmt.Errorf("%w: USAGE_RECORDS_ENABLED requires USAGE_RECORDS_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT", errors.ErrInvalidConfig)
 	}
 	return nil
 }

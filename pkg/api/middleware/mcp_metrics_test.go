@@ -56,7 +56,7 @@ func TestMCPMetricsMiddleware_PublishesDispatchedRequest(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMCPMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -85,7 +85,7 @@ func TestMCPMetricsMiddleware_SkipsWhenHandlerOptsOut(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMCPMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -111,7 +111,7 @@ func TestMCPMetricsMiddleware_DisabledSkipsWorker(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = false
-	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMCPMetricsMiddleware(worker, nil, cfg)
 
 	app := fiber.New()
 	app.Use(mw.Middleware())
@@ -146,7 +146,7 @@ func TestMCPMetricsMiddleware_ForgedPlaygroundHeaderIsNotVerified(t *testing.T) 
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMCPMetricsMiddleware(worker, nil, cfg)
 
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {

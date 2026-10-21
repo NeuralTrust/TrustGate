@@ -36,6 +36,7 @@ func fullModules() []container.Option {
 		container.WithModule(CacheEvents),
 		container.WithModule(Session),
 		container.WithModule(Telemetry),
+		container.WithModule(UsageRecords),
 		container.WithModule(Auth),
 		container.WithModule(Policy),
 		container.WithModule(Plugins),
@@ -54,6 +55,7 @@ func fullModules() []container.Option {
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(Usage),
 		container.WithModule(ControlConfigSync),
 	}
 }
@@ -66,6 +68,7 @@ func dataPlaneModules() []container.Option {
 		container.WithModule(CacheEvents),
 		container.WithModule(Session),
 		container.WithModule(Telemetry),
+		container.WithModule(UsageRecords),
 		container.WithModule(Plugins),
 		container.WithModule(LoadBalancer),
 		container.WithModule(Providers),

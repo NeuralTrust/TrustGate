@@ -75,7 +75,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMCPMetricsMiddleware(worker, nil, cfg)
 
 	composer := mcpmocks.NewComposer(t)
 	target := &appmcp.ResolvedTool{Tool: appmcp.Tool{Name: "echo"}, Exposed: "echo"}

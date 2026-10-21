@@ -52,6 +52,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	usageinfra "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -104,6 +105,12 @@ func main() {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
+		if err := c.Invoke(modules.StartUsageRestore); err != nil {
+			log.Fatalf("failed to start usage restore: %v", err)
+		}
+		if err := c.Invoke(modules.StartUsageSync); err != nil {
+			log.Fatalf("failed to start usage sync: %v", err)
+		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
 			log.Fatalf("failed to start stored secrets backfill: %v", err)
@@ -134,6 +141,12 @@ func main() {
 	if plane == serverRun {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
+		}
+		if err := c.Invoke(modules.StartUsageRestore); err != nil {
+			log.Fatalf("failed to start usage restore: %v", err)
+		}
+		if err := c.Invoke(modules.StartUsageSync); err != nil {
+			log.Fatalf("failed to start usage sync: %v", err)
 		}
 		stopBackfill, err := startSecretsBackfill(c)
 		if err != nil {
@@ -204,6 +217,7 @@ type proxyParam struct {
 	dig.In
 	Srv           server.Server `name:"proxy"`
 	Worker        appmetrics.Worker
+	UsageRecords  *usageinfra.Emitter
 	TrafficLabels modules.TrafficLabelsParams
 	Conn          *database.Connection
 	BedrockModels appcatalog.BedrockModelResolver
@@ -218,6 +232,7 @@ type mcpParam struct {
 	dig.In
 	Srv          server.Server `name:"mcp"`
 	Worker       appmetrics.Worker
+	UsageRecords *usageinfra.Emitter
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
@@ -230,6 +245,7 @@ type allParam struct {
 	Admin          server.Server `name:"admin"`
 	Proxy          server.Server `name:"proxy"`
 	Worker         appmetrics.Worker
+	UsageRecords   *usageinfra.Emitter
 	TrafficLabels  modules.TrafficLabelsParams
 	Conn           *database.Connection
 	BedrockModels  appcatalog.BedrockModelResolver
@@ -264,6 +280,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
@@ -275,6 +292,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
@@ -286,6 +304,7 @@ type labelWorkerParam struct {
 	dig.In
 	TrafficLabels modules.TrafficLabelsParams
 	Worker        appmetrics.Worker
+	UsageRecords  *usageinfra.Emitter
 	Conn          *database.Connection
 	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
@@ -297,6 +316,7 @@ func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopConfig()
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, false)()
 
@@ -312,6 +332,7 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer stopBackfill()
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer stopDispatcher()
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
