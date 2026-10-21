@@ -21,6 +21,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +62,10 @@ func TestClient_Configured(t *testing.T) {
 func TestClient_ScoreSR1_Success(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, complexityPath, r.URL.Path)
 		assert.Equal(t, "secret-token", r.Header.Get(headerToken))
@@ -153,4 +160,87 @@ func TestClientScoreProvenance(t *testing.T) {
 		})
 	}
 	assert.False(t, NewClient("http://x", tokenProviderStub{configured: true}, time.Second, " ").Configured())
+}
+
+func TestClient_ScoreSR1_InputTooLargeIsTyped(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configPath {
+			_, _ = io.WriteString(w, `{"max_input_chars":null,"max_text_chars":null}`)
+			return
+		}
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, time.Second, testRevision)
+	_, err := c.ScoreSR1(context.Background(), "hello", "")
+	require.ErrorIs(t, err, ErrInputTooLarge)
+	assert.NotContains(t, err.Error(), "hello")
+}
+
+func TestClient_LimitsRefreshNeverBlocksScoring(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	var inFlight, maxInFlight, configCalls atomic.Int32
+	var inputRunes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configPath {
+			configCalls.Add(1)
+			n := inFlight.Add(1)
+			for {
+				m := maxInFlight.Load()
+				if n <= m || maxInFlight.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			<-release // slow /config: held until the test releases it
+			inFlight.Add(-1)
+			_, _ = io.WriteString(w, `{"max_input_chars":10,"max_text_chars":null}`)
+			return
+		}
+		var got scoreRequest
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		inputRunes.Store(int32(len([]rune(got.Input))))
+		_, _ = io.WriteString(w, `{"revision":"`+testRevision+`","raw_score":0.5}`)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, 5*time.Second, testRevision)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.ScoreSR1(context.Background(), "hello world, long enough", "")
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait() // returns while /config is still blocked: scoring did not wait for it
+	assert.Equal(t, int32(24), inputRunes.Load(), "defaults serve the input unchanged until /config answers")
+
+	close(release)
+	require.Eventually(t, func() bool { return !c.refreshing.Load() }, 5*time.Second, 5*time.Millisecond)
+	assert.Equal(t, int32(1), configCalls.Load())
+	assert.Equal(t, int32(1), maxInFlight.Load())
+
+	_, err := c.ScoreSR1(context.Background(), "hello world, long enough", "")
+	require.NoError(t, err)
+	assert.Equal(t, int32(10), inputRunes.Load(), "published limit is used after the refresh")
+}
+
+func TestClient_FailingConfigKeepsDefaults(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == configPath {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `{"revision":"`+testRevision+`","raw_score":0.5}`)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, time.Second, testRevision)
+	require.Error(t, c.RefreshLimits(context.Background()))
+	assert.Equal(t, defaultMaxInputChars, c.currentLimits("tok").effective())
+	long := strings.Repeat("x", defaultMaxInputChars+5)
+	assert.Len(t, c.truncate("tok", long), defaultMaxInputChars)
 }

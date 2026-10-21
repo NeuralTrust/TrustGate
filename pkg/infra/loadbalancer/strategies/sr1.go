@@ -26,6 +26,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
@@ -139,6 +140,10 @@ func (s *SmartRouting) sr1Score(ctx context.Context, input, tenantID string) (in
 		return 0, errSR1ScorerUnavailable
 	}
 	score, err := s.scorer.ScoreSR1(ctx, input, tenantID)
+	if errors.Is(err, complexity.ErrInputTooLarge) && s.logger != nil {
+		// Never log the prompt; the error only carries status and length.
+		s.logger.Warn("SR-1 score rejected: input over firewall limit", slog.String("reason", err.Error()))
+	}
 	if err != nil || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
 		return 0, errSR1ScoreUnavailable
 	}

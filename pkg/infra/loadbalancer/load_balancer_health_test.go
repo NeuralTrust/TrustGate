@@ -146,7 +146,11 @@ func TestSmartRoutingHealthRecoveryPreservesCommitmentAndExclusions(t *testing.T
 	routes := []routingdomain.Route{{Registry: low, Model: "low"}, {Registry: high, Model: "high"}}
 	config := &registry.SmartRoutingConfig{SR1: &registry.SR1Config{CacheTTLSeconds: 300}, Tiers: []registry.SmartRoutingTier{{RegistryID: low.ID, Model: "low", MinScore: 0}, {RegistryID: high.ID, Model: "high", MinScore: .45}}}
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/complexity" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		calls.Add(1)
 		_, _ = w.Write([]byte(`{"revision":"test-revision","raw_score":0.9}`))
 	}))
