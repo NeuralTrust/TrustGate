@@ -341,10 +341,10 @@ func (p *Plugin) requestTools(req *infracontext.RequestContext) []adapter.Canoni
 }
 
 // segmentFailure splits the guard's failures from its answers. A 429 is the
-// engine refusing deliberately and comes back as a blocking verdict, matching
-// what Execute does on the buffered path. Everything else — transport, 5xx,
-// a block that ran out of time, rejected credentials, unavailable entitlements
-// — is a failure of the guard and is resolved by segmentGuardFailure.
+// engine refusing deliberately. The verdict carries the same status, body and
+// headers Execute returns on the buffered path. Everything else — transport,
+// 5xx, a block that ran out of time, rejected credentials, unavailable
+// entitlements — is a failure of the guard and is resolved by segmentGuardFailure.
 func (p *Plugin) segmentFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -354,7 +354,15 @@ func (p *Plugin) segmentFailure(
 ) (*appplugins.SegmentVerdict, error) {
 	var limited *rateLimitedError
 	if errors.As(err, &limited) {
-		return segmentBlock(typeRateLimited, rateLimitMessage), nil
+		pe := rateLimitError(limited)
+		return &appplugins.SegmentVerdict{
+			Block:      true,
+			Type:       pe.Type,
+			Message:    pe.Message,
+			Body:       pe.Body,
+			StatusCode: pe.StatusCode,
+			Headers:    pe.Headers,
+		}, nil
 	}
 	reason := reasonOfError(ctx, err)
 	return p.segmentGuardFailure(ctx, in, seg, reason, err)
