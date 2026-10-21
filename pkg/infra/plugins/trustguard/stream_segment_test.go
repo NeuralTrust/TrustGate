@@ -598,6 +598,37 @@ func TestInspectSegmentDeadlineCoversTheTokenFetch(t *testing.T) {
 	assert.Empty(t, g.calls(), "evaluate is never reached without a token")
 }
 
+// A streamed block whose request has no provider is recorded on the closing
+// span, and the guard is not called.
+func TestInspectSegmentMissingProviderRecordsFailure(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	req := segmentRequest()
+	req.Provider = ""
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, streamingSettings(nil), req, nil, event)
+	ctx := segmentTraceContext()
+
+	verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+	require.NoError(t, err)
+	require.NotNil(t, verdict)
+	assert.False(t, verdict.Block)
+	assert.Empty(t, g.calls())
+
+	_, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 2, Closing: true, Report: appplugins.StreamReport{Evals: 1}})
+	require.NoError(t, err)
+
+	attrs := span.PluginAttrsCopy()
+	data, ok := attrs.Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, failureReasonProviderMissing, data.FailureReason)
+	assert.Equal(t, decisionFailedOpen, data.Decision)
+	assert.Equal(t, decisionFailedOpen, attrs.Decision)
+	assert.False(t, data.Skipped)
+}
+
 func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 	t.Parallel()
 

@@ -273,7 +273,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	mcpMode := in.Request.MCP
-	if !mcpMode && (p.registry == nil || in.Request.Provider == "") {
+	if !mcpMode && in.Request.Provider == "" {
+		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonProviderMissing, nil)
+	}
+	if !mcpMode && p.registry == nil {
 		return passThrough(), nil
 	}
 
