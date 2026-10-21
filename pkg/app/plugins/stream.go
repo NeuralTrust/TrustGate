@@ -187,9 +187,12 @@ const (
 // it called, so which policy a fingerprint belongs to is never something an
 // inspector encodes into the value.
 type SegmentVerdict struct {
-	Block        bool
-	Type         string
-	Message      string
+	Block   bool
+	Type    string
+	Message string
+	// Body is the client refusal a head-gate block returns. Empty leaves the
+	// guard to render Type and Message.
+	Body         []byte
 	HasTransform bool
 	Transformed  string
 	Fingerprints []string
@@ -302,9 +305,12 @@ type SegmentOutcome struct {
 	Block           bool
 	Type            string
 	Message         string
-	HasTransform    bool
-	Transformed     string
-	Fingerprints    []StreamFinding
+	// Body is the blocking verdict's client refusal. The head gate returns it
+	// as the 403 body when it is set.
+	Body         []byte
+	HasTransform bool
+	Transformed  string
+	Fingerprints []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported
