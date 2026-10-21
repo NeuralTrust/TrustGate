@@ -158,13 +158,16 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 	}
 }
 
+// apply hands one message to the sink and returns the version to ack. Acks
+// only report progress to Usage System, so a change that cannot be read is
+// acked at the watermark and the stream carries on.
 func (c *Client) apply(ctx context.Context, resp *usagev1.SyncResponse) (int64, error) {
 	switch msg := resp.GetMessage().(type) {
 	case *usagev1.SyncResponse_Snapshot:
 		snapshot := msg.Snapshot
 		states := make([]domain.TenantState, 0, len(snapshot.GetExhausted()))
 		for _, entry := range snapshot.GetExhausted() {
-			if state, ok := c.toDomain(ctx, entry); ok {
+			if state, ok := c.listedState(ctx, entry); ok {
 				states = append(states, state)
 			}
 		}
@@ -173,9 +176,9 @@ func (c *Client) apply(ctx context.Context, resp *usagev1.SyncResponse) (int64, 
 		}
 		return snapshot.GetAsOfVersion(), nil
 	case *usagev1.SyncResponse_Change:
-		state, ok := c.toDomain(ctx, msg.Change)
+		state, ok := c.changedState(ctx, msg.Change)
 		if !ok {
-			return msg.Change.GetVersion(), nil
+			return c.sink.Watermark(), nil
 		}
 		if err := c.sink.Apply(ctx, []domain.TenantState{state}); err != nil {
 			return 0, fmt.Errorf("usagesync: apply change: %w", err)
@@ -186,17 +189,32 @@ func (c *Client) apply(ctx context.Context, resp *usagev1.SyncResponse) (int64, 
 	}
 }
 
-func (c *Client) toDomain(ctx context.Context, entry *usagev1.UsageState) (domain.TenantState, bool) {
-	status := domain.StatusHealthy
-	if entry.GetStatus() == usagev1.UsageStatus_USAGE_STATUS_EXHAUSTED {
-		status = domain.StatusExhausted
+// listedState reads an entry of a snapshot's exhausted list. Being listed is
+// what makes a tenant exhausted, whatever its status field says, so a snapshot
+// never unblocks a tenant because one of its fields is unknown here.
+func (c *Client) listedState(ctx context.Context, entry *usagev1.UsageState) (domain.TenantState, bool) {
+	return c.newState(ctx, entry, domain.StatusExhausted)
+}
+
+// changedState reads a single change. A status this build does not know is
+// dropped rather than read as healthy, so the tenant keeps its last state.
+func (c *Client) changedState(ctx context.Context, entry *usagev1.UsageState) (domain.TenantState, bool) {
+	switch entry.GetStatus() {
+	case usagev1.UsageStatus_USAGE_STATUS_EXHAUSTED:
+		return c.newState(ctx, entry, domain.StatusExhausted)
+	case usagev1.UsageStatus_USAGE_STATUS_HEALTHY:
+		return c.newState(ctx, entry, domain.StatusHealthy)
+	default:
+		c.logger.WarnContext(ctx, "usagesync: dropping a change with an unknown status",
+			slog.String("tenant_id", entry.GetTenantId()), slog.String("status", entry.GetStatus().String()))
+		return domain.TenantState{}, false
 	}
+}
+
+func (c *Client) newState(ctx context.Context, entry *usagev1.UsageState, status domain.Status) (domain.TenantState, bool) {
 	reason := domain.ReasonNone
-	switch entry.GetReason() {
-	case usagev1.ExhaustionReason_EXHAUSTION_REASON_FREE_LIMIT_REACHED:
-		reason = domain.ReasonFreeLimitReached
-	case usagev1.ExhaustionReason_EXHAUSTION_REASON_WALLET_EMPTY:
-		reason = domain.ReasonWalletEmpty
+	if status == domain.StatusExhausted {
+		reason = c.reason(ctx, entry)
 	}
 	state, err := domain.NewTenantState(entry.GetTenantId(), status, reason, entry.GetVersion())
 	if err != nil {
@@ -204,6 +222,22 @@ func (c *Client) toDomain(ctx context.Context, entry *usagev1.UsageState) (domai
 		return domain.TenantState{}, false
 	}
 	return state, true
+}
+
+// reason maps an exhaustion reason. One this build does not know still
+// blocks, as insufficient funds, because an exhausted tenant must not be
+// served over a field it cannot read.
+func (c *Client) reason(ctx context.Context, entry *usagev1.UsageState) domain.Reason {
+	switch entry.GetReason() {
+	case usagev1.ExhaustionReason_EXHAUSTION_REASON_FREE_LIMIT_REACHED:
+		return domain.ReasonFreeLimitReached
+	case usagev1.ExhaustionReason_EXHAUSTION_REASON_WALLET_EMPTY:
+		return domain.ReasonWalletEmpty
+	default:
+		c.logger.WarnContext(ctx, "usagesync: unknown exhaustion reason, blocking as wallet_empty",
+			slog.String("tenant_id", entry.GetTenantId()), slog.String("reason", entry.GetReason().String()))
+		return domain.ReasonWalletEmpty
+	}
 }
 
 func jitter(d time.Duration) time.Duration {

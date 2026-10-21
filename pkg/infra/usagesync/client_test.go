@@ -239,3 +239,61 @@ func TestClientReceivesASnapshotAboveTheDefaultMessageLimit(t *testing.T) {
 		t.Fatal("the last tenant of the large snapshot is missing")
 	}
 }
+
+func (r *recordingSink) state(tenant string) (domain.TenantState, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.exhausted[tenant]
+	return st, ok
+}
+
+func (f *fakeServer) ackVersions() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.acks...)
+}
+
+func TestClientBlocksOnFieldsItCannotRead(t *testing.T) {
+	unknownReason := usageState("unknown-reason", true, 3)
+	unknownReason.Reason = usagev1.ExhaustionReason(99)
+	unspecified := usageState("unspecified", true, 4)
+	unspecified.Reason = usagev1.ExhaustionReason_EXHAUSTION_REASON_UNSPECIFIED
+	listedOddStatus := usageState("odd-status", true, 5)
+	listedOddStatus.Status = usagev1.UsageStatus(42)
+	unknownStatusChange := usageState("held", true, 9)
+	unknownStatusChange.Status = usagev1.UsageStatus(42)
+	srv := &fakeServer{sessions: []func(usagev1.UsageSyncService_SyncServer) error{
+		func(stream usagev1.UsageSyncService_SyncServer) error {
+			if err := stream.Send(&usagev1.SyncResponse{Message: &usagev1.SyncResponse_Snapshot{Snapshot: &usagev1.Snapshot{
+				Exhausted:   []*usagev1.UsageState{unknownReason, unspecified, listedOddStatus, usageState("held", true, 6)},
+				AsOfVersion: 8,
+			}}}); err != nil {
+				return err
+			}
+			if err := stream.Send(&usagev1.SyncResponse{Message: &usagev1.SyncResponse_Change{Change: unknownStatusChange}}); err != nil {
+				return err
+			}
+			<-stream.Context().Done()
+			return nil
+		},
+	}}
+	sink := newRecordingSink()
+	startClient(t, srv, sink)
+
+	eventually(t, func() bool { return len(srv.ackVersions()) == 2 }, "the snapshot and the change were not both acked")
+	for _, tenant := range []string{"unknown-reason", "unspecified", "odd-status"} {
+		st, ok := sink.state(tenant)
+		if !ok || st.Reason != domain.ReasonWalletEmpty {
+			t.Fatalf("%s = %+v %v, want blocked as wallet_empty", tenant, st, ok)
+		}
+	}
+	if st, ok := sink.state("held"); !ok || st.Version != 6 {
+		t.Fatalf("held = %+v %v, want the block at 6 kept: a change with an unknown status is dropped", st, ok)
+	}
+	if acks := srv.ackVersions(); acks[1] != 8 {
+		t.Fatalf("acks = %v, want the dropped change acked at the watermark 8", acks)
+	}
+	if hellos := srv.helloVersions(); len(hellos) != 1 {
+		t.Fatalf("hellos = %v: a dropped change must not end the stream", hellos)
+	}
+}
