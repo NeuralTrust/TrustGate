@@ -42,6 +42,10 @@ message ClientMessage {
 message Hello {
   string instance_id = 1;
   string last_applied_version = 2;
+  // accepts_usage says the data plane takes usage messages on this stream.
+  // Older data planes leave it unset and get none, so a list larger than their
+  // default receive limit cannot break their stream.
+  bool accepts_usage = 3;
 }
 
 message Ack {

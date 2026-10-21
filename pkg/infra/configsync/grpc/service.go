@@ -81,7 +81,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 
 	var usageChanges <-chan struct{}
 	usageOwed := false
-	if s.usage != nil {
+	if s.usage != nil && hello.GetAcceptsUsage() {
 		changes, release := s.usage.Subscribe()
 		defer release()
 		usageChanges = changes
