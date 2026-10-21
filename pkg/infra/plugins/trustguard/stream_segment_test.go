@@ -291,6 +291,9 @@ type segmentGuard struct {
 	release     chan struct{}
 	status      int
 	response    GuardResponse
+	// header and rawBody, when set, are the evaluate answer instead of response.
+	header  map[string]string
+	rawBody []byte
 }
 
 func (g *segmentGuard) handler() http.HandlerFunc {
@@ -316,7 +319,7 @@ func (g *segmentGuard) handler() http.HandlerFunc {
 		if call <= len(g.delays) {
 			delay = g.delays[call-1]
 		}
-		status, resp := g.status, g.response
+		status, resp, raw, hdr := g.status, g.response, g.rawBody, g.header
 		g.mu.Unlock()
 		if !g.hold(r, delay) {
 			return
@@ -325,7 +328,14 @@ func (g *segmentGuard) handler() http.HandlerFunc {
 			status = http.StatusOK
 		}
 		w.Header().Set("Content-Type", contentTypeJSON)
+		for k, v := range hdr {
+			w.Header().Set(k, v)
+		}
 		w.WriteHeader(status)
+		if raw != nil {
+			_, _ = w.Write(raw)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
@@ -525,6 +535,58 @@ func TestInspectSegmentSortsAnswersFromFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInspectSegmentRateLimitMatchesBufferedError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("upstream body and headers", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"error":"rate limit exceeded","reason":"quota"}`)
+		header := map[string]string{
+			"Retry-After":           "7",
+			"X-RateLimit-Limit":     "60",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "quota",
+		}
+		g := &segmentGuard{status: http.StatusTooManyRequests, header: header, rawBody: raw}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, streamingSettings(nil)),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+
+		want := rateLimitError(&rateLimitedError{
+			headers: map[string][]string{
+				"Retry-After":           {"7"},
+				"X-RateLimit-Limit":     {"60"},
+				"X-RateLimit-Remaining": {"0"},
+				"X-RateLimit-Reason":    {"quota"},
+			},
+			body: raw,
+		})
+		assert.True(t, verdict.Block)
+		assert.Equal(t, want.StatusCode, verdict.StatusCode)
+		assert.Equal(t, want.Type, verdict.Type)
+		assert.Equal(t, want.Message, verdict.Message)
+		assert.Equal(t, want.Body, verdict.Body)
+		assert.Equal(t, want.Headers, verdict.Headers)
+	})
+
+	t.Run("empty body uses the buffered fallback", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusTooManyRequests, rawBody: []byte{}}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, streamingSettings(nil)),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+
+		want := rateLimitError(&rateLimitedError{})
+		assert.Equal(t, want.StatusCode, verdict.StatusCode)
+		assert.Equal(t, want.Body, verdict.Body)
+		assert.Equal(t, http.StatusTooManyRequests, verdict.StatusCode)
+	})
 }
 
 func TestInspectSegmentTransportFailureFailsOpenWhateverIsStored(t *testing.T) {
