@@ -65,17 +65,17 @@ func (_c *Reader_Ready_Call) RunAndReturn(run func() bool) *Reader_Ready_Call {
 	return _c
 }
 
-// SnapshotFor provides a mock function with given fields: tenantID, all
-func (_m *Reader) SnapshotFor(tenantID string, all bool) domainusage.Snapshot {
-	ret := _m.Called(tenantID, all)
+// SnapshotAll provides a mock function with no fields
+func (_m *Reader) SnapshotAll() domainusage.Snapshot {
+	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for SnapshotFor")
+		panic("no return value specified for SnapshotAll")
 	}
 
 	var r0 domainusage.Snapshot
-	if rf, ok := ret.Get(0).(func(string, bool) domainusage.Snapshot); ok {
-		r0 = rf(tenantID, all)
+	if rf, ok := ret.Get(0).(func() domainusage.Snapshot); ok {
+		r0 = rf()
 	} else {
 		r0 = ret.Get(0).(domainusage.Snapshot)
 	}
@@ -83,31 +83,75 @@ func (_m *Reader) SnapshotFor(tenantID string, all bool) domainusage.Snapshot {
 	return r0
 }
 
-// Reader_SnapshotFor_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SnapshotFor'
-type Reader_SnapshotFor_Call struct {
+// Reader_SnapshotAll_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SnapshotAll'
+type Reader_SnapshotAll_Call struct {
 	*mock.Call
 }
 
-// SnapshotFor is a helper method to define mock.On call
-//   - tenantID string
-//   - all bool
-func (_e *Reader_Expecter) SnapshotFor(tenantID interface{}, all interface{}) *Reader_SnapshotFor_Call {
-	return &Reader_SnapshotFor_Call{Call: _e.mock.On("SnapshotFor", tenantID, all)}
+// SnapshotAll is a helper method to define mock.On call
+func (_e *Reader_Expecter) SnapshotAll() *Reader_SnapshotAll_Call {
+	return &Reader_SnapshotAll_Call{Call: _e.mock.On("SnapshotAll")}
 }
 
-func (_c *Reader_SnapshotFor_Call) Run(run func(tenantID string, all bool)) *Reader_SnapshotFor_Call {
+func (_c *Reader_SnapshotAll_Call) Run(run func()) *Reader_SnapshotAll_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(bool))
+		run()
 	})
 	return _c
 }
 
-func (_c *Reader_SnapshotFor_Call) Return(_a0 domainusage.Snapshot) *Reader_SnapshotFor_Call {
+func (_c *Reader_SnapshotAll_Call) Return(_a0 domainusage.Snapshot) *Reader_SnapshotAll_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Reader_SnapshotFor_Call) RunAndReturn(run func(string, bool) domainusage.Snapshot) *Reader_SnapshotFor_Call {
+func (_c *Reader_SnapshotAll_Call) RunAndReturn(run func() domainusage.Snapshot) *Reader_SnapshotAll_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SnapshotTenant provides a mock function with given fields: tenantID
+func (_m *Reader) SnapshotTenant(tenantID string) domainusage.Snapshot {
+	ret := _m.Called(tenantID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SnapshotTenant")
+	}
+
+	var r0 domainusage.Snapshot
+	if rf, ok := ret.Get(0).(func(string) domainusage.Snapshot); ok {
+		r0 = rf(tenantID)
+	} else {
+		r0 = ret.Get(0).(domainusage.Snapshot)
+	}
+
+	return r0
+}
+
+// Reader_SnapshotTenant_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SnapshotTenant'
+type Reader_SnapshotTenant_Call struct {
+	*mock.Call
+}
+
+// SnapshotTenant is a helper method to define mock.On call
+//   - tenantID string
+func (_e *Reader_Expecter) SnapshotTenant(tenantID interface{}) *Reader_SnapshotTenant_Call {
+	return &Reader_SnapshotTenant_Call{Call: _e.mock.On("SnapshotTenant", tenantID)}
+}
+
+func (_c *Reader_SnapshotTenant_Call) Run(run func(tenantID string)) *Reader_SnapshotTenant_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *Reader_SnapshotTenant_Call) Return(_a0 domainusage.Snapshot) *Reader_SnapshotTenant_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Reader_SnapshotTenant_Call) RunAndReturn(run func(string) domainusage.Snapshot) *Reader_SnapshotTenant_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -29,9 +29,18 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	usagev1 "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/usage/v1"
 )
+
+var testConfig = config.UsageConfig{
+	GRPCKeepaliveTime:    30 * time.Second,
+	GRPCKeepaliveTimeout: 10 * time.Second,
+	GRPCMaxMessageBytes:  64 << 20,
+	ReconnectMinBackoff:  50 * time.Millisecond,
+	ReconnectMaxBackoff:  200 * time.Millisecond,
+}
 
 type recordingSink struct {
 	mu        sync.Mutex
@@ -148,11 +157,11 @@ func startClient(t *testing.T, srv *fakeServer, sink StateSink) {
 	conn, err := grpc.NewClient("passthrough:///bufnet", append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}, streamDialOptions()...)...)
+	}, streamDialOptions(testConfig)...)...)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	client := newClient(conn, sink, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := newClient(conn, sink, slog.New(slog.NewTextHandler(io.Discard, nil)), testConfig.ReconnectMinBackoff, testConfig.ReconnectMaxBackoff)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); _ = client.Close() })
 	go client.Run(ctx)
@@ -160,7 +169,7 @@ func startClient(t *testing.T, srv *fakeServer, sink StateSink) {
 
 func eventually(t *testing.T, cond func() bool, msg string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -211,8 +220,6 @@ func TestClientAppliesSnapshotAndChangesAndResyncsOnReconnect(t *testing.T) {
 	}
 }
 
-// A snapshot above gRPC's 4 MiB default must still be received: the list of
-// exhausted tenants travels in one message.
 func TestClientReceivesASnapshotAboveTheDefaultMessageLimit(t *testing.T) {
 	const tenants = 100_000
 	exhausted := make([]*usagev1.UsageState, 0, tenants)

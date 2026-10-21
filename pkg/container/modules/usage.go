@@ -17,7 +17,7 @@ package modules
 import (
 	"context"
 	"log/slog"
-	"time"
+	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
@@ -32,69 +32,104 @@ import (
 	"go.uber.org/dig"
 )
 
-const usageRestoreRetry = 2 * time.Second
-
 // Usage registers the control plane's usage state store and its Redis cache.
 // Nothing here runs unless USAGE_SYSTEM_ENABLED is set.
 func Usage(c *container.Container) error {
-	if err := c.Provide(func(client cache.Client) usagedomain.StateCache {
-		return infrausage.NewRedisStateCache(client.RedisClient())
-	}); err != nil {
-		return err
+	for _, provider := range []any{
+		func(client cache.Client) usagedomain.StateCache {
+			return infrausage.NewRedisStateCache(client.RedisClient())
+		},
+		provideUsageStore,
+		func(s *appusage.Store) appusage.Applier { return s },
+		func(s *appusage.Store) appusage.Reader { return s },
+		provideUsageSyncClient,
+		provideUsageLoops,
+	} {
+		if err := c.Provide(provider); err != nil {
+			return err
+		}
 	}
-	if err := c.Provide(appusage.NewStore); err != nil {
-		return err
-	}
-	if err := c.Provide(func(s *appusage.Store) appusage.Applier { return s }); err != nil {
-		return err
-	}
-	if err := c.Provide(func(s *appusage.Store) appusage.Reader { return s }); err != nil {
-		return err
-	}
-	return c.Provide(provideUsageSyncClient)
+	return nil
 }
 
-// provideUsageSyncClient builds the UsageSync client when Usage System is
-// enabled and its address is set; otherwise it returns nil and the control
-// plane serves the states cached in Redis.
+func provideUsageStore(cache usagedomain.StateCache, cfg *config.Config, logger *slog.Logger) *appusage.Store {
+	return appusage.NewStore(cache, logger, appusage.WithCacheWriteTimeout(cfg.Usage.CacheWriteTimeout))
+}
+
+// provideUsageSyncClient returns nil without an address: the control plane
+// then serves the states cached in Redis only.
 func provideUsageSyncClient(cfg *config.Config, store *appusage.Store, logger *slog.Logger) (*usagesync.Client, error) {
-	if !cfg.Usage.Enabled || cfg.Usage.GRPCAddr == "" {
+	if !cfg.Usage.Enabled {
+		return nil, nil
+	}
+	if err := cfg.Usage.Validate(); err != nil {
+		return nil, err
+	}
+	if cfg.Usage.GRPCAddr == "" {
 		return nil, nil
 	}
 	return usagesync.NewClient(cfg.Usage, store, logger)
 }
 
-// UsageSyncParams are the dependencies of StartUsageSync.
-type UsageSyncParams struct {
-	dig.In
-	Client *usagesync.Client
+// UsageLoops runs the control plane's usage loops in the background: the
+// Redis restore and, when Usage System's address is set, the UsageSync
+// stream. Each control plane replica holds its own stream, so a change
+// reaches every replica without cross-replica pub/sub. Its methods do nothing
+// on a nil UsageLoops, which is what a disabled Usage System provides.
+type UsageLoops struct {
+	cfg    config.UsageConfig
+	store  *appusage.Store
+	client *usagesync.Client
+	logger *slog.Logger
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
-// StartUsageSync keeps the UsageSync stream open in the background for the
-// life of the process. It does nothing when the client is disabled.
-func StartUsageSync(p UsageSyncParams) {
-	if p.Client == nil {
+func provideUsageLoops(cfg *config.Config, store *appusage.Store, client *usagesync.Client, logger *slog.Logger) *UsageLoops {
+	if !cfg.Usage.Enabled {
+		return nil
+	}
+	return &UsageLoops{cfg: cfg.Usage, store: store, client: client, logger: logger}
+}
+
+// Start launches the loops.
+func (l *UsageLoops) Start() {
+	if l == nil {
 		return
 	}
-	go p.Client.Run(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	l.cancel = cancel
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		l.store.RestoreUntilReady(ctx, appusage.RestoreOptions{
+			Interval:   l.cfg.CacheRestoreInterval,
+			MaxBackoff: l.cfg.CacheRestoreMaxBackoff,
+			AwaitSync:  l.client != nil,
+		})
+	}()
+	if l.client != nil {
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			l.client.Run(ctx)
+		}()
+	}
 }
 
-// UsageRestoreParams are the dependencies of StartUsageRestore.
-type UsageRestoreParams struct {
-	dig.In
-	Cfg    *config.Config
-	Store  *appusage.Store
-	Logger *slog.Logger
-}
-
-// StartUsageRestore loads the cached usage states in the background, retrying
-// until it succeeds, so a control plane that starts while Usage System is
-// unreachable still serves the last known list.
-func StartUsageRestore(p UsageRestoreParams) {
-	if !p.Cfg.Usage.Enabled {
+// Stop ends the loops, waits for them and closes the UsageSync connection.
+// Call it before Redis closes: the loops write to it until they return.
+func (l *UsageLoops) Stop() {
+	if l == nil || l.cancel == nil {
 		return
 	}
-	go p.Store.RestoreUntilReady(context.Background(), usageRestoreRetry)
+	l.cancel()
+	l.wg.Wait()
+	if l.client != nil {
+		if err := l.client.Close(); err != nil {
+			l.logger.Warn("usagesync shutdown error", slog.String("error", err.Error()))
+		}
+	}
 }
 
 type adminUsageReadiness func(context.Context) error
@@ -106,24 +141,65 @@ func provideAdminUsageReadiness(cfg *config.Config, reader appusage.Reader, logg
 	return appusage.ReadinessCheck(reader.Ready, cfg.Usage.ReadyTimeout, logger)
 }
 
+// localUsage is the guard source of the run plane, which holds the usage
+// store itself instead of receiving the list from a control plane.
+type localUsage struct {
+	checker appusage.ExhaustionChecker
+	enabled func() bool
+}
+
+// postgresDataPlane marks a data plane backed by Postgres: no control plane
+// feeds it usage states, so it cannot enforce them.
+type postgresDataPlane bool
+
+// usageForPlane wires what a non DB-less plane does with usage beyond the
+// admin readiness: run blocks from its own store, and a Postgres-backed data
+// plane is marked so its guard says it cannot enforce.
+func usageForPlane(plane string) container.Module {
+	return func(c *container.Container) error {
+		switch plane {
+		case "run":
+			return c.Provide(provideLocalUsage)
+		case "proxy", "mcp", "worker":
+			return c.Provide(func() postgresDataPlane { return true })
+		default:
+			return nil
+		}
+	}
+}
+
+func provideLocalUsage(cfg *config.Config, store *appusage.Store) *localUsage {
+	enabled := cfg.Usage.Enabled
+	return &localUsage{checker: store, enabled: func() bool { return enabled }}
+}
+
 type usageGuardParams struct {
 	dig.In
+	Cfg         *config.Config
+	Logger      *slog.Logger
 	Enforcement *appusage.Enforcement                       `optional:"true"`
-	Store       configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Snapshots   configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Local       *localUsage                                 `optional:"true"`
+	Postgres    postgresDataPlane                           `optional:"true"`
 }
 
-// provideUsageGuard builds the request guard. Only a DB-less data plane has
-// both an enforcement list and a snapshot carrying the control plane's flag;
-// everywhere else the guard lets every request through.
+// provideUsageGuard reads a DB-less data plane's list, under the control
+// plane's flag, or the run plane's own store. The admin plane serves no
+// gateway traffic, and a Postgres-backed data plane has no list: it logs at
+// boot when it is asked to enforce, so the gap is never silent.
 func provideUsageGuard(p usageGuardParams) *middleware.UsageGuardMiddleware {
-	if p.Enforcement == nil || p.Store == nil {
-		return middleware.NewUsageGuardMiddleware(nil, nil)
+	switch {
+	case p.Enforcement != nil && p.Snapshots != nil:
+		return middleware.NewUsageGuardMiddleware(p.Enforcement, usageEnforcementFlag(p.Snapshots))
+	case p.Local != nil:
+		return middleware.NewUsageGuardMiddleware(p.Local.checker, p.Local.enabled)
 	}
-	return middleware.NewUsageGuardMiddleware(p.Enforcement, usageEnforcementFlag(p.Store))
+	if bool(p.Postgres) && p.Cfg.Usage.Enabled {
+		p.Logger.Error("usage: a data plane backed by Postgres has no usage list and serves exhausted tenants; enforce usage with DB-less data planes")
+	}
+	return middleware.NewUsageGuardMiddleware(nil, nil)
 }
 
-// provideDataPlaneUsage registers the data plane's enforcement list, which the
-// config-sync client feeds with the control plane's usage snapshots.
 func provideDataPlaneUsage(c *container.Container) error {
 	if err := c.Provide(appusage.NewEnforcement); err != nil {
 		return err
@@ -138,9 +214,6 @@ func usageEnforcementFlag(store configsync.ConfigStore[*readmodel.Snapshot]) fun
 	}
 }
 
-// dataPlaneUsageReadiness keeps a data plane not ready while its snapshot says
-// usage is enforced and no usage list has arrived, bounded by
-// USAGE_READY_TIMEOUT.
 func dataPlaneUsageReadiness(store configsync.ConfigStore[*readmodel.Snapshot], enforcement *appusage.Enforcement, cfg *config.Config, logger *slog.Logger) func(context.Context) error {
 	enforced := usageEnforcementFlag(store)
 	return appusage.ReadinessCheck(func() bool {

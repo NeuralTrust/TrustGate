@@ -28,7 +28,8 @@ import (
 
 // UsageSource is the control plane's view of tenant usage states.
 type UsageSource interface {
-	SnapshotFor(tenantID string, all bool) usagedomain.Snapshot
+	SnapshotAll() usagedomain.Snapshot
+	SnapshotTenant(tenantID string) usagedomain.Snapshot
 	Subscribe() (<-chan struct{}, func())
 	// Ready reports whether the source holds a list worth sending. Until it
 	// does nothing is sent: a data plane reads any list as complete.
@@ -58,13 +59,13 @@ func (s *Service) usageSnapshotFor(ctx context.Context, scope string) (*snapshot
 		return nil, false
 	}
 	if scope == "" {
-		return usageMessage(s.usage.SnapshotFor("", true)), true
+		return usageMessage(s.usage.SnapshotAll()), true
 	}
 	tenantID, ok := s.usageTenantFor(ctx, scope)
 	if !ok {
 		return nil, false
 	}
-	return usageMessage(s.usage.SnapshotFor(tenantID, false)), true
+	return usageMessage(s.usage.SnapshotTenant(tenantID)), true
 }
 
 func (s *Service) usageTenantFor(ctx context.Context, scope string) (string, bool) {
