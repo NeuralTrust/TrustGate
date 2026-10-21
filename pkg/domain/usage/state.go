@@ -76,6 +76,17 @@ func NewTenantState(tenantID string, status Status, reason Reason, version int64
 // Exhausted reports whether the tenant's requests must be blocked.
 func (s TenantState) Exhausted() bool { return s.Status == StatusExhausted }
 
+// Supersedes reports whether s replaces held for the same tenant: a newer
+// version always does, and at an equal version a healthy state replaces an
+// exhausted one, because a snapshot unblocks a tenant at its as_of version.
+// Every holder (memory, the cache queue, Redis) applies this one rule.
+func (s TenantState) Supersedes(held TenantState) bool {
+	if s.Version != held.Version {
+		return s.Version > held.Version
+	}
+	return !s.Exhausted() && held.Exhausted()
+}
+
 // Snapshot lists the exhausted tenants. A tenant missing from Exhausted is
 // healthy unless the reader already holds a newer version for it than
 // AsOfVersion.
@@ -92,14 +103,14 @@ type Snapshot struct {
 func (s Snapshot) Changes(held map[string]TenantState) []TenantState {
 	listed := make(map[string]TenantState, len(s.Exhausted))
 	for _, state := range s.Exhausted {
-		if prev, ok := listed[state.TenantID]; ok && prev.Version >= state.Version {
+		if prev, ok := listed[state.TenantID]; ok && !state.Supersedes(prev) {
 			continue
 		}
 		listed[state.TenantID] = state
 	}
 	var changes []TenantState
 	for tenantID, state := range listed {
-		if current, ok := held[tenantID]; ok && current.Version >= state.Version {
+		if current, ok := held[tenantID]; ok && !state.Supersedes(current) {
 			continue
 		}
 		changes = append(changes, state)

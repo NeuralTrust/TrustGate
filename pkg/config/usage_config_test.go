@@ -26,7 +26,7 @@ import (
 func TestGetUsageConfigDefaults(t *testing.T) {
 	cfg := getUsageConfig()
 	want := UsageConfig{
-		ReadyTimeout:           DefaultUsageReadyTimeout,
+		ReadyTimeout:           defaultUsageReadyTimeout,
 		GRPCKeepaliveTime:      30 * time.Second,
 		GRPCKeepaliveTimeout:   10 * time.Second,
 		GRPCMaxMessageBytes:    64 << 20,
@@ -36,6 +36,7 @@ func TestGetUsageConfigDefaults(t *testing.T) {
 		CacheRestoreMaxBackoff: time.Minute,
 		CacheWriteTimeout:      3 * time.Second,
 		CacheRetryInterval:     10 * time.Second,
+		CacheResyncInterval:    5 * time.Minute,
 	}
 	if cfg != want {
 		t.Fatalf("getUsageConfig() = %+v, want %+v", cfg, want)
@@ -63,6 +64,7 @@ func TestUsageConfigValidate(t *testing.T) {
 		{name: "zero keepalive", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 0 }},
 		{name: "keepalive under gRPC's floor", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 5 * time.Second }},
 		{name: "zero retry interval", mutate: func(u *UsageConfig) { u.CacheRetryInterval = 0 }},
+		{name: "zero resync interval", mutate: func(u *UsageConfig) { u.CacheResyncInterval = 0 }},
 		{name: "negative ready timeout", mutate: func(u *UsageConfig) { u.ReadyTimeout = -time.Second }},
 		{name: "min backoff above max", mutate: func(u *UsageConfig) { u.ReconnectMinBackoff = time.Hour }},
 		{name: "restore interval above max", mutate: func(u *UsageConfig) { u.CacheRestoreInterval = time.Hour }},
