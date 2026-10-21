@@ -236,7 +236,10 @@ func TestExecutor_RunStreamSegment_RateLimitStatus(t *testing.T) {
 	})
 
 	t.Run("observe", func(t *testing.T) {
-		exec, pols, _ := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeObserve, verdict: verdict})
+		exec, pols, inspectors := streamChain(t,
+			entrySpec{slug: "guard", mode: policy.ModeObserve, verdict: verdict},
+			entrySpec{slug: "later", mode: policy.ModeEnforce, verdict: &SegmentVerdict{Fingerprints: []string{"later"}}},
+		)
 		out, err := runSegment(t, exec, StageInput{
 			Stage:    policy.StagePreResponse,
 			Policies: pols,
@@ -245,12 +248,13 @@ func TestExecutor_RunStreamSegment_RateLimitStatus(t *testing.T) {
 		}, segment(1, false))
 		require.NoError(t, err)
 		require.NotNil(t, out)
-		assert.False(t, out.Block)
-		assert.Zero(t, out.StatusCode)
-		assert.Nil(t, out.Body)
-		assert.Nil(t, out.Headers)
+		assert.True(t, out.Block)
+		assert.Equal(t, http.StatusTooManyRequests, out.StatusCode)
 		assert.Equal(t, "trustguard_rate_limited", out.Type)
 		assert.Equal(t, "rate limit exceeded", out.Message)
+		assert.Equal(t, body, out.Body)
+		assert.Equal(t, headers, out.Headers)
+		assert.Empty(t, inspectors["later"].seen, "a rate limit cuts the chain in observe")
 	})
 }
 
