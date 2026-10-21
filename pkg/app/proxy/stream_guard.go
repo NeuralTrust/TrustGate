@@ -574,7 +574,13 @@ func blockedHeadError(source adapter.Format, outcome *appplugins.SegmentOutcome)
 	if message == "" {
 		message = streamBlockMessage
 	}
-	return streamError(source, outcome.Type, message)
+	pe := streamError(source, outcome.Type, message)
+	// The plugin's own body is what the buffered leg returns. It replaces the
+	// generic envelope, and an adapted one, so both legs answer with one schema.
+	if len(outcome.Body) > 0 {
+		pe.Body = outcome.Body
+	}
+	return pe
 }
 
 func streamError(source adapter.Format, errType, message string) *appplugins.PluginError {

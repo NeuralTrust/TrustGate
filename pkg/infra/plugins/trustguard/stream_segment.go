@@ -646,7 +646,7 @@ func segmentVerdict(mode policy.Mode, seg appplugins.StreamSegment, resp *GuardR
 		}
 		return &appplugins.SegmentVerdict{HasTransform: true, Transformed: masked}, nil
 	case guardStatusBlock:
-		return segmentBlock(typeBlocked, clientBlockMessage(resp)), nil
+		return segmentPolicyBlock(resp), nil
 	case guardStatusAllow, guardStatusReport:
 		return segmentAllow(), nil
 	case guardStatusUnknown:
@@ -660,9 +660,18 @@ func segmentVerdict(mode policy.Mode, seg appplugins.StreamSegment, resp *GuardR
 // block does when the policy blocks, and otherwise lets the segment through.
 func unknownSegmentVerdict(mode policy.Mode, resp *GuardResponse) *appplugins.SegmentVerdict {
 	if appplugins.Blocks(mode) {
-		return segmentBlock(typeBlocked, clientBlockMessage(resp))
+		return segmentPolicyBlock(resp)
 	}
 	return segmentAllow()
+}
+
+// segmentPolicyBlock is a block verdict whose client body is blockBody, the
+// same refusal the buffered leg returns for this response.
+func segmentPolicyBlock(resp *GuardResponse) *appplugins.SegmentVerdict {
+	message := clientBlockMessage(resp)
+	verdict := segmentBlock(typeBlocked, message)
+	verdict.Body = blockBody(resp, message, directionOutput)
+	return verdict
 }
 
 func segmentAllow() *appplugins.SegmentVerdict {
