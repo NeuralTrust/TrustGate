@@ -52,8 +52,9 @@ func WithUsage(source UsageSource, gateways GatewayResolver) ServiceOption {
 // the unscoped in-cluster data planes get every tenant. A scoped data plane
 // gets its own tenant: the gateway's tenant for a gateway scope, or the scope
 // itself for a tenant-wide one. It never gets another tenant's state. When the
-// scope cannot be resolved right now nothing is sent, so the data plane keeps
-// what it has instead of reading an empty list as "nobody is exhausted".
+// scope cannot be resolved right now, or names neither a gateway nor a
+// compiled tenant scope, nothing is sent, so the data plane keeps what it has
+// instead of reading an empty list as "nobody is exhausted".
 func (s *Service) usageSnapshotFor(ctx context.Context, scope string) (*snapshotpb.ServerMessage, bool) {
 	if !s.usage.Ready() {
 		return nil, false
@@ -76,7 +77,15 @@ func (s *Service) usageTenantFor(ctx context.Context, scope string) (string, boo
 	gw, err := s.usageGateways.FindByID(ctx, gatewayID)
 	switch {
 	case errors.Is(err, gatewaydomain.ErrNotFound), errors.Is(err, commonerrors.ErrNotFound):
-		return scope, true
+		// A tenant id parses as a gateway id too. The scope is tenant-wide only
+		// when the control plane compiles a snapshot for it; otherwise it is a
+		// gateway this control plane does not know, and an empty list would
+		// unblock every tenant that data plane holds.
+		if _, _, compiled := s.source.SnapshotFor(scope); compiled {
+			return scope, true
+		}
+		s.logger.WarnContext(ctx, "configsync: usage scope is not a known gateway or tenant", slog.String("scope", scope))
+		return "", false
 	case err != nil:
 		s.logger.WarnContext(ctx, "configsync: resolve usage scope", slog.String("scope", scope), slog.Any("error", err))
 		return "", false
@@ -99,7 +108,11 @@ func usageMessage(snapshot usagedomain.Snapshot) *snapshotpb.ServerMessage {
 func usageSnapshotFromProto(msg *snapshotpb.UsageSnapshot) usagedomain.Snapshot {
 	out := usagedomain.Snapshot{AsOfVersion: msg.GetAsOfVersion()}
 	for _, entry := range msg.GetExhausted() {
-		state, err := usagedomain.NewTenantState(entry.GetTenantId(), usagedomain.StatusExhausted, usageReasonFromProto(entry.GetReason()), entry.GetVersion())
+		version := entry.GetVersion()
+		if version <= 0 {
+			version = msg.GetAsOfVersion()
+		}
+		state, err := usagedomain.NewTenantState(entry.GetTenantId(), usagedomain.StatusExhausted, usageReasonFromProto(entry.GetReason()), version)
 		if err != nil {
 			continue
 		}

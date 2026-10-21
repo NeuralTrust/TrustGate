@@ -34,6 +34,7 @@ func TestGetUsageConfigDefaults(t *testing.T) {
 		CacheRestoreInterval:   2 * time.Second,
 		CacheRestoreMaxBackoff: time.Minute,
 		CacheWriteTimeout:      3 * time.Second,
+		CacheRetryInterval:     10 * time.Second,
 	}
 	if cfg != want {
 		t.Fatalf("getUsageConfig() = %+v, want %+v", cfg, want)
@@ -59,6 +60,8 @@ func TestUsageConfigValidate(t *testing.T) {
 		{name: "address without port", mutate: func(u *UsageConfig) { u.GRPCAddr = "usage-system" }},
 		{name: "address as a URL", mutate: func(u *UsageConfig) { u.GRPCAddr = "https://usage-system:9090" }},
 		{name: "zero keepalive", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 0 }},
+		{name: "keepalive under gRPC's floor", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 5 * time.Second }},
+		{name: "zero retry interval", mutate: func(u *UsageConfig) { u.CacheRetryInterval = 0 }},
 		{name: "negative ready timeout", mutate: func(u *UsageConfig) { u.ReadyTimeout = -time.Second }},
 		{name: "min backoff above max", mutate: func(u *UsageConfig) { u.ReconnectMinBackoff = time.Hour }},
 		{name: "restore interval above max", mutate: func(u *UsageConfig) { u.CacheRestoreInterval = time.Hour }},
@@ -77,5 +80,15 @@ func TestUsageConfigValidate(t *testing.T) {
 				t.Fatalf("a disabled Usage System is never validated: %v", err)
 			}
 		})
+	}
+}
+
+func TestConfigSyncMaxRecvBytes(t *testing.T) {
+	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != DefaultConfigSyncGRPCMaxRecvBytes {
+		t.Fatalf("default = %d, want %d", got, DefaultConfigSyncGRPCMaxRecvBytes)
+	}
+	t.Setenv("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", "134217728")
+	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != 128<<20 {
+		t.Fatalf("from env = %d, want %d", got, 128<<20)
 	}
 }
