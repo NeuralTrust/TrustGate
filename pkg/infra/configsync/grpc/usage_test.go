@@ -137,7 +137,7 @@ func openSync(t *testing.T, srv snapshotpb.ConfigSyncServer) snapshotpb.ConfigSy
 	if err != nil {
 		t.Fatalf("open sync: %v", err)
 	}
-	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1"}}}); err != nil {
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1", AcceptsUsage: true}}}); err != nil {
 		t.Fatalf("hello: %v", err)
 	}
 	return stream
@@ -432,7 +432,7 @@ func TestSyncSendsOwedUsageOnceTheScopeResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sync: %v", err)
 	}
-	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1"}}}); err != nil {
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1", AcceptsUsage: true}}}); err != nil {
 		t.Fatalf("hello: %v", err)
 	}
 
@@ -499,4 +499,47 @@ func (f *flakyGateways) recover() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing = false
+}
+
+func TestSyncSendsNoUsageToADataPlaneThatDoesNotAcceptIt(t *testing.T) {
+	src := &fakeSource{}
+	src.set([]byte("payload"), "v1")
+	usage := newFakeUsage(exhaustedState(t, "tenant-a", 1))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	stream, err := snapshotpb.NewConfigSyncClient(conn).Sync(ctx)
+	if err != nil {
+		t.Fatalf("open sync: %v", err)
+	}
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "old-dp"}}}); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if msg.GetUsage() != nil || msg.GetNotice().GetVersion() != "v1" {
+		t.Fatalf("first message = %v, want only the version notice for a data plane that does not accept usage", msg)
+	}
+	usage.exhaust(exhaustedState(t, "tenant-b", 2))
+	got := make(chan *snapshotpb.ServerMessage, 1)
+	go func() {
+		if m, err := stream.Recv(); err == nil {
+			got <- m
+		}
+	}()
+	select {
+	case m := <-got:
+		t.Fatalf("sent %v to a data plane that does not accept usage", m)
+	case <-time.After(200 * time.Millisecond):
+	}
 }
