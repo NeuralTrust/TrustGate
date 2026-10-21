@@ -15,11 +15,13 @@
 package modules
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -34,8 +36,23 @@ import (
 
 type emptyStateCache struct{}
 
-func (emptyStateCache) Save(context.Context, usagedomain.TenantState) (bool, error) { return true, nil }
-func (emptyStateCache) LoadAll(context.Context) ([]usagedomain.TenantState, error)  { return nil, nil }
+func (emptyStateCache) SaveAll(context.Context, []usagedomain.TenantState) error   { return nil }
+func (emptyStateCache) LoadAll(context.Context) ([]usagedomain.TenantState, error) { return nil, nil }
+
+func enabledUsage() config.UsageConfig {
+	return config.UsageConfig{
+		Enabled:                true,
+		ReadyTimeout:           time.Hour,
+		GRPCKeepaliveTime:      30 * time.Second,
+		GRPCKeepaliveTimeout:   10 * time.Second,
+		GRPCMaxMessageBytes:    64 << 20,
+		ReconnectMinBackoff:    time.Second,
+		ReconnectMaxBackoff:    time.Second,
+		CacheRestoreInterval:   time.Millisecond,
+		CacheRestoreMaxBackoff: time.Millisecond,
+		CacheWriteTimeout:      time.Second,
+	}
+}
 
 func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 	t.Parallel()
@@ -64,7 +81,7 @@ func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 			}
 			require.NotNil(t, check)
 			assert.ErrorIs(t, check(context.Background()), appusage.ErrListNotReady)
-			require.NoError(t, store.Restore(context.Background()))
+			require.NoError(t, store.Restore(context.Background(), false))
 			assert.NoError(t, check(context.Background()))
 		}
 	}
@@ -92,20 +109,90 @@ func TestDataPlaneUsageReadinessFollowsTheSnapshotFlag(t *testing.T) {
 func TestUsageSyncClientOnlyWithEnabledAndAddress(t *testing.T) {
 	t.Parallel()
 	store := appusage.NewStore(emptyStateCache{}, nil)
+	withAddr := func(addr string) config.UsageConfig {
+		usage := enabledUsage()
+		usage.GRPCAddr = addr
+		usage.GRPCInsecure = true
+		return usage
+	}
 	for _, tc := range []struct {
-		usage config.UsageConfig
-		want  bool
+		usage   config.UsageConfig
+		want    bool
+		wantErr bool
 	}{
 		{usage: config.UsageConfig{}, want: false},
-		{usage: config.UsageConfig{Enabled: true}, want: false},
+		{usage: enabledUsage(), want: false},
 		{usage: config.UsageConfig{GRPCAddr: "usage-system:9090"}, want: false},
-		{usage: config.UsageConfig{Enabled: true, GRPCAddr: "usage-system:9090", GRPCInsecure: true}, want: true},
+		{usage: withAddr("usage-system:9090"), want: true},
+		{usage: withAddr("usage-system"), wantErr: true},
 	} {
 		client, err := provideUsageSyncClient(&config.Config{Usage: tc.usage}, store, slog.Default())
+		if tc.wantErr {
+			require.Error(t, err, "%+v", tc.usage)
+			continue
+		}
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, client != nil, "%+v", tc.usage)
 		if client != nil {
 			require.NoError(t, client.Close())
 		}
 	}
+}
+
+func TestUsageForPlane(t *testing.T) {
+	t.Parallel()
+	state, err := usagedomain.NewTenantState("tenant-a", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 2)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		plane     string
+		enabled   bool
+		wantLocal bool
+		wantLog   bool
+	}{
+		{plane: "run", enabled: true, wantLocal: true},
+		{plane: "admin", enabled: true},
+		{plane: "proxy", enabled: true, wantLog: true},
+		{plane: "mcp", enabled: true, wantLog: true},
+		{plane: "proxy", enabled: false},
+	} {
+		var logs bytes.Buffer
+		usage := enabledUsage()
+		usage.Enabled = tc.enabled
+		c, err := container.New(container.WithModule(usageForPlane(tc.plane)))
+		require.NoError(t, err)
+		require.NoError(t, c.Provide(func() *config.Config { return &config.Config{Usage: usage} }))
+		require.NoError(t, c.Provide(func() *slog.Logger { return slog.New(slog.NewTextHandler(&logs, nil)) }))
+		store := appusage.NewStore(emptyStateCache{}, nil)
+		require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
+		require.NoError(t, c.Provide(func() *appusage.Store { return store }))
+		require.NoError(t, c.Provide(provideUsageGuard))
+
+		require.NoError(t, c.Invoke(func(p struct {
+			dig.In
+			Guard *middleware.UsageGuardMiddleware
+			Local *localUsage `optional:"true"`
+		}) {
+			require.NotNil(t, p.Guard)
+			assert.Equal(t, tc.wantLocal, p.Local != nil, "plane %s", tc.plane)
+			if p.Local != nil {
+				_, exhausted := p.Local.checker.Exhausted("tenant-a")
+				assert.True(t, exhausted && p.Local.enabled(), "the run plane blocks from its own store")
+			}
+		}))
+		assert.Equal(t, tc.wantLog, bytes.Contains(logs.Bytes(), []byte("no usage list")), "plane %s enabled %v: %s", tc.plane, tc.enabled, logs.String())
+	}
+}
+
+func TestUsageLoopsRestoreAndStop(t *testing.T) {
+	t.Parallel()
+	var disabled *UsageLoops
+	disabled.Start()
+	disabled.Stop()
+	assert.Nil(t, provideUsageLoops(&config.Config{}, nil, nil, slog.Default()))
+
+	store := appusage.NewStore(emptyStateCache{}, nil)
+	loops := provideUsageLoops(&config.Config{Usage: enabledUsage()}, store, nil, slog.Default())
+	loops.Start()
+	require.Eventually(t, store.Ready, 2*time.Second, 5*time.Millisecond, "without a UsageSync stream an empty cache makes the store ready")
+	loops.Stop()
 }

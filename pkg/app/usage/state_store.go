@@ -46,9 +46,11 @@ type Applier interface {
 
 // Reader serves the exhausted tenants to the data planes.
 type Reader interface {
-	// SnapshotFor lists the exhausted tenants a data plane may see: every
-	// tenant when all is true, otherwise only tenantID.
-	SnapshotFor(tenantID string, all bool) domain.Snapshot
+	// SnapshotAll lists every exhausted tenant.
+	SnapshotAll() domain.Snapshot
+	// SnapshotTenant lists tenantID when it is exhausted. An empty tenantID
+	// lists nothing and still carries the watermark.
+	SnapshotTenant(tenantID string) domain.Snapshot
 	// Subscribe returns a channel that receives a value after every change,
 	// coalescing bursts, and a function that releases it.
 	Subscribe() (<-chan struct{}, func())
@@ -59,74 +61,73 @@ type Reader interface {
 // Store is the in-memory usage state of every tenant, backed by a cache that
 // lets a control plane start while Usage System is unreachable.
 type Store struct {
-	cache  domain.StateCache
-	logger *slog.Logger
+	cache        domain.StateCache
+	logger       *slog.Logger
+	writeTimeout time.Duration
 
-	mu         sync.RWMutex
-	states     map[string]domain.TenantState
-	maxVersion int64
-	ready      atomic.Bool
+	mu           sync.RWMutex
+	states       map[string]domain.TenantState
+	maxVersion   int64
+	snapshotAsOf int64
+	ready        atomic.Bool
 
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
 }
 
-const maxRestoreBackoff = time.Minute
+// DefaultCacheWriteTimeout bounds one batch of cache writes.
+const DefaultCacheWriteTimeout = 3 * time.Second
 
 var (
-	_ Applier = (*Store)(nil)
-	_ Reader  = (*Store)(nil)
+	_ Applier           = (*Store)(nil)
+	_ Reader            = (*Store)(nil)
+	_ ExhaustionChecker = (*Store)(nil)
 )
 
+// StoreOption configures a Store.
+type StoreOption func(*Store)
+
+// WithCacheWriteTimeout bounds each batch of cache writes. A non-positive
+// value keeps DefaultCacheWriteTimeout.
+func WithCacheWriteTimeout(timeout time.Duration) StoreOption {
+	return func(s *Store) {
+		if timeout > 0 {
+			s.writeTimeout = timeout
+		}
+	}
+}
+
 // NewStore builds an empty, not yet ready Store.
-func NewStore(cache domain.StateCache, logger *slog.Logger) *Store {
+func NewStore(cache domain.StateCache, logger *slog.Logger, opts ...StoreOption) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Store{
-		cache:  cache,
-		logger: logger,
-		states: make(map[string]domain.TenantState),
-		subs:   make(map[chan struct{}]struct{}),
+	s := &Store{
+		cache:        cache,
+		logger:       logger,
+		writeTimeout: DefaultCacheWriteTimeout,
+		states:       make(map[string]domain.TenantState),
+		subs:         make(map[chan struct{}]struct{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
-// Apply records states, keeping the highest version per tenant, persists the
-// ones that changed and wakes the subscribers. A cache failure is logged and
-// does not undo the in-memory change: the cache only serves cold starts.
+// Apply records states, keeping the highest version per tenant, wakes the
+// subscribers and persists the states that changed. A cache failure is logged
+// and does not undo the in-memory change: the cache only serves cold starts.
 func (s *Store) Apply(ctx context.Context, states []domain.TenantState) error {
-	changed := s.merge(states)
-	becameReady := s.markReady()
-	for _, state := range changed {
-		if _, err := s.cache.Save(ctx, state); err != nil {
-			s.logger.WarnContext(ctx, "usage: cache state", slog.String("tenant_id", state.TenantID), slog.Any("error", err))
-		}
-	}
-	if len(changed) > 0 || becameReady {
-		s.notify()
-	}
+	s.publish(ctx, s.merge(states))
 	return nil
 }
 
-// ApplySnapshot records a full list of exhausted tenants. Listed tenants are
-// merged as in Apply. A held exhausted tenant missing from the list becomes
-// healthy at asOfVersion, unless the store holds a newer version for it, so a
-// list that is behind cannot undo a newer block. asOfVersion becomes the
-// watermark the store hands to the data planes.
+// ApplySnapshot records a full list of exhausted tenants as of asOfVersion,
+// following domain.Snapshot.Changes. asOfVersion becomes the watermark the
+// store hands to the data planes.
 func (s *Store) ApplySnapshot(ctx context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
-	changed, err := s.mergeSnapshot(exhausted, asOfVersion)
-	if err != nil {
-		return err
-	}
-	becameReady := s.markReady()
-	for _, state := range changed {
-		if _, err := s.cache.Save(ctx, state); err != nil {
-			s.logger.WarnContext(ctx, "usage: cache state", slog.String("tenant_id", state.TenantID), slog.Any("error", err))
-		}
-	}
-	if len(changed) > 0 || becameReady {
-		s.notify()
-	}
+	s.publish(ctx, s.mergeSnapshot(domain.Snapshot{Exhausted: exhausted, AsOfVersion: asOfVersion}))
 	return nil
 }
 
@@ -137,56 +138,93 @@ func (s *Store) Watermark() int64 {
 	return s.maxVersion
 }
 
-// Restore loads the cached states. The store becomes ready once it succeeds.
-func (s *Store) Restore(ctx context.Context) error {
+// Restore loads the cached states, skipping any that a snapshot applied in
+// the meantime already covers. The store becomes ready once it succeeds,
+// except when the cache is empty and awaitSync is set: an empty cache says
+// nothing, so the store waits for Usage System's first snapshot instead of
+// serving an empty list as if nobody were exhausted.
+func (s *Store) Restore(ctx context.Context, awaitSync bool) error {
 	states, err := s.cache.LoadAll(ctx)
 	if err != nil {
 		return fmt.Errorf("usage: load cached states: %w", err)
 	}
-	changed := s.merge(states)
-	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
+	changed := s.mergeRestored(states)
+	becameReady := false
+	if len(states) > 0 || !awaitSync {
+		becameReady = s.markReady()
+	}
+	if len(changed) > 0 || becameReady {
 		s.notify()
 	}
 	return nil
 }
 
-// RestoreUntilReady retries Restore, doubling the wait from interval up to
-// maxRestoreBackoff, until the store is ready or ctx ends.
-func (s *Store) RestoreUntilReady(ctx context.Context, interval time.Duration) {
-	wait := interval
+// RestoreOptions tune RestoreUntilReady.
+type RestoreOptions struct {
+	// Interval is the first wait after a failed restore; it doubles up to
+	// MaxBackoff.
+	Interval   time.Duration
+	MaxBackoff time.Duration
+	// AwaitSync is set when a UsageSync stream will deliver a snapshot.
+	AwaitSync bool
+}
+
+// RestoreUntilReady retries Restore until it succeeds, the store is ready or
+// ctx ends.
+func (s *Store) RestoreUntilReady(ctx context.Context, opts RestoreOptions) {
+	wait := opts.Interval
 	for !s.Ready() {
-		err := s.Restore(ctx)
+		err := s.Restore(ctx, opts.AwaitSync)
 		if err == nil {
 			return
 		}
 		s.logger.WarnContext(ctx, "usage: restore cached states", slog.Any("error", err), slog.Duration("retry_in", wait))
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(wait):
+		case <-timer.C:
 		}
-		wait = min(wait*2, maxRestoreBackoff)
+		wait = min(wait*2, opts.MaxBackoff)
 	}
 }
 
 // Ready reports whether the store holds a list it can serve.
 func (s *Store) Ready() bool { return s.ready.Load() }
 
-// SnapshotFor lists the exhausted tenants visible to one data plane.
-func (s *Store) SnapshotFor(tenantID string, all bool) domain.Snapshot {
+// Exhausted reports whether tenantID is exhausted and why, so a plane that
+// holds the store serves requests from it directly.
+func (s *Store) Exhausted(tenantID string) (domain.Reason, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, ok := s.states[tenantID]
+	if !ok || !state.Exhausted() {
+		return domain.ReasonNone, false
+	}
+	return state.Reason, true
+}
+
+// SnapshotAll lists every exhausted tenant, sorted by tenant.
+func (s *Store) SnapshotAll() domain.Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := domain.Snapshot{AsOfVersion: s.maxVersion}
-	if all {
-		for _, state := range s.states {
-			if state.Exhausted() {
-				out.Exhausted = append(out.Exhausted, state)
-			}
+	for _, state := range s.states {
+		if state.Exhausted() {
+			out.Exhausted = append(out.Exhausted, state)
 		}
-		sort.Slice(out.Exhausted, func(i, j int) bool { return out.Exhausted[i].TenantID < out.Exhausted[j].TenantID })
-		return out
 	}
-	if state, ok := s.states[tenantID]; ok && state.Exhausted() {
+	sort.Slice(out.Exhausted, func(i, j int) bool { return out.Exhausted[i].TenantID < out.Exhausted[j].TenantID })
+	return out
+}
+
+// SnapshotTenant lists tenantID when it is exhausted.
+func (s *Store) SnapshotTenant(tenantID string) domain.Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := domain.Snapshot{AsOfVersion: s.maxVersion}
+	if state, ok := s.states[tenantID]; ok && tenantID != "" && state.Exhausted() {
 		out.Exhausted = append(out.Exhausted, state)
 	}
 	return out
@@ -205,35 +243,51 @@ func (s *Store) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// markReady flips the store to ready and reports whether it just did, so the
-// data planes waiting for a first list are woken even when nothing changed.
+// publish wakes the subscribers before it writes the cache, so the data
+// planes never wait on Redis.
+func (s *Store) publish(ctx context.Context, changed []domain.TenantState) {
+	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
+		s.notify()
+	}
+	if len(changed) == 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, s.writeTimeout)
+	defer cancel()
+	if err := s.cache.SaveAll(writeCtx, changed); err != nil {
+		s.logger.WarnContext(ctx, "usage: cache states", slog.Int("states", len(changed)), slog.Any("error", err))
+	}
+}
+
+// markReady reports whether this call made the store ready, so the data
+// planes waiting for a first list are woken even when nothing changed.
 func (s *Store) markReady() bool {
 	return s.ready.CompareAndSwap(false, true)
 }
 
-func (s *Store) mergeSnapshot(exhausted []domain.TenantState, asOfVersion int64) ([]domain.TenantState, error) {
+func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	listed := make(map[string]struct{}, len(exhausted))
-	for _, state := range exhausted {
-		listed[state.TenantID] = struct{}{}
+	changed := snapshot.Changes(s.states)
+	for _, state := range changed {
+		s.states[state.TenantID] = state
+		s.maxVersion = max(s.maxVersion, state.Version)
 	}
-	changed := s.mergeLocked(exhausted)
-	for tenantID, current := range s.states {
-		if _, ok := listed[tenantID]; ok || !current.Exhausted() || current.Version > asOfVersion {
-			continue
+	s.maxVersion = max(s.maxVersion, snapshot.AsOfVersion)
+	s.snapshotAsOf = max(s.snapshotAsOf, snapshot.AsOfVersion)
+	return changed
+}
+
+func (s *Store) mergeRestored(cached []domain.TenantState) []domain.TenantState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fresh := make([]domain.TenantState, 0, len(cached))
+	for _, state := range cached {
+		if state.Version > s.snapshotAsOf {
+			fresh = append(fresh, state)
 		}
-		healthy, err := domain.NewTenantState(tenantID, domain.StatusHealthy, domain.ReasonNone, asOfVersion)
-		if err != nil {
-			return nil, fmt.Errorf("usage: unblock %s: %w", tenantID, err)
-		}
-		s.states[tenantID] = healthy
-		changed = append(changed, healthy)
 	}
-	if asOfVersion > s.maxVersion {
-		s.maxVersion = asOfVersion
-	}
-	return changed, nil
+	return s.mergeLocked(fresh)
 }
 
 func (s *Store) merge(states []domain.TenantState) []domain.TenantState {
@@ -249,9 +303,7 @@ func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 			continue
 		}
 		s.states[state.TenantID] = state
-		if state.Version > s.maxVersion {
-			s.maxVersion = state.Version
-		}
+		s.maxVersion = max(s.maxVersion, state.Version)
 		changed = append(changed, state)
 	}
 	return changed

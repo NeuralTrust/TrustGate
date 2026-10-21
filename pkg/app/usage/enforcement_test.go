@@ -45,8 +45,6 @@ func TestEnforcementAppliesNewerAndDropsOlder(t *testing.T) {
 	}
 }
 
-// A replica that unblocked tenant x (x missing, as of 110) followed by a stale
-// replica that still lists x at 105 must not block x again.
 func TestEnforcementTombstoneSurvivesAStaleReplica(t *testing.T) {
 	t.Parallel()
 	e := NewEnforcement()
@@ -65,8 +63,6 @@ func TestEnforcementTombstoneSurvivesAStaleReplica(t *testing.T) {
 	}
 }
 
-// A snapshot that is behind the data plane must not unblock a tenant the data
-// plane knows to be exhausted at a newer version.
 func TestEnforcementKeepsANewerBlockAgainstAnOlderList(t *testing.T) {
 	t.Parallel()
 	e := NewEnforcement()
@@ -77,8 +73,6 @@ func TestEnforcementKeepsANewerBlockAgainstAnOlderList(t *testing.T) {
 	}
 }
 
-// Readers never see a half-applied snapshot: a tenant blocked before the run
-// and never unblocked stays blocked on every read while snapshots land.
 func TestEnforcementReadsWhileSnapshotsApply(t *testing.T) {
 	t.Parallel()
 	e := NewEnforcement()

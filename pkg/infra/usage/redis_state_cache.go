@@ -30,10 +30,8 @@ import (
 // one HGETALL at boot and lives in one cluster slot.
 const StatesKey = "gt:usage:states"
 
-// saveScript stores ARGV[2] under field ARGV[1] unless the field already holds
-// a version (the prefix before the first '|') at least ARGV[3]. Several control
-// plane replicas write the same states, so a late older write must never
-// replace a newer one.
+// Several control plane replicas write the same states, so a late older write
+// must never replace a newer one.
 var saveScript = redis.NewScript(`
 local current = redis.call('HGET', KEYS[1], ARGV[1])
 if current then
@@ -58,13 +56,22 @@ func NewRedisStateCache(client redis.UniversalClient) *RedisStateCache {
 	return &RedisStateCache{client: client}
 }
 
-// Save stores state unless Redis already holds the same or a newer version.
-func (c *RedisStateCache) Save(ctx context.Context, state domain.TenantState) (bool, error) {
-	stored, err := saveScript.Run(ctx, c.client, []string{StatesKey}, state.TenantID, encode(state), state.Version).Int()
-	if err != nil {
-		return false, fmt.Errorf("usage: save state of %s: %w", state.TenantID, err)
+// SaveAll stores every state in one round trip, each unless Redis already
+// holds the same or a newer version for its tenant. The script is sent with
+// EVAL: a pipelined EVALSHA cannot fall back when Redis lost the script, after
+// a restart or a failover, so every save would fail.
+func (c *RedisStateCache) SaveAll(ctx context.Context, states []domain.TenantState) error {
+	if len(states) == 0 {
+		return nil
 	}
-	return stored == 1, nil
+	pipe := c.client.Pipeline()
+	for _, state := range states {
+		saveScript.Eval(ctx, pipe, []string{StatesKey}, state.TenantID, encode(state), state.Version)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("usage: save %d states: %w", len(states), err)
+	}
+	return nil
 }
 
 // LoadAll returns every cached state. Unreadable entries are skipped: one
