@@ -17,7 +17,9 @@ package modules
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +53,7 @@ func enabledUsage() config.UsageConfig {
 		CacheRestoreInterval:   time.Millisecond,
 		CacheRestoreMaxBackoff: time.Millisecond,
 		CacheWriteTimeout:      time.Second,
+		CacheRetryInterval:     time.Millisecond,
 	}
 }
 
@@ -65,7 +68,7 @@ func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 				return &config.Config{Usage: config.UsageConfig{Enabled: enabled, ReadyTimeout: time.Hour}}
 			}))
 			require.NoError(t, c.Provide(func() *slog.Logger { return slog.Default() }))
-			store := appusage.NewStore(emptyStateCache{}, nil)
+			store := appusage.NewStore(emptyStateCache{}, nil, time.Second)
 			require.NoError(t, c.Provide(func() appusage.Reader { return store }))
 
 			var check adminUsageReadiness
@@ -108,7 +111,7 @@ func TestDataPlaneUsageReadinessFollowsTheSnapshotFlag(t *testing.T) {
 
 func TestUsageSyncClientOnlyWithEnabledAndAddress(t *testing.T) {
 	t.Parallel()
-	store := appusage.NewStore(emptyStateCache{}, nil)
+	store := appusage.NewStore(emptyStateCache{}, nil, time.Second)
 	withAddr := func(addr string) config.UsageConfig {
 		usage := enabledUsage()
 		usage.GRPCAddr = addr
@@ -154,6 +157,7 @@ func TestUsageForPlane(t *testing.T) {
 		{plane: "proxy", enabled: true, wantLog: true},
 		{plane: "mcp", enabled: true, wantLog: true},
 		{plane: "proxy", enabled: false},
+		{plane: "proxi", enabled: true, wantLog: true},
 	} {
 		var logs bytes.Buffer
 		usage := enabledUsage()
@@ -162,7 +166,7 @@ func TestUsageForPlane(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, c.Provide(func() *config.Config { return &config.Config{Usage: usage} }))
 		require.NoError(t, c.Provide(func() *slog.Logger { return slog.New(slog.NewTextHandler(&logs, nil)) }))
-		store := appusage.NewStore(emptyStateCache{}, nil)
+		store := appusage.NewStore(emptyStateCache{}, nil, time.Second)
 		require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
 		require.NoError(t, c.Provide(func() *appusage.Store { return store }))
 		require.NoError(t, c.Provide(provideUsageGuard))
@@ -190,9 +194,50 @@ func TestUsageLoopsRestoreAndStop(t *testing.T) {
 	disabled.Stop()
 	assert.Nil(t, provideUsageLoops(&config.Config{}, nil, nil, slog.Default()))
 
-	store := appusage.NewStore(emptyStateCache{}, nil)
+	store := appusage.NewStore(emptyStateCache{}, nil, time.Second)
 	loops := provideUsageLoops(&config.Config{Usage: enabledUsage()}, store, nil, slog.Default())
 	loops.Start()
 	require.Eventually(t, store.Ready, 2*time.Second, 5*time.Millisecond, "without a UsageSync stream an empty cache makes the store ready")
 	loops.Stop()
+}
+
+type flakyStateCache struct {
+	mu       sync.Mutex
+	failures int
+	saved    []usagedomain.TenantState
+}
+
+func (f *flakyStateCache) SaveAll(_ context.Context, states []usagedomain.TenantState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("redis down")
+	}
+	f.saved = append(f.saved, states...)
+	return nil
+}
+
+func (f *flakyStateCache) LoadAll(context.Context) ([]usagedomain.TenantState, error) {
+	return nil, nil
+}
+
+func (f *flakyStateCache) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.saved)
+}
+
+func TestUsageLoopsRetryFailedCacheWrites(t *testing.T) {
+	t.Parallel()
+	cache := &flakyStateCache{failures: 2}
+	store := appusage.NewStore(cache, nil, time.Second)
+	loops := provideUsageLoops(&config.Config{Usage: enabledUsage()}, store, nil, slog.Default())
+	loops.Start()
+	defer loops.Stop()
+
+	state, err := usagedomain.NewTenantState("tenant-a", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 2)
+	require.NoError(t, err)
+	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
+	require.Eventually(t, func() bool { return cache.count() == 1 }, 2*time.Second, 5*time.Millisecond, "the failed write was never retried")
 }

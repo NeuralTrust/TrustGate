@@ -267,12 +267,13 @@ func TestClientBlocksOnFieldsItCannotRead(t *testing.T) {
 	unspecified.Reason = usagev1.ExhaustionReason_EXHAUSTION_REASON_UNSPECIFIED
 	listedOddStatus := usageState("odd-status", true, 5)
 	listedOddStatus.Status = usagev1.UsageStatus(42)
+	zeroVersion := usageState("zero-version", true, 0)
 	unknownStatusChange := usageState("held", true, 9)
 	unknownStatusChange.Status = usagev1.UsageStatus(42)
 	srv := &fakeServer{sessions: []func(usagev1.UsageSyncService_SyncServer) error{
 		func(stream usagev1.UsageSyncService_SyncServer) error {
 			if err := stream.Send(&usagev1.SyncResponse{Message: &usagev1.SyncResponse_Snapshot{Snapshot: &usagev1.Snapshot{
-				Exhausted:   []*usagev1.UsageState{unknownReason, unspecified, listedOddStatus, usageState("held", true, 6)},
+				Exhausted:   []*usagev1.UsageState{unknownReason, unspecified, listedOddStatus, zeroVersion, usageState("held", true, 6)},
 				AsOfVersion: 8,
 			}}}); err != nil {
 				return err
@@ -293,6 +294,9 @@ func TestClientBlocksOnFieldsItCannotRead(t *testing.T) {
 		if !ok || st.Reason != domain.ReasonWalletEmpty {
 			t.Fatalf("%s = %+v %v, want blocked as wallet_empty", tenant, st, ok)
 		}
+	}
+	if st, ok := sink.state("zero-version"); !ok || st.Version != 8 {
+		t.Fatalf("zero-version = %+v %v, want blocked as of the snapshot (8)", st, ok)
 	}
 	if st, ok := sink.state("held"); !ok || st.Version != 6 {
 		t.Fatalf("held = %+v %v, want the block at 6 kept: a change with an unknown status is dropped", st, ok)

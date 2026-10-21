@@ -73,17 +73,18 @@ func (c *Client) SetUsageSink(sink UsageSink) {
 	c.usageSink = sink
 }
 
-// NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
-// credentials, and keepalive tuning.
-// maxRecvMessageBytes lifts gRPC's 4 MiB receive default: the control plane
-// sends every exhausted tenant in one usage message, and a message over the
-// limit would break the whole stream, config notices included.
-const maxRecvMessageBytes = 64 << 20
-
-func recvLimit() grpc.DialOption {
-	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMessageBytes))
+// recvLimit lifts gRPC's 4 MiB receive default: the control plane sends every
+// exhausted tenant in one usage message, and a message over the limit would
+// break the whole stream, config notices included.
+func recvLimit(maxBytes int) grpc.DialOption {
+	if maxBytes <= 0 {
+		maxBytes = config.DefaultConfigSyncGRPCMaxRecvBytes
+	}
+	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBytes))
 }
 
+// NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
+// credentials, keepalive tuning and the configured receive limit.
 func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error) {
 	creds, err := clientTransportCredentials(cfg)
 	if err != nil {
@@ -97,7 +98,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 			Timeout:             cfg.GRPCKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
-		recvLimit(),
+		recvLimit(cfg.GRPCMaxRecvBytes),
 	}
 	conn, err := grpc.NewClient(cfg.GRPCEndpoint, opts...)
 	if err != nil {

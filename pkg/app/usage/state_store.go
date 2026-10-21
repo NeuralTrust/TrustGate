@@ -69,14 +69,19 @@ type Store struct {
 	states       map[string]domain.TenantState
 	maxVersion   int64
 	snapshotAsOf int64
+	generation   uint64
 	ready        atomic.Bool
+
+	pendingMu sync.Mutex
+	pending   map[string]domain.TenantState
 
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
 }
 
-// DefaultCacheWriteTimeout bounds one batch of cache writes.
-const DefaultCacheWriteTimeout = 3 * time.Second
+// cacheChunk caps the states written in one round trip, so one slow chunk
+// fails alone instead of the whole list.
+const cacheChunk = 1000
 
 var (
 	_ Applier           = (*Store)(nil)
@@ -84,35 +89,20 @@ var (
 	_ ExhaustionChecker = (*Store)(nil)
 )
 
-// StoreOption configures a Store.
-type StoreOption func(*Store)
-
-// WithCacheWriteTimeout bounds each batch of cache writes. A non-positive
-// value keeps DefaultCacheWriteTimeout.
-func WithCacheWriteTimeout(timeout time.Duration) StoreOption {
-	return func(s *Store) {
-		if timeout > 0 {
-			s.writeTimeout = timeout
-		}
-	}
-}
-
-// NewStore builds an empty, not yet ready Store.
-func NewStore(cache domain.StateCache, logger *slog.Logger, opts ...StoreOption) *Store {
+// NewStore builds an empty, not yet ready Store. writeTimeout bounds each
+// chunk of cache writes and must be positive.
+func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Duration) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Store{
+	return &Store{
 		cache:        cache,
 		logger:       logger,
-		writeTimeout: DefaultCacheWriteTimeout,
+		writeTimeout: writeTimeout,
 		states:       make(map[string]domain.TenantState),
+		pending:      make(map[string]domain.TenantState),
 		subs:         make(map[chan struct{}]struct{}),
 	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
 }
 
 // Apply records states, keeping the highest version per tenant, wakes the
@@ -243,19 +233,81 @@ func (s *Store) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
+// FlushPending writes again the states a failed cache write left behind.
+func (s *Store) FlushPending(ctx context.Context) {
+	s.persist(ctx, nil)
+}
+
 // publish wakes the subscribers before it writes the cache, so the data
 // planes never wait on Redis.
 func (s *Store) publish(ctx context.Context, changed []domain.TenantState) {
 	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
 		s.notify()
 	}
-	if len(changed) == 0 {
+	s.persist(ctx, changed)
+}
+
+// persist writes changed, together with the states still pending, in chunks.
+// A chunk that has started finishes even when ctx is cancelled, bounded by
+// writeTimeout, so a shutdown does not drop the change being written. The
+// first chunk that fails, and every chunk after it or not started by then,
+// stay pending for the next write or FlushPending: a hung Redis costs one
+// writeTimeout per write, not one per chunk.
+func (s *Store) persist(ctx context.Context, changed []domain.TenantState) {
+	batch := s.takePending(changed)
+	if len(batch) == 0 {
 		return
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, s.writeTimeout)
-	defer cancel()
-	if err := s.cache.SaveAll(writeCtx, changed); err != nil {
-		s.logger.WarnContext(ctx, "usage: cache states", slog.Int("states", len(changed)), slog.Any("error", err))
+	var failed []domain.TenantState
+	var lastErr error
+	for start := 0; start < len(batch); start += cacheChunk {
+		if err := ctx.Err(); err != nil {
+			failed, lastErr = append(failed, batch[start:]...), err
+			break
+		}
+		chunk := batch[start:min(start+cacheChunk, len(batch))]
+		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.writeTimeout)
+		err := s.cache.SaveAll(writeCtx, chunk)
+		cancel()
+		if err != nil {
+			failed, lastErr = append(failed, batch[start:]...), err
+			break
+		}
+	}
+	if len(failed) > 0 {
+		s.keepPending(failed)
+		s.logger.WarnContext(ctx, "usage: cache states, retrying later", slog.Int("states", len(failed)), slog.Any("error", lastErr))
+	}
+}
+
+func (s *Store) takePending(changed []domain.TenantState) []domain.TenantState {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if len(s.pending) == 0 {
+		return changed
+	}
+	latest := s.pending
+	s.pending = make(map[string]domain.TenantState)
+	for _, state := range changed {
+		if held, ok := latest[state.TenantID]; !ok || held.Version < state.Version {
+			latest[state.TenantID] = state
+		}
+	}
+	batch := make([]domain.TenantState, 0, len(latest))
+	for _, state := range latest {
+		batch = append(batch, state)
+	}
+	sort.Slice(batch, func(i, j int) bool { return batch[i].TenantID < batch[j].TenantID })
+	return batch
+}
+
+func (s *Store) keepPending(failed []domain.TenantState) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	for _, state := range failed {
+		if held, ok := s.pending[state.TenantID]; !ok || held.Version < state.Version {
+			s.pending[state.TenantID] = state
+		}
 	}
 }
 
@@ -265,10 +317,21 @@ func (s *Store) markReady() bool {
 	return s.ready.CompareAndSwap(false, true)
 }
 
+// mergeSnapshot computes the changes under the read lock, so the request path
+// keeps reading while a large list is compared, and recomputes them under the
+// write lock only when another merge ran in between.
 func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
+	s.mu.RLock()
+	generation := s.generation
+	changed := snapshot.Changes(s.states)
+	s.mu.RUnlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	changed := snapshot.Changes(s.states)
+	if s.generation != generation {
+		changed = snapshot.Changes(s.states)
+	}
+	s.generation++
 	for _, state := range changed {
 		s.states[state.TenantID] = state
 		s.maxVersion = max(s.maxVersion, state.Version)
@@ -305,6 +368,9 @@ func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 		s.states[state.TenantID] = state
 		s.maxVersion = max(s.maxVersion, state.Version)
 		changed = append(changed, state)
+	}
+	if len(changed) > 0 {
+		s.generation++
 	}
 	return changed
 }
