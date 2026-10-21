@@ -159,7 +159,7 @@ func (c *Client) apply(ctx context.Context, resp *usagev1.SyncResponse) (int64, 
 		snapshot := msg.Snapshot
 		states := make([]domain.TenantState, 0, len(snapshot.GetExhausted()))
 		for _, entry := range snapshot.GetExhausted() {
-			if state, ok := c.listedState(ctx, entry); ok {
+			if state, ok := c.listedState(ctx, entry, snapshot.GetAsOfVersion()); ok {
 				states = append(states, state)
 			}
 		}
@@ -183,8 +183,14 @@ func (c *Client) apply(ctx context.Context, resp *usagev1.SyncResponse) (int64, 
 
 // listedState reads an entry of a snapshot's exhausted list. Being listed is
 // what makes a tenant exhausted, whatever its status field says, so a snapshot
-// never unblocks a tenant because one of its fields is unknown here.
-func (c *Client) listedState(ctx context.Context, entry *usagev1.UsageState) (domain.TenantState, bool) {
+// never unblocks a tenant because one of its fields is unknown here; an entry
+// without a usable version is taken as of the snapshot for the same reason.
+func (c *Client) listedState(ctx context.Context, entry *usagev1.UsageState, asOfVersion int64) (domain.TenantState, bool) {
+	if entry.GetVersion() <= 0 && asOfVersion > 0 {
+		c.logger.WarnContext(ctx, "usagesync: listed state without a version, taking it as of the snapshot",
+			slog.String("tenant_id", entry.GetTenantId()), slog.Int64("as_of_version", asOfVersion))
+		entry = &usagev1.UsageState{TenantId: entry.GetTenantId(), Status: entry.GetStatus(), Reason: entry.GetReason(), Version: asOfVersion}
+	}
 	return c.newState(ctx, entry, domain.StatusExhausted)
 }
 

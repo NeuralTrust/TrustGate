@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
@@ -53,7 +54,7 @@ func Usage(c *container.Container) error {
 }
 
 func provideUsageStore(cache usagedomain.StateCache, cfg *config.Config, logger *slog.Logger) *appusage.Store {
-	return appusage.NewStore(cache, logger, appusage.WithCacheWriteTimeout(cfg.Usage.CacheWriteTimeout))
+	return appusage.NewStore(cache, logger, cfg.Usage.CacheWriteTimeout)
 }
 
 // provideUsageSyncClient returns nil without an address: the control plane
@@ -92,7 +93,8 @@ func provideUsageLoops(cfg *config.Config, store *appusage.Store, client *usages
 	return &UsageLoops{cfg: cfg.Usage, store: store, client: client, logger: logger}
 }
 
-// Start launches the loops.
+// Start launches the loops, including the one that writes again the states a
+// failed Redis write left behind.
 func (l *UsageLoops) Start() {
 	if l == nil {
 		return
@@ -115,6 +117,20 @@ func (l *UsageLoops) Start() {
 			l.client.Run(ctx)
 		}()
 	}
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		ticker := time.NewTicker(l.cfg.CacheRetryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				l.store.FlushPending(ctx)
+			}
+		}
+	}()
 }
 
 // Stop ends the loops, waits for them and closes the UsageSync connection.
@@ -153,17 +169,18 @@ type localUsage struct {
 type postgresDataPlane bool
 
 // usageForPlane wires what a non DB-less plane does with usage beyond the
-// admin readiness: run blocks from its own store, and a Postgres-backed data
-// plane is marked so its guard says it cannot enforce.
+// admin readiness: run blocks from its own store, admin serves no gateway
+// traffic, and every other plane is a Postgres-backed data plane (main runs
+// an unknown plane name as proxy), marked so its guard says it cannot enforce.
 func usageForPlane(plane string) container.Module {
 	return func(c *container.Container) error {
 		switch plane {
 		case "run":
 			return c.Provide(provideLocalUsage)
-		case "proxy", "mcp", "worker":
-			return c.Provide(func() postgresDataPlane { return true })
-		default:
+		case "admin":
 			return nil
+		default:
+			return c.Provide(func() postgresDataPlane { return true })
 		}
 	}
 }
