@@ -1324,6 +1324,108 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/config-sync/revocations": {
+            "post": {
+                "description": "Records revocations for the config-sync tokens of one gateway. jtis revokes the listed token identifiers. issued_before revokes every token of the gateway whose iat is strictly earlier than that unix time in seconds. Send either field or both. A token whose iat equals issued_before is not revoked, so send the iat of the replacement token as issued_before. jtis takes 1 to 100 entries of at most 128 bytes of printable UTF-8 each. issued_before must be greater than zero and at most 5 seconds in the future, which only absorbs clock skew. Repeating a request is safe, and a stored issued_before mark never moves backwards: it cannot be lowered or removed. Replicas pick up a revocation within one refresh interval. Only tokens bound to an instance through the instance_id claim can be revoked; the shared config-sync token cannot. Revoked tokens are refused only when the control plane runs with CONFIG_SYNC_TOKEN_REVOCATION_MODE=enforce; in shadow mode they are logged and counted. Authentication is a console JWT, and a service credential is refused.",
+                "tags": [
+                    "config-sync"
+                ],
+                "summary": "Revoke config-sync tokens",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_request.RevokeTokensRequest"
+                            }
+                        }
+                    },
+                    "description": "Revocation",
+                    "required": true
+                },
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers": {
             "get": {
                 "description": "Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.",
@@ -8108,6 +8210,20 @@
                     },
                     "wire_format": {
                         "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_request.RevokeTokensRequest": {
+                "type": "object",
+                "properties": {
+                    "issued_before": {
+                        "type": "integer"
+                    },
+                    "jtis": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 }
             },
