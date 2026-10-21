@@ -156,14 +156,17 @@ const (
 	defaultMCPConnectRateLimitConsumer = 100
 	defaultMCPConnectRateLimitWindow   = time.Minute
 
-	defaultConfigSyncGRPCListenAddr             = ":8083"
-	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
-	defaultConfigSyncGRPCKeepaliveTimeout       = 10 * time.Second
-	defaultConfigSyncGRPCMinBackoff             = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
-	defaultConfigSyncOutboxRetention            = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows        int64 = 10000
-	defaultConfigSyncAdminLKGMaxAge             = 7 * 24 * time.Hour
+	defaultConfigSyncGRPCListenAddr               = ":8083"
+	defaultConfigSyncGRPCKeepaliveTime            = 30 * time.Second
+	defaultConfigSyncGRPCKeepaliveTimeout         = 10 * time.Second
+	defaultConfigSyncGRPCMinBackoff               = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff               = 30 * time.Second
+	defaultConfigSyncOutboxRetention              = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows          int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge               = 7 * 24 * time.Hour
+	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
+	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
+	minConfigSyncTokenRevocationRefresh           = time.Second
 
 	configSyncKeyBytes = 32
 
@@ -243,6 +246,14 @@ const (
 	ConfigSyncAuthModeComposite = "composite"
 )
 
+// Config-sync token revocation modes. Shadow only reports the tokens enforce
+// would reject, so revocations can be measured before anything is refused.
+const (
+	ConfigSyncTokenRevocationOff     = "off"
+	ConfigSyncTokenRevocationShadow  = "shadow"
+	ConfigSyncTokenRevocationEnforce = "enforce"
+)
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled     bool
 	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -276,6 +287,12 @@ type ConfigSyncConfig struct {
 	AdminLKGEnabled bool
 	// AdminLKGMaxAge refuses a persisted snapshot older than this.
 	AdminLKGMaxAge time.Duration
+	// TokenRevocationMode decides what the control plane does with a revoked
+	// config-sync token: off, shadow or enforce.
+	TokenRevocationMode string
+	// TokenRevocationRefreshInterval is how often each control replica reloads
+	// the stored revocations.
+	TokenRevocationRefreshInterval time.Duration
 }
 
 type ServerConfig struct {
@@ -1105,6 +1122,9 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
 		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
+			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
+		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
 	}
 }
 
@@ -1404,6 +1424,9 @@ func (c *Config) Validate() error {
 	if err := c.ConfigSync.validateAuthMode(); err != nil {
 		return err
 	}
+	if err := c.ConfigSync.validateTokenRevocation(); err != nil {
+		return err
+	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
 	}
@@ -1445,6 +1468,42 @@ func (cs ConfigSyncConfig) validateAuthMode() error {
 	default:
 		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE must be %q, %q or %q", errors.ErrInvalidConfig, ConfigSyncAuthModeShared, ConfigSyncAuthModeSigned, ConfigSyncAuthModeComposite)
 	}
+}
+
+// AcceptsSignedTokens reports whether the config-sync channel verifies signed
+// per-instance JWTs, which are the only tokens revocation applies to.
+func (cs ConfigSyncConfig) AcceptsSignedTokens() bool {
+	return cs.AuthMode == ConfigSyncAuthModeSigned || cs.AuthMode == ConfigSyncAuthModeComposite
+}
+
+// RevocationMode returns the token revocation mode, shadow when unset.
+func (cs ConfigSyncConfig) RevocationMode() string {
+	if cs.TokenRevocationMode == "" {
+		return defaultConfigSyncTokenRevocationMode
+	}
+	return cs.TokenRevocationMode
+}
+
+// RevocationRefreshInterval returns how often revocations are reloaded, the
+// default when unset.
+func (cs ConfigSyncConfig) RevocationRefreshInterval() time.Duration {
+	if cs.TokenRevocationRefreshInterval == 0 {
+		return defaultConfigSyncTokenRevocationRefresh
+	}
+	return cs.TokenRevocationRefreshInterval
+}
+
+func (cs ConfigSyncConfig) validateTokenRevocation() error {
+	switch cs.RevocationMode() {
+	case ConfigSyncTokenRevocationOff, ConfigSyncTokenRevocationShadow, ConfigSyncTokenRevocationEnforce:
+	default:
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_MODE must be %q, %q or %q", errors.ErrInvalidConfig,
+			ConfigSyncTokenRevocationOff, ConfigSyncTokenRevocationShadow, ConfigSyncTokenRevocationEnforce)
+	}
+	if cs.RevocationRefreshInterval() < minConfigSyncTokenRevocationRefresh {
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL must be at least %s, since each reload gets one interval to finish", errors.ErrInvalidConfig, minConfigSyncTokenRevocationRefresh)
+	}
+	return nil
 }
 
 func (cs ConfigSyncConfig) validateSignedJWTParams() error {

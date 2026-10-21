@@ -31,7 +31,7 @@ func testInterceptor(t *testing.T, token, previous string) *AuthInterceptor {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := &config.Config{ConfigSync: config.ConfigSyncConfig{Token: token, TokenPrevious: previous}}
-	interceptor, err := NewAuthInterceptor(cfg, logger)
+	interceptor, err := NewAuthInterceptor(cfg, logger, nil)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}

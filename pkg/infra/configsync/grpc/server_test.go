@@ -35,11 +35,11 @@ func startServer(t *testing.T, token string, src SnapshotSource) *Server {
 		GRPCKeepaliveTime:    30 * time.Second,
 		GRPCKeepaliveTimeout: 10 * time.Second,
 	}
-	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: token}}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: token}}, discardLogger(), nil)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
-	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger())
+	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil)
 	srv, err := NewServer(cfg, svc, nil, auth, discardLogger())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -101,7 +101,7 @@ func TestServer_ShutdownBoundsLongLivedStreams(t *testing.T) {
 		GRPCKeepaliveTime:    30 * time.Second,
 		GRPCKeepaliveTimeout: 10 * time.Second,
 	}
-	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger(), nil)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
