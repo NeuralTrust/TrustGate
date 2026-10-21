@@ -5461,6 +5461,33 @@
       ]
     },
     {
+      "name": "ai.enginy/mcp",
+      "vendor": "Enginy",
+      "category": "Sales Intelligence",
+      "description": "AI sales outreach: contacts, companies, lists, campaigns, AI research, inbox, and tasks in Enginy.",
+      "capabilities": [
+        "Find and enrich contacts and companies",
+        "Manage lists and outreach campaigns",
+        "Run AI research and draft AI messages"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://openapi.enginy.ai/mcp",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.enginy.ai/authorize",
+        "token_url": "https://api.enginy.ai/api/v1/mcp/oauth/token",
+        "resource": "https://openapi.enginy.ai/mcp"
+      },
+      "relevance": 60,
+      "tools": []
+    },
+    {
       "name": "ai.exa/exa",
       "vendor": "Exa",
       "category": "Search",
