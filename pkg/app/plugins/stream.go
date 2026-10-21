@@ -192,7 +192,13 @@ type SegmentVerdict struct {
 	Message string
 	// Body is the client refusal a head-gate block returns. Empty leaves the
 	// guard to render Type and Message.
-	Body         []byte
+	Body []byte
+	// StatusCode is the HTTP status a head-gate block returns. Zero keeps the
+	// head gate's 403.
+	StatusCode int
+	// Headers are copied onto that response. Nil leaves the headers the head
+	// gate sets itself.
+	Headers      map[string][]string
 	HasTransform bool
 	Transformed  string
 	Fingerprints []string
@@ -306,8 +312,12 @@ type SegmentOutcome struct {
 	Type            string
 	Message         string
 	// Body is the blocking verdict's client refusal. The head gate returns it
-	// as the 403 body when it is set.
-	Body         []byte
+	// as the response body when it is set.
+	Body []byte
+	// StatusCode is the HTTP status of that refusal. Zero is a 403.
+	StatusCode int
+	// Headers travel with the refusal. Nil leaves the head gate's own headers.
+	Headers      map[string][]string
 	HasTransform bool
 	Transformed  string
 	Fingerprints []StreamFinding
