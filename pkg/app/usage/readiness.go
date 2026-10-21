@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -35,20 +35,28 @@ func ReadinessCheck(ready func() bool, timeout time.Duration, logger *slog.Logge
 	if logger == nil {
 		logger = slog.Default()
 	}
-	var waitingSince atomic.Int64
-	var gaveUp atomic.Bool
+	var mu sync.Mutex
+	var waitingSince time.Time
+	var gaveUp bool
 	return func(ctx context.Context) error {
-		if ready() {
-			waitingSince.Store(0)
-			gaveUp.Store(false)
+		isReady := ready()
+		mu.Lock()
+		if isReady {
+			waitingSince, gaveUp = time.Time{}, false
+			mu.Unlock()
 			return nil
 		}
-		now := time.Now().UnixNano()
-		waitingSince.CompareAndSwap(0, now)
-		if time.Duration(now-waitingSince.Load()) < timeout {
+		if waitingSince.IsZero() {
+			waitingSince = time.Now()
+		}
+		if time.Since(waitingSince) < timeout {
+			mu.Unlock()
 			return ErrListNotReady
 		}
-		if gaveUp.CompareAndSwap(false, true) {
+		logGiveUp := !gaveUp
+		gaveUp = true
+		mu.Unlock()
+		if logGiveUp {
 			logger.ErrorContext(ctx, "usage: serving without a usage list; exhausted tenants are not blocked until it arrives",
 				slog.Duration("waited", timeout))
 		}

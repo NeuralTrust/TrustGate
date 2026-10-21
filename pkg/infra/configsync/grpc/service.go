@@ -80,13 +80,16 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 
 	var usageChanges <-chan struct{}
+	usageOwed := false
 	if s.usage != nil {
 		changes, release := s.usage.Subscribe()
 		defer release()
 		usageChanges = changes
-		if err := s.sendUsage(stream, scope); err != nil {
+		sent, err := s.sendUsage(stream, scope)
+		if err != nil {
 			return err
 		}
+		usageOwed = !sent
 	}
 
 	recvErr := make(chan error, 1)
@@ -117,20 +120,32 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
+			// A scope compiled after the connection opened can now be
+			// resolved, so the list it could not get then is sent now.
+			if usageOwed {
+				sent, err := s.sendUsage(stream, scope)
+				if err != nil {
+					return err
+				}
+				usageOwed = !sent
+			}
 		case <-usageChanges:
-			if err := s.sendUsage(stream, scope); err != nil {
+			sent, err := s.sendUsage(stream, scope)
+			if err != nil {
 				return err
 			}
+			usageOwed = !sent
 		}
 	}
 }
 
-func (s *Service) sendUsage(stream snapshotpb.ConfigSync_SyncServer, scope string) error {
+// sendUsage reports whether a usage list was sent.
+func (s *Service) sendUsage(stream snapshotpb.ConfigSync_SyncServer, scope string) (bool, error) {
 	msg, ok := s.usageSnapshotFor(stream.Context(), scope)
 	if !ok {
-		return nil
+		return false, nil
 	}
-	return stream.Send(msg)
+	return true, stream.Send(msg)
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,

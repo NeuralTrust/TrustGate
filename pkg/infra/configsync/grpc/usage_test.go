@@ -29,6 +29,7 @@ import (
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -218,18 +219,24 @@ func TestUsageSnapshotForScopes(t *testing.T) {
 		name     string
 		gateways GatewayResolver
 		scope    string
+		compiled bool
 		wantSent bool
 		want     []string
 	}{
 		{name: "in-cluster data plane gets every tenant", gateways: gateways, scope: "", wantSent: true, want: []string{"tenant-a", "tenant-b"}},
 		{name: "hybrid gateway scope gets only its tenant", gateways: gateways, scope: gwA.ID.String(), wantSent: true, want: []string{"tenant-a"}},
 		{name: "tenant-wide scope gets that tenant", gateways: gateways, scope: "tenant-b", wantSent: true, want: []string{"tenant-b"}},
-		{name: "unknown gateway gets nobody", gateways: gateways, scope: unknownGateway.String(), wantSent: true},
+		{name: "unknown gateway without a compiled scope sends nothing", gateways: gateways, scope: unknownGateway.String(), wantSent: false},
+		{name: "tenant-wide scope shaped like a gateway id gets that tenant", gateways: gateways, scope: unknownGateway.String(), compiled: true, wantSent: true},
 		{name: "unresolvable scope sends nothing", gateways: failingGateways{}, scope: gwA.ID.String(), wantSent: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, tt.gateways))
+			src := &fakeSource{}
+			if tt.compiled {
+				src.set([]byte("scoped"), "v1")
+			}
+			svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, tt.gateways))
 			msg, sent := svc.usageSnapshotFor(context.Background(), tt.scope)
 			if sent != tt.wantSent {
 				t.Fatalf("sent = %v, want %v", sent, tt.wantSent)
@@ -367,5 +374,105 @@ func TestClientWatchReceivesAUsageMessageAboveTheDefaultLimit(t *testing.T) {
 	}
 	if sink.count() != 1 || len(sink.snapshots[0].Exhausted) != tenants {
 		t.Fatalf("sink got %d snapshots, want one with every tenant", sink.count())
+	}
+}
+
+func TestUsageSnapshotFromProtoKeepsListedTenantsBlocked(t *testing.T) {
+	got := usageSnapshotFromProto(&snapshotpb.UsageSnapshot{
+		AsOfVersion: 12,
+		Exhausted: []*snapshotpb.TenantUsage{
+			{TenantId: "zero-version", Reason: snapshotpb.UsageReason_USAGE_REASON_WALLET_EMPTY},
+			{TenantId: "unknown-reason", Reason: snapshotpb.UsageReason(99), Version: 4},
+			{TenantId: "", Version: 5},
+		},
+	})
+	byTenant := map[string]usagedomain.TenantState{}
+	for _, st := range got.Exhausted {
+		byTenant[st.TenantID] = st
+	}
+	if len(byTenant) != 2 {
+		t.Fatalf("exhausted = %+v, want the two entries with a tenant", got.Exhausted)
+	}
+	if st := byTenant["zero-version"]; st.Version != 12 || !st.Exhausted() {
+		t.Fatalf("zero-version = %+v, want exhausted as of the snapshot", st)
+	}
+	if st := byTenant["unknown-reason"]; st.Reason != usagedomain.ReasonWalletEmpty {
+		t.Fatalf("unknown-reason = %+v, want wallet_empty", st)
+	}
+}
+
+func TestSyncSendsOwedUsageOnceTheScopeIsCompiled(t *testing.T) {
+	gateways := &fakeGateways{byID: map[ids.GatewayID]*gatewaydomain.Gateway{}}
+	tenantScope, err := ids.NewV7[ids.GatewayKind]()
+	if err != nil {
+		t.Fatalf("id: %v", err)
+	}
+	usage := newFakeUsage(exhaustedState(t, tenantScope.String(), 3))
+	src := &fakeSource{}
+	hub := NewHub(discardLogger(), nil)
+	svc := NewService(hub, src, discardLogger(), WithUsage(usage, gateways))
+
+	lis := bufconn.Listen(1 << 20)
+	gsrv := grpc.NewServer(grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srv, &recordingStream{ServerStream: ss, ctx: WithScope(ss.Context(), tenantScope.String())})
+	}))
+	snapshotpb.RegisterConfigSyncServer(gsrv, svc)
+	go func() { _ = gsrv.Serve(lis) }()
+	t.Cleanup(gsrv.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	stream, err := snapshotpb.NewConfigSyncClient(conn).Sync(ctx)
+	if err != nil {
+		t.Fatalf("open sync: %v", err)
+	}
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1"}}}); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+
+	got := make(chan *snapshotpb.ServerMessage, 4)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			got <- msg
+		}
+	}()
+	eventually(t, func() bool { return hub.ConnectionCount() == 1 }, "stream never registered")
+	select {
+	case msg := <-got:
+		t.Fatalf("sent %v for a scope that is neither a gateway nor compiled", msg)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	src.set([]byte("scoped"), "v2")
+	hub.Broadcast("v2")
+	var sawNotice bool
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-got:
+			if msg.GetNotice() != nil {
+				sawNotice = true
+				continue
+			}
+			if u := msg.GetUsage(); u != nil {
+				if !sawNotice || len(u.GetExhausted()) != 1 || u.GetExhausted()[0].GetTenantId() != tenantScope.String() {
+					t.Fatalf("usage = %v (after notice: %v), want the tenant's list after the notice", u, sawNotice)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("the owed usage list never followed the notice")
+		}
 	}
 }
