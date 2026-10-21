@@ -32,6 +32,9 @@ type GuardRequest struct {
 	SessionID       string                       `json:"session_id"`
 	ConsumerID      string                       `json:"consumer_id"`
 	Attributes      GuardAttributes              `json:"attributes"`
+	// FailureMode is the policy's failure_mode. It travels as the
+	// X-Failure-Mode header, never in the body; empty is sent as open.
+	FailureMode string `json:"-"`
 }
 
 type GuardUser struct {
@@ -155,6 +158,11 @@ type guardData struct {
 	// FailureClass is availability or input (appplugins.ClassOf): whether the
 	// failure was TrustGuard's or the request's own content.
 	FailureClass string `json:"failure_class,omitempty"`
+	// FailureMode is "closed" on a failure of a policy that asked for it, beside
+	// the real failure_class: the class says whose failure it was, the mode says
+	// why a mode that blocks refused it anyway. Absent under open, so open
+	// events are unchanged.
+	FailureMode string `json:"failure_mode,omitempty"`
 	// FailureDetail refines FailureReason when it is the shared verdict_incomplete
 	// (attachment_not_fetched). It is absent for every other reason, which this
 	// plugin names in its own vocabulary.

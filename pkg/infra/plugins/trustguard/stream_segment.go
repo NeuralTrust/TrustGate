@@ -41,9 +41,18 @@ func (p *Plugin) inspectSegment(
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		// Settings that do not parse keep this entry off the stream chain
-		// (StreamSettings), so this covers only a caller that skipped that
-		// check. An error would stop the executor from running the rest of the
-		// chain, so it fails open here as it does in Execute.
+		// (StreamSettings) unless the policy is closed, so otherwise this covers
+		// only a caller that skipped that check. An error would stop the
+		// executor from running the rest of the chain, so it fails open here as
+		// it does in Execute. A closed policy is resolved like any other
+		// failure: refused in a mode that blocks, recorded in observe.
+		if p.failClosed(in) {
+			if seg.Closing {
+				p.recordStreamOutcome(ctx, in, seg)
+				return segmentAllow(), nil
+			}
+			return p.segmentGuardFailure(ctx, in, seg, failureReasonConfigInvalid, err)
+		}
 		if !seg.Closing {
 			recordEvaluateFailure(ctx, failureReasonConfigInvalid)
 		}
@@ -90,6 +99,7 @@ func (p *Plugin) inspectSegment(
 	// still sent and keeps its place.
 	block := p.nextStreamBlock(ctx, in, seg)
 	body := GuardRequest{
+		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
 		Payload:         payload,
 		Direction:       directionOutput,
@@ -190,6 +200,9 @@ func (p *Plugin) recordStreamOutcome(
 		return
 	}
 	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
+	if p.failClosed(in) && (data.FailedClosed || failure != nil) {
+		data.FailureMode = failureModeClosed
+	}
 	// A stream that was cut reports blocked even if earlier blocks failed
 	// open; those still count in trustguard_evaluate_failures_total.
 	failedOpen := failure != nil && data.Decision != decisionBlocked && data.Decision != decisionFailedClosed
@@ -389,7 +402,7 @@ func (p *Plugin) segmentFailureOf(
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	verdict, _ := appplugins.ExternalStreamOutcome(PluginName, in.Mode, sharedReason, detail, block, err)
+	verdict, _ := appplugins.ExternalStreamOutcomeUnder(PluginName, in.Mode, sharedReason, detail, block, p.failClosed(in), err)
 	if block == nil && appplugins.Cancelled(ctx) {
 		// The client left mid-stream: the guard did not fail, so the outcome is
 		// unchanged but nothing is counted, logged or carried to the closing
