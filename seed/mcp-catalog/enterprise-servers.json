@@ -7684,6 +7684,10 @@
           "name": "get_screen"
         },
         {
+          "description": "Downloads the content of a screen file: its HTML code or its screenshot.",
+          "name": "download_file"
+        },
+        {
           "description": "Generates a new screen within a project from a text prompt. **Instructions for Tool Call:** * This action can take a few minutes to complete. Please be patient. DO NOT RETRY. * If the tool fails with a timeout, don't retry. Instead, try to get the screen with `get_screen` method every 30 seconds ...",
           "name": "generate_screen_from_text"
         },
