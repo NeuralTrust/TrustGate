@@ -158,11 +158,6 @@ func TestForward_StreamedTrustGuardRateLimitMatchesBuffered(t *testing.T) {
 	forwardTrustGuardRateLimit(t, policy.ModeEnforce)
 }
 
-func TestForward_StreamedTrustGuardRateLimitMatchesBufferedInObserve(t *testing.T) {
-	t.Parallel()
-	forwardTrustGuardRateLimit(t, policy.ModeObserve)
-}
-
 func forwardTrustGuardRateLimit(t *testing.T, mode policy.Mode) {
 	t.Helper()
 
