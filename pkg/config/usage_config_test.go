@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/base64"
 	stderrors "errors"
 	"testing"
 	"time"
@@ -84,11 +85,32 @@ func TestUsageConfigValidate(t *testing.T) {
 }
 
 func TestConfigSyncMaxRecvBytes(t *testing.T) {
-	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != DefaultConfigSyncGRPCMaxRecvBytes {
-		t.Fatalf("default = %d, want %d", got, DefaultConfigSyncGRPCMaxRecvBytes)
+	if got := getConfigSyncConfig().MaxRecvBytes(); got != 64<<20 {
+		t.Fatalf("default = %d, want 64 MiB", got)
+	}
+	if got := (ConfigSyncConfig{}).MaxRecvBytes(); got != defaultUsageGRPCMaxMessageBytes {
+		t.Fatalf("unset = %d, want the control plane's default usage message limit", got)
 	}
 	t.Setenv("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", "134217728")
-	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != 128<<20 {
+	if got := getConfigSyncConfig().MaxRecvBytes(); got != 128<<20 {
 		t.Fatalf("from env = %d, want %d", got, 128<<20)
+	}
+
+	valid := ConfigSyncConfig{
+		DataPlaneEnabled: true,
+		Token:            "token",
+		GRPCEndpoint:     "control-plane:9443",
+		LKGPath:          "/tmp/lkg",
+		LKGKey:           base64.StdEncoding.EncodeToString(make([]byte, configSyncKeyBytes)),
+		PollInterval:     time.Second,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("zero takes the default: %v", err)
+	}
+	for _, bad := range []int{-1, 1 << 20, 64<<20 - 1} {
+		valid.GRPCMaxRecvBytes = bad
+		if err := valid.Validate(); !stderrors.Is(err, errors.ErrInvalidConfig) {
+			t.Fatalf("%d is below the floor: Validate() = %v", bad, err)
+		}
 	}
 }

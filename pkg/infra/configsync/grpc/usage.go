@@ -16,11 +16,8 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -49,12 +46,12 @@ func WithUsage(source UsageSource, gateways GatewayResolver) ServiceOption {
 }
 
 // usageSnapshotFor builds the usage message one connection may receive. Only
-// the unscoped in-cluster data planes get every tenant. A scoped data plane
-// gets its own tenant: the gateway's tenant for a gateway scope, or the scope
-// itself for a tenant-wide one. It never gets another tenant's state. When the
-// scope cannot be resolved right now, or names neither a gateway nor a
-// compiled tenant scope, nothing is sent, so the data plane keeps what it has
-// instead of reading an empty list as "nobody is exhausted".
+// the unscoped in-cluster data planes get every tenant. A data plane scoped to
+// a gateway gets that gateway's tenant, and a scope that is not a gateway id
+// names its tenant directly; it never gets another tenant's state. When a
+// gateway scope cannot be resolved (unknown, deleted, or the lookup failed)
+// nothing is sent, so the data plane keeps what it has instead of reading an
+// empty list as "nobody is exhausted".
 func (s *Service) usageSnapshotFor(ctx context.Context, scope string) (*snapshotpb.ServerMessage, bool) {
 	if !s.usage.Ready() {
 		return nil, false
@@ -71,23 +68,15 @@ func (s *Service) usageSnapshotFor(ctx context.Context, scope string) (*snapshot
 
 func (s *Service) usageTenantFor(ctx context.Context, scope string) (string, bool) {
 	gatewayID, err := ids.Parse[ids.GatewayKind](scope)
-	if err != nil || s.usageGateways == nil {
+	if err != nil {
 		return scope, true
 	}
-	gw, err := s.usageGateways.FindByID(ctx, gatewayID)
-	switch {
-	case errors.Is(err, gatewaydomain.ErrNotFound), errors.Is(err, commonerrors.ErrNotFound):
-		// A tenant id parses as a gateway id too. The scope is tenant-wide only
-		// when the control plane compiles a snapshot for it; otherwise it is a
-		// gateway this control plane does not know, and an empty list would
-		// unblock every tenant that data plane holds.
-		if _, _, compiled := s.source.SnapshotFor(scope); compiled {
-			return scope, true
-		}
-		s.logger.WarnContext(ctx, "configsync: usage scope is not a known gateway or tenant", slog.String("scope", scope))
+	if s.usageGateways == nil {
 		return "", false
-	case err != nil:
-		s.logger.WarnContext(ctx, "configsync: resolve usage scope", slog.String("scope", scope), slog.Any("error", err))
+	}
+	gw, err := s.usageGateways.FindByID(ctx, gatewayID)
+	if err != nil {
+		s.logger.DebugContext(ctx, "configsync: resolve usage scope", slog.String("scope", scope), slog.Any("error", err))
 		return "", false
 	}
 	return gw.TenantID(), true

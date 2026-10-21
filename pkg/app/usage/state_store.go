@@ -61,9 +61,9 @@ type Reader interface {
 // Store is the in-memory usage state of every tenant, backed by a cache that
 // lets a control plane start while Usage System is unreachable.
 type Store struct {
-	cache        domain.StateCache
-	logger       *slog.Logger
-	writeTimeout time.Duration
+	cache  domain.StateCache
+	logger *slog.Logger
+	writer *cacheWriter
 
 	mu           sync.RWMutex
 	states       map[string]domain.TenantState
@@ -72,16 +72,9 @@ type Store struct {
 	generation   uint64
 	ready        atomic.Bool
 
-	pendingMu sync.Mutex
-	pending   map[string]domain.TenantState
-
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
 }
-
-// cacheChunk caps the states written in one round trip, so one slow chunk
-// fails alone instead of the whole list.
-const cacheChunk = 1000
 
 var (
 	_ Applier           = (*Store)(nil)
@@ -96,12 +89,11 @@ func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Du
 		logger = slog.Default()
 	}
 	return &Store{
-		cache:        cache,
-		logger:       logger,
-		writeTimeout: writeTimeout,
-		states:       make(map[string]domain.TenantState),
-		pending:      make(map[string]domain.TenantState),
-		subs:         make(map[chan struct{}]struct{}),
+		cache:  cache,
+		logger: logger,
+		writer: newCacheWriter(cache, writeTimeout, logger),
+		states: make(map[string]domain.TenantState),
+		subs:   make(map[chan struct{}]struct{}),
 	}
 }
 
@@ -235,7 +227,7 @@ func (s *Store) Subscribe() (<-chan struct{}, func()) {
 
 // FlushPending writes again the states a failed cache write left behind.
 func (s *Store) FlushPending(ctx context.Context) {
-	s.persist(ctx, nil)
+	s.writer.write(ctx, nil)
 }
 
 // publish wakes the subscribers before it writes the cache, so the data
@@ -244,71 +236,7 @@ func (s *Store) publish(ctx context.Context, changed []domain.TenantState) {
 	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
 		s.notify()
 	}
-	s.persist(ctx, changed)
-}
-
-// persist writes changed, together with the states still pending, in chunks.
-// A chunk that has started finishes even when ctx is cancelled, bounded by
-// writeTimeout, so a shutdown does not drop the change being written. The
-// first chunk that fails, and every chunk after it or not started by then,
-// stay pending for the next write or FlushPending: a hung Redis costs one
-// writeTimeout per write, not one per chunk.
-func (s *Store) persist(ctx context.Context, changed []domain.TenantState) {
-	batch := s.takePending(changed)
-	if len(batch) == 0 {
-		return
-	}
-	var failed []domain.TenantState
-	var lastErr error
-	for start := 0; start < len(batch); start += cacheChunk {
-		if err := ctx.Err(); err != nil {
-			failed, lastErr = append(failed, batch[start:]...), err
-			break
-		}
-		chunk := batch[start:min(start+cacheChunk, len(batch))]
-		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.writeTimeout)
-		err := s.cache.SaveAll(writeCtx, chunk)
-		cancel()
-		if err != nil {
-			failed, lastErr = append(failed, batch[start:]...), err
-			break
-		}
-	}
-	if len(failed) > 0 {
-		s.keepPending(failed)
-		s.logger.WarnContext(ctx, "usage: cache states, retrying later", slog.Int("states", len(failed)), slog.Any("error", lastErr))
-	}
-}
-
-func (s *Store) takePending(changed []domain.TenantState) []domain.TenantState {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	if len(s.pending) == 0 {
-		return changed
-	}
-	latest := s.pending
-	s.pending = make(map[string]domain.TenantState)
-	for _, state := range changed {
-		if held, ok := latest[state.TenantID]; !ok || held.Version < state.Version {
-			latest[state.TenantID] = state
-		}
-	}
-	batch := make([]domain.TenantState, 0, len(latest))
-	for _, state := range latest {
-		batch = append(batch, state)
-	}
-	sort.Slice(batch, func(i, j int) bool { return batch[i].TenantID < batch[j].TenantID })
-	return batch
-}
-
-func (s *Store) keepPending(failed []domain.TenantState) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	for _, state := range failed {
-		if held, ok := s.pending[state.TenantID]; !ok || held.Version < state.Version {
-			s.pending[state.TenantID] = state
-		}
-	}
+	s.writer.write(ctx, changed)
 }
 
 // markReady reports whether this call made the store ready, so the data

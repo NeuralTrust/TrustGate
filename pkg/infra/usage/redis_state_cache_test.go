@@ -51,9 +51,9 @@ func TestRedisStateCacheKeepsNewestVersion(t *testing.T) {
 	if got := server.HGet(StatesKey, "tenant-a"); got != "10|exhausted|wallet_empty" {
 		t.Fatalf("tenant-a = %q, an older version replaced a newer one", got)
 	}
-	saveAll(state("tenant-a", domain.StatusHealthy, domain.ReasonNone, 10))
+	saveAll(state("tenant-a", domain.StatusExhausted, domain.ReasonFreeLimitReached, 10))
 	if got := server.HGet(StatesKey, "tenant-a"); got != "10|exhausted|wallet_empty" {
-		t.Fatalf("tenant-a = %q, the same version replaced the stored one", got)
+		t.Fatalf("tenant-a = %q, a block at the same version replaced the stored one", got)
 	}
 	saveAll(state("tenant-a", domain.StatusHealthy, domain.ReasonNone, 11), state("tenant-b", domain.StatusHealthy, domain.ReasonNone, 5))
 	server.HSet(StatesKey, "tenant-corrupt", "garbage")
@@ -93,5 +93,38 @@ func TestRedisStateCacheSavesAfterTheScriptCacheIsFlushed(t *testing.T) {
 	}
 	if got := server.HGet(StatesKey, "tenant-a"); got != "3|exhausted|wallet_empty" {
 		t.Fatalf("tenant-a = %q", got)
+	}
+}
+
+func TestRedisStateCacheHealthyWinsAtTheSameVersion(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := NewRedisStateCache(client)
+	ctx := context.Background()
+	exhausted, err := domain.NewTenantState("tenant-a", domain.StatusExhausted, domain.ReasonWalletEmpty, 9)
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	healthy, err := domain.NewTenantState("tenant-a", domain.StatusHealthy, domain.ReasonNone, 9)
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+
+	if err := cache.SaveAll(ctx, []domain.TenantState{exhausted}); err != nil {
+		t.Fatalf("SaveAll: %v", err)
+	}
+	if err := cache.SaveAll(ctx, []domain.TenantState{healthy}); err != nil {
+		t.Fatalf("SaveAll: %v", err)
+	}
+	if got := server.HGet(StatesKey, "tenant-a"); got != "9|healthy|" {
+		t.Fatalf("tenant-a = %q, want the unblock at the same version stored", got)
+	}
+	if err := cache.SaveAll(ctx, []domain.TenantState{exhausted}); err != nil {
+		t.Fatalf("SaveAll: %v", err)
+	}
+	if got := server.HGet(StatesKey, "tenant-a"); got != "9|healthy|" {
+		t.Fatalf("tenant-a = %q, a block at the same version must not undo the unblock", got)
 	}
 }

@@ -77,7 +77,7 @@ type adminSnapshotReadiness func(context.Context) error
 
 func adminReadiness(plane string) container.Module {
 	return func(c *container.Container) error {
-		if plane != "admin" && plane != "run" {
+		if plane != PlaneAdmin && plane != PlaneRun {
 			return nil
 		}
 		if err := c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {

@@ -31,12 +31,17 @@ import (
 const StatesKey = "gt:usage:states"
 
 // Several control plane replicas write the same states, so a late older write
-// must never replace a newer one.
+// must never replace a newer one. At an equal version a healthy state wins, as
+// in memory: a snapshot unblocks a tenant at its as_of version.
 var saveScript = redis.NewScript(`
 local current = redis.call('HGET', KEYS[1], ARGV[1])
 if current then
   local version = tonumber(string.match(current, '^(%d+)|'))
-  if version and version >= tonumber(ARGV[3]) then
+  local incoming = tonumber(ARGV[3])
+  if version and version > incoming then
+    return 0
+  end
+  if version and version == incoming and not string.find(ARGV[2], '|healthy|', 1, true) then
     return 0
   end
 end
