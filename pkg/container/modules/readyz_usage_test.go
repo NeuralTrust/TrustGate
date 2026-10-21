@@ -54,6 +54,7 @@ func enabledUsage() config.UsageConfig {
 		CacheRestoreMaxBackoff: time.Millisecond,
 		CacheWriteTimeout:      time.Second,
 		CacheRetryInterval:     time.Millisecond,
+		CacheResyncInterval:    time.Hour,
 	}
 }
 
@@ -84,7 +85,7 @@ func TestAdminUsageReadinessFollowsTheFlag(t *testing.T) {
 			}
 			require.NotNil(t, check)
 			assert.ErrorIs(t, check(context.Background()), appusage.ErrListNotReady)
-			require.NoError(t, store.Restore(context.Background(), false))
+			store.RestoreUntilReady(context.Background(), appusage.RestoreOptions{Interval: time.Millisecond, MaxBackoff: time.Millisecond})
 			assert.NoError(t, check(context.Background()))
 		}
 	}
@@ -242,19 +243,35 @@ func TestUsageLoopsRetryFailedCacheWrites(t *testing.T) {
 	require.Eventually(t, func() bool { return cache.count() == 1 }, 2*time.Second, 5*time.Millisecond, "the failed write was never retried")
 }
 
-func TestUsageLoopsFlushPendingStatesOnStop(t *testing.T) {
+func TestUsageLoopsWriteQueuedStatesAndStopOnce(t *testing.T) {
 	t.Parallel()
-	cache := &flakyStateCache{failures: 1}
+	cache := &flakyStateCache{}
 	store := appusage.NewStore(cache, nil, time.Second)
 	usage := enabledUsage()
 	usage.CacheRetryInterval = time.Hour
 	loops := provideUsageLoops(&config.Config{Usage: usage}, store, nil, slog.Default())
 	loops.Start()
 
-	state, err := usagedomain.NewTenantState("tenant-a", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 2)
+	first, err := usagedomain.NewTenantState("tenant-a", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 2)
 	require.NoError(t, err)
-	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{state}))
-	require.Zero(t, cache.count(), "the first write fails")
+	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{first}))
+	require.Eventually(t, func() bool { return cache.count() == 1 }, 2*time.Second, 5*time.Millisecond, "the queued state was not written")
+	second, err := usagedomain.NewTenantState("tenant-b", usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, 3)
+	require.NoError(t, err)
+	require.NoError(t, store.Apply(context.Background(), []usagedomain.TenantState{second}))
 	loops.Stop()
-	require.Equal(t, 1, cache.count(), "Stop must write the pending state before Redis closes")
+	require.Equal(t, 2, cache.count(), "Stop writes what is still queued before Redis closes")
+	loops.Stop()
+}
+
+func TestDataPlaneUsageGuardNeedsTheListAndTheFlag(t *testing.T) {
+	t.Parallel()
+	c, err := container.New(container.WithModule(provideDataPlaneUsage))
+	require.NoError(t, err)
+	require.Error(t, c.Invoke(func(*middleware.UsageGuardMiddleware) {}), "without the snapshot store the DB-less guard must not resolve")
+
+	require.NoError(t, c.Provide(func() configsync.ConfigStore[*readmodel.Snapshot] {
+		return configsync.NewMemoryStore[*readmodel.Snapshot]()
+	}))
+	require.NoError(t, c.Invoke(func(guard *middleware.UsageGuardMiddleware) { require.NotNil(t, guard) }))
 }

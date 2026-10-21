@@ -18,6 +18,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -30,9 +31,9 @@ import (
 // one HGETALL at boot and lives in one cluster slot.
 const StatesKey = "gt:usage:states"
 
-// Several control plane replicas write the same states, so a late older write
-// must never replace a newer one. At an equal version a healthy state wins, as
-// in memory: a snapshot unblocks a tenant at its as_of version.
+// Several control plane replicas write the same states, so the script applies
+// domain.TenantState.Supersedes: a late older write never replaces a newer
+// one, and at an equal version a healthy state wins.
 var saveScript = redis.NewScript(`
 local current = redis.call('HGET', KEYS[1], ARGV[1])
 if current then
@@ -52,13 +53,17 @@ return 1
 // RedisStateCache is the Redis-backed domain.StateCache.
 type RedisStateCache struct {
 	client redis.UniversalClient
+	logger *slog.Logger
 }
 
 var _ domain.StateCache = (*RedisStateCache)(nil)
 
 // NewRedisStateCache builds the cache over client.
-func NewRedisStateCache(client redis.UniversalClient) *RedisStateCache {
-	return &RedisStateCache{client: client}
+func NewRedisStateCache(client redis.UniversalClient, logger *slog.Logger) *RedisStateCache {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RedisStateCache{client: client, logger: logger}
 }
 
 // SaveAll stores every state in one round trip, each unless Redis already
@@ -79,8 +84,10 @@ func (c *RedisStateCache) SaveAll(ctx context.Context, states []domain.TenantSta
 	return nil
 }
 
-// LoadAll returns every cached state. Unreadable entries are skipped: one
-// corrupt field must not keep the control plane from starting.
+// LoadAll returns every cached state. An exhausted state whose reason this
+// build does not know still blocks, as wallet_empty, like the UsageSync
+// stream; an unreadable entry is logged and skipped, so one corrupt field
+// cannot keep the control plane from starting.
 func (c *RedisStateCache) LoadAll(ctx context.Context) ([]domain.TenantState, error) {
 	fields, err := c.client.HGetAll(ctx, StatesKey).Result()
 	if err != nil {
@@ -90,6 +97,7 @@ func (c *RedisStateCache) LoadAll(ctx context.Context) ([]domain.TenantState, er
 	for tenantID, value := range fields {
 		state, err := decode(tenantID, value)
 		if err != nil {
+			c.logger.WarnContext(ctx, "usage: skipping unreadable cached state", slog.String("tenant_id", tenantID), slog.Any("error", err))
 			continue
 		}
 		states = append(states, state)
@@ -110,5 +118,9 @@ func decode(tenantID, value string) (domain.TenantState, error) {
 	if err != nil {
 		return domain.TenantState{}, fmt.Errorf("usage: malformed version %q: %w", parts[0], err)
 	}
-	return domain.NewTenantState(tenantID, domain.Status(parts[1]), domain.Reason(parts[2]), version)
+	status, reason := domain.Status(parts[1]), domain.Reason(parts[2])
+	if status == domain.StatusExhausted && reason != domain.ReasonFreeLimitReached && reason != domain.ReasonWalletEmpty {
+		reason = domain.ReasonWalletEmpty
+	}
+	return domain.NewTenantState(tenantID, status, reason, version)
 }

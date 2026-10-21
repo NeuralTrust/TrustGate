@@ -69,6 +69,7 @@ type Store struct {
 	states       map[string]domain.TenantState
 	maxVersion   int64
 	snapshotAsOf int64
+	complete     bool
 	generation   uint64
 	ready        atomic.Bool
 
@@ -97,19 +98,18 @@ func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Du
 	}
 }
 
-// Apply records states, keeping the highest version per tenant, wakes the
-// subscribers and persists the states that changed. A cache failure is logged
-// and does not undo the in-memory change: the cache only serves cold starts.
-func (s *Store) Apply(ctx context.Context, states []domain.TenantState) error {
-	s.publish(ctx, s.merge(states))
+// Apply records states following TenantState.Supersedes, wakes the
+// subscribers and queues the states that changed for the cache.
+func (s *Store) Apply(_ context.Context, states []domain.TenantState) error {
+	s.publish(s.merge(states))
 	return nil
 }
 
 // ApplySnapshot records a full list of exhausted tenants as of asOfVersion,
-// following domain.Snapshot.Changes. asOfVersion becomes the watermark the
-// store hands to the data planes.
-func (s *Store) ApplySnapshot(ctx context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
-	s.publish(ctx, s.mergeSnapshot(domain.Snapshot{Exhausted: exhausted, AsOfVersion: asOfVersion}))
+// following domain.Snapshot.Changes. From the first one on, the store's lists
+// are complete and carry its watermark as their as_of version.
+func (s *Store) ApplySnapshot(_ context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
+	s.publish(s.mergeSnapshot(domain.Snapshot{Exhausted: exhausted, AsOfVersion: asOfVersion}))
 	return nil
 }
 
@@ -120,12 +120,12 @@ func (s *Store) Watermark() int64 {
 	return s.maxVersion
 }
 
-// Restore loads the cached states, skipping any that a snapshot applied in
+// restore loads the cached states, skipping any that a snapshot applied in
 // the meantime already covers. The store becomes ready once it succeeds,
 // except when the cache is empty and awaitSync is set: an empty cache says
 // nothing, so the store waits for Usage System's first snapshot instead of
 // serving an empty list as if nobody were exhausted.
-func (s *Store) Restore(ctx context.Context, awaitSync bool) error {
+func (s *Store) restore(ctx context.Context, awaitSync bool) error {
 	states, err := s.cache.LoadAll(ctx)
 	if err != nil {
 		return fmt.Errorf("usage: load cached states: %w", err)
@@ -151,12 +151,12 @@ type RestoreOptions struct {
 	AwaitSync bool
 }
 
-// RestoreUntilReady retries Restore until it succeeds, the store is ready or
-// ctx ends.
+// RestoreUntilReady loads the cached states, retrying until it succeeds, the
+// store is ready or ctx ends.
 func (s *Store) RestoreUntilReady(ctx context.Context, opts RestoreOptions) {
 	wait := opts.Interval
 	for !s.Ready() {
-		err := s.Restore(ctx, opts.AwaitSync)
+		err := s.restore(ctx, opts.AwaitSync)
 		if err == nil {
 			return
 		}
@@ -187,16 +187,17 @@ func (s *Store) Exhausted(tenantID string) (domain.Reason, bool) {
 	return state.Reason, true
 }
 
-// SnapshotAll lists every exhausted tenant, sorted by tenant.
+// SnapshotAll lists every exhausted tenant, sorted by tenant. The list is
+// sorted after the lock is released, so the request path is not held up.
 func (s *Store) SnapshotAll() domain.Snapshot {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := domain.Snapshot{AsOfVersion: s.maxVersion}
+	out := domain.Snapshot{AsOfVersion: s.listAsOfLocked()}
 	for _, state := range s.states {
 		if state.Exhausted() {
 			out.Exhausted = append(out.Exhausted, state)
 		}
 	}
+	s.mu.RUnlock()
 	sort.Slice(out.Exhausted, func(i, j int) bool { return out.Exhausted[i].TenantID < out.Exhausted[j].TenantID })
 	return out
 }
@@ -205,7 +206,7 @@ func (s *Store) SnapshotAll() domain.Snapshot {
 func (s *Store) SnapshotTenant(tenantID string) domain.Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := domain.Snapshot{AsOfVersion: s.maxVersion}
+	out := domain.Snapshot{AsOfVersion: s.listAsOfLocked()}
 	if state, ok := s.states[tenantID]; ok && tenantID != "" && state.Exhausted() {
 		out.Exhausted = append(out.Exhausted, state)
 	}
@@ -225,22 +226,40 @@ func (s *Store) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// FlushPending writes again the states a failed cache write left behind.
+// FlushPending writes the states waiting for the cache. The store only queues
+// them, so the UsageSync stream never waits on Redis; whoever runs the store
+// flushes on CacheWrites, on a retry timer and once more at shutdown.
 func (s *Store) FlushPending(ctx context.Context) {
-	s.writer.write(ctx, nil)
+	s.writer.flush(ctx)
 }
 
-// publish wakes the subscribers before it writes the cache, so the data
-// planes never wait on Redis.
-func (s *Store) publish(ctx context.Context, changed []domain.TenantState) {
+// CacheWrites receives a value whenever states are queued for the cache.
+func (s *Store) CacheWrites() <-chan struct{} {
+	return s.writer.wake
+}
+
+// ResyncCache queues every held state again, so a cache that was flushed or
+// lost writes while the store kept running is repopulated. The cache's
+// version check makes rewriting what it already holds a no-op.
+func (s *Store) ResyncCache() {
+	s.mu.RLock()
+	states := make([]domain.TenantState, 0, len(s.states))
+	for _, state := range s.states {
+		states = append(states, state)
+	}
+	s.mu.RUnlock()
+	s.writer.enqueue(states)
+}
+
+func (s *Store) publish(changed []domain.TenantState) {
 	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
 		s.notify()
 	}
-	s.writer.write(ctx, changed)
+	s.writer.enqueue(changed)
 }
 
-// markReady reports whether this call made the store ready, so the data
-// planes waiting for a first list are woken even when nothing changed.
+// The data planes waiting for a first list are woken even when becoming ready
+// changed nothing, so the caller needs to know it was this call.
 func (s *Store) markReady() bool {
 	return s.ready.CompareAndSwap(false, true)
 }
@@ -266,7 +285,19 @@ func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
 	}
 	s.maxVersion = max(s.maxVersion, snapshot.AsOfVersion)
 	s.snapshotAsOf = max(s.snapshotAsOf, snapshot.AsOfVersion)
+	s.complete = true
 	return changed
+}
+
+// listAsOfLocked is the as_of version a list carries. Until a UsageSync
+// snapshot has been applied the store only holds what the cache had, which
+// can miss states whose writes failed, so its lists claim nothing beyond
+// what they list: a data plane then unblocks no tenant on their account.
+func (s *Store) listAsOfLocked() int64 {
+	if !s.complete {
+		return 0
+	}
+	return s.maxVersion
 }
 
 func (s *Store) mergeRestored(cached []domain.TenantState) []domain.TenantState {
@@ -290,7 +321,7 @@ func (s *Store) merge(states []domain.TenantState) []domain.TenantState {
 func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 	var changed []domain.TenantState
 	for _, state := range states {
-		if current, ok := s.states[state.TenantID]; ok && current.Version >= state.Version {
+		if current, ok := s.states[state.TenantID]; ok && !state.Supersedes(current) {
 			continue
 		}
 		s.states[state.TenantID] = state
