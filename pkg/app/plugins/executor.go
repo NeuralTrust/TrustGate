@@ -412,6 +412,7 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		outcome.Block = true
 		outcome.Type = verdict.Type
 		outcome.Message = verdict.Message
+		outcome.Body = verdict.Body
 		outcome.HasTransform = false
 		outcome.Transformed = ""
 		return true
