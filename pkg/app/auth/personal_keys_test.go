@@ -461,3 +461,129 @@ func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
 	require.Equal(t, time.UTC, key.Auth.CreatedAt.Location())
 	require.False(t, key.Auth.CreatedAt.Before(before))
 }
+
+func TestPersonalKeys_List(t *testing.T) {
+	t.Parallel()
+	f := newPersonalKeysFixture(t)
+	personal, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{}, nil, personalNow)
+	require.NoError(t, err)
+	eng, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{ID: "g-eng", Name: "engineering"}, &personalLimit, personalNow)
+	require.NoError(t, err)
+	f.repo.EXPECT().ListByOwner(mock.Anything, f.gwID, "alice").Return([]*domain.Auth{eng, personal}, nil).Once()
+	engConsumers := f.links(eng.ID, 1)
+	f.links(personal.ID, 0)
+
+	keys, err := f.keys.List(context.Background(), f.gwID, "alice")
+	require.NoError(t, err)
+	require.Len(t, keys, 2)
+	require.Equal(t, eng.ID, keys[0].Auth.ID, "in the order the store answers: newest first")
+	require.Equal(t, engConsumers, keys[0].ConsumerIDs)
+	require.Equal(t, personal.ID, keys[1].Auth.ID)
+	require.NotNil(t, keys[1].ConsumerIDs)
+	require.Empty(t, keys[1].ConsumerIDs)
+
+	_, err = f.keys.List(context.Background(), f.gwID, " ")
+	require.ErrorIs(t, err, domain.ErrInvalidOwner)
+	f.repo.EXPECT().ListByOwner(mock.Anything, f.gwID, "bob").Return(nil, errStore).Once()
+	_, err = f.keys.List(context.Background(), f.gwID, "bob")
+	require.ErrorIs(t, err, errStore)
+}
+
+// A key addressed by id is acted on only when it is the caller's, on this
+// gateway: anything else is not found, without a write.
+func TestPersonalKeys_ActsByIDOnlyOnTheCallersKeys(t *testing.T) {
+	t.Parallel()
+	ownKey := func(t *testing.T, f *personalKeysFixture) *domain.Auth {
+		a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{ID: "g-eng", Name: "engineering"}, ptr(personalNow.Add(5*day)), personalNow)
+		require.NoError(t, err)
+		return a
+	}
+
+	t.Run("rotate a group key, renewed to never expire", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		key := ownKey(t, f)
+		key.ExpiresAt = ptr(personalNow.Add(-day))
+		f.repo.EXPECT().FindByID(mock.Anything, key.ID).Return(key, nil).Twice()
+		consumerIDs := f.links(key.ID, 1)
+		f.repo.EXPECT().RotateKey(mock.Anything, key, mock.Anything).Return(nil).Once()
+		f.published()
+
+		rotated, err := f.keys.RotateKey(context.Background(), f.gwID, "alice", key.ID, &appauth.ExpiryChange{})
+		require.NoError(t, err)
+		require.Equal(t, key.ID, rotated.Auth.ID)
+		require.Equal(t, "g-eng", rotated.Auth.GroupID, "a rotation keeps the group")
+		require.Nil(t, rotated.Auth.ExpiresAt)
+		require.Equal(t, consumerIDs, rotated.ConsumerIDs)
+	})
+
+	t.Run("an expired group key rotated with no expiry", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		key := ownKey(t, f)
+		key.ExpiresAt = ptr(personalNow.Add(-day))
+		f.repo.EXPECT().FindByID(mock.Anything, key.ID).Return(key, nil).Once()
+		f.links(key.ID, 0)
+
+		_, err := f.keys.RotateKey(context.Background(), f.gwID, "alice", key.ID, nil)
+		require.ErrorIs(t, err, domain.ErrOwnedExpiry)
+		require.Zero(t, f.signaler.Count())
+	})
+
+	t.Run("revoke a group key", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		key := ownKey(t, f)
+		f.repo.EXPECT().FindByID(mock.Anything, key.ID).Return(key, nil).Twice()
+		f.repo.EXPECT().DeleteOwned(mock.Anything, f.gwID, key.ID).Return(nil).Once()
+		f.published()
+
+		require.NoError(t, f.keys.RevokeKey(context.Background(), f.gwID, "alice", key.ID))
+		require.Equal(t, 1, f.signaler.Count())
+	})
+
+	for name, other := range map[string]func(t *testing.T, f *personalKeysFixture) *domain.Auth{
+		"another user's key": func(t *testing.T, f *personalKeysFixture) *domain.Auth {
+			a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "bob", domain.KeyGroup{}, nil, personalNow)
+			require.NoError(t, err)
+			return a
+		},
+		"the caller's key on another gateway": func(t *testing.T, _ *personalKeysFixture) *domain.Auth {
+			a, err := domain.NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), "alice", domain.KeyGroup{}, nil, personalNow)
+			require.NoError(t, err)
+			return a
+		},
+		"an application key": func(t *testing.T, f *personalKeysFixture) *domain.Auth {
+			a, err := domain.NewAPIKeyAuth(f.gwID, "ci", true, nil)
+			require.NoError(t, err)
+			return a
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newPersonalKeysFixture(t)
+			key := other(t, f)
+			f.repo.EXPECT().FindByID(mock.Anything, key.ID).Return(key, nil).Twice()
+
+			_, err := f.keys.RotateKey(context.Background(), f.gwID, "alice", key.ID, nil)
+			require.ErrorIs(t, err, domain.ErrNotFound)
+			require.ErrorIs(t, f.keys.RevokeKey(context.Background(), f.gwID, "alice", key.ID), domain.ErrNotFound)
+			require.Zero(t, f.signaler.Count())
+		})
+	}
+
+	t.Run("an unknown key", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		id := ids.New[ids.AuthKind]()
+		f.repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
+		require.ErrorIs(t, f.keys.RevokeKey(context.Background(), f.gwID, "alice", id), domain.ErrNotFound)
+	})
+
+	t.Run("an out-of-range expiry is refused before the lookup", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		_, err := f.keys.RotateKey(context.Background(), f.gwID, "alice", ids.New[ids.AuthKind](), &appauth.ExpiryChange{At: ptr(personalNow.Add(domain.MaxOwnedKeyLifetime + time.Second))})
+		require.ErrorIs(t, err, domain.ErrOwnedExpiry)
+	})
+}

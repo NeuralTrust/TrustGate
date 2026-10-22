@@ -15,6 +15,7 @@
 package store_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,8 +53,26 @@ func newLLMKeyApp(keys appauth.PersonalKeys, identity middleware.AdminIdentity) 
 	app.Post(path, h.Create)
 	app.Post(path+"/rotate", h.Rotate)
 	app.Delete(path, h.Revoke)
+	const keysPath = "/v1/gateways/:gateway_id/store/principal/llm-keys"
+	app.Get(keysPath, h.List)
+	app.Post(keysPath+"/:auth_id/rotate", h.RotateKey)
+	app.Delete(keysPath+"/:auth_id", h.RevokeKey)
 	app.Post("/v1/gateways/:gateway_id/store/users/:user_id/llm-key", h.CreateForUser)
 	return app
+}
+
+func callLLMKeys(t *testing.T, app *fiber.App, method string, gw ids.GatewayID, suffix, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(method, "/v1/gateways/"+gw.String()+"/store/principal/llm-keys"+suffix, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	}
+	res, err := app.Test(req)
+	require.NoError(t, err)
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	return res.StatusCode, string(raw)
 }
 
 func callUserLLMKey(t *testing.T, app *fiber.App, gw ids.GatewayID, userID, body string) (int, string) {
@@ -94,6 +113,11 @@ func TestLLMKeyHandler_RefusesCallersWithoutATenantUser(t *testing.T) {
 		for _, route := range [][2]string{{http.MethodGet, ""}, {http.MethodPost, ""}, {http.MethodPost, "/rotate"}, {http.MethodDelete, ""}} {
 			status, raw := callLLMKey(t, app, route[0], gw, route[1], validLLMKeyBody, fiber.MIMEApplicationJSON)
 			require.Equal(t, http.StatusForbidden, status, "%s on %s %s: %s", name, route[0], route[1], raw)
+		}
+		keyID := "/" + ids.New[ids.AuthKind]().String()
+		for _, route := range [][2]string{{http.MethodGet, ""}, {http.MethodPost, keyID + "/rotate"}, {http.MethodDelete, keyID}} {
+			status, raw := callLLMKeys(t, app, route[0], gw, route[1], validLLMKeyBody)
+			require.Equal(t, http.StatusForbidden, status, "%s on %s llm-keys%s: %s", name, route[0], route[1], raw)
 		}
 		status, raw := callUserLLMKey(t, app, gw, "bob", validLLMKeyBody)
 		require.Equal(t, http.StatusForbidden, status, "%s creating another user's key: %s", name, raw)
@@ -248,6 +272,81 @@ func TestLLMKeyHandler_CreatesAnotherUsersKeyForTheAdmin(t *testing.T) {
 	require.NotContains(t, raw, "carol")
 }
 
+// An admin issues bob's key for a group: the group travels to the key, and the
+// response names it.
+func TestLLMKeyHandler_CreatesAGroupKeyForTheAdmin(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	group := domain.KeyGroup{ID: "g-eng", Name: "engineering"}
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", group, nil, time.Now())
+	require.NoError(t, err)
+	keys := appauthmocks.NewPersonalKeys(t)
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob"}, domain.KeyGroup{ID: "g-eng", Name: " engineering"}, (*time.Time)(nil)).
+		Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
+
+	status, raw := callUserLLMKey(t, newLLMKeyApp(keys, alice), gw, "bob", `{"group_id":"g-eng","group_name":" engineering"}`)
+
+	require.Equal(t, http.StatusCreated, status, raw)
+	require.Contains(t, raw, `"group_id":"g-eng","group_name":"engineering"`)
+	require.Contains(t, raw, `"expires_at":null`)
+	require.Contains(t, raw, `"api_key":"`+a.RawKey+`"`)
+}
+
+// The caller's keys, listed and each addressed by id.
+func TestLLMKeyHandler_ServesEveryKeyOfTheCaller(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	personal, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, nil, time.Now())
+	require.NoError(t, err)
+	eng, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{ID: "g-eng", Name: "engineering"}, ptr(time.Now().Add(time.Hour)), time.Now())
+	require.NoError(t, err)
+	consumerID := ids.New[ids.ConsumerKind]()
+	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	keys := appauthmocks.NewPersonalKeys(t)
+	keys.EXPECT().List(mock.Anything, gw, "alice").Return([]*appauth.PersonalKey{
+		{Auth: eng, ConsumerIDs: []ids.ConsumerID{consumerID}}, {Auth: personal, ConsumerIDs: []ids.ConsumerID{}},
+	}, nil).Once()
+	keys.EXPECT().RotateKey(mock.Anything, gw, "alice", eng.ID, mock.MatchedBy(func(e *appauth.ExpiryChange) bool { return e != nil && e.At != nil && e.At.Equal(expiry) })).
+		Return(&appauth.PersonalKey{Auth: eng, ConsumerIDs: []ids.ConsumerID{consumerID}}, nil).Once()
+	keys.EXPECT().RotateKey(mock.Anything, gw, "alice", eng.ID, &appauth.ExpiryChange{}).Return(&appauth.PersonalKey{Auth: eng}, nil).Once()
+	keys.EXPECT().RevokeKey(mock.Anything, gw, "alice", eng.ID).Return(nil).Once()
+	keys.EXPECT().RevokeKey(mock.Anything, gw, "alice", personal.ID).Return(domain.ErrNotFound).Once()
+	app := newLLMKeyApp(keys, alice)
+
+	status, raw := callLLMKeys(t, app, http.MethodGet, gw, "", "")
+	require.Equal(t, http.StatusOK, status, raw)
+	var listed struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &listed))
+	require.Len(t, listed.Items, 2)
+	require.Equal(t, eng.ID.String(), listed.Items[0]["id"])
+	require.Equal(t, "g-eng", listed.Items[0]["group_id"])
+	require.Equal(t, "engineering", listed.Items[0]["group_name"])
+	require.Equal(t, []any{consumerID.String()}, listed.Items[0]["consumer_ids"])
+	require.NotContains(t, listed.Items[1], "group_id", "the personal key names no group")
+	require.Nil(t, listed.Items[1]["expires_at"])
+	require.NotContains(t, raw, "api_key")
+	require.NotContains(t, raw, eng.RawKey)
+
+	status, raw = callLLMKeys(t, app, http.MethodPost, gw, "/"+eng.ID.String()+"/rotate", validLLMKeyBody)
+	require.Equal(t, http.StatusOK, status, raw)
+	require.Contains(t, raw, `"api_key":"`+eng.RawKey+`"`)
+	status, raw = callLLMKeys(t, app, http.MethodPost, gw, "/"+eng.ID.String()+"/rotate", `{"never_expires":true}`)
+	require.Equal(t, http.StatusOK, status, raw)
+	status, raw = callLLMKeys(t, app, http.MethodPost, gw, "/"+eng.ID.String()+"/rotate", `{"never_expires":true,"expires_at":"2099-01-01T00:00:00Z"}`)
+	require.Equal(t, http.StatusUnprocessableEntity, status, raw)
+	status, raw = callLLMKeys(t, app, http.MethodPost, gw, "/not-a-key/rotate", "")
+	require.Equal(t, http.StatusBadRequest, status, raw)
+
+	status, raw = callLLMKeys(t, app, http.MethodDelete, gw, "/"+eng.ID.String(), "")
+	require.Equal(t, http.StatusNoContent, status, raw)
+	status, raw = callLLMKeys(t, app, http.MethodDelete, gw, "/"+personal.ID.String(), "")
+	require.Equal(t, http.StatusNotFound, status, raw)
+	status, raw = callLLMKeys(t, app, http.MethodDelete, gw, "/not-a-key", "")
+	require.Equal(t, http.StatusBadRequest, status, raw)
+}
+
 func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 	t.Parallel()
 	bob := appauth.PersonalKeyOwner{ID: "bob"}
@@ -268,6 +367,13 @@ func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 		"with an email that is not one": {body: `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob at acme"}`, want: http.StatusUnprocessableEntity, says: "not an email address", expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "bob", Email: "bob at acme"}, domain.KeyGroup{}, mock.Anything).
 				Return(nil, fmt.Errorf("%w: %q is not an email address", domain.ErrInvalidOwnerEmail, "bob at acme")).Once()
+		}},
+		"for a group the user has a key for": {body: `{"group_id":"g-eng","group_name":"engineering"}`, want: http.StatusConflict, says: "for this group", expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{ID: "g-eng", Name: "engineering"}, (*time.Time)(nil)).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
+		"with a group_id and no group_name": {body: `{"group_id":"g-eng"}`, want: http.StatusUnprocessableEntity, says: "group_name is required", expect: func(m *appauthmocks.PersonalKeys) {
+			_, err := domain.NormalizeKeyGroup(domain.KeyGroup{ID: "g-eng"})
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{ID: "g-eng"}, (*time.Time)(nil)).Return(nil, err).Once()
 		}},
 		"on a hybrid gateway": {body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
