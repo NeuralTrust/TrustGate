@@ -63,7 +63,13 @@ func (p *Purger) PurgeGatewayState(ctx context.Context, gatewayID ids.GatewayID)
 			return fmt.Errorf("gatewaystate: scan %q: %w", pattern, err)
 		}
 		if len(keys) > 0 {
-			if err := p.rdb.Del(ctx, keys...).Err(); err != nil {
+			// One DEL per key: the keys of a batch hash to different slots, which
+			// a cluster-mode Redis rejects as a single multi-key DEL (CROSSSLOT).
+			pipe := p.rdb.Pipeline()
+			for _, key := range keys {
+				pipe.Del(ctx, key)
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
 				return fmt.Errorf("gatewaystate: delete %d keys: %w", len(keys), err)
 			}
 		}

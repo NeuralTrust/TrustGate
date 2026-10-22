@@ -57,7 +57,10 @@ func (r *repository) Save(ctx context.Context, s *domain.Session) error {
 	if s.LastTurnID == "" {
 		return r.rdb.Set(ctx, key(s.GatewayID, s.ID), payload, ttl).Err()
 	}
-	_, err = r.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	// Not a MULTI: the two keys hash to different slots, which a cluster-mode
+	// Redis rejects (CROSSSLOT). The session goes first so a failure between
+	// the writes never leaves a turn pointing at a missing session.
+	_, err = r.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Set(ctx, key(s.GatewayID, s.ID), payload, ttl)
 		pipe.Set(ctx, turnKey(s.GatewayID, s.LastTurnID), s.ID, ttl)
 		return nil
