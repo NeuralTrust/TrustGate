@@ -90,6 +90,11 @@ type ConnectTicket struct {
 	// install (configure before install) applies the same group gate the install
 	// tool applied — the browser submitting the form carries no token.
 	Groups []string `json:"groups,omitempty"`
+	// GroupScoped marks a ticket a group key minted: Groups is the key's one
+	// group, and the Store mode and grants of the install the form files are
+	// decided for it alone, never for PrincipalSub. A ticket from before the
+	// field reads false, as every ticket minted then was.
+	GroupScoped bool `json:"group_scoped,omitempty"`
 	// Reason carries the requester's words from the install that minted this
 	// ticket, for the same reason Groups does: submitting the form is what files
 	// the request, and the form has no way to ask. A request without one is
@@ -101,6 +106,15 @@ type ConnectTicket struct {
 	// was given, so the meta tool does not accept one at all and hands the user
 	// this form instead.
 	AskReason bool `json:"ask_reason,omitempty"`
+}
+
+// storeSubject is the subject the ticket's install is decided for: none for a
+// group key's ticket, whose group alone decides.
+func (t *ConnectTicket) storeSubject() string {
+	if t.GroupScoped {
+		return ""
+	}
+	return t.PrincipalSub
 }
 
 type ConnectState struct {
