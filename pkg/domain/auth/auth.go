@@ -31,7 +31,9 @@ const apiKeyPrefix = "ag_"
 const apiKeyEntropyBytes = 32
 
 const (
-	MaxOwnedKeyLifetime = 90 * 24 * time.Hour
+	// MaxOwnedKeyLifetime is the furthest a personal key's expiry may sit in
+	// the future when it has one. A personal key may also never expire.
+	MaxOwnedKeyLifetime = 366 * 24 * time.Hour
 	ownedKeyName        = "personal"
 )
 
@@ -129,14 +131,40 @@ type Auth struct {
 	// reported it. Calls made with the key carry it as the principal's email,
 	// as a signed-in session's do, so traffic is attributed to a person rather
 	// than an id.
-	OwnerEmail string    `json:"owner_email,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	OwnerEmail string `json:"owner_email,omitempty"`
+	// GroupID is the directory group a group key is held for, as the console
+	// names it, and what the key's spend is attributed to. Empty for the
+	// owner's personal key, which belongs to no group, and for every
+	// application key. It never changes once the key exists.
+	GroupID string `json:"group_id,omitempty"`
+	// GroupName is GroupID's directory name: the string owner_groups and the
+	// MCP Store's grants and access policies name the group by. A group key
+	// reaches the Store as this group alone. The platform keeps it current
+	// when the group is renamed.
+	GroupName string    `json:"group_name,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// IsOwned reports whether a is a personal key, held by one user.
+// IsOwned reports whether a is a personal key, held by one user: their
+// personal key or one of their group keys.
 func (a *Auth) IsOwned() bool {
 	return a.OwnerID != ""
+}
+
+// IsGroupKey reports whether a is a group key: a personal key held for one of
+// its owner's directory groups.
+func (a *Auth) IsGroupKey() bool {
+	return a.IsOwned() && a.GroupID != ""
+}
+
+// KeyGroup returns the group a personal key is held for, the zero KeyGroup
+// for the owner's personal key and for an application key.
+func (a *Auth) KeyGroup() KeyGroup {
+	if !a.IsGroupKey() {
+		return KeyGroup{}
+	}
+	return KeyGroup{ID: a.GroupID, Name: a.GroupName}
 }
 
 // ManagedBy reports whether caller may change the auth: the admin (empty
@@ -224,21 +252,33 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 	return a, nil
 }
 
-// NewOwnedAPIKeyAuth mints the personal api key of ownerID on gatewayID.
-func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, expiresAt, now time.Time) (*Auth, error) {
+// NewOwnedAPIKeyAuth mints a personal api key of ownerID on gatewayID: their
+// personal key when group is the zero KeyGroup, else their key for group. A
+// nil expiresAt is a key that never expires.
+func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, group KeyGroup, expiresAt *time.Time, now time.Time) (*Auth, error) {
 	if err := ValidateOwner(ownerID); err != nil {
 		return nil, err
 	}
-	if err := ValidateOwnedExpiry(expiresAt, now); err != nil {
+	group, err := NormalizeKeyGroup(group)
+	if err != nil {
 		return nil, err
+	}
+	if expiresAt != nil {
+		if err := ValidateOwnedExpiry(*expiresAt, now); err != nil {
+			return nil, err
+		}
 	}
 	a, err := NewAPIKeyAuth(gatewayID, ownedKeyName, true, nil)
 	if err != nil {
 		return nil, err
 	}
-	at := expiresAt.UTC()
-	a.ExpiresAt = &at
+	if expiresAt != nil {
+		at := expiresAt.UTC()
+		a.ExpiresAt = &at
+	}
 	a.OwnerID = ownerID
+	a.GroupID = group.ID
+	a.GroupName = group.Name
 	a.CreatedAt = now.UTC()
 	a.UpdatedAt = a.CreatedAt
 	return a, nil
@@ -253,7 +293,7 @@ func ValidateOwner(ownerID string) error {
 }
 
 // ValidateOwnedExpiry reports whether expiresAt is an expiry a personal key may
-// carry at now.
+// carry at now: in the future, and no further than MaxOwnedKeyLifetime.
 func ValidateOwnedExpiry(expiresAt, now time.Time) error {
 	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxOwnedKeyLifetime)) {
 		return ErrOwnedExpiry

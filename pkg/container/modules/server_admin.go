@@ -24,6 +24,7 @@ import (
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -132,6 +133,7 @@ type adminRouterParams struct {
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
 	StoreLLMKey      *storehttp.LLMKeyHandler
+	KeyGroupBudgets  *keygrouphttp.BudgetHandler `optional:"true"`
 }
 
 type adminServerParams struct {
@@ -220,6 +222,7 @@ func ServerAdmin(c *container.Container) error {
 				StorePrincipal:            p.StorePrincipal,
 				StoreMaterialize:          p.StoreMaterialize,
 				StoreLLMKey:               p.StoreLLMKey,
+				KeyGroupBudgets:           p.KeyGroupBudgets,
 			})
 		},
 		dig.Name("admin"),

@@ -23,6 +23,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -70,6 +71,8 @@ type Data struct {
 	registryByID  map[ids.RegistryID]*registrydomain.Registry
 	storeLinks    map[ids.AuthID][]StoreLink
 	personal      int
+	// budgets are the gateway's group budgets, by group id.
+	budgets map[string]*keygroupdomain.Budget
 }
 
 func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
@@ -124,6 +127,25 @@ func compareStoreLinks(a, b StoreLink) int {
 		a.Link.GrantedAt.Compare(b.Link.GrantedAt),
 		bytes.Compare(idA[:], idB[:]),
 	)
+}
+
+// SetKeyGroupBudgets indexes the gateway's group budgets by group.
+func (d *Data) SetKeyGroupBudgets(budgets []*keygroupdomain.Budget) {
+	d.budgets = make(map[string]*keygroupdomain.Budget, len(budgets))
+	for _, b := range budgets {
+		if b != nil && b.GroupID != "" {
+			d.budgets[b.GroupID] = b
+		}
+	}
+}
+
+// KeyGroupBudget is the budget of groupID on the gateway, nil when it has
+// none. It is shared by every reader and must not be modified.
+func (d *Data) KeyGroupBudget(groupID string) *keygroupdomain.Budget {
+	if d == nil || groupID == "" {
+		return nil
+	}
+	return d.budgets[groupID]
 }
 
 func (d *Data) SetRegistryIndex(byID map[ids.RegistryID]*registrydomain.Registry) {

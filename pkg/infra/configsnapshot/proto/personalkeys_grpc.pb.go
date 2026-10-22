@@ -49,7 +49,8 @@ const (
 // plane. The data plane has already established who the person is (a Store
 // session, then a sign-in in the browser that opened the page); the server
 // authorises the gateway against the caller's config-sync scope and applies the
-// same rules the console's Portal does: one key per owner, the 90-day ceiling,
+// same rules the console's Portal does: one personal key per owner (the one
+// that belongs to no group; group keys are the console's), issued for 90 days,
 // no personal keys on a hybrid gateway.
 //
 // Errors are status codes: NotFound (no key), AlreadyExists (the owner holds
@@ -124,7 +125,8 @@ func (c *personalKeysClient) Revoke(ctx context.Context, in *PersonalKeyRequest,
 // plane. The data plane has already established who the person is (a Store
 // session, then a sign-in in the browser that opened the page); the server
 // authorises the gateway against the caller's config-sync scope and applies the
-// same rules the console's Portal does: one key per owner, the 90-day ceiling,
+// same rules the console's Portal does: one personal key per owner (the one
+// that belongs to no group; group keys are the console's), issued for 90 days,
 // no personal keys on a hybrid gateway.
 //
 // Errors are status codes: NotFound (no key), AlreadyExists (the owner holds

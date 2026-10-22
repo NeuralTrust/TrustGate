@@ -35,6 +35,13 @@ type Metadata struct {
 	IP           string
 	SessionID    string
 	Kind         string
+	// AuthKind is what kind of key AuthID is: AuthKindPersonal for a key a
+	// user owns, AuthKindApplication for any other api key; empty for any
+	// other credential.
+	AuthKind string
+	// AuthGroupID is the directory group a group key is held for, which the
+	// request's spend is attributed to. Empty for every other auth.
+	AuthGroupID string
 	// RetentionWindow is the plan's trace-retention window, zero when the
 	// gateway carries no stamp. The window travels rather than a computed
 	// expiry so the builder derives the expiry from the same timestamp it
@@ -144,6 +151,14 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 	t.mu.Unlock()
 }
 
+// AuthKindPersonal and AuthKindApplication are the kinds of api key a request
+// is attributed to: one a user owns (their personal key or a group key), and
+// one an application holds.
+const (
+	AuthKindPersonal    = "personal"
+	AuthKindApplication = "application"
+)
+
 // SetAuthID records the auth that authenticated the request.
 func (t *RequestTrace) SetAuthID(id string) {
 	if id == "" {
@@ -151,6 +166,18 @@ func (t *RequestTrace) SetAuthID(id string) {
 	}
 	t.mu.Lock()
 	t.meta.AuthID = id
+	t.mu.Unlock()
+}
+
+// SetAuthKey records what kind of api key authenticated the request and, for
+// a group key, the group its spend is attributed to.
+func (t *RequestTrace) SetAuthKey(kind, groupID string) {
+	if kind == "" && groupID == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.AuthKind = kind
+	t.meta.AuthGroupID = groupID
 	t.mu.Unlock()
 }
 

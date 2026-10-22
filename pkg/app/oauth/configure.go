@@ -119,8 +119,12 @@ type ConfigureTicketRequest struct {
 	// InstanceID pins the ticket to one installation instance of Code. Empty when
 	// the install recorded no row yet (requires-config before install).
 	InstanceID string
-	// Groups are the principal's IdP groups at mint time (from their token).
+	// Groups are the principal's IdP groups at mint time (from their token),
+	// or a group key's one group.
 	Groups []string
+	// GroupScoped marks a ticket minted for a group key: the install it files
+	// is decided for Groups alone, never for PrincipalSub.
+	GroupScoped bool
 	// Reason is the requester's words from the install that needs this form, kept
 	// so the install the submit files can be a request (see ConnectTicket.Reason).
 	Reason string
@@ -232,6 +236,7 @@ func (s *configureService) CreateTicket(ctx context.Context, in ConfigureTicketR
 		Code:         code,
 		InstanceID:   strings.TrimSpace(in.InstanceID),
 		Groups:       append([]string(nil), in.Groups...),
+		GroupScoped:  in.GroupScoped,
 		Reason:       strings.TrimSpace(in.Reason),
 		AskReason:    in.AskReason,
 	}); err != nil {
@@ -429,9 +434,10 @@ func (s *configureService) servingTarget(
 		PrincipalSub: ticket.PrincipalSub,
 		Code:         ticket.Code,
 		Groups:       ticket.Groups,
+		GroupScoped:  ticket.GroupScoped,
 	}
 	if s.openMode != nil {
-		req.OpenMode = s.openMode(ctx, gatewayID, ticket.PrincipalSub, ticket.Groups)
+		req.OpenMode = s.openMode(ctx, gatewayID, ticket.storeSubject(), ticket.Groups)
 	}
 	// An existing row is written in place. Name its instance so the pins are
 	// that row's, which is the one Install binds when the instance is named.
@@ -621,7 +627,7 @@ func (s *configureService) installConfigured(
 	if s.openMode != nil {
 		// The ticket is the requester's proof, so it is what the mode is decided
 		// for — not whoever (nobody) the browser request looks like.
-		open = s.openMode(ctx, gatewayID, ticket.PrincipalSub, ticket.Groups)
+		open = s.openMode(ctx, gatewayID, ticket.storeSubject(), ticket.Groups)
 	}
 	res, err := s.installer.Install(ctx, appstore.InstallRequest{
 		GatewayID:    gatewayID,
@@ -629,6 +635,7 @@ func (s *configureService) installConfigured(
 		Code:         ticket.Code,
 		InstalledBy:  ticket.PrincipalSub,
 		Groups:       ticket.Groups,
+		GroupScoped:  ticket.GroupScoped,
 		OpenMode:     open,
 		Config:       plain,
 		Reason:       ticket.Reason,

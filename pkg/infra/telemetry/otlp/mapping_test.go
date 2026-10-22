@@ -164,6 +164,38 @@ func TestEventToRecord_EmitsTheAuthIDOnlyWhenPresent(t *testing.T) {
 	}
 }
 
+func TestEventToRecord_EmitsTheKeyKindAndGroup(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		kind, groupID string
+	}{
+		"a group key":             {kind: "personal", groupID: "g-eng"},
+		"a personal key":          {kind: "personal"},
+		"an application key":      {kind: "application"},
+		"a credential, not a key": {},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			evt := fullEvent()
+			evt.AuthKind, evt.AuthGroupID = tc.kind, tc.groupID
+
+			attrs := attrsOf(eventToRecord(evt))
+
+			kind, present := attrs["trustgate.auth.kind"]
+			assert.Equal(t, tc.kind != "", present)
+			if present {
+				assert.Equal(t, tc.kind, kind.AsString())
+			}
+			group, present := attrs["trustgate.auth.group_id"]
+			assert.Equal(t, tc.groupID != "", present, "only a group key names a group")
+			if present {
+				assert.Equal(t, tc.groupID, group.AsString())
+			}
+		})
+	}
+}
+
 func TestEventToRecord_OmitsBodies(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()

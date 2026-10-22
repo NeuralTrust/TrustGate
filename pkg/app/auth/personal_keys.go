@@ -41,16 +41,31 @@ type PersonalKeyOwner struct {
 	Email string
 }
 
-// PersonalKeys is the self-service lifecycle of the one personal key a user
-// holds on a gateway: read, create, rotate and revoke, each scoped to the
-// caller as owner.
+// PersonalKeys is the self-service lifecycle of the keys a user holds on a
+// gateway, each scoped to the caller as owner. A user holds at most one
+// personal key, which belongs to no group, and at most one key per directory
+// group the console lets them hold one for. Get, Rotate and Revoke act on the
+// personal key.
 //
 //go:generate mockery --name=PersonalKeys --dir=. --output=./mocks --filename=auth_personal_keys_mock.go --case=underscore --with-expecter
 type PersonalKeys interface {
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
-	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error)
-	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error)
+	// Create issues the owner their personal key when group is the zero
+	// KeyGroup, else their key for group. A nil expiresAt never expires.
+	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt *time.Time) (*PersonalKey, error)
+	// Rotate replaces the secret. A nil expiry keeps the current expiry, which
+	// an expired key cannot; a non-nil one sets it, or clears it when its At
+	// is nil.
+	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiry *ExpiryChange) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
+	// List is every key the owner holds on the gateway, their personal key and
+	// their group keys, newest first.
+	List(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*PersonalKey, error)
+	// RotateKey and RevokeKey act on one of the owner's keys, named by id. A
+	// key that is not the owner's on the gateway answers domain.ErrNotFound,
+	// as one that does not exist does.
+	RotateKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID, expiry *ExpiryChange) (*PersonalKey, error)
+	RevokeKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) error
 }
 
 var _ PersonalKeys = (*personalKeys)(nil)
@@ -92,6 +107,54 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	if err != nil {
 		return nil, err
 	}
+	return p.withConsumers(ctx, a)
+}
+
+func (p *personalKeys) List(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*PersonalKey, error) {
+	if err := domain.ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	auths, err := p.repo.ListByOwner(ctx, gatewayID, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list personal keys: %w", err)
+	}
+	out := make([]*PersonalKey, 0, len(auths))
+	for _, a := range auths {
+		key, err := p.withConsumers(ctx, a)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, nil
+}
+
+func (p *personalKeys) RotateKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID, expiry *ExpiryChange) (*PersonalKey, error) {
+	if err := validateOwnedExpiryChange(expiry, p.now()); err != nil {
+		return nil, err
+	}
+	a, err := p.findOwned(ctx, gatewayID, ownerID, id)
+	if err != nil {
+		return nil, err
+	}
+	current, err := p.withConsumers(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	return p.rotate(ctx, gatewayID, ownerID, current, expiry)
+}
+
+func (p *personalKeys) RevokeKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) error {
+	a, err := p.findOwned(ctx, gatewayID, ownerID, id)
+	if err != nil {
+		return err
+	}
+	return p.deleter.Delete(ctx, gatewayID, a.ID)
+}
+
+// withConsumers is a with the personal consumers it is linked to, an empty
+// list rather than nil when it has none.
+func (p *personalKeys) withConsumers(ctx context.Context, a *domain.Auth) (*PersonalKey, error) {
 	consumerIDs, err := p.links.ListIDsByAuthID(ctx, a.ID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list consumers of personal key: %w", err)
@@ -102,9 +165,9 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	return &PersonalKey{Auth: a, ConsumerIDs: consumerIDs}, nil
 }
 
-func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error) {
+func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt *time.Time) (*PersonalKey, error) {
 	ownerID := owner.ID
-	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, p.now())
+	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, group, expiresAt, p.now())
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +177,9 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	if err := p.ensureNotHybrid(ctx, gatewayID); err != nil {
 		return nil, err
 	}
-	switch _, err := p.repo.FindByOwner(ctx, gatewayID, ownerID); {
+	// The unique index refuses a second key all the same; asking first gives
+	// the common case its answer without a failed insert.
+	switch _, err := p.repo.FindByOwnerAndGroup(ctx, gatewayID, ownerID, a.GroupID); {
 	case err == nil:
 		return nil, domain.ErrOwnedKeyExists
 	case !errors.Is(err, domain.ErrNotFound):
@@ -127,27 +192,38 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	return &PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil
 }
 
-func (p *personalKeys) Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error) {
-	now := p.now()
-	var expiry *ExpiryChange
-	if expiresAt != nil {
-		if err := domain.ValidateOwnedExpiry(*expiresAt, now); err != nil {
-			return nil, err
-		}
-		expiry = &ExpiryChange{At: expiresAt}
+func (p *personalKeys) Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiry *ExpiryChange) (*PersonalKey, error) {
+	if err := validateOwnedExpiryChange(expiry, p.now()); err != nil {
+		return nil, err
 	}
 	current, err := p.Get(ctx, gatewayID, ownerID)
 	if err != nil {
 		return nil, err
 	}
-	if expiry == nil && current.Auth.IsExpired(now) {
-		return nil, domain.ErrOwnedExpiry
+	return p.rotate(ctx, gatewayID, ownerID, current, expiry)
+}
+
+// rotate replaces the secret of current, one of ownerID's keys. A key that
+// has expired is not brought back on its old expiry: the caller names a new
+// one, or asks for none.
+func (p *personalKeys) rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, current *PersonalKey, expiry *ExpiryChange) (*PersonalKey, error) {
+	if expiry == nil && current.Auth.IsExpired(p.now()) {
+		return nil, fmt.Errorf("%w: the key has expired, so its rotation needs a new expiry", domain.ErrOwnedExpiry)
 	}
 	rotated, err := p.rotator.Rotate(ctx, RotateInput{ID: current.Auth.ID, GatewayID: gatewayID, Expiry: expiry, OwnerID: ownerID})
 	if err != nil {
 		return nil, err
 	}
 	return &PersonalKey{Auth: rotated, ConsumerIDs: current.ConsumerIDs}, nil
+}
+
+// validateOwnedExpiryChange refuses an expiry a personal key may not take.
+// Keeping the current one, and never expiring, are always allowed.
+func validateOwnedExpiryChange(expiry *ExpiryChange, now time.Time) error {
+	if expiry == nil || expiry.At == nil {
+		return nil
+	}
+	return domain.ValidateOwnedExpiry(*expiry.At, now)
 }
 
 func (p *personalKeys) Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error {
@@ -158,13 +234,31 @@ func (p *personalKeys) Revoke(ctx context.Context, gatewayID ids.GatewayID, owne
 	return p.deleter.Delete(ctx, gatewayID, existing.ID)
 }
 
+// find is the owner's personal key, the one held for no group.
 func (p *personalKeys) find(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
 	if err := domain.ValidateOwner(ownerID); err != nil {
 		return nil, err
 	}
-	a, err := p.repo.FindByOwner(ctx, gatewayID, ownerID)
+	a, err := p.repo.FindByOwnerAndGroup(ctx, gatewayID, ownerID, "")
 	if err != nil {
 		return nil, fmt.Errorf("auth: find personal key: %w", err)
+	}
+	return a, nil
+}
+
+// findOwned is the key id when ownerID holds it on gatewayID. Any other key,
+// an application key or another user's, is not found: the caller learns
+// nothing about keys that are not theirs.
+func (p *personalKeys) findOwned(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) (*domain.Auth, error) {
+	if err := domain.ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	a, err := p.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("auth: find personal key: %w", err)
+	}
+	if a.GatewayID != gatewayID || !a.IsOwned() || a.OwnerID != ownerID {
+		return nil, domain.ErrNotFound
 	}
 	return a, nil
 }

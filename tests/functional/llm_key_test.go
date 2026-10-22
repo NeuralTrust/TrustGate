@@ -25,8 +25,8 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key")})
 	alice, bob := uniqueName("alice"), uniqueName("bob")
 
-	status, _ := CreateLLMKey(t, gwID, alice, llmKeyExpiry(90*llmKeyDay+time.Hour))
-	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is capped at 90 days")
+	status, _ := CreateLLMKey(t, gwID, alice, llmKeyExpiry(366*llmKeyDay+time.Hour))
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is capped at 366 days")
 	body := llmKeyExpiry(30 * llmKeyDay)
 	body["principal_sub"], body["owner_id"], body["consumer_id"] = bob, bob, CreateConsumer(t, gwID, validConsumerPayload(uniqueName("llm-key-cons")))
 	status, created := CreateLLMKey(t, gwID, alice, body)
@@ -54,7 +54,7 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, "the body owner was ignored")
 	status, _ = RotateLLMKey(t, gwID, bob, nil)
 	assert.Equal(t, http.StatusNotFound, status)
-	status, _ = RotateLLMKey(t, gwID, bob, llmKeyExpiry(91*llmKeyDay))
+	status, _ = RotateLLMKey(t, gwID, bob, llmKeyExpiry(367*llmKeyDay))
 	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is judged before the lookup")
 	assert.Equal(t, http.StatusNotFound, RevokeLLMKey(t, gwID, bob))
 
@@ -68,6 +68,23 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	otherGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-other")})
 	status, _ = CreateLLMKey(t, otherGW, alice, llmKeyExpiry(llmKeyDay))
 	assert.Equal(t, http.StatusCreated, status, "one key on each gateway")
+
+	status, renewed := RotateLLMKey(t, gwID, alice, map[string]any{"never_expires": true})
+	require.Equal(t, http.StatusOK, status, "body=%v", renewed)
+	assert.Nil(t, renewed["expires_at"], "never_expires renews the key with no expiry")
+	status, kept := RotateLLMKey(t, gwID, alice, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", kept)
+	assert.Nil(t, kept["expires_at"], "a key that never expires stays so")
+	status, _ = RotateLLMKey(t, gwID, alice, map[string]any{"never_expires": true, "expires_at": time.Now().Add(llmKeyDay).UTC().Format(time.RFC3339)})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "expires_at and never_expires cannot be combined")
+	status, yearLong := RotateLLMKey(t, gwID, alice, llmKeyExpiry(365*llmKeyDay))
+	require.Equal(t, http.StatusOK, status, "body=%v", yearLong)
+	assert.NotNil(t, yearLong["expires_at"])
+
+	thirdGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-forever")})
+	status, forever := CreateLLMKey(t, thirdGW, alice, map[string]any{})
+	require.Equal(t, http.StatusCreated, status, "body=%v", forever)
+	assert.Nil(t, forever["expires_at"], "without expires_at the key never expires")
 
 	status, _ = llmKeyRequest(t, http.MethodGet, gwID, userToken(t, "another-tenant", alice), "", nil)
 	assert.Equal(t, http.StatusNotFound, status, "a user of another tenant does not see the gateway")
@@ -225,4 +242,104 @@ func TestLLMKey_AdminBudgetAndOwnedList(t *testing.T) {
 	status, got = sendRequest(t, http.MethodGet, authsURL+"/"+aliceID, nil, nil)
 	require.Equal(t, http.StatusOK, status, "body=%v", got)
 	assert.NotContains(t, got, "budget")
+}
+
+func llmKeysRequest(t *testing.T, method, gatewayID, userID, suffix string, body any) (int, map[string]any) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/store/principal/llm-keys%s", AdminURL, gatewayID, suffix)
+	return sendRequest(t, method, url, map[string]string{"Authorization": "Bearer " + userToken(t, functionalTenantID, userID)}, body)
+}
+
+func itemIDs(t *testing.T, list map[string]any) []string {
+	t.Helper()
+	items, ok := list["items"].([]any)
+	require.True(t, ok, "items: %v", list)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, fmt.Sprint(item.(map[string]any)["id"]))
+	}
+	return out
+}
+
+// A user holds their personal key and one key per directory group: an admin
+// issues the group keys, the user lists them and rotates or revokes each by
+// id, and the routes for the personal key never touch a group key.
+func TestLLMKey_GroupKeys(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-groups")})
+	alice, bob, admin := uniqueName("alice"), uniqueName("bob"), uniqueName("admin")
+	issue := func(owner string, body map[string]any) (int, map[string]any) {
+		t.Helper()
+		url := fmt.Sprintf("%s/v1/gateways/%s/store/users/%s/llm-key", AdminURL, gwID, owner)
+		return sendRequest(t, http.MethodPost, url, map[string]string{"Authorization": "Bearer " + userToken(t, functionalTenantID, admin)}, body)
+	}
+
+	status, personal := CreateLLMKey(t, gwID, alice, map[string]any{})
+	require.Equal(t, http.StatusCreated, status, "body=%v", personal)
+	assert.NotContains(t, personal, "group_id")
+	status, eng := issue(alice, map[string]any{"group_id": "g-eng", "group_name": " engineering ", "expires_at": time.Now().Add(30 * llmKeyDay).UTC().Format(time.RFC3339)})
+	require.Equal(t, http.StatusCreated, status, "body=%v", eng)
+	assert.Equal(t, "g-eng", eng["group_id"])
+	assert.Equal(t, "engineering", eng["group_name"])
+	assert.True(t, strings.HasPrefix(fmt.Sprint(eng["api_key"]), "ag_"))
+	status, sre := issue(alice, map[string]any{"group_id": "g-sre", "group_name": "sre"})
+	require.Equal(t, http.StatusCreated, status, "body=%v", sre)
+	assert.Nil(t, sre["expires_at"])
+	status, _ = issue(bob, map[string]any{"group_id": "g-eng", "group_name": "engineering"})
+	assert.Equal(t, http.StatusCreated, status, "another user holds their own key for the group")
+
+	status, resp := issue(alice, map[string]any{"group_id": "g-eng", "group_name": "engineering"})
+	assert.Equal(t, http.StatusConflict, status, "one key per user and group: %v", resp)
+	status, resp = issue(alice, map[string]any{})
+	assert.Equal(t, http.StatusConflict, status, "and one personal key: %v", resp)
+	status, resp = issue(alice, map[string]any{"group_id": "g-ops"})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "a group needs its name: %v", resp)
+	status, resp = issue(alice, map[string]any{"group_name": "ops"})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "a name needs its group: %v", resp)
+
+	personalID, engID, sreID := fmt.Sprint(personal["id"]), fmt.Sprint(eng["id"]), fmt.Sprint(sre["id"])
+	status, list := llmKeysRequest(t, http.MethodGet, gwID, alice, "", nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	assert.Equal(t, []string{sreID, engID, personalID}, itemIDs(t, list), "every key of the caller, newest first")
+	assert.NotContains(t, fmt.Sprint(list), "api_key", "the secrets are never read back")
+	status, got := GetLLMKey(t, gwID, alice)
+	require.Equal(t, http.StatusOK, status, "body=%v", got)
+	assert.Equal(t, personalID, got["id"], "the personal key route reads the personal key")
+
+	authsURL := fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID)
+	status, owned := sendRequest(t, http.MethodGet, authsURL+"?owner_id="+alice, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", owned)
+	assert.Equal(t, float64(3), owned["total"], "owner_id lists every key of the owner")
+	assert.Contains(t, fmt.Sprint(owned["items"]), "group_name:engineering")
+
+	status, rotated := llmKeysRequest(t, http.MethodPost, gwID, alice, "/"+engID+"/rotate", map[string]any{"never_expires": true})
+	require.Equal(t, http.StatusOK, status, "body=%v", rotated)
+	assert.Equal(t, engID, rotated["id"])
+	assert.Equal(t, "g-eng", rotated["group_id"], "a rotation keeps the group")
+	assert.Nil(t, rotated["expires_at"])
+	assert.NotEqual(t, eng["api_key"], rotated["api_key"])
+	status, _ = llmKeysRequest(t, http.MethodPost, gwID, bob, "/"+engID+"/rotate", nil)
+	assert.Equal(t, http.StatusNotFound, status, "another user's key is not found")
+	assert.Equal(t, http.StatusNotFound, func() int { s, _ := llmKeysRequest(t, http.MethodDelete, gwID, bob, "/"+engID, nil); return s }())
+	appID, _ := CreateAPIKeyAuth(t, gwID, uniqueName("app-key"))
+	status, _ = llmKeysRequest(t, http.MethodDelete, gwID, alice, "/"+appID, nil)
+	assert.Equal(t, http.StatusNotFound, status, "an application key is nobody's")
+
+	keyURL := authsURL + "/" + engID + "/groups"
+	status, renamed := sendRequest(t, http.MethodPut, keyURL, nil, map[string]any{"groups": []string{"platform engineering", "sre"}, "group_name": "platform engineering"})
+	require.Equal(t, http.StatusOK, status, "body=%v", renamed)
+	assert.Equal(t, "g-eng", renamed["group_id"])
+	assert.Equal(t, "platform engineering", renamed["group_name"])
+	status, resp = sendRequest(t, http.MethodPut, authsURL+"/"+personalID+"/groups", nil, map[string]any{"groups": []string{"sre"}, "group_name": "sre"})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", resp)
+	assert.Equal(t, "personal_key", resp["error"])
+
+	status, _ = llmKeysRequest(t, http.MethodDelete, gwID, alice, "/"+engID, nil)
+	assert.Equal(t, http.StatusNoContent, status)
+	assert.Equal(t, http.StatusNoContent, RevokeLLMKey(t, gwID, alice), "the personal key route revokes the personal key")
+	status, list = llmKeysRequest(t, http.MethodGet, gwID, alice, "", nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", list)
+	assert.Equal(t, []string{sreID}, itemIDs(t, list), "the other group key stays")
+	status, _ = GetLLMKey(t, gwID, alice)
+	assert.Equal(t, http.StatusNotFound, status, "no personal key, though a group key remains")
 }
