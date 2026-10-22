@@ -151,6 +151,66 @@ func (_c *PersonalKeys_Get_Call) RunAndReturn(run func(context.Context, ids.ID[i
 	return _c
 }
 
+// List provides a mock function with given fields: ctx, gatewayID, ownerID
+func (_m *PersonalKeys) List(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string) ([]*auth.PersonalKey, error) {
+	ret := _m.Called(ctx, gatewayID, ownerID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for List")
+	}
+
+	var r0 []*auth.PersonalKey
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) ([]*auth.PersonalKey, error)); ok {
+		return rf(ctx, gatewayID, ownerID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) []*auth.PersonalKey); ok {
+		r0 = rf(ctx, gatewayID, ownerID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.PersonalKey)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string) error); ok {
+		r1 = rf(ctx, gatewayID, ownerID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// PersonalKeys_List_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'List'
+type PersonalKeys_List_Call struct {
+	*mock.Call
+}
+
+// List is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - ownerID string
+func (_e *PersonalKeys_Expecter) List(ctx interface{}, gatewayID interface{}, ownerID interface{}) *PersonalKeys_List_Call {
+	return &PersonalKeys_List_Call{Call: _e.mock.On("List", ctx, gatewayID, ownerID)}
+}
+
+func (_c *PersonalKeys_List_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string)) *PersonalKeys_List_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *PersonalKeys_List_Call) Return(_a0 []*auth.PersonalKey, _a1 error) *PersonalKeys_List_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *PersonalKeys_List_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string) ([]*auth.PersonalKey, error)) *PersonalKeys_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Revoke provides a mock function with given fields: ctx, gatewayID, ownerID
 func (_m *PersonalKeys) Revoke(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string) error {
 	ret := _m.Called(ctx, gatewayID, ownerID)
@@ -195,6 +255,55 @@ func (_c *PersonalKeys_Revoke_Call) Return(_a0 error) *PersonalKeys_Revoke_Call 
 }
 
 func (_c *PersonalKeys_Revoke_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string) error) *PersonalKeys_Revoke_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RevokeKey provides a mock function with given fields: ctx, gatewayID, ownerID, id
+func (_m *PersonalKeys) RevokeKey(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, id ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, gatewayID, ownerID, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RevokeKey")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, gatewayID, ownerID, id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PersonalKeys_RevokeKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RevokeKey'
+type PersonalKeys_RevokeKey_Call struct {
+	*mock.Call
+}
+
+// RevokeKey is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - ownerID string
+//   - id ids.ID[ids.AuthKind]
+func (_e *PersonalKeys_Expecter) RevokeKey(ctx interface{}, gatewayID interface{}, ownerID interface{}, id interface{}) *PersonalKeys_RevokeKey_Call {
+	return &PersonalKeys_RevokeKey_Call{Call: _e.mock.On("RevokeKey", ctx, gatewayID, ownerID, id)}
+}
+
+func (_c *PersonalKeys_RevokeKey_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, id ids.ID[ids.AuthKind])) *PersonalKeys_RevokeKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *PersonalKeys_RevokeKey_Call) Return(_a0 error) *PersonalKeys_RevokeKey_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *PersonalKeys_RevokeKey_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind]) error) *PersonalKeys_RevokeKey_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -256,6 +365,68 @@ func (_c *PersonalKeys_Rotate_Call) Return(_a0 *auth.PersonalKey, _a1 error) *Pe
 }
 
 func (_c *PersonalKeys_Rotate_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, *auth.ExpiryChange) (*auth.PersonalKey, error)) *PersonalKeys_Rotate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RotateKey provides a mock function with given fields: ctx, gatewayID, ownerID, id, expiry
+func (_m *PersonalKeys) RotateKey(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, id ids.ID[ids.AuthKind], expiry *auth.ExpiryChange) (*auth.PersonalKey, error) {
+	ret := _m.Called(ctx, gatewayID, ownerID, id, expiry)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RotateKey")
+	}
+
+	var r0 *auth.PersonalKey
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind], *auth.ExpiryChange) (*auth.PersonalKey, error)); ok {
+		return rf(ctx, gatewayID, ownerID, id, expiry)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind], *auth.ExpiryChange) *auth.PersonalKey); ok {
+		r0 = rf(ctx, gatewayID, ownerID, id, expiry)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*auth.PersonalKey)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind], *auth.ExpiryChange) error); ok {
+		r1 = rf(ctx, gatewayID, ownerID, id, expiry)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// PersonalKeys_RotateKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RotateKey'
+type PersonalKeys_RotateKey_Call struct {
+	*mock.Call
+}
+
+// RotateKey is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - ownerID string
+//   - id ids.ID[ids.AuthKind]
+//   - expiry *auth.ExpiryChange
+func (_e *PersonalKeys_Expecter) RotateKey(ctx interface{}, gatewayID interface{}, ownerID interface{}, id interface{}, expiry interface{}) *PersonalKeys_RotateKey_Call {
+	return &PersonalKeys_RotateKey_Call{Call: _e.mock.On("RotateKey", ctx, gatewayID, ownerID, id, expiry)}
+}
+
+func (_c *PersonalKeys_RotateKey_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, id ids.ID[ids.AuthKind], expiry *auth.ExpiryChange)) *PersonalKeys_RotateKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(ids.ID[ids.AuthKind]), args[4].(*auth.ExpiryChange))
+	})
+	return _c
+}
+
+func (_c *PersonalKeys_RotateKey_Call) Return(_a0 *auth.PersonalKey, _a1 error) *PersonalKeys_RotateKey_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *PersonalKeys_RotateKey_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, ids.ID[ids.AuthKind], *auth.ExpiryChange) (*auth.PersonalKey, error)) *PersonalKeys_RotateKey_Call {
 	_c.Call.Return(run)
 	return _c
 }

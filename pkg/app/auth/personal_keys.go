@@ -58,6 +58,14 @@ type PersonalKeys interface {
 	// is nil.
 	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiry *ExpiryChange) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
+	// List is every key the owner holds on the gateway, their personal key and
+	// their group keys, newest first.
+	List(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*PersonalKey, error)
+	// RotateKey and RevokeKey act on one of the owner's keys, named by id. A
+	// key that is not the owner's on the gateway answers domain.ErrNotFound,
+	// as one that does not exist does.
+	RotateKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID, expiry *ExpiryChange) (*PersonalKey, error)
+	RevokeKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) error
 }
 
 var _ PersonalKeys = (*personalKeys)(nil)
@@ -99,6 +107,54 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	if err != nil {
 		return nil, err
 	}
+	return p.withConsumers(ctx, a)
+}
+
+func (p *personalKeys) List(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*PersonalKey, error) {
+	if err := domain.ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	auths, err := p.repo.ListByOwner(ctx, gatewayID, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list personal keys: %w", err)
+	}
+	out := make([]*PersonalKey, 0, len(auths))
+	for _, a := range auths {
+		key, err := p.withConsumers(ctx, a)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, nil
+}
+
+func (p *personalKeys) RotateKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID, expiry *ExpiryChange) (*PersonalKey, error) {
+	if err := validateOwnedExpiryChange(expiry, p.now()); err != nil {
+		return nil, err
+	}
+	a, err := p.findOwned(ctx, gatewayID, ownerID, id)
+	if err != nil {
+		return nil, err
+	}
+	current, err := p.withConsumers(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	return p.rotate(ctx, gatewayID, ownerID, current, expiry)
+}
+
+func (p *personalKeys) RevokeKey(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) error {
+	a, err := p.findOwned(ctx, gatewayID, ownerID, id)
+	if err != nil {
+		return err
+	}
+	return p.deleter.Delete(ctx, gatewayID, a.ID)
+}
+
+// withConsumers is a with the personal consumers it is linked to, an empty
+// list rather than nil when it has none.
+func (p *personalKeys) withConsumers(ctx context.Context, a *domain.Auth) (*PersonalKey, error) {
 	consumerIDs, err := p.links.ListIDsByAuthID(ctx, a.ID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list consumers of personal key: %w", err)
@@ -186,6 +242,23 @@ func (p *personalKeys) find(ctx context.Context, gatewayID ids.GatewayID, ownerI
 	a, err := p.repo.FindByOwnerAndGroup(ctx, gatewayID, ownerID, "")
 	if err != nil {
 		return nil, fmt.Errorf("auth: find personal key: %w", err)
+	}
+	return a, nil
+}
+
+// findOwned is the key id when ownerID holds it on gatewayID. Any other key,
+// an application key or another user's, is not found: the caller learns
+// nothing about keys that are not theirs.
+func (p *personalKeys) findOwned(ctx context.Context, gatewayID ids.GatewayID, ownerID string, id ids.AuthID) (*domain.Auth, error) {
+	if err := domain.ValidateOwner(ownerID); err != nil {
+		return nil, err
+	}
+	a, err := p.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("auth: find personal key: %w", err)
+	}
+	if a.GatewayID != gatewayID || !a.IsOwned() || a.OwnerID != ownerID {
+		return nil, domain.ErrNotFound
 	}
 	return a, nil
 }

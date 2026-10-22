@@ -130,6 +130,35 @@ func TestUpdateAuthOwnerGroups_RecordsTheOwnersEmailWhenSent(t *testing.T) {
 	}
 }
 
+// A group key's group is renamed with the owner's groups: the name changes,
+// the group does not, and the groups stay every group the owner belongs to.
+func TestUpdateAuthOwnerGroups_RenamesAGroupKeysGroup(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	grouped := groupKeyOf("alice")(t, gwID)
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, grouped.ID).Return(grouped, nil).Once()
+	repo.EXPECT().UpdateOwner(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+		return a.GroupID == "g-eng" && a.GroupName == "platform engineering" && slices.Equal(a.OwnerGroups, []string{"platform engineering", "sre"})
+	})).RunAndReturn(func(_ context.Context, a *domain.Auth) (*domain.Auth, error) { return a, nil }).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
+
+	status, raw := doJSON(t, ownerGroupsApp(repo, publisher, &configsynctest.FakeSignaler{}), http.MethodPut, ownerGroupsURL(gwID, grouped.ID.String()),
+		`{"groups":["sre","platform engineering"],"group_name":" platform engineering "}`)
+	require.Equal(t, http.StatusOK, status, raw)
+	require.Contains(t, raw, `"group_id":"g-eng","group_name":"platform engineering"`)
+	require.Contains(t, raw, `"owner_groups":["platform engineering","sre"]`)
+}
+
+func groupKeyOf(owner string) func(t *testing.T, gwID ids.GatewayID) *domain.Auth {
+	return func(t *testing.T, gwID ids.GatewayID) *domain.Auth {
+		a := testAPIKeyAuth(t, gwID, "personal-"+owner, owner)
+		a.GroupID, a.GroupName = "g-eng", "engineering"
+		return a
+	}
+}
+
 func TestUpdateAuthOwnerGroups_RefusesWithoutWriting(t *testing.T) {
 	t.Parallel()
 	const groups = `{"groups":["engineering"]}`
@@ -146,9 +175,15 @@ func TestUpdateAuthOwnerGroups_RefusesWithoutWriting(t *testing.T) {
 		"another gateway's key": {body: groups, auth: func(t *testing.T, _ ids.GatewayID) *domain.Auth {
 			return testAPIKeyAuth(t, ids.New[ids.GatewayKind](), "personal-alice", "alice")
 		}, wantStatus: http.StatusNotFound, wantCode: "not_found"},
-		"a group name too long": {body: tooLong, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
-		"groups as a string":    {body: `{"groups":"engineering"}`, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
-		"not an email":          {body: `{"groups":["engineering"],"email":"alice at acme"}`, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"a group name too long":           {body: tooLong, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"groups as a string":              {body: `{"groups":"engineering"}`, wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"not an email":                    {body: `{"groups":["engineering"],"email":"alice at acme"}`, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"a group name for a personal key": {body: `{"groups":["engineering"],"group_name":"engineering"}`, auth: ownedBy("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "personal_key"},
+		"a group name for an application key": {body: `{"groups":["engineering"],"group_name":"engineering"}`, auth: func(t *testing.T, gwID ids.GatewayID) *domain.Auth {
+			return testAPIKeyAuth(t, gwID, "ci", "")
+		}, wantStatus: http.StatusUnprocessableEntity, wantCode: "application_key"},
+		"a blank group name":        {body: `{"groups":["engineering"],"group_name":" "}`, auth: groupKeyOf("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
+		"a key group name too long": {body: `{"groups":["engineering"],"group_name":"` + strings.Repeat("g", domain.MaxOwnerGroupLength+1) + `"}`, auth: groupKeyOf("alice"), wantStatus: http.StatusUnprocessableEntity, wantCode: "validation_failed"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

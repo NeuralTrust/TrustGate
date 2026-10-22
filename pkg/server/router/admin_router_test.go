@@ -72,8 +72,13 @@ func TestAdminRouterRefusesServiceCredentialsOnThePersonalKey(t *testing.T) {
 
 	path := "/v1/gateways/" + gatewayID.String() + "/store/principal/llm-key"
 	forUser := "/v1/gateways/" + gatewayID.String() + "/store/users/bob/llm-key"
+	everyKey := "/v1/gateways/" + gatewayID.String() + "/store/principal/llm-keys"
+	oneKey := everyKey + "/" + ids.New[ids.AuthKind]().String()
 	for token := range credentials {
-		for _, route := range [][2]string{{http.MethodGet, path}, {http.MethodPost, path}, {http.MethodPost, path + "/rotate"}, {http.MethodDelete, path}, {http.MethodPost, forUser}} {
+		for _, route := range [][2]string{
+			{http.MethodGet, path}, {http.MethodPost, path}, {http.MethodPost, path + "/rotate"}, {http.MethodDelete, path}, {http.MethodPost, forUser},
+			{http.MethodGet, everyKey}, {http.MethodPost, oneKey + "/rotate"}, {http.MethodDelete, oneKey},
+		} {
 			req := httptest.NewRequest(route[0], route[1], strings.NewReader(`{"expires_at":"2099-01-01T00:00:00Z"}`))
 			req.Header.Set(fiber.HeaderAuthorization, "Bearer "+token)
 			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)

@@ -260,6 +260,11 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/llm-key", interactive, r.deps.StoreLLMKey.Create)
 			store.Post("/principal/llm-key/rotate", interactive, r.deps.StoreLLMKey.Rotate)
 			store.Delete("/principal/llm-key", interactive, r.deps.StoreLLMKey.Revoke)
+			// Every key the caller holds, their personal key and their group
+			// keys, each addressed by id.
+			store.Get("/principal/llm-keys", interactive, r.deps.StoreLLMKey.List)
+			store.Post("/principal/llm-keys/:auth_id/rotate", interactive, r.deps.StoreLLMKey.RotateKey)
+			store.Delete("/principal/llm-keys/:auth_id", interactive, r.deps.StoreLLMKey.RevokeKey)
 			// An admin issuing a user's key for them: a person in the console, never a machine.
 			store.Post("/users/:user_id/llm-key", interactive, r.deps.StoreLLMKey.CreateForUser)
 		}

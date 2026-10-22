@@ -58,3 +58,19 @@ func FromPersonalKey(key *appauth.PersonalKey) PersonalKeyResponse {
 		UpdatedAt:   key.Auth.UpdatedAt,
 	}
 }
+
+// PersonalKeyListResponse is every key the caller holds on the gateway,
+// newest first.
+type PersonalKeyListResponse struct {
+	Items []PersonalKeyResponse `json:"items"`
+}
+
+// FromPersonalKeys maps the caller's keys, an empty list rather than null when
+// they hold none.
+func FromPersonalKeys(keys []*appauth.PersonalKey) PersonalKeyListResponse {
+	out := PersonalKeyListResponse{Items: make([]PersonalKeyResponse, 0, len(keys))}
+	for _, key := range keys {
+		out.Items = append(out.Items, FromPersonalKey(key))
+	}
+	return out
+}
