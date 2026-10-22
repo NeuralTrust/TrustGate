@@ -96,7 +96,7 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	key, err := h.keys.Create(c.UserContext(), gatewayID, appauth.PersonalKeyOwner{ID: owner, Email: callerEmail(c)}, expiresAt)
+	key, err := h.keys.Create(c.UserContext(), gatewayID, appauth.PersonalKeyOwner{ID: owner, Email: callerEmail(c)}, authdomain.KeyGroup{}, expiresAt)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
@@ -135,7 +135,7 @@ func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	owner := appauth.PersonalKeyOwner{ID: strings.TrimSpace(c.Params("user_id")), Email: req.OwnerEmail}
-	key, err := h.keys.Create(c.UserContext(), gatewayID, owner, expiresAt)
+	key, err := h.keys.Create(c.UserContext(), gatewayID, owner, authdomain.KeyGroup{}, expiresAt)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}

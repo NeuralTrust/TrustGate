@@ -17,6 +17,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,14 +89,14 @@ func (f *personalKeysFixture) published() {
 }
 
 func (f *personalKeysFixture) noKey(owner string) {
-	f.repo.EXPECT().FindByOwner(mock.Anything, f.gwID, owner).Return(nil, domain.ErrNotFound).Once()
+	f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, owner, "").Return(nil, domain.ErrNotFound).Once()
 }
 
 func (f *personalKeysFixture) existingKey(t *testing.T) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", personalNow.Add(5*day), personalNow)
+	a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{}, personalNow.Add(5*day), personalNow)
 	require.NoError(t, err)
-	f.repo.EXPECT().FindByOwner(mock.Anything, f.gwID, "alice").Return(a, nil).Once()
+	f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "").Return(a, nil).Once()
 	return a
 }
 
@@ -122,7 +123,7 @@ func TestPersonalKeys_Create_FirstKey(t *testing.T) {
 	})).Return(nil).Once()
 	f.published()
 
-	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, personalLimit)
+	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, domain.KeyGroup{}, personalLimit)
 	require.NoError(t, err)
 	require.NotEmpty(t, key.Auth.RawKey)
 	require.Equal(t, domain.HashAPIKey(key.Auth.RawKey), key.Auth.KeyHash)
@@ -161,7 +162,7 @@ func TestPersonalKeys_Create_Refused(t *testing.T) {
 		}},
 		"owner lookup fails": {owner: "alice", expiresAt: personalLimit, want: errStore, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateway("")
-			f.repo.EXPECT().FindByOwner(mock.Anything, f.gwID, "alice").Return(nil, errStore).Once()
+			f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "").Return(nil, errStore).Once()
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -170,9 +171,59 @@ func TestPersonalKeys_Create_Refused(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, f)
 			}
-			_, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: tc.owner, Email: tc.email}, tc.expiresAt)
+			_, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: tc.owner, Email: tc.email}, domain.KeyGroup{}, tc.expiresAt)
 			require.ErrorIs(t, err, tc.want)
 			require.Zero(t, f.signaler.Count())
+		})
+	}
+}
+
+// A group key is looked up, and refused, by its own group: the owner's
+// personal key does not stand in its way, and another key for the group does.
+func TestPersonalKeys_Create_GroupKey(t *testing.T) {
+	t.Parallel()
+	eng := domain.KeyGroup{ID: " g-eng ", Name: " engineering "}
+
+	t.Run("beside the personal key", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		f.gateway(gatewaydomain.DataPlaneHosted)
+		f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "g-eng").Return(nil, domain.ErrNotFound).Once()
+		f.repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+			return a.OwnerID == "alice" && a.GroupID == "g-eng" && a.GroupName == "engineering"
+		})).Return(nil).Once()
+		f.published()
+
+		key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, personalLimit)
+		require.NoError(t, err)
+		require.True(t, key.Auth.IsGroupKey())
+		require.Equal(t, domain.KeyGroup{ID: "g-eng", Name: "engineering"}, key.Auth.KeyGroup())
+	})
+
+	t.Run("a second key for the group", func(t *testing.T) {
+		t.Parallel()
+		f := newPersonalKeysFixture(t)
+		f.gateway("")
+		existing, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", eng, personalLimit, personalNow)
+		require.NoError(t, err)
+		f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "g-eng").Return(existing, nil).Once()
+
+		_, err = f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, personalLimit)
+		require.ErrorIs(t, err, domain.ErrOwnedKeyExists)
+	})
+
+	for name, group := range map[string]domain.KeyGroup{
+		"a group without its name": {ID: "g-eng"},
+		"a name without its group": {Name: "engineering"},
+		"a name too long":          {ID: "g-eng", Name: strings.Repeat("e", domain.MaxOwnerGroupLength+1)},
+		"an id too long":           {ID: strings.Repeat("g", domain.MaxKeyGroupIDLength+1), Name: "engineering"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newPersonalKeysFixture(t)
+			_, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, group, personalLimit)
+			require.ErrorIs(t, err, domain.ErrInvalidKeyGroup)
+			require.ErrorIs(t, err, commonerrors.ErrValidation)
 		})
 	}
 }
@@ -318,7 +369,7 @@ func TestPersonalKeys_RevokeThenCreate(t *testing.T) {
 	f.noKey("alice")
 	f.repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	f.published()
-	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, personalLimit)
+	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, personalLimit)
 	require.NoError(t, err)
 	require.NotEqual(t, existing.ID, key.Auth.ID)
 	require.Empty(t, key.ConsumerIDs)
@@ -371,7 +422,7 @@ func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
 	publisher := cachemocks.NewEventPublisher(t)
 	gwID := ids.New[ids.GatewayKind]()
 	gateways.EXPECT().FindByID(mock.Anything, gwID).Return(&gatewaydomain.Gateway{ID: gwID}, nil).Once()
-	repo.EXPECT().FindByOwner(mock.Anything, gwID, "alice").Return(nil, domain.ErrNotFound).Once()
+	repo.EXPECT().FindByOwnerAndGroup(mock.Anything, gwID, "alice", "").Return(nil, domain.ErrNotFound).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
 	logger := newTestLogger()
@@ -380,7 +431,7 @@ func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
 		appauth.NewKeyEvents(manager, publisher, logger, nil), nil)
 
 	before := time.Now().UTC()
-	key, err := keys.Create(context.Background(), gwID, appauth.PersonalKeyOwner{ID: "alice"}, before.Add(day))
+	key, err := keys.Create(context.Background(), gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, before.Add(day))
 	require.NoError(t, err)
 	require.Equal(t, time.UTC, key.Auth.CreatedAt.Location())
 	require.False(t, key.Auth.CreatedAt.Before(before))

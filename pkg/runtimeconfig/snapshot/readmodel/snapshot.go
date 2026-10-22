@@ -98,6 +98,7 @@ type Snapshot struct {
 	authsByGateway      map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth
 	authsByAPIKeyHash   map[string]*authdomain.Auth
 	authsByOwner        map[authOwnerKey]*authdomain.Auth
+	authsOfOwner        map[authOwnerKey][]*authdomain.Auth
 	authsEnabledByAge   []*authdomain.Auth
 	authsEnabledGateway map[ids.GatewayID][]*authdomain.Auth
 
@@ -140,6 +141,7 @@ func Build(data Data) *Snapshot {
 		authsByGateway:         make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
 		authsByAPIKeyHash:      make(map[string]*authdomain.Auth),
 		authsByOwner:           make(map[authOwnerKey]*authdomain.Auth),
+		authsOfOwner:           make(map[authOwnerKey][]*authdomain.Auth),
 		authsEnabledGateway:    make(map[ids.GatewayID][]*authdomain.Auth),
 		catalogByProviderSlug:  make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
 		catalogByProviderCode:  make(map[string][]*catalogdomain.Model),
@@ -305,8 +307,15 @@ func (s *Snapshot) buildAuths() {
 			s.authsByAPIKeyHash[a.KeyHash] = a
 		}
 		if a.IsOwned() {
-			s.authsByOwner[authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID}] = a
+			s.authsByOwner[authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID, groupID: a.GroupID}] = a
+			owner := authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID}
+			s.authsOfOwner[owner] = append(s.authsOfOwner[owner], a)
 		}
+	}
+	for _, keys := range s.authsOfOwner {
+		sort.SliceStable(keys, func(a, b int) bool {
+			return recencyDescIDAsc(keys[a].CreatedAt, keys[a].ID.String(), keys[b].CreatedAt, keys[b].ID.String())
+		})
 	}
 
 	enabled := make([]*authdomain.Auth, 0, len(s.data.Auths))
@@ -520,18 +529,31 @@ func (s *Snapshot) AuthByAPIKeyHash(keyHash string) (*authdomain.Auth, bool) {
 	return a, ok
 }
 
+// authOwnerKey names one key of an owner: the one held for groupID, their
+// personal key when groupID is empty. Without a group it also names the owner,
+// for the list of all their keys.
 type authOwnerKey struct {
 	gatewayID ids.GatewayID
 	ownerID   string
+	groupID   string
 }
 
-// AuthByOwner returns the personal key ownerID holds on gatewayID.
-func (s *Snapshot) AuthByOwner(gatewayID ids.GatewayID, ownerID string) (*authdomain.Auth, bool) {
+// AuthByOwnerAndGroup returns the key ownerID holds on gatewayID for groupID,
+// their personal key when groupID is empty.
+func (s *Snapshot) AuthByOwnerAndGroup(gatewayID ids.GatewayID, ownerID, groupID string) (*authdomain.Auth, bool) {
 	if ownerID == "" {
 		return nil, false
 	}
-	a, ok := s.authsByOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID}]
+	a, ok := s.authsByOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID, groupID: groupID}]
 	return a, ok
+}
+
+// AuthsByOwner returns every key ownerID holds on gatewayID, newest first.
+func (s *Snapshot) AuthsByOwner(gatewayID ids.GatewayID, ownerID string) []*authdomain.Auth {
+	if ownerID == "" {
+		return nil
+	}
+	return s.authsOfOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID}]
 }
 
 func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Auth {

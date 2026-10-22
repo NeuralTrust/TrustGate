@@ -69,7 +69,7 @@ func (m *memIssuer) Create(_ context.Context, gw ids.GatewayID, owner appauth.Pe
 	m.groups = groups
 	m.email = owner.Email
 	expires := time.Now().Add(time.Hour).Truncate(time.Second)
-	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner.ID, expires, time.Now())
+	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner.ID, authdomain.KeyGroup{}, expires, time.Now())
 	if err != nil {
 		return nil, err
 	}

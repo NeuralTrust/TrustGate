@@ -104,10 +104,10 @@ func TestLLMKeyHandler_RefusesCallersWithoutATenantUser(t *testing.T) {
 func TestLLMKeyHandler_CreatesWithoutAnEmailThatIsNotOne(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
 	require.NoError(t, err)
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, mock.Anything).Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, mock.Anything).Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
 	caller := alice
 	caller.Email = "alice at acme"
 
@@ -120,11 +120,11 @@ func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
 	require.NoError(t, err)
 	key := &appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.MatchedBy(expiry.Equal)).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiry.Equal)).Return(key, nil).Once()
 	keys.EXPECT().Get(mock.Anything, gw, "alice").Return(key, nil).Once()
 	keys.EXPECT().Rotate(mock.Anything, gw, "alice", mock.MatchedBy(func(at *time.Time) bool { return at != nil && at.Equal(expiry) })).Return(key, nil).Once()
 	app := newLLMKeyApp(keys, alice)
@@ -163,16 +163,16 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 		"create without a content type":      {method: http.MethodPost, body: validLLMKeyBody, plain: true, want: http.StatusUnprocessableEntity},
 		"rotate with a malformed body":       {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":1}`, want: http.StatusUnprocessableEntity},
 		"create a second key": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusConflict, says: "Rotate or revoke it instead", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
 		}},
 		"create out of range": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
 		}},
 		"create on a hybrid gateway": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
 		}},
 		"create failing unexpectedly": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusInternalServerError, hides: "10.0.0.7", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()
 		}},
 		"get without a key": {method: http.MethodGet, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Get(mock.Anything, mock.Anything, "alice").Return(nil, domain.ErrNotFound).Once()
@@ -219,10 +219,10 @@ func TestLLMKeyHandler_CreatesAnotherUsersKeyForTheAdmin(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
 	require.NoError(t, err)
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, mock.MatchedBy(expiry.Equal)).
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiry.Equal)).
 		Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
 
 	status, raw := callUserLLMKey(t, newLLMKeyApp(keys, alice), gw, "bob", `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob@acme.test","owner_id":"carol"}`)
@@ -246,14 +246,14 @@ func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 		"with a malformed expires_at": {body: `{"expires_at":"soon"}`, want: http.StatusUnprocessableEntity, says: "expires_at must be an RFC 3339 instant"},
 		"with a malformed body":       {body: `{"owner_email":1}`, want: http.StatusUnprocessableEntity},
 		"for a user who has a key": {body: validLLMKeyBody, want: http.StatusConflict, says: "already exists", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, bob, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{}, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
 		}},
 		"with an email that is not one": {body: `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob at acme"}`, want: http.StatusUnprocessableEntity, says: "not an email address", expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "bob", Email: "bob at acme"}, mock.Anything).
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "bob", Email: "bob at acme"}, domain.KeyGroup{}, mock.Anything).
 				Return(nil, fmt.Errorf("%w: %q is not an email address", domain.ErrInvalidOwnerEmail, "bob at acme")).Once()
 		}},
 		"on a hybrid gateway": {body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, bob, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
+			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
 		}},
 	}
 	for name, tc := range cases {

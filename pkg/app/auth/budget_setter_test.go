@@ -36,7 +36,7 @@ var budgetNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
 func ownedKey(t *testing.T, gwID ids.GatewayID) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewOwnedAPIKeyAuth(gwID, "alice", budgetNow.Add(24*time.Hour), budgetNow.Add(-time.Hour))
+	a, err := domain.NewOwnedAPIKeyAuth(gwID, "alice", domain.KeyGroup{}, budgetNow.Add(24*time.Hour), budgetNow.Add(-time.Hour))
 	require.NoError(t, err)
 	a.RawKey = ""
 	return a

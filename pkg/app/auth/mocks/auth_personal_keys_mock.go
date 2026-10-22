@@ -7,6 +7,8 @@ import (
 
 	auth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 
+	domainauth "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+
 	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 
 	mock "github.com/stretchr/testify/mock"
@@ -27,9 +29,9 @@ func (_m *PersonalKeys) EXPECT() *PersonalKeys_Expecter {
 	return &PersonalKeys_Expecter{mock: &_m.Mock}
 }
 
-// Create provides a mock function with given fields: ctx, gatewayID, owner, expiresAt
-func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, expiresAt time.Time) (*auth.PersonalKey, error) {
-	ret := _m.Called(ctx, gatewayID, owner, expiresAt)
+// Create provides a mock function with given fields: ctx, gatewayID, owner, group, expiresAt
+func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, group domainauth.KeyGroup, expiresAt time.Time) (*auth.PersonalKey, error) {
+	ret := _m.Called(ctx, gatewayID, owner, group, expiresAt)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Create")
@@ -37,19 +39,19 @@ func (_m *PersonalKeys) Create(ctx context.Context, gatewayID ids.ID[ids.Gateway
 
 	var r0 *auth.PersonalKey
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) (*auth.PersonalKey, error)); ok {
-		return rf(ctx, gatewayID, owner, expiresAt)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, domainauth.KeyGroup, time.Time) (*auth.PersonalKey, error)); ok {
+		return rf(ctx, gatewayID, owner, group, expiresAt)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) *auth.PersonalKey); ok {
-		r0 = rf(ctx, gatewayID, owner, expiresAt)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, domainauth.KeyGroup, time.Time) *auth.PersonalKey); ok {
+		r0 = rf(ctx, gatewayID, owner, group, expiresAt)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*auth.PersonalKey)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) error); ok {
-		r1 = rf(ctx, gatewayID, owner, expiresAt)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, domainauth.KeyGroup, time.Time) error); ok {
+		r1 = rf(ctx, gatewayID, owner, group, expiresAt)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -66,14 +68,15 @@ type PersonalKeys_Create_Call struct {
 //   - ctx context.Context
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - owner auth.PersonalKeyOwner
+//   - group domainauth.KeyGroup
 //   - expiresAt time.Time
-func (_e *PersonalKeys_Expecter) Create(ctx interface{}, gatewayID interface{}, owner interface{}, expiresAt interface{}) *PersonalKeys_Create_Call {
-	return &PersonalKeys_Create_Call{Call: _e.mock.On("Create", ctx, gatewayID, owner, expiresAt)}
+func (_e *PersonalKeys_Expecter) Create(ctx interface{}, gatewayID interface{}, owner interface{}, group interface{}, expiresAt interface{}) *PersonalKeys_Create_Call {
+	return &PersonalKeys_Create_Call{Call: _e.mock.On("Create", ctx, gatewayID, owner, group, expiresAt)}
 }
 
-func (_c *PersonalKeys_Create_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, expiresAt time.Time)) *PersonalKeys_Create_Call {
+func (_c *PersonalKeys_Create_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], owner auth.PersonalKeyOwner, group domainauth.KeyGroup, expiresAt time.Time)) *PersonalKeys_Create_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(auth.PersonalKeyOwner), args[3].(time.Time))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(auth.PersonalKeyOwner), args[3].(domainauth.KeyGroup), args[4].(time.Time))
 	})
 	return _c
 }
@@ -83,7 +86,7 @@ func (_c *PersonalKeys_Create_Call) Return(_a0 *auth.PersonalKey, _a1 error) *Pe
 	return _c
 }
 
-func (_c *PersonalKeys_Create_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, time.Time) (*auth.PersonalKey, error)) *PersonalKeys_Create_Call {
+func (_c *PersonalKeys_Create_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.PersonalKeyOwner, domainauth.KeyGroup, time.Time) (*auth.PersonalKey, error)) *PersonalKeys_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }
