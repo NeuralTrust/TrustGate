@@ -220,7 +220,11 @@ type InstallRequest struct {
 	Code         string
 	InstalledBy  string
 	Groups       []string
-	OpenMode     bool
+	// GroupScoped marks a request made with a group key: grants are matched
+	// on Groups (the key's group) alone, never on PrincipalSub, which still
+	// owns the install.
+	GroupScoped bool
+	OpenMode    bool
 	// Config carries the per-user URL variable values the caller supplied (e.g.
 	// {"instance":"acme","database":"analytics"}). Non-secret only — secrets are
 	// collected through the connect link, never inline. Validated against the
@@ -237,6 +241,15 @@ type InstallRequest struct {
 	// read (Access → Approvals); an install that needs no approval asks nobody,
 	// so it carries none even when the caller sends one.
 	Reason string
+}
+
+// grantSubject is the subject a grant may name the requester by: none for a
+// group key, whose group alone is granted.
+func (in InstallRequest) grantSubject() string {
+	if in.GroupScoped {
+		return ""
+	}
+	return in.PrincipalSub
 }
 
 type installer struct {
@@ -735,7 +748,8 @@ func (i *installer) decideAmong(
 	if err != nil {
 		return installDecision{}, err
 	}
-	codeGranted := in.OpenMode || grants.CodeAllows(code, in.Groups, in.PrincipalSub)
+	grantee := in.grantSubject()
+	codeGranted := in.OpenMode || grants.CodeAllows(code, in.Groups, grantee)
 
 	// An explicitly named instance must exist and be an instance of this code.
 	if !in.RegistryID.IsNil() {
@@ -743,7 +757,7 @@ func (i *installer) decideAmong(
 		if reg == nil {
 			return installDecision{}, fmt.Errorf("%w: %q is not an instance of %q", ErrUnknownInstance, in.RegistryID, code)
 		}
-		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
+		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, grantee) {
 			return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusInstalled}, nil
 		}
 		return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusPendingApproval}, nil
@@ -773,7 +787,7 @@ func (i *installer) decideAmong(
 	if !codeGranted {
 		usable = usable[:0:0]
 		for _, reg := range instances {
-			if grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
+			if grants.Instance(reg.ID).Allows(in.Groups, grantee) {
 				usable = append(usable, reg)
 			}
 		}

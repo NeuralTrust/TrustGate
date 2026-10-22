@@ -433,8 +433,13 @@ func personalKeyIdentity(ctx context.Context, a *authdomain.Auth, store bool, no
 	}
 	principal := &identity.Principal{Subject: a.OwnerID, Method: identity.MethodPersonalKey}
 	claims := map[string]any{}
-	if len(a.OwnerGroups) > 0 {
-		claims[identity.ClaimGroups] = slices.Clone(a.OwnerGroups)
+	if groups := personalKeyGroups(a); len(groups) > 0 {
+		claims[identity.ClaimGroups] = groups
+	}
+	// A group key opens the Store as its group alone: the Store's mode and
+	// grants read this claim, never the owner's own policy or other groups.
+	if a.IsGroupKey() && a.GroupName != "" {
+		claims[identity.ClaimKeyGroup] = a.GroupName
 	}
 	// The owner's email, so the key's calls are shown under the person who
 	// made them, as a session's are, and not under their user id.
@@ -445,6 +450,20 @@ func personalKeyIdentity(ctx context.Context, a *authdomain.Auth, store bool, no
 		principal.Claims = claims
 	}
 	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+}
+
+// personalKeyGroups are the groups a personal key's principal carries: every
+// group of its owner, which MCP policies scoped to a group are matched
+// against. A group key adds its own group, which its owner belongs to however
+// stale the recorded list is, so a policy on that group is never skipped for
+// a call the key makes.
+func personalKeyGroups(a *authdomain.Auth) []string {
+	groups := slices.Clone(a.OwnerGroups)
+	if a.IsGroupKey() && a.GroupName != "" && !slices.Contains(groups, a.GroupName) {
+		groups = append(groups, a.GroupName)
+		slices.Sort(groups)
+	}
+	return groups
 }
 
 // isStorePath reports whether path addresses the MCP Store, as the path
