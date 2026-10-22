@@ -68,20 +68,20 @@ func (h *LLMKeyHandler) Get(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create your personal LLM key
-// @Description  Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored. The key records the email the caller's token carries, which every call it makes is shown under.
+// @Description  Issues the caller's personal key on the gateway, the one that belongs to no group, linked to no consumer, and returns its secret once. expires_at is optional: when set it must fall within the next 366 days; absent, null or empty, the key never expires. One personal key per user per gateway; owner_id, principal_sub, consumer_id and any group in the body are ignored (a key for a group is issued by the admin route). The key records the email the caller's token carries, which every call it makes is shown under.
 // @Tags         store
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string                            true  "Gateway id"  format(uuid)
-// @Param        body        body      storerequest.CreateLLMKeyRequest  true  "Expiry of the key"
+// @Param        body        body      storerequest.CreateLLMKeyRequest  false  "Expiry of the key"
 // @Success      201         {object}  storeresponse.IssuedPersonalKeyResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
 // @Failure      404         {object}  httpio.ErrorBody  "No such gateway"
 // @Failure      409         {object}  httpio.ErrorBody  "The caller already holds a key on this gateway"
-// @Failure      422         {object}  httpio.ErrorBody  "Missing or out-of-range expires_at, or a hybrid gateway"
+// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at, or a hybrid gateway"
 // @Router       /v1/gateways/{gateway_id}/store/principal/llm-key [post]
 func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 	gatewayID, owner, err := selfScope(c)
@@ -89,8 +89,10 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	var req storerequest.CreateLLMKeyRequest
-	if err := c.BodyParser(&req); err != nil {
-		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		}
 	}
 	expiresAt, err := req.Expiry()
 	if err != nil {
@@ -105,21 +107,21 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 
 // CreateForUser godoc
 // @Summary      Create a user's personal LLM key
-// @Description  Issues the personal key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. It is the key the user would create themselves: one per user per gateway, expires_at required and within the next 90 days, and the user rotates or revokes it afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.
+// @Description  Issues the personal key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. It is the key the user would create themselves: one per user per gateway, expires_at optional (absent never expires; set, within the next 366 days), and the user rotates or revokes it afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.
 // @Tags         store
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string                                true  "Gateway id"  format(uuid)
 // @Param        user_id     path      string                                true  "Platform user id of the key's owner"
-// @Param        body        body      storerequest.CreateUserLLMKeyRequest  true  "Expiry of the key and the owner's email"
+// @Param        body        body      storerequest.CreateUserLLMKeyRequest  false  "Expiry of the key and the owner's email"
 // @Success      201         {object}  storeresponse.IssuedPersonalKeyResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
 // @Failure      404         {object}  httpio.ErrorBody  "No such gateway"
 // @Failure      409         {object}  httpio.ErrorBody  "The user already holds a key on this gateway"
-// @Failure      422         {object}  httpio.ErrorBody  "Missing or out-of-range expires_at, an owner_email that is not an address, or a hybrid gateway"
+// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at, an owner_email that is not an address, or a hybrid gateway"
 // @Router       /v1/gateways/{gateway_id}/store/users/{user_id}/llm-key [post]
 func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 	gatewayID, _, err := selfScope(c)
@@ -127,8 +129,10 @@ func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	var req storerequest.CreateUserLLMKeyRequest
-	if err := c.BodyParser(&req); err != nil {
-		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		}
 	}
 	expiresAt, err := req.Expiry()
 	if err != nil {
@@ -144,7 +148,7 @@ func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 
 // Rotate godoc
 // @Summary      Rotate your personal LLM key
-// @Description  Replaces the secret of the caller's personal key and returns the new one once. The key keeps its id and every consumer link. Without expires_at the current expiry stays, unless it has passed; with it, it must fall within the next 90 days.
+// @Description  Replaces the secret of the caller's personal key (the one that belongs to no group) and returns the new one once. The key keeps its id and every consumer link. Without expires_at or never_expires the current expiry stays, a key that never expires included; a key whose expiry has passed then answers 422. expires_at sets a new expiry within the next 366 days; never_expires true renews it with none. The two cannot be combined (422).
 // @Tags         store
 // @Accept       json
 // @Produce      json
@@ -156,7 +160,7 @@ func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
 // @Failure      404         {object}  httpio.ErrorBody  "No key for the caller, or no such gateway"
-// @Failure      422         {object}  httpio.ErrorBody  "Out-of-range expires_at, or an expired key rotated without one"
+// @Failure      422         {object}  httpio.ErrorBody  "Out-of-range expires_at, expires_at with never_expires, or an expired key rotated with neither"
 // @Router       /v1/gateways/{gateway_id}/store/principal/llm-key/rotate [post]
 func (h *LLMKeyHandler) Rotate(c *fiber.Ctx) error {
 	gatewayID, owner, err := selfScope(c)
@@ -169,11 +173,11 @@ func (h *LLMKeyHandler) Rotate(c *fiber.Ctx) error {
 			return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 		}
 	}
-	expiresAt, err := req.Expiry()
+	expiry, err := req.Expiry()
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	key, err := h.keys.Rotate(c.UserContext(), gatewayID, owner, expiresAt)
+	key, err := h.keys.Rotate(c.UserContext(), gatewayID, owner, expiry)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}

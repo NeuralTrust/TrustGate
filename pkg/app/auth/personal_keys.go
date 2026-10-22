@@ -51,9 +51,12 @@ type PersonalKeyOwner struct {
 type PersonalKeys interface {
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
 	// Create issues the owner their personal key when group is the zero
-	// KeyGroup, else their key for group.
-	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt time.Time) (*PersonalKey, error)
-	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error)
+	// KeyGroup, else their key for group. A nil expiresAt never expires.
+	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt *time.Time) (*PersonalKey, error)
+	// Rotate replaces the secret. A nil expiry keeps the current expiry, which
+	// an expired key cannot; a non-nil one sets it, or clears it when its At
+	// is nil.
+	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiry *ExpiryChange) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
 }
 
@@ -106,7 +109,7 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	return &PersonalKey{Auth: a, ConsumerIDs: consumerIDs}, nil
 }
 
-func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt time.Time) (*PersonalKey, error) {
+func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt *time.Time) (*PersonalKey, error) {
 	ownerID := owner.ID
 	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, group, expiresAt, p.now())
 	if err != nil {
@@ -133,27 +136,38 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	return &PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil
 }
 
-func (p *personalKeys) Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error) {
-	now := p.now()
-	var expiry *ExpiryChange
-	if expiresAt != nil {
-		if err := domain.ValidateOwnedExpiry(*expiresAt, now); err != nil {
-			return nil, err
-		}
-		expiry = &ExpiryChange{At: expiresAt}
+func (p *personalKeys) Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiry *ExpiryChange) (*PersonalKey, error) {
+	if err := validateOwnedExpiryChange(expiry, p.now()); err != nil {
+		return nil, err
 	}
 	current, err := p.Get(ctx, gatewayID, ownerID)
 	if err != nil {
 		return nil, err
 	}
-	if expiry == nil && current.Auth.IsExpired(now) {
-		return nil, domain.ErrOwnedExpiry
+	return p.rotate(ctx, gatewayID, ownerID, current, expiry)
+}
+
+// rotate replaces the secret of current, one of ownerID's keys. A key that
+// has expired is not brought back on its old expiry: the caller names a new
+// one, or asks for none.
+func (p *personalKeys) rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, current *PersonalKey, expiry *ExpiryChange) (*PersonalKey, error) {
+	if expiry == nil && current.Auth.IsExpired(p.now()) {
+		return nil, fmt.Errorf("%w: the key has expired, so its rotation needs a new expiry", domain.ErrOwnedExpiry)
 	}
 	rotated, err := p.rotator.Rotate(ctx, RotateInput{ID: current.Auth.ID, GatewayID: gatewayID, Expiry: expiry, OwnerID: ownerID})
 	if err != nil {
 		return nil, err
 	}
 	return &PersonalKey{Auth: rotated, ConsumerIDs: current.ConsumerIDs}, nil
+}
+
+// validateOwnedExpiryChange refuses an expiry a personal key may not take.
+// Keeping the current one, and never expiring, are always allowed.
+func validateOwnedExpiryChange(expiry *ExpiryChange, now time.Time) error {
+	if expiry == nil || expiry.At == nil {
+		return nil
+	}
+	return domain.ValidateOwnedExpiry(*expiry.At, now)
 }
 
 func (p *personalKeys) Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error {

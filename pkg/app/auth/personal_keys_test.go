@@ -94,7 +94,7 @@ func (f *personalKeysFixture) noKey(owner string) {
 
 func (f *personalKeysFixture) existingKey(t *testing.T) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{}, personalNow.Add(5*day), personalNow)
+	a, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", domain.KeyGroup{}, ptr(personalNow.Add(5*day)), personalNow)
 	require.NoError(t, err)
 	f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "").Return(a, nil).Once()
 	return a
@@ -123,7 +123,7 @@ func TestPersonalKeys_Create_FirstKey(t *testing.T) {
 	})).Return(nil).Once()
 	f.published()
 
-	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, domain.KeyGroup{}, personalLimit)
+	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, domain.KeyGroup{}, &personalLimit)
 	require.NoError(t, err)
 	require.NotEmpty(t, key.Auth.RawKey)
 	require.Equal(t, domain.HashAPIKey(key.Auth.RawKey), key.Auth.KeyHash)
@@ -136,31 +136,44 @@ func TestPersonalKeys_Create_FirstKey(t *testing.T) {
 	require.Equal(t, 1, f.signaler.Count())
 }
 
+func TestPersonalKeys_Create_NeverExpires(t *testing.T) {
+	t.Parallel()
+	f := newPersonalKeysFixture(t)
+	f.gateway(gatewaydomain.DataPlaneHosted)
+	f.noKey("alice")
+	f.repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool { return a.ExpiresAt == nil })).Return(nil).Once()
+	f.published()
+
+	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, nil)
+	require.NoError(t, err)
+	require.Nil(t, key.Auth.ExpiresAt)
+	require.False(t, key.Auth.IsExpired(personalNow.Add(10*domain.MaxOwnedKeyLifetime)))
+}
+
 func TestPersonalKeys_Create_Refused(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		owner     string
 		email     string
-		expiresAt time.Time
+		expiresAt *time.Time
 		setup     func(t *testing.T, f *personalKeysFixture)
 		want      error
 	}{
-		"no expiry":           {owner: "alice", want: domain.ErrOwnedExpiry},
-		"expiry at now":       {owner: "alice", expiresAt: personalNow, want: domain.ErrOwnedExpiry},
-		"expiry past 90 days": {owner: "alice", expiresAt: personalLimit.Add(time.Second), want: domain.ErrOwnedExpiry},
-		"blank owner":         {owner: " ", expiresAt: personalLimit, want: domain.ErrInvalidOwner},
-		"not an email":        {owner: "alice", email: "alice at acme", expiresAt: personalLimit, want: domain.ErrInvalidOwnerEmail},
-		"hybrid gateway":      {owner: "alice", expiresAt: personalLimit, want: consumerdomain.ErrHybridPersonal, setup: func(_ *testing.T, f *personalKeysFixture) { f.gateway(gatewaydomain.DataPlaneHybrid) }},
-		"second key":          {owner: "alice", expiresAt: personalLimit, want: domain.ErrOwnedKeyExists, setup: func(t *testing.T, f *personalKeysFixture) { f.gateway(""); f.existingKey(t) }},
-		"concurrent create 409": {owner: "alice", expiresAt: personalLimit, want: domain.ErrOwnedKeyExists, setup: func(_ *testing.T, f *personalKeysFixture) {
+		"expiry at now":        {owner: "alice", expiresAt: &personalNow, want: domain.ErrOwnedExpiry},
+		"expiry past 366 days": {owner: "alice", expiresAt: ptr(personalNow.Add(domain.MaxOwnedKeyLifetime + time.Second)), want: domain.ErrOwnedExpiry},
+		"blank owner":          {owner: " ", expiresAt: &personalLimit, want: domain.ErrInvalidOwner},
+		"not an email":         {owner: "alice", email: "alice at acme", expiresAt: &personalLimit, want: domain.ErrInvalidOwnerEmail},
+		"hybrid gateway":       {owner: "alice", expiresAt: &personalLimit, want: consumerdomain.ErrHybridPersonal, setup: func(_ *testing.T, f *personalKeysFixture) { f.gateway(gatewaydomain.DataPlaneHybrid) }},
+		"second key":           {owner: "alice", expiresAt: &personalLimit, want: domain.ErrOwnedKeyExists, setup: func(t *testing.T, f *personalKeysFixture) { f.gateway(""); f.existingKey(t) }},
+		"concurrent create 409": {owner: "alice", expiresAt: &personalLimit, want: domain.ErrOwnedKeyExists, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateway("")
 			f.noKey("alice")
 			f.repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrOwnedKeyExists).Once()
 		}},
-		"gateway lookup fails": {owner: "alice", expiresAt: personalLimit, want: errStore, setup: func(_ *testing.T, f *personalKeysFixture) {
+		"gateway lookup fails": {owner: "alice", expiresAt: &personalLimit, want: errStore, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateways.EXPECT().FindByID(mock.Anything, f.gwID).Return(nil, errStore).Once()
 		}},
-		"owner lookup fails": {owner: "alice", expiresAt: personalLimit, want: errStore, setup: func(_ *testing.T, f *personalKeysFixture) {
+		"owner lookup fails": {owner: "alice", expiresAt: &personalLimit, want: errStore, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateway("")
 			f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "").Return(nil, errStore).Once()
 		}},
@@ -194,7 +207,7 @@ func TestPersonalKeys_Create_GroupKey(t *testing.T) {
 		})).Return(nil).Once()
 		f.published()
 
-		key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, personalLimit)
+		key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, &personalLimit)
 		require.NoError(t, err)
 		require.True(t, key.Auth.IsGroupKey())
 		require.Equal(t, domain.KeyGroup{ID: "g-eng", Name: "engineering"}, key.Auth.KeyGroup())
@@ -204,11 +217,11 @@ func TestPersonalKeys_Create_GroupKey(t *testing.T) {
 		t.Parallel()
 		f := newPersonalKeysFixture(t)
 		f.gateway("")
-		existing, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", eng, personalLimit, personalNow)
+		existing, err := domain.NewOwnedAPIKeyAuth(f.gwID, "alice", eng, ptr(personalLimit), personalNow)
 		require.NoError(t, err)
 		f.repo.EXPECT().FindByOwnerAndGroup(mock.Anything, f.gwID, "alice", "g-eng").Return(existing, nil).Once()
 
-		_, err = f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, personalLimit)
+		_, err = f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, eng, &personalLimit)
 		require.ErrorIs(t, err, domain.ErrOwnedKeyExists)
 	})
 
@@ -221,7 +234,7 @@ func TestPersonalKeys_Create_GroupKey(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newPersonalKeysFixture(t)
-			_, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, group, personalLimit)
+			_, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, group, &personalLimit)
 			require.ErrorIs(t, err, domain.ErrInvalidKeyGroup)
 			require.ErrorIs(t, err, commonerrors.ErrValidation)
 		})
@@ -232,12 +245,17 @@ func TestPersonalKeys_Rotate(t *testing.T) {
 	t.Parallel()
 	at := func(d time.Duration) *time.Time { v := personalNow.Add(d); return &v }
 	for name, tc := range map[string]struct {
-		expired       bool
-		request, want *time.Time
+		expired, never bool
+		request        *appauth.ExpiryChange
+		want           *time.Time
 	}{
-		"new expiry at the cap":           {request: at(domain.MaxOwnedKeyLifetime), want: at(domain.MaxOwnedKeyLifetime)},
-		"absent keeps the current expiry": {want: at(5 * day)},
-		"an expired key takes a new one":  {expired: true, request: at(30 * day), want: at(30 * day)},
+		"new expiry at the cap":                   {request: &appauth.ExpiryChange{At: at(domain.MaxOwnedKeyLifetime)}, want: at(domain.MaxOwnedKeyLifetime)},
+		"absent keeps the current expiry":         {want: at(5 * day)},
+		"an expired key takes a new one":          {expired: true, request: &appauth.ExpiryChange{At: at(30 * day)}, want: at(30 * day)},
+		"never expires clears the expiry":         {request: &appauth.ExpiryChange{}},
+		"an expired key renewed to never expire":  {expired: true, request: &appauth.ExpiryChange{}},
+		"a key that never expires stays so":       {never: true},
+		"a key that never expires takes a expiry": {never: true, request: &appauth.ExpiryChange{At: at(30 * day)}, want: at(30 * day)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -245,6 +263,9 @@ func TestPersonalKeys_Rotate(t *testing.T) {
 			existing := f.existingKey(t)
 			if tc.expired {
 				existing.ExpiresAt = at(-day)
+			}
+			if tc.never {
+				existing.ExpiresAt = nil
 			}
 			id, oldKey, oldHash := existing.ID, existing.RawKey, existing.KeyHash
 			consumerIDs := f.links(id, 2)
@@ -258,7 +279,11 @@ func TestPersonalKeys_Rotate(t *testing.T) {
 			require.Equal(t, id, key.Auth.ID)
 			require.Equal(t, consumerIDs, key.ConsumerIDs)
 			require.NotEqual(t, oldKey, key.Auth.RawKey)
-			require.True(t, key.Auth.ExpiresAt.Equal(*tc.want))
+			if tc.want == nil {
+				require.Nil(t, key.Auth.ExpiresAt, "the key never expires")
+			} else {
+				require.True(t, key.Auth.ExpiresAt.Equal(*tc.want))
+			}
 			require.True(t, key.Auth.UpdatedAt.Equal(personalNow))
 			_, stale := f.keyCache.Get(oldHash)
 			require.False(t, stale)
@@ -271,18 +296,18 @@ func TestPersonalKeys_Rotate_Refused(t *testing.T) {
 	t.Parallel()
 	at := func(d time.Duration) *time.Time { v := personalNow.Add(d); return &v }
 	for name, tc := range map[string]struct {
-		request *time.Time
+		request *appauth.ExpiryChange
 		setup   func(t *testing.T, f *personalKeysFixture)
 		want    error
 	}{
-		"expiry beyond the cap": {request: at(domain.MaxOwnedKeyLifetime + time.Second), want: domain.ErrOwnedExpiry},
-		"expiry in the past":    {request: at(-time.Hour), want: domain.ErrOwnedExpiry},
+		"expiry beyond the cap": {request: &appauth.ExpiryChange{At: at(domain.MaxOwnedKeyLifetime + time.Second)}, want: domain.ErrOwnedExpiry},
+		"expiry in the past":    {request: &appauth.ExpiryChange{At: at(-time.Hour)}, want: domain.ErrOwnedExpiry},
 		"an expired key without a new expiry": {want: domain.ErrOwnedExpiry, setup: func(t *testing.T, f *personalKeysFixture) {
 			existing := f.existingKey(t)
 			existing.ExpiresAt = at(-day)
 			f.links(existing.ID, 1)
 		}},
-		"consumer listing fails": {request: at(30 * day), want: errStore, setup: func(t *testing.T, f *personalKeysFixture) {
+		"consumer listing fails": {request: &appauth.ExpiryChange{At: at(30 * day)}, want: errStore, setup: func(t *testing.T, f *personalKeysFixture) {
 			f.listingFails(f.existingKey(t).ID)
 		}},
 	} {
@@ -369,7 +394,7 @@ func TestPersonalKeys_RevokeThenCreate(t *testing.T) {
 	f.noKey("alice")
 	f.repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	f.published()
-	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, personalLimit)
+	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, &personalLimit)
 	require.NoError(t, err)
 	require.NotEqual(t, existing.ID, key.Auth.ID)
 	require.Empty(t, key.ConsumerIDs)
@@ -431,7 +456,7 @@ func TestPersonalKeys_NilClockReadsUTCNow(t *testing.T) {
 		appauth.NewKeyEvents(manager, publisher, logger, nil), nil)
 
 	before := time.Now().UTC()
-	key, err := keys.Create(context.Background(), gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, before.Add(day))
+	key, err := keys.Create(context.Background(), gwID, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, ptr(before.Add(day)))
 	require.NoError(t, err)
 	require.Equal(t, time.UTC, key.Auth.CreatedAt.Location())
 	require.False(t, key.Auth.CreatedAt.Before(before))

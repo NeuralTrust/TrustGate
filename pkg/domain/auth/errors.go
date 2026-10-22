@@ -44,7 +44,7 @@ var (
 	// ErrRotatedConcurrently is a rotation that lost the race to another one:
 	// the secret it read is no longer the stored one, so it changes nothing.
 	ErrRotatedConcurrently = fmt.Errorf("auth: the key was rotated by another request: %w", commonerrors.ErrConflict)
-	ErrOwnedExpiry         = fmt.Errorf("auth: expires_at must be in the future and within 90 days: %w", commonerrors.ErrValidation)
+	ErrOwnedExpiry         = fmt.Errorf("auth: expires_at must be in the future and within 366 days: %w", commonerrors.ErrValidation)
 	ErrInvalidOwner        = fmt.Errorf("auth: invalid owner_id: %w", commonerrors.ErrValidation)
 	ErrInvalidBudget       = fmt.Errorf("auth: invalid budget: %w", commonerrors.ErrValidation)
 	ErrInvalidOwnerGroups  = fmt.Errorf("auth: invalid owner_groups: %w", commonerrors.ErrValidation)
