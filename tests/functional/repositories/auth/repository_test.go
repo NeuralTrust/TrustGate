@@ -412,6 +412,13 @@ func ownedAuth(t *testing.T, gwID ids.GatewayID, owner string) *domain.Auth {
 	return a
 }
 
+func groupAuth(t *testing.T, gwID ids.GatewayID, owner, groupID, groupName string) *domain.Auth {
+	t.Helper()
+	a := ownedAuth(t, gwID, owner)
+	a.GroupID, a.GroupName = groupID, groupName
+	return a
+}
+
 func TestRepository_FindByOwnerAndUpdateKeepsOwner(t *testing.T) {
 	r, gw := setupRepo(t)
 	ctx := context.Background()
@@ -421,16 +428,16 @@ func TestRepository_FindByOwnerAndUpdateKeepsOwner(t *testing.T) {
 	require.NoError(t, r.Save(ctx, application))
 	require.NoError(t, r.Save(ctx, owned))
 
-	got, err := r.FindByOwner(ctx, gwG, "alice")
+	got, err := r.FindByOwnerAndGroup(ctx, gwG, "alice", "")
 	require.NoError(t, err)
 	require.Equal(t, owned.ID, got.ID)
 	require.Equal(t, owned.KeyHash, got.KeyHash)
 	require.Equal(t, "alice@acme.test", got.OwnerEmail, "a key is created with its owner's email")
-	_, err = r.FindByOwner(ctx, gwH, "alice")
+	_, err = r.FindByOwnerAndGroup(ctx, gwH, "alice", "")
 	require.ErrorIs(t, err, domain.ErrNotFound)
-	_, err = r.FindByOwner(ctx, gwG, "bob")
+	_, err = r.FindByOwnerAndGroup(ctx, gwG, "bob", "")
 	require.ErrorIs(t, err, domain.ErrNotFound)
-	_, err = r.FindByOwner(ctx, gwG, "")
+	_, err = r.FindByOwnerAndGroup(ctx, gwG, "", "")
 	require.ErrorIs(t, err, domain.ErrNotFound)
 
 	for id, want := range map[ids.AuthID]string{owned.ID: "alice", application.ID: ""} {
@@ -471,6 +478,66 @@ func TestRepository_ConcurrentOwnedKeysForOneOwner(t *testing.T) {
 	_, total, err := r.List(ctx, domain.ListFilter{GatewayID: gwID})
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
+}
+
+// An owner holds one personal key and one key per group: each is found by its
+// own group, listed with the others, and a second key for the same group
+// answers ErrOwnedKeyExists.
+func TestRepository_GroupKeysBesideThePersonalKey(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID, other := seedGateway(t, gw, "group-keys"), seedGateway(t, gw, "group-keys-other")
+	personal := ownedAuth(t, gwID, "alice")
+	personal.CreatedAt = personal.CreatedAt.Add(-2 * time.Hour)
+	eng := groupAuth(t, gwID, "alice", "g-eng", "engineering")
+	eng.CreatedAt = eng.CreatedAt.Add(-time.Hour)
+	sre := groupAuth(t, gwID, "alice", "g-sre", "sre")
+	for _, a := range []*domain.Auth{personal, eng, sre, groupAuth(t, gwID, "bob", "g-eng", "engineering"), groupAuth(t, other, "alice", "g-eng", "engineering")} {
+		require.NoError(t, r.Save(ctx, a))
+	}
+
+	got, err := r.FindByOwnerAndGroup(ctx, gwID, "alice", "")
+	require.NoError(t, err)
+	require.Equal(t, personal.ID, got.ID, "no group finds the personal key")
+	got, err = r.FindByOwnerAndGroup(ctx, gwID, "alice", "g-eng")
+	require.NoError(t, err)
+	require.Equal(t, eng.ID, got.ID)
+	require.Equal(t, "g-eng", got.GroupID)
+	require.Equal(t, "engineering", got.GroupName)
+	_, err = r.FindByOwnerAndGroup(ctx, gwID, "alice", "g-ops")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	byHash, err := r.FindByAPIKeyHash(ctx, sre.KeyHash)
+	require.NoError(t, err)
+	require.Equal(t, "sre", byHash.GroupName, "the key lookup carries the group")
+
+	listed, err := r.ListByOwner(ctx, gwID, "alice")
+	require.NoError(t, err)
+	require.Equal(t, []ids.AuthID{sre.ID, eng.ID, personal.ID}, authIDs(listed), "newest first, on this gateway only")
+	listed, err = r.ListByOwner(ctx, gwID, "carol")
+	require.NoError(t, err)
+	require.Empty(t, listed)
+	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gwID, OwnerID: "alice"})
+	require.NoError(t, err)
+	require.Equal(t, 3, total, "owner_id lists every key of the owner")
+	require.Len(t, items, 3)
+
+	for name, second := range map[string]*domain.Auth{
+		"a second personal key":         ownedAuth(t, gwID, "alice"),
+		"a second key for g-eng":        groupAuth(t, gwID, "alice", "g-eng", "engineering (renamed)"),
+		"a second key under a new name": groupAuth(t, gwID, "alice", "g-sre", "site reliability"),
+	} {
+		err := r.Save(ctx, second)
+		require.ErrorIs(t, err, domain.ErrOwnedKeyExists, name)
+		require.ErrorIs(t, err, commonerrors.ErrAlreadyExists, name)
+	}
+}
+
+func authIDs(auths []*domain.Auth) []ids.AuthID {
+	out := make([]ids.AuthID, 0, len(auths))
+	for _, a := range auths {
+		out = append(out, a.ID)
+	}
+	return out
 }
 
 func TestRepository_List_OwnedKeyFilters(t *testing.T) {
@@ -524,7 +591,7 @@ func TestRepository_BudgetIsReadEverywhereAnAuthIs(t *testing.T) {
 	require.NoError(t, err)
 	byHash, err := r.FindByAPIKeyHash(ctx, owned.KeyHash)
 	require.NoError(t, err)
-	byOwner, err := r.FindByOwner(ctx, gwID, "alice")
+	byOwner, err := r.FindByOwnerAndGroup(ctx, gwID, "alice", "")
 	require.NoError(t, err)
 	byIDs, err := r.FindByIDs(ctx, gwID, []ids.AuthID{owned.ID})
 	require.NoError(t, err)
@@ -655,6 +722,21 @@ func TestRepository_UpdateOwnerWritesOnlyTheGroupsAndEmail(t *testing.T) {
 	foreign.GatewayID = otherGW
 	_, err = r.UpdateOwner(ctx, &foreign)
 	require.ErrorIs(t, err, domain.ErrNotFound)
+
+	// The group name is written only on a group key, and only the name: a
+	// personal key never gains one, and a group key keeps its group.
+	cleared.GroupName = "engineering"
+	personal, err := r.UpdateOwner(ctx, cleared)
+	require.NoError(t, err)
+	require.Empty(t, personal.GroupName)
+	require.Empty(t, personal.GroupID)
+	grouped := groupAuth(t, gwID, "alice", "g-eng", "engineering")
+	require.NoError(t, r.Save(ctx, grouped))
+	grouped.GroupName, grouped.GroupID = "platform engineering", "g-other"
+	renamed, err := r.UpdateOwner(ctx, grouped)
+	require.NoError(t, err)
+	require.Equal(t, "platform engineering", renamed.GroupName)
+	require.Equal(t, "g-eng", renamed.GroupID)
 }
 
 func TestRepository_RotateKeyOnlyWinsAgainstTheSecretItRead(t *testing.T) {

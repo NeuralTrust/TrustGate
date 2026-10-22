@@ -66,16 +66,24 @@ func (r *authRepository) FindByAPIKeyHash(_ context.Context, keyHash string) (*d
 	return cloneAuth(a)
 }
 
-func (r *authRepository) FindByOwner(_ context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
+func (r *authRepository) FindByOwnerAndGroup(_ context.Context, gatewayID ids.GatewayID, ownerID, groupID string) (*domain.Auth, error) {
 	snap, ok := snapshotFrom(r.store)
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	a, ok := snap.AuthByOwner(gatewayID, ownerID)
+	a, ok := snap.AuthByOwnerAndGroup(gatewayID, ownerID, groupID)
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
 	return cloneAuth(a)
+}
+
+func (r *authRepository) ListByOwner(_ context.Context, gatewayID ids.GatewayID, ownerID string) ([]*domain.Auth, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return cloneAuths(snap.AuthsByOwner(gatewayID, ownerID))
 }
 
 func (r *authRepository) FindEnabledByTypes(_ context.Context, types []domain.Type) ([]*domain.Auth, error) {

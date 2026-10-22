@@ -41,14 +41,18 @@ type PersonalKeyOwner struct {
 	Email string
 }
 
-// PersonalKeys is the self-service lifecycle of the one personal key a user
-// holds on a gateway: read, create, rotate and revoke, each scoped to the
-// caller as owner.
+// PersonalKeys is the self-service lifecycle of the keys a user holds on a
+// gateway, each scoped to the caller as owner. A user holds at most one
+// personal key, which belongs to no group, and at most one key per directory
+// group the console lets them hold one for. Get, Rotate and Revoke act on the
+// personal key.
 //
 //go:generate mockery --name=PersonalKeys --dir=. --output=./mocks --filename=auth_personal_keys_mock.go --case=underscore --with-expecter
 type PersonalKeys interface {
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
-	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error)
+	// Create issues the owner their personal key when group is the zero
+	// KeyGroup, else their key for group.
+	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt time.Time) (*PersonalKey, error)
 	Rotate(ctx context.Context, gatewayID ids.GatewayID, ownerID string, expiresAt *time.Time) (*PersonalKey, error)
 	Revoke(ctx context.Context, gatewayID ids.GatewayID, ownerID string) error
 }
@@ -102,9 +106,9 @@ func (p *personalKeys) Get(ctx context.Context, gatewayID ids.GatewayID, ownerID
 	return &PersonalKey{Auth: a, ConsumerIDs: consumerIDs}, nil
 }
 
-func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, expiresAt time.Time) (*PersonalKey, error) {
+func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, group domain.KeyGroup, expiresAt time.Time) (*PersonalKey, error) {
 	ownerID := owner.ID
-	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, expiresAt, p.now())
+	a, err := domain.NewOwnedAPIKeyAuth(gatewayID, ownerID, group, expiresAt, p.now())
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +118,9 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	if err := p.ensureNotHybrid(ctx, gatewayID); err != nil {
 		return nil, err
 	}
-	switch _, err := p.repo.FindByOwner(ctx, gatewayID, ownerID); {
+	// The unique index refuses a second key all the same; asking first gives
+	// the common case its answer without a failed insert.
+	switch _, err := p.repo.FindByOwnerAndGroup(ctx, gatewayID, ownerID, a.GroupID); {
 	case err == nil:
 		return nil, domain.ErrOwnedKeyExists
 	case !errors.Is(err, domain.ErrNotFound):
@@ -158,11 +164,12 @@ func (p *personalKeys) Revoke(ctx context.Context, gatewayID ids.GatewayID, owne
 	return p.deleter.Delete(ctx, gatewayID, existing.ID)
 }
 
+// find is the owner's personal key, the one held for no group.
 func (p *personalKeys) find(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
 	if err := domain.ValidateOwner(ownerID); err != nil {
 		return nil, err
 	}
-	a, err := p.repo.FindByOwner(ctx, gatewayID, ownerID)
+	a, err := p.repo.FindByOwnerAndGroup(ctx, gatewayID, ownerID, "")
 	if err != nil {
 		return nil, fmt.Errorf("auth: find personal key: %w", err)
 	}

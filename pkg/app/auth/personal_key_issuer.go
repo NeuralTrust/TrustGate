@@ -140,7 +140,7 @@ func (i *personalKeyIssuer) Create(ctx context.Context, gatewayID ids.GatewayID,
 			slog.String("gateway_id", gatewayID.String()))
 	}
 	owner.Email = email
-	key, err := i.keys.Create(ctx, gatewayID, owner, i.fullLifetime())
+	key, err := i.keys.Create(ctx, gatewayID, owner, domain.KeyGroup{}, i.fullLifetime())
 	if err != nil {
 		return nil, err
 	}
