@@ -171,7 +171,7 @@ func answerLimit(payloadBytes int) int {
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
-	payload, err := json.Marshal(body)
+	payload, err := marshalNoEscape(body)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
