@@ -632,6 +632,8 @@ func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScop
 		scope.AuthID = req.AuthID
 		scope.OwnerID = req.OwnerID
 		scope.KeyBudget = req.KeyBudget
+		scope.KeyGroupID = req.KeyGroupID
+		scope.KeyGroupBudget = req.KeyGroupBudget
 	}
 	return scope
 }
