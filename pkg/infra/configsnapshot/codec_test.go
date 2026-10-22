@@ -25,6 +25,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
@@ -388,6 +389,31 @@ func TestCodecRoundTripsGroupKey(t *testing.T) {
 	assert.Equal(t, "engineering", gotAuth.GroupName)
 	_, ok = snap.AuthByOwnerAndGroup(auth.GatewayID, "alice", "")
 	assert.False(t, ok, "a group key is not its owner's personal key")
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsKeyGroupBudgets(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.From[ids.GatewayKind](uuid.MustParse("0199a000-0000-7000-8000-000000000001"))
+	monthly, member := 100.5, 20.0
+	at := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	budget := keygroupdomain.Budget{
+		GatewayID: gw, GroupID: "g-eng", MonthlyLimitUSD: &monthly, MemberMonthlyLimitUSD: &member,
+		MemberOverrides: map[string]float64{"alice": 50}, Action: keygroupdomain.ActionBlock, CreatedAt: at, UpdatedAt: at,
+	}
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "budgets", KeyGroupBudgets: []keygroupdomain.Budget{budget}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	got := snap.KeyGroupBudgetsByGateway(gw)
+	require.Len(t, got, 1)
+	assert.Equal(t, budget, *got[0])
+	assert.Empty(t, snap.KeyGroupBudgetsByGateway(ids.New[ids.GatewayKind]()))
 
 	reraw, err := codec.Encode(snap)
 	require.NoError(t, err)

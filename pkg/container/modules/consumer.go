@@ -26,6 +26,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -95,7 +96,7 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(appconsumer.NewDataFinder); err != nil {
+	if err := c.Provide(provideDataFinder); err != nil {
 		return err
 	}
 	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
@@ -159,4 +160,23 @@ type apiKeyConsumersParams struct {
 
 func provideAPIKeyConsumers(p apiKeyConsumersParams) (appconsumer.APIKeyConsumers, error) {
 	return appconsumer.NewAPIKeyConsumers(p.Consumers, p.APIKeys, p.Vault)
+}
+
+type dataFinderParams struct {
+	dig.In
+	Consumers      domain.Reader
+	Registries     registrydomain.Repository
+	Policies       policydomain.Repository
+	Auths          authdomain.Repository
+	PluginRegistry appplugins.Registry
+	Manager        *cache.TTLMapManager
+	Logger         *slog.Logger
+	// Budgets is the group budgets' read side: Postgres on the full plane,
+	// the config snapshot on a data plane with no database.
+	Budgets keygroupdomain.Reader `optional:"true"`
+}
+
+func provideDataFinder(p dataFinderParams) appconsumer.DataFinder {
+	return appconsumer.NewDataFinder(p.Consumers, p.Registries, p.Policies, p.Auths, p.PluginRegistry, p.Manager, p.Logger,
+		appconsumer.WithKeyGroupBudgets(p.Budgets))
 }
