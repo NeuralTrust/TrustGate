@@ -653,9 +653,24 @@ func stampCallerTrace(c *fiber.Ctx, authCtx *appauth.AuthContext) {
 	}
 	if authCtx != nil && !authCtx.AuthID.IsNil() {
 		rt.SetAuthID(authCtx.AuthID.String())
+		rt.SetAuthKey(authKind(authCtx), authCtx.KeyGroupID)
 	}
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
+	}
+}
+
+// authKind is what kind of api key authenticated the request: a user's own,
+// their personal key or a group key, or an application's. Any other
+// credential is not a key and has no kind.
+func authKind(authCtx *appauth.AuthContext) string {
+	switch {
+	case authCtx.Method != appauth.MethodAPIKey:
+		return ""
+	case authCtx.OwnerID != "":
+		return trace.AuthKindPersonal
+	default:
+		return trace.AuthKindApplication
 	}
 }
 
