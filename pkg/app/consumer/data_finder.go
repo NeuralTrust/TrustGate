@@ -22,6 +22,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -44,6 +45,19 @@ type dataFinder struct {
 	memoryCache    *cache.TTLMap
 	logger         *slog.Logger
 	sf             singleflight.Group
+	// budgets loads the group budgets with the gateway's data. Nil: no group
+	// key is held to a budget on this plane.
+	budgets keygroupdomain.Reader
+}
+
+// DataFinderOption tunes NewDataFinder.
+type DataFinderOption func(*dataFinder)
+
+// WithKeyGroupBudgets loads every group budget of a gateway with its data, so
+// the store holds each group key to its group's budget without a read per
+// request.
+func WithKeyGroupBudgets(r keygroupdomain.Reader) DataFinderOption {
+	return func(f *dataFinder) { f.budgets = r }
 }
 
 func NewDataFinder(
@@ -54,8 +68,9 @@ func NewDataFinder(
 	pluginRegistry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
+	opts ...DataFinderOption,
 ) DataFinder {
-	return &dataFinder{
+	f := &dataFinder{
 		repo:           repo,
 		registryRepo:   registryRepo,
 		policyRepo:     policyRepo,
@@ -64,6 +79,12 @@ func NewDataFinder(
 		memoryCache:    manager.GetTTLMap(cache.ConsumerDataTTLName),
 		logger:         logger,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(f)
+		}
+	}
+	return f
 }
 
 func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID ids.GatewayID) (*Data, error) {
@@ -153,6 +174,15 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, onMCP.unscoped, onMCP.scoped, f.logger),
 	}
 	data.SetRegistryIndex(backendByID)
+	if f.budgets != nil {
+		// A budget that cannot be read cannot be enforced: the gateway's data
+		// fails to load, as it does when its keys or policies cannot be read.
+		budgets, err := f.budgets.ListByGateway(ctx, gatewayID)
+		if err != nil {
+			return nil, err
+		}
+		data.SetKeyGroupBudgets(budgets)
+	}
 	f.memoryCache.Set(key, data)
 	return data, nil
 }

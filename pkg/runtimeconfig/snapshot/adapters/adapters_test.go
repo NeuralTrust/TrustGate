@@ -25,6 +25,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
@@ -431,4 +432,31 @@ func TestAuthAdapterFindByOwnerAndGroup(t *testing.T) {
 	}
 	_, err = repo.FindByOwnerAndGroup(ctx, f.gateway.ID, "alice", "g-sre")
 	assert.ErrorIs(t, err, authdomain.ErrNotFound)
+}
+
+func TestKeyGroupBudgetReader(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	limit := 25.0
+	budget := keygroupdomain.Budget{GatewayID: f.gateway.ID, GroupID: "g-eng", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionBlock}
+	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
+	reader := adapters.NewKeyGroupBudgetReader(store)
+	ctx := context.Background()
+
+	got, err := reader.ListByGateway(ctx, f.gateway.ID)
+	require.NoError(t, err)
+	assert.Empty(t, got, "no snapshot, no budget")
+
+	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: readmodel.Build(readmodel.Data{KeyGroupBudgets: []keygroupdomain.Budget{budget}})})
+	got, err = reader.ListByGateway(ctx, f.gateway.ID)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "g-eng", got[0].GroupID)
+	*got[0].MonthlyLimitUSD = 1
+	again, err := reader.ListByGateway(ctx, f.gateway.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 25.0, *again[0].MonthlyLimitUSD, "a read never shares the snapshot's budget")
+	other, err := reader.ListByGateway(ctx, f.other)
+	require.NoError(t, err)
+	assert.Empty(t, other)
 }

@@ -26,13 +26,16 @@ import (
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
+	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	revokermocks "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation/mocks"
 	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
+	keygroupmocks "github.com/NeuralTrust/TrustGate/pkg/app/keygroup/mocks"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	jwtmocks "github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -130,6 +133,52 @@ func TestAdminRouterRefusesServiceCredentialsOnDirectoryGroups(t *testing.T) {
 		require.NoError(t, res.Body.Close())
 		assert.Equal(t, http.StatusForbidden, res.StatusCode, "%s: %s", path, raw)
 		assert.Contains(t, string(raw), "Use a credential scoped to this gateway")
+	}
+}
+
+// A service credential scoped to the gateway's auths may read its group
+// budgets, never write them: a budget is set by a person, in the console.
+func TestAdminRouterKeepsGroupBudgetWritesFromServiceCredentials(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	token := "eyJhbGciOiJSUzI1NiJ9.e30.auths"
+	verifier := jwtmocks.NewServiceVerifier(t)
+	verifier.EXPECT().Enabled().Return(true)
+	verifier.EXPECT().Verify(token).Return(&jwt.ServiceClaims{
+		TenantID: "t1", GatewayID: gatewayID.String(), Scopes: []string{
+			middleware.RequiredScope(middleware.ResourceAuths, fiber.MethodGet),
+			middleware.RequiredScope(middleware.ResourceAuths, fiber.MethodPut),
+			middleware.RequiredScope(middleware.ResourceAuths, fiber.MethodDelete),
+		},
+	}, nil)
+	gateways := gatewaymocks.NewFinder(t)
+	gateways.EXPECT().FindByID(mock.Anything, gatewayID).
+		Return(&gatewaydomain.Gateway{ID: gatewayID, Metadata: gatewaydomain.WithTenantID(nil, "t1")}, nil)
+	budgets := keygroupmocks.NewBudgets(t)
+	budgets.EXPECT().List(mock.Anything, gatewayID).Return([]*keygroupdomain.Budget{}, nil).Once()
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport: middleware.NewTransport(),
+		AdminAuth:           middleware.NewAdminAuthMiddleware(nil, nil, verifier, false),
+		AdminAuthz:          middleware.NewAdminAuthzMiddleware(nil, gateways),
+		KeyGroupBudgets:     keygrouphttp.NewBudgetHandler(budgets),
+	}).BuildRoutes(app))
+
+	base := "/v1/gateways/" + gatewayID.String() + "/key-groups"
+	for _, route := range [][3]any{
+		{http.MethodGet, base + "/budgets", http.StatusOK},
+		{http.MethodPut, base + "/g-eng/budget", http.StatusForbidden},
+		{http.MethodDelete, base + "/g-eng/budget", http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(route[0].(string), route[1].(string), strings.NewReader(`{"monthly_limit_usd":10,"action":"block"}`))
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+token)
+		req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		res, err := app.Test(req)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		assert.Equal(t, route[2], res.StatusCode, "%s %s: %s", route[0], route[1], raw)
 	}
 }
 

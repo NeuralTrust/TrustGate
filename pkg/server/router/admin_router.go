@@ -21,6 +21,7 @@ import (
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -138,6 +139,9 @@ type AdminRouterDeps struct {
 	// plane; nil-guarded when absent.
 	StoreMaterialize *storehttp.MaterializeHandler
 	StoreLLMKey      *storehttp.LLMKeyHandler
+	// KeyGroupBudgets serves the budgets of directory groups' keys. Present
+	// only on the full plane.
+	KeyGroupBudgets *keygrouphttp.BudgetHandler
 }
 
 type adminRouter struct {
@@ -268,6 +272,16 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			// An admin issuing a user's key for them: a person in the console, never a machine.
 			store.Post("/users/:user_id/llm-key", interactive, r.deps.StoreLLMKey.CreateForUser)
 		}
+	}
+
+	// Group budgets hold group keys, so gateway access is on auths. The console
+	// writes them as a person or with its platform token; a service credential
+	// may read them and never write.
+	if r.deps.KeyGroupBudgets != nil {
+		keyGroups := gw.Group("/:gateway_id/key-groups", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
+		keyGroups.Get("/budgets", r.deps.KeyGroupBudgets.List)
+		keyGroups.Put("/:group_id/budget", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.KeyGroupBudgets.Set)
+		keyGroups.Delete("/:group_id/budget", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.KeyGroupBudgets.Delete)
 	}
 
 	auths := gw.Group("/:gateway_id/auths", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))

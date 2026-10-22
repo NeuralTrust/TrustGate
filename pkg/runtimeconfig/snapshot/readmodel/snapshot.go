@@ -24,6 +24,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -63,6 +64,10 @@ type Data struct {
 	// one with none, is not a revocation. A data plane that does not know the
 	// field skips it.
 	SessionRevocations []SessionRevocation
+	// KeyGroupBudgets are the budgets of the directory groups whose keys the
+	// gateways above serve. A snapshot from before the field carries none, and
+	// a data plane that does not know it holds no group to a budget.
+	KeyGroupBudgets []keygroupdomain.Budget
 }
 
 // SessionRevocation is one default-IdP subject revoked at RevokedAt.
@@ -112,6 +117,8 @@ type Snapshot struct {
 
 	tenantCaps       map[string]*ratelimitdomain.TenantCaps
 	sessionRevokedAt map[sessionRevocationKey]time.Time
+
+	keyGroupBudgetsByGateway map[ids.GatewayID][]*keygroupdomain.Budget
 }
 
 type sessionRevocationKey struct {
@@ -150,6 +157,8 @@ func Build(data Data) *Snapshot {
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
 		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
 		sessionRevokedAt:       make(map[sessionRevocationKey]time.Time, len(data.SessionRevocations)),
+
+		keyGroupBudgetsByGateway: make(map[ids.GatewayID][]*keygroupdomain.Budget),
 	}
 	for i := range s.data.TenantCaps {
 		c := &s.data.TenantCaps[i]
@@ -170,8 +179,22 @@ func Build(data Data) *Snapshot {
 	s.buildAuths()
 	s.buildCatalog()
 	s.buildStoreGrants()
+	s.buildKeyGroupBudgets()
 
 	return s
+}
+
+func (s *Snapshot) buildKeyGroupBudgets() {
+	for i := range s.data.KeyGroupBudgets {
+		b := &s.data.KeyGroupBudgets[i]
+		s.keyGroupBudgetsByGateway[b.GatewayID] = append(s.keyGroupBudgetsByGateway[b.GatewayID], b)
+	}
+}
+
+// KeyGroupBudgetsByGateway returns the group budgets of gatewayID. The
+// budgets are the snapshot's own: read them, never modify them.
+func (s *Snapshot) KeyGroupBudgetsByGateway(gatewayID ids.GatewayID) []*keygroupdomain.Budget {
+	return s.keyGroupBudgetsByGateway[gatewayID]
 }
 
 func (s *Snapshot) buildStoreGrants() {
