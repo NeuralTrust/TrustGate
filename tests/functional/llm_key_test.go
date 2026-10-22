@@ -25,8 +25,8 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key")})
 	alice, bob := uniqueName("alice"), uniqueName("bob")
 
-	status, _ := CreateLLMKey(t, gwID, alice, llmKeyExpiry(90*llmKeyDay+time.Hour))
-	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is capped at 90 days")
+	status, _ := CreateLLMKey(t, gwID, alice, llmKeyExpiry(366*llmKeyDay+time.Hour))
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is capped at 366 days")
 	body := llmKeyExpiry(30 * llmKeyDay)
 	body["principal_sub"], body["owner_id"], body["consumer_id"] = bob, bob, CreateConsumer(t, gwID, validConsumerPayload(uniqueName("llm-key-cons")))
 	status, created := CreateLLMKey(t, gwID, alice, body)
@@ -54,7 +54,7 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status, "the body owner was ignored")
 	status, _ = RotateLLMKey(t, gwID, bob, nil)
 	assert.Equal(t, http.StatusNotFound, status)
-	status, _ = RotateLLMKey(t, gwID, bob, llmKeyExpiry(91*llmKeyDay))
+	status, _ = RotateLLMKey(t, gwID, bob, llmKeyExpiry(367*llmKeyDay))
 	assert.Equal(t, http.StatusUnprocessableEntity, status, "the expiry is judged before the lookup")
 	assert.Equal(t, http.StatusNotFound, RevokeLLMKey(t, gwID, bob))
 
@@ -68,6 +68,23 @@ func TestLLMKey_SelfFlows(t *testing.T) {
 	otherGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-other")})
 	status, _ = CreateLLMKey(t, otherGW, alice, llmKeyExpiry(llmKeyDay))
 	assert.Equal(t, http.StatusCreated, status, "one key on each gateway")
+
+	status, renewed := RotateLLMKey(t, gwID, alice, map[string]any{"never_expires": true})
+	require.Equal(t, http.StatusOK, status, "body=%v", renewed)
+	assert.Nil(t, renewed["expires_at"], "never_expires renews the key with no expiry")
+	status, kept := RotateLLMKey(t, gwID, alice, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", kept)
+	assert.Nil(t, kept["expires_at"], "a key that never expires stays so")
+	status, _ = RotateLLMKey(t, gwID, alice, map[string]any{"never_expires": true, "expires_at": time.Now().Add(llmKeyDay).UTC().Format(time.RFC3339)})
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "expires_at and never_expires cannot be combined")
+	status, yearLong := RotateLLMKey(t, gwID, alice, llmKeyExpiry(365*llmKeyDay))
+	require.Equal(t, http.StatusOK, status, "body=%v", yearLong)
+	assert.NotNil(t, yearLong["expires_at"])
+
+	thirdGW := CreateGateway(t, map[string]any{"slug": uniqueName("llm-key-forever")})
+	status, forever := CreateLLMKey(t, thirdGW, alice, map[string]any{})
+	require.Equal(t, http.StatusCreated, status, "body=%v", forever)
+	assert.Nil(t, forever["expires_at"], "without expires_at the key never expires")
 
 	status, _ = llmKeyRequest(t, http.MethodGet, gwID, userToken(t, "another-tenant", alice), "", nil)
 	assert.Equal(t, http.StatusNotFound, status, "a user of another tenant does not see the gateway")

@@ -24,9 +24,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
-// PersonalKeyExpiryMargin keeps a new key's expiry clear of the 90-day
-// ceiling, so a request that takes a moment to arrive is not refused for
-// asking for the very limit. The console's Portal uses the same margin.
+// PersonalKeyIssuerLifetime is how long a key the MCP Store's page issues
+// lives, less PersonalKeyExpiryMargin. It is the Store's own choice, well
+// inside the MaxOwnedKeyLifetime a console caller may ask for, and a key the
+// page issues always expires.
+const PersonalKeyIssuerLifetime = 90 * 24 * time.Hour
+
+// PersonalKeyExpiryMargin keeps a new key's expiry clear of its lifetime, so a
+// request that takes a moment to arrive is not refused for asking for the very
+// limit. The console's Portal uses the same margin.
 const PersonalKeyExpiryMargin = 5 * time.Minute
 
 // PersonalKeyIssuer gives a person their personal key from outside the
@@ -40,7 +46,7 @@ const PersonalKeyExpiryMargin = 5 * time.Minute
 type PersonalKeyIssuer interface {
 	// Get is the owner's key, or domain.ErrNotFound.
 	Get(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*PersonalKey, error)
-	// Create issues the owner's key for as long as a personal key may live,
+	// Create issues the owner's personal key for PersonalKeyIssuerLifetime,
 	// with their email and groups as its owner's. The secret is on the
 	// returned key, once.
 	Create(ctx context.Context, gatewayID ids.GatewayID, owner PersonalKeyOwner, groups []string) (*PersonalKey, error)
@@ -140,7 +146,8 @@ func (i *personalKeyIssuer) Create(ctx context.Context, gatewayID ids.GatewayID,
 			slog.String("gateway_id", gatewayID.String()))
 	}
 	owner.Email = email
-	key, err := i.keys.Create(ctx, gatewayID, owner, domain.KeyGroup{}, i.fullLifetime())
+	expiresAt := i.fullLifetime()
+	key, err := i.keys.Create(ctx, gatewayID, owner, domain.KeyGroup{}, &expiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -170,16 +177,16 @@ func (i *personalKeyIssuer) Rotate(ctx context.Context, gatewayID ids.GatewayID,
 	if err != nil {
 		return nil, err
 	}
-	var expiresAt *time.Time
+	var expiry *ExpiryChange
 	if current.Auth.IsExpired(i.now()) {
 		renewed := i.fullLifetime()
-		expiresAt = &renewed
+		expiry = &ExpiryChange{At: &renewed}
 	}
-	rotated, err := i.keys.Rotate(ctx, gatewayID, ownerID, expiresAt)
+	rotated, err := i.keys.Rotate(ctx, gatewayID, ownerID, expiry)
 	if err != nil {
 		return nil, err
 	}
-	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRotated, GatewayID: gatewayID, OwnerID: ownerID, AuthID: rotated.Auth.ID, ExpiresAt: rotated.Auth.ExpiresAt, Renewed: expiresAt != nil})
+	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRotated, GatewayID: gatewayID, OwnerID: ownerID, AuthID: rotated.Auth.ID, ExpiresAt: rotated.Auth.ExpiresAt, Renewed: expiry != nil})
 	return rotated, nil
 }
 
@@ -220,5 +227,5 @@ func (i *personalKeyIssuer) notify(ctx context.Context, event PersonalKeyEvent) 
 }
 
 func (i *personalKeyIssuer) fullLifetime() time.Time {
-	return i.now().Add(domain.MaxOwnedKeyLifetime - PersonalKeyExpiryMargin).Truncate(time.Second)
+	return i.now().Add(PersonalKeyIssuerLifetime - PersonalKeyExpiryMargin).Truncate(time.Second)
 }

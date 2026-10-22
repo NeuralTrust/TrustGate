@@ -15,28 +15,21 @@
 package request
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 // CreateLLMKeyRequest is the body of a personal key create.
 type CreateLLMKeyRequest struct {
-	ExpiresAt string `json:"expires_at" format:"date-time" example:"2026-12-31T12:00:00Z"`
+	// ExpiresAt is when the key stops working, within the next 366 days.
+	// Absent, null or empty: it never expires.
+	ExpiresAt string `json:"expires_at,omitempty" format:"date-time" example:"2026-12-31T12:00:00Z"`
 }
 
-// Expiry parses expires_at, which a personal key cannot leave out.
-func (r CreateLLMKeyRequest) Expiry() (time.Time, error) {
-	at, err := httpio.ParseExpiresAt(r.ExpiresAt)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if at == nil {
-		return time.Time{}, fmt.Errorf("expires_at is required: %w", commonerrors.ErrValidation)
-	}
-	return *at, nil
+// Expiry parses expires_at, nil for a key that never expires.
+func (r CreateLLMKeyRequest) Expiry() (*time.Time, error) {
+	return httpio.ParseExpiresAt(r.ExpiresAt)
 }
 
 // CreateUserLLMKeyRequest is the body of a personal key an admin creates for a

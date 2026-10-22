@@ -48,7 +48,7 @@ func TestNormalizeKeyGroup(t *testing.T) {
 func TestNewOwnedAPIKeyAuth_ForAGroup(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	a, err := NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), "alice", KeyGroup{ID: "g-eng", Name: " engineering"}, now.Add(time.Hour), now)
+	a, err := NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), "alice", KeyGroup{ID: "g-eng", Name: " engineering"}, ptr(now.Add(time.Hour)), now)
 	if err != nil {
 		t.Fatalf("NewOwnedAPIKeyAuth: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestNewOwnedAPIKeyAuth_ForAGroup(t *testing.T) {
 	if personal.IsGroupKey() || !personal.KeyGroup().IsZero() || application.IsGroupKey() || !application.KeyGroup().IsZero() {
 		t.Fatal("only an owned key with a group is a group key")
 	}
-	if _, err := NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), "alice", KeyGroup{ID: "g-eng"}, now.Add(time.Hour), now); !errors.Is(err, ErrInvalidKeyGroup) {
+	if _, err := NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), "alice", KeyGroup{ID: "g-eng"}, ptr(now.Add(time.Hour)), now); !errors.Is(err, ErrInvalidKeyGroup) {
 		t.Fatalf("group without a name: err = %v, want ErrInvalidKeyGroup", err)
 	}
 }
@@ -89,3 +89,5 @@ func TestSetGroupName(t *testing.T) {
 		t.Fatalf("application key: err = %v, want ErrApplicationKey", err)
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

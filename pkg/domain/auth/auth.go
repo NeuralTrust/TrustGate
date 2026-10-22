@@ -31,7 +31,9 @@ const apiKeyPrefix = "ag_"
 const apiKeyEntropyBytes = 32
 
 const (
-	MaxOwnedKeyLifetime = 90 * 24 * time.Hour
+	// MaxOwnedKeyLifetime is the furthest a personal key's expiry may sit in
+	// the future when it has one. A personal key may also never expire.
+	MaxOwnedKeyLifetime = 366 * 24 * time.Hour
 	ownedKeyName        = "personal"
 )
 
@@ -251,8 +253,9 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt
 }
 
 // NewOwnedAPIKeyAuth mints a personal api key of ownerID on gatewayID: their
-// personal key when group is the zero KeyGroup, else their key for group.
-func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, group KeyGroup, expiresAt, now time.Time) (*Auth, error) {
+// personal key when group is the zero KeyGroup, else their key for group. A
+// nil expiresAt is a key that never expires.
+func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, group KeyGroup, expiresAt *time.Time, now time.Time) (*Auth, error) {
 	if err := ValidateOwner(ownerID); err != nil {
 		return nil, err
 	}
@@ -260,15 +263,19 @@ func NewOwnedAPIKeyAuth(gatewayID ids.GatewayID, ownerID string, group KeyGroup,
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateOwnedExpiry(expiresAt, now); err != nil {
-		return nil, err
+	if expiresAt != nil {
+		if err := ValidateOwnedExpiry(*expiresAt, now); err != nil {
+			return nil, err
+		}
 	}
 	a, err := NewAPIKeyAuth(gatewayID, ownedKeyName, true, nil)
 	if err != nil {
 		return nil, err
 	}
-	at := expiresAt.UTC()
-	a.ExpiresAt = &at
+	if expiresAt != nil {
+		at := expiresAt.UTC()
+		a.ExpiresAt = &at
+	}
 	a.OwnerID = ownerID
 	a.GroupID = group.ID
 	a.GroupName = group.Name
@@ -286,7 +293,7 @@ func ValidateOwner(ownerID string) error {
 }
 
 // ValidateOwnedExpiry reports whether expiresAt is an expiry a personal key may
-// carry at now.
+// carry at now: in the future, and no further than MaxOwnedKeyLifetime.
 func ValidateOwnedExpiry(expiresAt, now time.Time) error {
 	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxOwnedKeyLifetime)) {
 		return ErrOwnedExpiry

@@ -70,7 +70,7 @@ type modelsFixture struct {
 func newModelsFixture(t *testing.T, models []StoreModel) *modelsFixture {
 	t.Helper()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
-	key, err := authdomain.NewOwnedAPIKeyAuth(gw.ID, "alice", authdomain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
+	key, err := authdomain.NewOwnedAPIKeyAuth(gw.ID, "alice", authdomain.KeyGroup{}, ptr(time.Now().Add(time.Hour)), time.Now())
 	if err != nil {
 		t.Fatalf("key: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestStoreModels_SaysWhatIsMissing(t *testing.T) {
 // reaches its group's consumer, not what the personal key reaches.
 func TestStoreModels_AnswersForTheKeyTheCallWasMadeWith(t *testing.T) {
 	f := newModelsFixture(t, []StoreModel{{ID: "gpt6", Provider: "openai"}})
-	groupKey, err := authdomain.NewOwnedAPIKeyAuth(f.gw.ID, "alice", authdomain.KeyGroup{ID: "g-eng", Name: "engineering"}, time.Now().Add(time.Hour), time.Now())
+	groupKey, err := authdomain.NewOwnedAPIKeyAuth(f.gw.ID, "alice", authdomain.KeyGroup{ID: "g-eng", Name: "engineering"}, ptr(time.Now().Add(time.Hour)), time.Now())
 	if err != nil {
 		t.Fatalf("group key: %v", err)
 	}
@@ -230,3 +230,5 @@ func hasToolNamed(t *testing.T, defs []Tool, name string) bool {
 	}
 	return false
 }
+
+func ptr[T any](v T) *T { return &v }

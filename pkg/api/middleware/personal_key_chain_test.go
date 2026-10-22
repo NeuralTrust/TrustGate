@@ -34,7 +34,7 @@ import (
 
 func personalKey(t *testing.T, owner string, groups ...string) *authdomain.Auth {
 	t.Helper()
-	key, err := authdomain.NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), owner, authdomain.KeyGroup{}, time.Now().UTC().Add(24*time.Hour), time.Now().UTC())
+	key, err := authdomain.NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), owner, authdomain.KeyGroup{}, ptr(time.Now().UTC().Add(24*time.Hour)), time.Now().UTC())
 	require.NoError(t, err)
 	key.OwnerGroups = groups
 	return key
@@ -164,3 +164,5 @@ func TestChain_ApplicationKeyStaysOffTheStore(t *testing.T) {
 
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
+
+func ptr[T any](v T) *T { return &v }

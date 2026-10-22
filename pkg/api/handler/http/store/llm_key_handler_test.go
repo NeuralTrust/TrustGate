@@ -104,7 +104,7 @@ func TestLLMKeyHandler_RefusesCallersWithoutATenantUser(t *testing.T) {
 func TestLLMKeyHandler_CreatesWithoutAnEmailThatIsNotOne(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, ptr(time.Now().Add(time.Hour)), time.Now())
 	require.NoError(t, err)
 	keys := appauthmocks.NewPersonalKeys(t)
 	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice"}, domain.KeyGroup{}, mock.Anything).Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
@@ -120,13 +120,13 @@ func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "alice", domain.KeyGroup{}, ptr(time.Now().Add(time.Hour)), time.Now())
 	require.NoError(t, err)
 	key := &appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiry.Equal)).Return(key, nil).Once()
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiresAt(expiry))).Return(key, nil).Once()
 	keys.EXPECT().Get(mock.Anything, gw, "alice").Return(key, nil).Once()
-	keys.EXPECT().Rotate(mock.Anything, gw, "alice", mock.MatchedBy(func(at *time.Time) bool { return at != nil && at.Equal(expiry) })).Return(key, nil).Once()
+	keys.EXPECT().Rotate(mock.Anything, gw, "alice", mock.MatchedBy(func(e *appauth.ExpiryChange) bool { return e != nil && e.At != nil && e.At.Equal(expiry) })).Return(key, nil).Once()
 	app := newLLMKeyApp(keys, alice)
 
 	status, raw := callLLMKey(t, app, http.MethodPost, gw, "",
@@ -150,6 +150,7 @@ func TestLLMKeyHandler_ActsOnTheCallerAndShowsTheSecretOnlyWhenIssued(t *testing
 func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 	t.Parallel()
 	noExpiry := (*time.Time)(nil)
+	keepExpiry := (*appauth.ExpiryChange)(nil)
 	cases := map[string]struct {
 		method, suffix, body string
 		plain                bool
@@ -157,11 +158,25 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 		want                 int
 		says, hides          string
 	}{
-		"create without expires_at":          {method: http.MethodPost, body: `{}`, want: http.StatusUnprocessableEntity, says: "expires_at is required"},
-		"create with a malformed expires_at": {method: http.MethodPost, body: `{"expires_at":"soon"}`, want: http.StatusUnprocessableEntity, says: "expires_at must be an RFC 3339 instant"},
-		"create with an empty body":          {method: http.MethodPost, plain: true, want: http.StatusUnprocessableEntity},
-		"create without a content type":      {method: http.MethodPost, body: validLLMKeyBody, plain: true, want: http.StatusUnprocessableEntity},
-		"rotate with a malformed body":       {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":1}`, want: http.StatusUnprocessableEntity},
+		"create without expires_at never expires": {method: http.MethodPost, body: `{}`, want: http.StatusConflict, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, noExpiry).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
+		"create with a null expires_at never expires": {method: http.MethodPost, body: `{"expires_at":null}`, want: http.StatusConflict, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, noExpiry).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
+		"create with an empty body never expires": {method: http.MethodPost, plain: true, want: http.StatusConflict, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, noExpiry).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
+		"create with a malformed expires_at":            {method: http.MethodPost, body: `{"expires_at":"soon"}`, want: http.StatusUnprocessableEntity, says: "expires_at must be an RFC 3339 instant"},
+		"create without a content type":                 {method: http.MethodPost, body: validLLMKeyBody, plain: true, want: http.StatusUnprocessableEntity},
+		"rotate with a malformed body":                  {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":1}`, want: http.StatusUnprocessableEntity},
+		"rotate with both expires_at and never_expires": {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":"2099-01-01T00:00:00Z","never_expires":true}`, want: http.StatusUnprocessableEntity, says: "cannot be combined"},
+		"rotate to never expire": {method: http.MethodPost, suffix: "/rotate", body: `{"never_expires":true}`, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", &appauth.ExpiryChange{}).Return(nil, domain.ErrNotFound).Once()
+		}},
+		"rotate with never_expires false keeps the expiry": {method: http.MethodPost, suffix: "/rotate", body: `{"never_expires":false}`, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", keepExpiry).Return(nil, domain.ErrNotFound).Once()
+		}},
 		"create a second key": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusConflict, says: "Rotate or revoke it instead", expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, domain.ErrOwnedKeyExists).Once()
 		}},
@@ -178,13 +193,13 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 			m.EXPECT().Get(mock.Anything, mock.Anything, "alice").Return(nil, domain.ErrNotFound).Once()
 		}},
 		"rotate without a body or a key": {method: http.MethodPost, suffix: "/rotate", plain: true, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", noExpiry).Return(nil, domain.ErrNotFound).Once()
+			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", keepExpiry).Return(nil, domain.ErrNotFound).Once()
 		}},
 		"rotate an expired key with an empty body": {method: http.MethodPost, suffix: "/rotate", body: `{}`, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", noExpiry).Return(nil, domain.ErrOwnedExpiry).Once()
+			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", keepExpiry).Return(nil, domain.ErrOwnedExpiry).Once()
 		}},
 		"rotate with a null expires_at": {method: http.MethodPost, suffix: "/rotate", body: `{"expires_at":null}`, want: http.StatusNotFound, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", noExpiry).Return(nil, domain.ErrNotFound).Once()
+			m.EXPECT().Rotate(mock.Anything, mock.Anything, "alice", keepExpiry).Return(nil, domain.ErrNotFound).Once()
 		}},
 		"revoke": {method: http.MethodDelete, want: http.StatusNoContent, expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Revoke(mock.Anything, mock.Anything, "alice").Return(nil).Once()
@@ -219,10 +234,10 @@ func TestLLMKeyHandler_CreatesAnotherUsersKeyForTheAdmin(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	expiry := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", domain.KeyGroup{}, time.Now().Add(time.Hour), time.Now())
+	a, err := domain.NewOwnedAPIKeyAuth(gw, "bob", domain.KeyGroup{}, ptr(time.Now().Add(time.Hour)), time.Now())
 	require.NoError(t, err)
 	keys := appauthmocks.NewPersonalKeys(t)
-	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiry.Equal)).
+	keys.EXPECT().Create(mock.Anything, gw, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, domain.KeyGroup{}, mock.MatchedBy(expiresAt(expiry))).
 		Return(&appauth.PersonalKey{Auth: a, ConsumerIDs: []ids.ConsumerID{}}, nil).Once()
 
 	status, raw := callUserLLMKey(t, newLLMKeyApp(keys, alice), gw, "bob", `{"expires_at":"2099-01-01T00:00:00Z","owner_email":"bob@acme.test","owner_id":"carol"}`)
@@ -242,7 +257,9 @@ func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 		want   int
 		says   string
 	}{
-		"without expires_at":          {body: `{"owner_email":"bob@acme.test"}`, want: http.StatusUnprocessableEntity, says: "expires_at is required"},
+		"without expires_at never expires": {body: `{"owner_email":"bob@acme.test"}`, want: http.StatusConflict, expect: func(m *appauthmocks.PersonalKeys) {
+			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "bob", Email: "bob@acme.test"}, domain.KeyGroup{}, (*time.Time)(nil)).Return(nil, domain.ErrOwnedKeyExists).Once()
+		}},
 		"with a malformed expires_at": {body: `{"expires_at":"soon"}`, want: http.StatusUnprocessableEntity, says: "expires_at must be an RFC 3339 instant"},
 		"with a malformed body":       {body: `{"owner_email":1}`, want: http.StatusUnprocessableEntity},
 		"for a user who has a key": {body: validLLMKeyBody, want: http.StatusConflict, says: "already exists", expect: func(m *appauthmocks.PersonalKeys) {
@@ -268,4 +285,11 @@ func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 			require.Contains(t, raw, tc.says)
 		})
 	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// expiresAt matches an expiry argument that is want.
+func expiresAt(want time.Time) func(*time.Time) bool {
+	return func(at *time.Time) bool { return at != nil && at.Equal(want) }
 }
