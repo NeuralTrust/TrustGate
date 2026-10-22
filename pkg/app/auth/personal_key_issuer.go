@@ -78,6 +78,9 @@ type PersonalKeyEvent struct {
 	ExpiresAt *time.Time
 	// Renewed: a rotation that gave an expired key a new lifetime.
 	Renewed bool
+	// GroupID is the group of a group key. The MCP Store's page manages only
+	// the personal key, so its events carry none.
+	GroupID string
 }
 
 // PersonalKeyNotifier tells the console about a change. It is best effort: the
@@ -151,7 +154,7 @@ func (i *personalKeyIssuer) Create(ctx context.Context, gatewayID ids.GatewayID,
 	if err != nil {
 		return nil, err
 	}
-	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyCreated, GatewayID: gatewayID, OwnerID: owner.ID, AuthID: key.Auth.ID, ExpiresAt: key.Auth.ExpiresAt})
+	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyCreated, GatewayID: gatewayID, OwnerID: owner.ID, AuthID: key.Auth.ID, ExpiresAt: key.Auth.ExpiresAt, GroupID: key.Auth.GroupID})
 	normalized, err := domain.NormalizeOwnerGroups(groups)
 	if err != nil || len(normalized) == 0 || i.groups == nil {
 		return key, nil
@@ -186,7 +189,7 @@ func (i *personalKeyIssuer) Rotate(ctx context.Context, gatewayID ids.GatewayID,
 	if err != nil {
 		return nil, err
 	}
-	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRotated, GatewayID: gatewayID, OwnerID: ownerID, AuthID: rotated.Auth.ID, ExpiresAt: rotated.Auth.ExpiresAt, Renewed: expiry != nil})
+	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRotated, GatewayID: gatewayID, OwnerID: ownerID, AuthID: rotated.Auth.ID, ExpiresAt: rotated.Auth.ExpiresAt, Renewed: expiry != nil, GroupID: rotated.Auth.GroupID})
 	return rotated, nil
 }
 
@@ -198,7 +201,7 @@ func (i *personalKeyIssuer) Revoke(ctx context.Context, gatewayID ids.GatewayID,
 	if err := i.keys.Revoke(ctx, gatewayID, ownerID); err != nil {
 		return err
 	}
-	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRevoked, GatewayID: gatewayID, OwnerID: ownerID, AuthID: current.Auth.ID})
+	i.notify(ctx, PersonalKeyEvent{Kind: PersonalKeyRevoked, GatewayID: gatewayID, OwnerID: ownerID, AuthID: current.Auth.ID, GroupID: current.Auth.GroupID})
 	return nil
 }
 

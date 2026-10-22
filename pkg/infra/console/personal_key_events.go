@@ -84,6 +84,8 @@ type personalKeyEventBody struct {
 	AuthID    string     `json:"auth_id"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Renewed   bool       `json:"renewed,omitempty"`
+	// GroupID is the group of a group key, absent on the personal key.
+	GroupID string `json:"group_id,omitempty"`
 }
 
 func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKeyEvent) error {
@@ -101,6 +103,7 @@ func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKe
 		AuthID:    event.AuthID.String(),
 		ExpiresAt: event.ExpiresAt,
 		Renewed:   event.Renewed,
+		GroupID:   event.GroupID,
 	})
 	if err != nil {
 		return fmt.Errorf("console events: encode: %w", err)
