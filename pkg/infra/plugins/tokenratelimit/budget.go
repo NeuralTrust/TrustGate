@@ -196,6 +196,13 @@ func resolvedModel(req *infracontext.RequestContext) string {
 // dodged by leaving the model out; every other policy keeps counting such a
 // request under the requested ref, as it always has.
 func modelFor(cfg *config, req *infracontext.RequestContext) string {
+	return chargedModel(req, cfg.keyPartitioned())
+}
+
+// chargedModel is the model a request is counted against. With
+// servedDefault, a request that names no model is counted against the default
+// model of the routed registry, the one it will be served with.
+func chargedModel(req *infracontext.RequestContext, servedDefault bool) string {
 	if req == nil {
 		return ""
 	}
@@ -209,7 +216,7 @@ func modelFor(cfg *config, req *infracontext.RequestContext) string {
 			return m
 		}
 	}
-	if cfg.keyPartitioned() && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
+	if servedDefault && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
 		return req.DefaultModel
 	}
 	return req.RequestedModel

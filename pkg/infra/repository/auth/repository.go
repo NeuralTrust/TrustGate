@@ -35,9 +35,14 @@ const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
 
-	ownerUniqueIndex = "auths_gateway_owner_uniq"
+	// ownerGroupUniqueIndex holds an owner to one key per group on a gateway,
+	// their personal key counting as an empty group. ownerUniqueIndex is the
+	// index it replaced, still named here so a write racing the migration maps
+	// the same way.
+	ownerGroupUniqueIndex = "auths_gateway_owner_group_uniq"
+	ownerUniqueIndex      = "auths_gateway_owner_uniq"
 
-	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, owner_groups, owner_email, created_at, updated_at`
+	authColumns = `id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, owner_id, budget, owner_groups, owner_email, group_id, group_name, created_at, updated_at`
 )
 
 var _ domain.Repository = (*Repository)(nil)
@@ -94,12 +99,13 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	}
 	const query = `
 		INSERT INTO auths (` + authColumns + `)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
-			nullableString(a.OwnerID), budget, ownerGroups, nullableString(a.OwnerEmail), a.CreatedAt, a.UpdatedAt,
+			nullableString(a.OwnerID), budget, ownerGroups, nullableString(a.OwnerEmail),
+			nullableString(a.GroupID), nullableString(a.GroupName), a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -183,17 +189,21 @@ func (r *Repository) UpdateOwner(ctx context.Context, a *domain.Auth) (*domain.A
 	if err != nil {
 		return nil, err
 	}
+	// The group name is written only where a group already is: the group of a
+	// key never changes, and a personal key never gains a name.
 	const query = `
 		UPDATE auths
 		   SET owner_groups = $3,
 		       owner_email  = $5,
+		       group_name   = CASE WHEN group_id IS NULL THEN group_name ELSE $6 END,
 		       updated_at   = $4
 		 WHERE id = $1 AND gateway_id = $2
 		RETURNING ` + authColumns
 	var stored *domain.Auth
 	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		var scanErr error
-		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt, nullableString(a.OwnerEmail)))
+		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt,
+			nullableString(a.OwnerEmail), nullableString(a.GroupName)))
 		if errors.Is(scanErr, pgx.ErrNoRows) {
 			return domain.ErrNotFound
 		}
@@ -316,7 +326,9 @@ func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*dom
 	return a, nil
 }
 
-func (r *Repository) FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*domain.Auth, error) {
+// FindByOwnerAndGroup matches the group the way the unique index does, so it
+// finds exactly the key that index lets the owner hold for it.
+func (r *Repository) FindByOwnerAndGroup(ctx context.Context, gatewayID ids.GatewayID, ownerID, groupID string) (*domain.Auth, error) {
 	if ownerID == "" {
 		return nil, domain.ErrNotFound
 	}
@@ -324,15 +336,46 @@ func (r *Repository) FindByOwner(ctx context.Context, gatewayID ids.GatewayID, o
 		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE gateway_id = $1
-		   AND owner_id = $2`
-	a, err := r.scanAuth(ctx, r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID))
+		   AND owner_id = $2
+		   AND COALESCE(group_id, '') = $3`
+	a, err := r.scanAuth(ctx, r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID, groupID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
-		return nil, fmt.Errorf("auth repository: find by owner: %w", err)
+		return nil, fmt.Errorf("auth repository: find by owner and group: %w", err)
 	}
 	return a, nil
+}
+
+func (r *Repository) ListByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*domain.Auth, error) {
+	if ownerID == "" {
+		return []*domain.Auth{}, nil
+	}
+	const query = `
+		SELECT ` + authColumns + `
+		  FROM auths
+		 WHERE gateway_id = $1
+		   AND owner_id = $2
+		 ORDER BY created_at DESC, id`
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: list by owner: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.Auth, 0)
+	for rows.Next() {
+		a, err := r.scanAuth(ctx, rows)
+		if err != nil {
+			return nil, fmt.Errorf("auth repository: scan: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("auth repository: iter: %w", err)
+	}
+	return out, nil
 }
 
 func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*domain.Auth, error) {
@@ -504,11 +547,13 @@ func (r *Repository) scanAuth(ctx context.Context, s rowScanner) (*domain.Auth, 
 		budgetRaw  []byte
 		groupsRaw  []byte
 		ownerEmail *string
+		groupID    *string
+		groupName  *string
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
 		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
-		&ownerID, &budgetRaw, &groupsRaw, &ownerEmail, &a.CreatedAt, &a.UpdatedAt,
+		&ownerID, &budgetRaw, &groupsRaw, &ownerEmail, &groupID, &groupName, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -517,6 +562,12 @@ func (r *Repository) scanAuth(ctx context.Context, s rowScanner) (*domain.Auth, 
 	}
 	if ownerEmail != nil {
 		a.OwnerEmail = *ownerEmail
+	}
+	if groupID != nil {
+		a.GroupID = *groupID
+	}
+	if groupName != nil {
+		a.GroupName = *groupName
 	}
 	a.Type = domain.NormalizeType(domain.Type(authType))
 	if keyHash != nil {
@@ -609,7 +660,7 @@ func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
 		case pgUniqueViolation:
-			if pgErr.ConstraintName == ownerUniqueIndex {
+			if pgErr.ConstraintName == ownerGroupUniqueIndex || pgErr.ConstraintName == ownerUniqueIndex {
 				return domain.ErrOwnedKeyExists
 			}
 			return domain.ErrAlreadyExists

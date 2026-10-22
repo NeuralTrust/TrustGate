@@ -16,6 +16,7 @@ package consumer_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	policymocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -859,4 +861,51 @@ func TestDataFinder_FindByGateway_ApplicationConsumersNeverCarryOwnedKeys(t *tes
 
 	require.Len(t, data.Consumers[0].Auths, 1)
 	require.Equal(t, appKey, data.Consumers[0].Auths[0].ID, "an owned key never authenticates on an application slug")
+}
+
+type budgetsByGateway struct {
+	items []*keygroupdomain.Budget
+	err   error
+	reads int
+}
+
+func (b *budgetsByGateway) ListByGateway(context.Context, ids.GatewayID) ([]*keygroupdomain.Budget, error) {
+	b.reads++
+	return b.items, b.err
+}
+
+// A gateway's group budgets load with its data, once, so a store request finds
+// its group's budget without a read of its own; a budget that cannot be read
+// fails the load rather than leave a group unheld.
+func TestDataFinder_LoadsTheGroupBudgets(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	emptyGateway := func() (*repomocks.Repository, *policymocks.Repository) {
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+		policyRepo := policymocks.NewRepository(t)
+		policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+		return repo, policyRepo
+	}
+	limit := 10.0
+	budgets := &budgetsByGateway{items: []*keygroupdomain.Budget{{GatewayID: gwID, GroupID: "g-eng", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionBlock}}}
+	repo, policyRepo := emptyGateway()
+	finder := appconsumer.NewDataFinder(repo, backendmocks.NewRepository(t), policyRepo, authmocks.NewRepository(t), nil, newCacheManager(), newTestLogger(),
+		appconsumer.WithKeyGroupBudgets(budgets))
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	require.NoError(t, err)
+	require.NotNil(t, data.KeyGroupBudget("g-eng"))
+	require.True(t, data.KeyGroupBudget("g-eng").Blocks())
+	require.Nil(t, data.KeyGroupBudget("g-sre"))
+	require.Nil(t, data.KeyGroupBudget(""))
+	_, err = finder.FindByGateway(context.Background(), gwID)
+	require.NoError(t, err)
+	require.Equal(t, 1, budgets.reads, "the budgets are cached with the gateway's data")
+
+	failing := &budgetsByGateway{err: errors.New("db down")}
+	repo, policyRepo = emptyGateway()
+	finder = appconsumer.NewDataFinder(repo, backendmocks.NewRepository(t), policyRepo, authmocks.NewRepository(t), nil, newCacheManager(), newTestLogger(),
+		appconsumer.WithKeyGroupBudgets(failing))
+	_, err = finder.FindByGateway(context.Background(), gwID)
+	require.Error(t, err)
 }

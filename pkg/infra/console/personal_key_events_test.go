@@ -62,6 +62,24 @@ func TestPersonalKeyEvents_PostsASignedEventTheConsoleCanCheck(t *testing.T) {
 	}, body)
 }
 
+// A group key's event names its group; the personal key's names none (above).
+func TestPersonalKeyEvents_NamesAGroupKeysGroup(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	events, err := NewPersonalKeyEvents(srv.URL, "s", srv.Client())
+	require.NoError(t, err)
+
+	require.NoError(t, events.Notify(context.Background(), appauth.PersonalKeyEvent{
+		Kind: appauth.PersonalKeyRotated, TenantID: "team-a", OwnerID: "user-1", GroupID: "g-eng",
+	}))
+	require.Equal(t, "g-eng", body["group_id"])
+}
+
 func TestPersonalKeyEvents_ReportsAConsoleThatRefused(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

@@ -448,7 +448,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/auths": {
             "get": {
-                "description": "Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.",
+                "description": "Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget. A group key, one held for a directory group, also carries group_id and group_name.",
                 "produces": [
                     "application/json"
                 ],
@@ -491,7 +491,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "List only the personal key of this owner. Without it, personal keys are excluded",
+                        "description": "List every key of this owner: their personal key and their group keys. Without it, personal keys are excluded",
                         "name": "owner_id",
                         "in": "query"
                     },
@@ -915,7 +915,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/auths/{id}/groups": {
             "put": {
-                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"\u003cgroup\u003e\", ...], \"email\": \"\u003cowner email\u003e\"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
+                "description": "Records the directory groups of a personal (owned) key's owner. The body is {\"groups\": [\"\u003cgroup\u003e\", ...], \"email\": \"\u003cowner email\u003e\", \"group_name\": \"\u003cgroup name\u003e\"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. group_name is optional and only for a group key (a key with a group_id): it records the new directory name of the key's group after a rename, the name the MCP Store matches the key's access against; the group itself never changes. Sent for the owner's personal key it answers 422 personal_key. A group key's groups are its owner's, every group they belong to, like the personal key's. An application key answers 422 application_key; an invalid body answers 422 validation_failed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -979,7 +979,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "An application key (application_key), or invalid groups (validation_failed)",
+                        "description": "An application key (application_key), group_name on a personal key (personal_key), or invalid groups or group_name (validation_failed)",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2057,6 +2057,207 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/key-groups/budgets": {
+            "get": {
+                "description": "Returns the monthly budget of every directory group that has one on the gateway. A group budget holds the group keys (personal keys with a group_id) of the group on /store/v1: monthly_limit_usd caps the group's total, member_monthly_limit_usd each member's own spend through their key for the group, and member_overrides replaces that per-member limit for the members it names. A null limit is no limit.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "key-groups"
+                ],
+                "summary": "List the group budgets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_response.BudgetListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/key-groups/{group_id}/budget": {
+            "put": {
+                "description": "Creates or replaces the monthly budget of the directory group group_id (the console's DirectoryGroup id, the group_id its members' group keys carry). Limits are US dollars of priced cost over the UTC calendar month, reset on the 1st: monthly_limit_usd is the group's total, shared by every member; member_monthly_limit_usd is what each member may spend through their key for the group; member_overrides ({\"\u003cuser id\u003e\": \u003cdollars\u003e}) replaces that per-member limit for the members it names. Null or absent is no limit, and at least one limit or override is required; a limit is a finite number of dollars, zero or more (zero allows no spend). A request is held to the first limit it has reached. action block answers such a request 429 budget_exceeded until the month turns; action alert lets it through and records the decision. Either way the console is told once per limit and month (event key_group_budget_reached on CONSOLE_EVENTS_URL). A replaced budget keeps the spend counted so far this month.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "key-groups"
+                ],
+                "summary": "Set a group's budget",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Directory group id",
+                        "name": "group_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The group's budget",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_request.SetBudgetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_response.BudgetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "A service credential, or no access to the gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "No limit, a negative or non-finite limit, or an action other than alert or block (validation_failed)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Removes the budget of the directory group group_id: its keys are no longer held to a group or member limit. The spend counted this month is kept, so a budget set again later in the month starts from it.",
+                "tags": [
+                    "key-groups"
+                ],
+                "summary": "Clear a group's budget",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Directory group id",
+                        "name": "group_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "A service credential, or no access to the gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "The group has no budget, or no such gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4163,7 +4364,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/store/principal/llm-key": {
             "get": {
-                "description": "Returns the caller's own personal key on the gateway: its id, recognition prefix and suffix, the consumers it is linked to, its expiry and timestamps. The secret is never returned. Acts on the signed-in tenant user only; a service credential or a platform token answers 403.",
+                "description": "Returns the caller's own personal key on the gateway, the one that belongs to no group (GET /store/principal/llm-keys lists every key, group keys included): its id, recognition prefix and suffix, the consumers it is linked to, its expiry and timestamps. The secret is never returned. Acts on the signed-in tenant user only; a service credential or a platform token answers 403.",
                 "produces": [
                     "application/json"
                 ],
@@ -4220,7 +4421,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Issues the caller's personal key on the gateway, linked to no consumer, and returns its secret once. expires_at is required and must fall within the next 90 days. One key per user per gateway; owner_id, principal_sub and consumer_id in the body are ignored. The key records the email the caller's token carries, which every call it makes is shown under.",
+                "description": "Issues the caller's personal key on the gateway, the one that belongs to no group, linked to no consumer, and returns its secret once. expires_at is optional: when set it must fall within the next 366 days; absent, null or empty, the key never expires. One personal key per user per gateway; owner_id, principal_sub, consumer_id and any group in the body are ignored (a key for a group is issued by the admin route). The key records the email the caller's token carries, which every call it makes is shown under.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4244,7 +4445,6 @@ const docTemplate = `{
                         "description": "Expiry of the key",
                         "name": "body",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateLLMKeyRequest"
                         }
@@ -4288,7 +4488,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Missing or out-of-range expires_at, or a hybrid gateway",
+                        "description": "An out-of-range expires_at, or a hybrid gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4301,7 +4501,7 @@ const docTemplate = `{
                 ]
             },
             "delete": {
-                "description": "Deletes the caller's personal key and every consumer link it holds. The caller may create a new one afterwards.",
+                "description": "Deletes the caller's personal key, the one that belongs to no group, and every consumer link it holds. The caller may create a new one afterwards. A group key is revoked with DELETE /store/principal/llm-keys/{auth_id}.",
                 "tags": [
                     "store"
                 ],
@@ -4354,7 +4554,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/store/principal/llm-key/rotate": {
             "post": {
-                "description": "Replaces the secret of the caller's personal key and returns the new one once. The key keeps its id and every consumer link. Without expires_at the current expiry stays, unless it has passed; with it, it must fall within the next 90 days.",
+                "description": "Replaces the secret of the caller's personal key (the one that belongs to no group) and returns the new one once. The key keeps its id and every consumer link. Without expires_at or never_expires the current expiry stays, a key that never expires included; a key whose expiry has passed then answers 422. expires_at sets a new expiry within the next 366 days; never_expires true renews it with none. The two cannot be combined (422).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4415,7 +4615,211 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Out-of-range expires_at, or an expired key rotated without one",
+                        "description": "Out-of-range expires_at, expires_at with never_expires, or an expired key rotated with neither",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-keys": {
+            "get": {
+                "description": "Returns every key the caller holds on the gateway, newest first: their personal key and the keys they hold for their directory groups (group_id and group_name set). Each carries its id, recognition prefix and suffix, the consumers it is linked to, its expiry and timestamps; the secrets are never returned. Acts on the signed-in tenant user only; a service credential or a platform token answers 403.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "List your LLM keys",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-keys/{auth_id}": {
+            "delete": {
+                "description": "Deletes one of the caller's keys, their personal key or a group key, and every consumer link it holds. A key that is not the caller's answers 404, as one that does not exist does.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Revoke one of your LLM keys",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Key id",
+                        "name": "auth_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such key of the caller's, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/store/principal/llm-keys/{auth_id}/rotate": {
+            "post": {
+                "description": "Replaces the secret of one of the caller's keys, their personal key or a group key, and returns the new one once. The key keeps its id, its group and every consumer link. Without expires_at or never_expires the current expiry stays, a key that never expires included; a key whose expiry has passed then answers 422. expires_at sets a new expiry within the next 366 days; never_expires true renews it with none. The two cannot be combined (422). A key that is not the caller's answers 404, as one that does not exist does.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Rotate one of your LLM keys",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Key id",
+                        "name": "auth_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry of the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.IssuedPersonalKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a signed-in tenant user: service credential, platform token or no user id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such key of the caller's, or no such gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Out-of-range expires_at, expires_at with never_expires, or an expired key rotated with neither",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4642,7 +5046,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/store/users/{user_id}/llm-key": {
             "post": {
-                "description": "Issues the personal key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. It is the key the user would create themselves: one per user per gateway, expires_at required and within the next 90 days, and the user rotates or revokes it afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.",
+                "description": "Issues a key of the user named in the path, on the gateway, linked to no consumer, and returns its secret once, for the admin to hand over. Without group_id it is the user's personal key, the one they would create themselves; with group_id (and group_name, required with it) it is their key for that directory group, whose spend is attributed to the group. A user holds at most one personal key and one key per group on a gateway. expires_at is optional (absent never expires; set, within the next 366 days), and the user rotates or revokes the key afterwards as their own. owner_email is the email every call the key makes is shown under; absent, it is recorded when the console next reconciles the key. Which users an admin may issue keys for is the console's call; TrustGate checks only that the gateway is the caller's tenant's. Needs a signed-in tenant user: a service credential or a platform token answers 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4673,7 +5077,6 @@ const docTemplate = `{
                         "description": "Expiry of the key and the owner's email",
                         "name": "body",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.CreateUserLLMKeyRequest"
                         }
@@ -4711,13 +5114,13 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "The user already holds a key on this gateway",
+                        "description": "The user already holds a key for this group on this gateway, or a personal key when no group is named",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
                     "422": {
-                        "description": "Missing or out-of-range expires_at, an owner_email that is not an address, or a hybrid gateway",
+                        "description": "An out-of-range expires_at, an owner_email that is not an address, a group_id without group_name (or the reverse), or a hybrid gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -6216,6 +6619,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "alice@example.com"
                 },
+                "group_name": {
+                    "type": "string",
+                    "example": "engineering"
+                },
                 "groups": {
                     "type": "array",
                     "items": {
@@ -6317,6 +6724,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "gateway_id": {
+                    "type": "string"
+                },
+                "group_id": {
+                    "description": "GroupID is the directory group a group key is held for, which its spend\nis attributed to. Absent on the owner's personal key and on application\nkeys.",
+                    "type": "string"
+                },
+                "group_name": {
+                    "description": "GroupName is GroupID's directory name, which the MCP Store matches the\nkey's access against. Absent wherever GroupID is.",
                     "type": "string"
                 },
                 "id": {
@@ -7746,6 +8161,87 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_request.SetBudgetRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "Action is what reaching a limit does: alert records it and tells the\nconsole; block also refuses the group's keys until the month turns.",
+                    "type": "string",
+                    "enum": [
+                        "alert",
+                        "block"
+                    ],
+                    "example": "block"
+                },
+                "member_monthly_limit_usd": {
+                    "description": "MemberMonthlyLimitUSD is what each member may spend in the month through\ntheir key for the group.",
+                    "type": "number",
+                    "example": 50
+                },
+                "member_overrides": {
+                    "description": "MemberOverrides replaces MemberMonthlyLimitUSD for the members it names,\nby platform user id.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "monthly_limit_usd": {
+                    "description": "MonthlyLimitUSD is the group's total for the month, shared by every\nmember.",
+                    "type": "number",
+                    "example": 500
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_response.BudgetListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_response.BudgetResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_keygroup_response.BudgetResponse": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "alert",
+                        "block"
+                    ],
+                    "example": "block"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "group_id": {
+                    "type": "string",
+                    "example": "0199a000-0000-7000-8000-00000000000a"
+                },
+                "member_monthly_limit_usd": {
+                    "type": "number",
+                    "example": 50
+                },
+                "member_overrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "monthly_limit_usd": {
+                    "type": "number",
+                    "example": 500
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -8948,6 +9444,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "expires_at": {
+                    "description": "ExpiresAt is when the key stops working, within the next 366 days.\nAbsent, null or empty: it never expires.",
                     "type": "string",
                     "format": "date-time",
                     "example": "2026-12-31T12:00:00Z"
@@ -8958,9 +9455,20 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "expires_at": {
+                    "description": "ExpiresAt is when the key stops working, within the next 366 days.\nAbsent, null or empty: it never expires.",
                     "type": "string",
                     "format": "date-time",
                     "example": "2026-12-31T12:00:00Z"
+                },
+                "group_id": {
+                    "description": "GroupID is the console's id of the directory group the key is held for.\nIt never changes once the key exists.",
+                    "type": "string",
+                    "example": "0199a000-0000-7000-8000-00000000000a"
+                },
+                "group_name": {
+                    "description": "GroupName is the group's directory name, required with group_id: the\nname the MCP Store matches the key's access against.",
+                    "type": "string",
+                    "example": "engineering"
                 },
                 "owner_email": {
                     "type": "string",
@@ -9013,9 +9521,15 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "expires_at": {
+                    "description": "ExpiresAt is the new expiry, within the next 366 days. Absent keeps the\ncurrent one, which a key that has expired cannot.",
                     "type": "string",
                     "format": "date-time",
                     "example": "2026-12-31T12:00:00Z"
+                },
+                "never_expires": {
+                    "description": "NeverExpires renews the key with no expiry at all. Not allowed with\nexpires_at.",
+                    "type": "boolean",
+                    "example": false
                 }
             }
         },
@@ -9220,6 +9734,13 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string"
                 },
+                "group_id": {
+                    "description": "GroupID and GroupName name the directory group a group key is held for.\nBoth are absent on the personal key.",
+                    "type": "string"
+                },
+                "group_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -9286,6 +9807,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PersonalKeyResponse": {
             "type": "object",
             "properties": {
@@ -9302,6 +9834,13 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "expires_at": {
+                    "type": "string"
+                },
+                "group_id": {
+                    "description": "GroupID and GroupName name the directory group a group key is held for.\nBoth are absent on the personal key.",
+                    "type": "string"
+                },
+                "group_name": {
                     "type": "string"
                 },
                 "id": {
@@ -10275,7 +10814,15 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt"
                     }
                 },
+                "auth_group_id": {
+                    "description": "AuthGroupID is the directory group a group key is held for, which the\nrequest's spend is attributed to; absent on every other auth.",
+                    "type": "string"
+                },
                 "auth_id": {
+                    "type": "string"
+                },
+                "auth_kind": {
+                    "description": "AuthKind is \"personal\" for a key a user owns, their personal key or a\ngroup key, and \"application\" for any other api key; absent for any\nother credential.",
                     "type": "string"
                 },
                 "consumer": {

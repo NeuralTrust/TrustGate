@@ -212,3 +212,42 @@ func TestPrincipalGroups(t *testing.T) {
 		t.Fatalf("Groups() = %#v", got)
 	}
 }
+
+func TestPrincipalStoreIdentity(t *testing.T) {
+	t.Parallel()
+	groups := []string{"engineering", "sre"}
+	for name, tc := range map[string]struct {
+		p           *Principal
+		keyGroup    string
+		subject     string
+		storeGroups []string
+	}{
+		"a group key is its group alone": {
+			p:        &Principal{Subject: "alice", Method: MethodPersonalKey, Claims: map[string]any{ClaimGroups: groups, ClaimKeyGroup: " sre "}},
+			keyGroup: "sre", storeGroups: []string{"sre"},
+		},
+		"a personal key is its owner": {
+			p:       &Principal{Subject: "alice", Method: MethodPersonalKey, Claims: map[string]any{ClaimGroups: groups}},
+			subject: "alice", storeGroups: groups,
+		},
+		"a token cannot claim a key group": {
+			p:       &Principal{Subject: "alice", Method: MethodExternalJWT, Claims: map[string]any{ClaimGroups: groups, ClaimKeyGroup: "sre"}},
+			subject: "alice", storeGroups: groups,
+		},
+		"nor can an application key": {
+			p:       &Principal{Subject: "ci", Method: MethodAPIKey, Claims: map[string]any{ClaimKeyGroup: "sre"}},
+			subject: "ci",
+		},
+		"nobody": {p: nil},
+	} {
+		if got := tc.p.KeyGroup(); got != tc.keyGroup {
+			t.Fatalf("%s: KeyGroup() = %q, want %q", name, got, tc.keyGroup)
+		}
+		if got := tc.p.StoreSubject(); got != tc.subject {
+			t.Fatalf("%s: StoreSubject() = %q, want %q", name, got, tc.subject)
+		}
+		if got := tc.p.StoreGroups(); !reflect.DeepEqual(got, tc.storeGroups) && (len(got) != 0 || len(tc.storeGroups) != 0) {
+			t.Fatalf("%s: StoreGroups() = %#v, want %#v", name, got, tc.storeGroups)
+		}
+	}
+}

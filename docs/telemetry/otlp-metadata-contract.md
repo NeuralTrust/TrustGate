@@ -52,6 +52,8 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.consumer.id` | `consumer.id` |
 | `trustgate.consumer.name` | `consumer.name` |
 | `trustgate.auth.id` | `auth_id`: the id of the auth that authenticated an LLM proxy request (`/<slug>/v1/*` and `/store/v1/*`, where it is the personal key). Omitted when no auth id was resolved; MCP records do not carry it yet |
+| `trustgate.auth.kind` | `auth_kind`: what kind of api key `trustgate.auth.id` is. `personal` for a key a user owns (`/store/v1/*`: their personal key or a group key), `application` for any other api key. Omitted for a credential that is not an api key (OAuth2/OIDC, mTLS, the playground) and wherever `trustgate.auth.id` is |
+| `trustgate.auth.group_id` | `auth_group_id`: the directory group (the console's `DirectoryGroup` id) a group key is held for, which the request's spend is attributed to. Omitted for the owner's personal key, for application keys and for every other credential, so "no attribute" is the personal (no group) bucket of `personal` traffic |
 | `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, the API key name for an application key, or the key owner for a personal key) |
 | `trustgate.principal.method` | `principal_method` (`api_key`, `jwt`, `introspection`, `mtls`) |
 | `trustgate.principal.email` | `principal_email` (display identity: inbound JWT `email` / `upn` / email-shaped `preferred_username`, or the unique vault `account_ref` when that is an email) |

@@ -44,6 +44,10 @@ type AuthContext struct {
 	Subject     string
 	Claims      map[string]any
 	Scopes      []string
+
+	// KeyGroupID is the directory group a group key is held for, empty for
+	// every other credential. Spend on the request is attributed to it.
+	KeyGroupID string
 }
 
 type authContextKey struct{}

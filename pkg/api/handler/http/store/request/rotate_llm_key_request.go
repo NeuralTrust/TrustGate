@@ -15,17 +15,38 @@
 package request
 
 import (
-	"time"
+	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 // RotateLLMKeyRequest is the body of a personal key rotation.
 type RotateLLMKeyRequest struct {
+	// ExpiresAt is the new expiry, within the next 366 days. Absent keeps the
+	// current one, which a key that has expired cannot.
 	ExpiresAt string `json:"expires_at,omitempty" format:"date-time" example:"2026-12-31T12:00:00Z"`
+	// NeverExpires renews the key with no expiry at all. Not allowed with
+	// expires_at.
+	NeverExpires bool `json:"never_expires,omitempty" example:"false"`
 }
 
-// Expiry parses expires_at, nil when the rotation keeps the current expiry.
-func (r RotateLLMKeyRequest) Expiry() (*time.Time, error) {
-	return httpio.ParseExpiresAt(r.ExpiresAt)
+// Expiry is the expiry change the rotation asks for: nil keeps the current
+// expiry, a change with no At clears it.
+func (r RotateLLMKeyRequest) Expiry() (*appauth.ExpiryChange, error) {
+	at, err := httpio.ParseExpiresAt(r.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case r.NeverExpires && at != nil:
+		return nil, fmt.Errorf("expires_at and never_expires cannot be combined: %w", commonerrors.ErrValidation)
+	case r.NeverExpires:
+		return &appauth.ExpiryChange{}, nil
+	case at != nil:
+		return &appauth.ExpiryChange{At: at}, nil
+	default:
+		return nil, nil
+	}
 }
