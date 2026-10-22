@@ -838,12 +838,16 @@ type windowState struct {
 	total  int
 }
 
+// The scripts touch the dedupe key and every window counter of one subject, and
+// a cluster-mode Redis runs a script only when all its keys share a slot. Both
+// key shapes therefore carry the same {configID:dimension:subject} hash tag:
+// one subject stays on one slot, and distinct subjects spread across slots.
 func counterKey(configID, dimension, subject, tool string, window int) string {
-	return fmt.Sprintf("pertoolrl:%s:%s:%s:%s:w%d", configID, dimension, subject, tool, window)
+	return fmt.Sprintf("pertoolrl:{%s:%s:%s}:%s:w%d", configID, dimension, subject, tool, window)
 }
 
 func dedupeKey(configID, dimension, subject, toolCallID string) string {
-	return fmt.Sprintf("pertoolrl:dedupe:%s:%s:%s:%s", configID, dimension, subject, toolCallID)
+	return fmt.Sprintf("pertoolrl:dedupe:{%s:%s:%s}:%s", configID, dimension, subject, toolCallID)
 }
 
 func largestWindow(rule *ruleConfig) time.Duration {

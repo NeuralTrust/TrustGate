@@ -28,6 +28,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/clustertest"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -1829,5 +1830,60 @@ func TestPlugin_PreRequest_InjectGeminiURLStreamDegradesToStrip(t *testing.T) {
 			require.Len(t, decoded.Tools, 1)
 			assert.Equal(t, "lookup", decoded.Tools[0].Name)
 		})
+	}
+}
+
+func multiWindowSettings(tool string) map[string]any {
+	return map[string]any{
+		"rules": []any{map[string]any{
+			"tool": tool, "behavior": "reject_response",
+			"windows": []any{
+				map[string]any{"duration": "1m", "max": 5},
+				map[string]any{"duration": "1h", "max": 50},
+			},
+		}},
+	}
+}
+
+func newClusterPluginRedis(t *testing.T) (*Plugin, *redis.Client) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := clustertest.New(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = rdb.Close() })
+	return New(rdb, adapter.NewRegistry()), rdb
+}
+
+// A cluster-mode server only runs a script whose keys share a slot, so the
+// dedupe key and every window counter of one subject must carry one hash tag.
+func TestPlugin_MCP_PreResponse_ClusterModeCountsEveryWindow(t *testing.T) {
+	p, rdb := newClusterPluginRedis(t)
+	settings := multiWindowSettings("send_email")
+
+	in := input(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"), nil)
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+
+	for w := 0; w < 2; w++ {
+		val, err := rdb.Get(context.Background(), consumerKey("send_email", w)).Result()
+		require.NoError(t, err, "window %d", w)
+		assert.Equal(t, "1", val)
+	}
+	assert.EqualValues(t, 1, rdb.Exists(context.Background(), consumerDedupeKey("call_1")).Val())
+}
+
+func TestPlugin_PreRequest_ClusterModeCountsExecutedResultOnce(t *testing.T) {
+	p, rdb := newClusterPluginRedis(t)
+	settings := multiWindowSettings("send_email")
+	req := openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"}))
+
+	for i := 0; i < 2; i++ {
+		_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+		require.NoError(t, err)
+	}
+
+	for w := 0; w < 2; w++ {
+		val, err := rdb.Get(context.Background(), consumerKey("send_email", w)).Result()
+		require.NoError(t, err, "window %d", w)
+		assert.Equal(t, "1", val, "the dedupe slot must stop the replay")
 	}
 }
