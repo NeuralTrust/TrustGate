@@ -130,6 +130,9 @@ type forwarder struct {
 	models     appcatalog.BedrockModelResolver
 	masker     NativeBodyMasker
 	maxRetries int
+	// groupBudget holds a group key's store requests to its group's budget;
+	// nil when the plane enforces none.
+	groupBudget *groupBudgetStage
 
 	nativeToolHold   time.Duration
 	nativeLookupWait time.Duration
@@ -251,8 +254,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
 	}
-	policies := in.Consumer.Policies
-	plan := in.Consumer.PolicyPlan
+	policies, plan := f.groupBudget.extend(in.Request, in.Consumer.Policies, in.Consumer.PolicyPlan)
 
 	nativeBody := nativeBodySnapshot(in.Request)
 	if nativeBody != nil {
