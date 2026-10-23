@@ -103,9 +103,9 @@ func TestPurgeGatewayState_ClusterModeDeletesEveryKey(t *testing.T) {
 	// More than one SCAN batch, with keys that hash to different slots.
 	total := 450
 	for i := 0; i < total; i++ {
-		mr.Set("session:"+deleted.String()+":"+strconv.Itoa(i), "payload")
+		require.NoError(t, mr.Set("session:"+deleted.String()+":"+strconv.Itoa(i), "payload"))
 	}
-	mr.Set("oauth:gwclient:agw-unscoped", "payload")
+	require.NoError(t, mr.Set("oauth:gwclient:agw-unscoped", "payload"))
 
 	require.NoError(t, gatewaystate.NewPurger(rdb).PurgeGatewayState(t.Context(), deleted))
 
