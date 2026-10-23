@@ -22,6 +22,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,10 @@ func (f *recordingFilter) Filter(
 	*f.order = append(*f.order, f.name)
 	f.got = in
 	return f.answer
+}
+
+func (f *recordingFilter) CheckCatalogAccess(context.Context, string, *registrydomain.TargetAuth) []string {
+	return nil
 }
 
 // recordingLiveFilter is a recordingFilter in the live listing's place, which

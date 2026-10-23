@@ -17,6 +17,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -437,6 +438,25 @@ func TestCredentialsCacheKey_OmitsSecret(t *testing.T) {
 	assert.NotEqual(t, key, other.CacheKey())
 }
 
+// Anyone can type a known access key ID with a made-up secret: the key must tell
+// them apart, or the bogus attempt would poison (or read) the real one's entry.
+func TestCredentialsCacheKey_SeparatesSecrets(t *testing.T) {
+	t.Parallel()
+	base := Credentials{Region: "eu-west-1", AccessKey: "AKIAEXAMPLE", SecretKey: "real-secret", SessionToken: "tok"}
+
+	wrongSecret := base
+	wrongSecret.SecretKey = "made-up"
+	assert.NotEqual(t, base.CacheKey(), wrongSecret.CacheKey())
+
+	otherToken := base
+	otherToken.SessionToken = "other"
+	assert.NotEqual(t, base.CacheKey(), otherToken.CacheKey())
+
+	assert.NotContains(t, base.CacheKey(), "real-secret")
+	assert.NotContains(t, base.CacheKey(), "tok")
+	assert.Equal(t, base.CacheKey(), base.CacheKey())
+}
+
 const (
 	appProfileARN  = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123xyz"
 	provisionedARN = "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/pt1234"
@@ -583,4 +603,143 @@ func TestResolveModelARN_RefusesAResourceThatIsNotOneSegment(t *testing.T) {
 			assert.Empty(t, rt.hosts, "no request is made for it")
 		})
 	}
+}
+
+func TestMissingPermission(t *testing.T) {
+	t.Parallel()
+	named := &APIError{Path: "/inference-profiles", Status: 403,
+		Body: `{"Message":"User: arn:aws:iam::1:user/x is not authorized to perform: bedrock:ListInferenceProfiles on resource: *"}`}
+	action, ok := MissingPermission(named)
+	assert.True(t, ok)
+	assert.Equal(t, "bedrock:ListInferenceProfiles", action)
+
+	// Wrapped, and with no action named: inferred from the endpoint.
+	wrapped := fmt.Errorf("lookup: %w", &APIError{
+		Path: availabilityPath + "amazon.nova-pro-v1:0", Status: 403, ErrorType: "AccessDeniedException",
+	})
+	action, ok = MissingPermission(wrapped)
+	assert.True(t, ok)
+	assert.Equal(t, "bedrock:GetFoundationModelAvailability", action)
+
+	// A 403 that is not AccessDenied says nothing about IAM.
+	for _, body := range []string{
+		`{"__type":"UnrecognizedClientException","message":"The security token included in the request is invalid."}`,
+		`{"__type":"InvalidSignatureException","message":"signature mismatch"}`,
+		`{"__type":"ExpiredTokenException","message":"expired"}`,
+		``,
+	} {
+		_, ok = MissingPermission(&APIError{Path: foundationModelsPath, Status: 403, Body: body})
+		assert.False(t, ok, body)
+	}
+
+	_, ok = MissingPermission(&APIError{Path: foundationModelsPath, Status: 500})
+	assert.False(t, ok)
+	_, ok = MissingPermission(errors.New("boom"))
+	assert.False(t, ok)
+}
+
+func TestCheckCatalogAccess_ReportsOnlyDeniedActions(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case foundationModelsPath:
+			_, _ = w.Write([]byte(foundationModelsPayload))
+		case inferenceProfilesPath:
+			w.Header().Set("x-amzn-ErrorType", "AccessDeniedException:http://internal.amazon.com/coral/")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"Message":"not authorized to perform: bedrock:ListInferenceProfiles"}`))
+		default:
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
+		}
+	}))
+
+	missing, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bedrock:ListInferenceProfiles"}, missing)
+}
+
+func TestCheckCatalogAccess_RuntimeOnlyCredentialsMissEverything(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("x-amzn-ErrorType", "AccessDeniedException")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+
+	missing, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+
+	require.NoError(t, err)
+	// Availability cannot be probed without a listed model; it is reported
+	// through the listing denial, which is the first thing to grant.
+	assert.Equal(t, []string{"bedrock:ListFoundationModels", "bedrock:ListInferenceProfiles"}, missing)
+}
+
+func TestCheckCatalogAccess_AllGranted(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(allEntitled))
+	missing, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
+
+func TestCheckCatalogAccess_DeniedAvailability(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case foundationModelsPath:
+			_, _ = w.Write([]byte(foundationModelsPayload))
+		case inferenceProfilesPath:
+			_, _ = w.Write([]byte(profilesPayload))
+		default:
+			w.Header().Set("x-amzn-ErrorType", "AccessDeniedException")
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	missing, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bedrock:GetFoundationModelAvailability"}, missing)
+}
+
+// A failing availability probe that is not a permission denial means "not
+// probed": it must not throw away what the two listings already established.
+func TestCheckCatalogAccess_AvailabilityServerErrorIsNotProbed(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(func(string) (int, string) { return http.StatusInternalServerError, "boom" }))
+	missing, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
+
+// The probe asks about a model that ListInvocableModelIDs could also offer:
+// on-demand and not retired.
+func TestCheckCatalogAccess_ProbesAnActiveOnDemandModel(t *testing.T) {
+	t.Parallel()
+	var probed []string
+	var mu sync.Mutex
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case foundationModelsPath:
+			_, _ = w.Write([]byte(`{"modelSummaries":[
+				{"modelId":"profile.only","inferenceTypesSupported":["INFERENCE_PROFILE"],"modelLifecycle":{"status":"ACTIVE"}},
+				{"modelId":"legacy.model","inferenceTypesSupported":["ON_DEMAND"],"modelLifecycle":{"status":"LEGACY"}},
+				{"modelId":"good.model","inferenceTypesSupported":["ON_DEMAND"],"modelLifecycle":{"status":"ACTIVE"}}]}`))
+		case inferenceProfilesPath:
+			_, _ = w.Write([]byte(profilesPayload))
+		default:
+			mu.Lock()
+			probed = append(probed, strings.TrimPrefix(r.URL.Path, availabilityPath))
+			mu.Unlock()
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
+		}
+	}))
+	_, err := c.CheckCatalogAccess(context.Background(), Credentials{Region: "eu-west-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"good.model"}, probed)
+}
+
+func TestCheckCatalogAccess_RequiresRegion(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(allEntitled))
+	_, err := c.CheckCatalogAccess(context.Background(), Credentials{})
+	assert.ErrorIs(t, err, ErrRegionRequired)
 }
