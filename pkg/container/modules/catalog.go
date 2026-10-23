@@ -25,6 +25,7 @@ import (
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -99,6 +100,11 @@ func provideCatalogServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
+		return err
+	}
+	// Test-connection reports missing catalog permissions through the same
+	// filter instance, so clearing its cache clears what Filter serves.
+	if err := c.Provide(func(f appcatalog.ServerlessFilter) appregistry.CatalogAccessChecker { return f }); err != nil {
 		return err
 	}
 	if err := c.Provide(newLiveModelSource); err != nil {

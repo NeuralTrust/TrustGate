@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
@@ -144,7 +145,7 @@ func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(appregistry.NewGroupedFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(appregistry.NewConnectionTester); err != nil {
+	if err := c.Provide(newConnectionTester); err != nil {
 		return err
 	}
 	if err := c.Provide(appregistry.NewOpenAPIValidator); err != nil {
@@ -172,4 +173,22 @@ func provideRegistryServices(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+type connectionTesterParams struct {
+	dig.In
+	Finder  appregistry.Finder
+	Locator factory.ProviderLocator
+	Logger  *slog.Logger
+	// Catalog is optional so a plane without the catalog module still tests
+	// connections, only without catalog warnings.
+	Catalog appregistry.CatalogAccessChecker `optional:"true"`
+}
+
+func newConnectionTester(p connectionTesterParams) appregistry.ConnectionTester {
+	var opts []appregistry.ConnectionTesterOption
+	if p.Catalog != nil {
+		opts = append(opts, appregistry.WithCatalogAccessChecker(p.Catalog))
+	}
+	return appregistry.NewConnectionTester(p.Finder, p.Locator, p.Logger, opts...)
 }
