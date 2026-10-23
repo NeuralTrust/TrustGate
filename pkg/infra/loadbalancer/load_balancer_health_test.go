@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/clustertest"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -92,6 +93,48 @@ func TestLoadBalancer_NextRoute_SkipsUnhealthyViaMGet(t *testing.T) {
 		}
 		if got.RegistryID() != healthy.ID {
 			t.Fatalf("NextRoute returned %q, want the healthy backend", got.Registry.Name)
+		}
+	}
+}
+
+func TestLoadBalancer_NextRoute_SkipsUnhealthyInClusterMode(t *testing.T) {
+	t.Parallel()
+
+	mr := miniredis.RunT(t)
+	rdb := clustertest.New(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	cacheClient := cachemocks.NewClient(t)
+	cacheClient.EXPECT().RedisClient().Return(rdb).Maybe()
+
+	unhealthy := newBackend(t, "unhealthy")
+	healthy := newBackend(t, "healthy")
+
+	if err := mr.Set(fmt.Sprintf("lb:health:%s", unhealthy.ID.String()), `{"Healthy":false}`); err != nil {
+		t.Fatalf("seed unhealthy status: %v", err)
+	}
+
+	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil), loadbalancer.Pool{
+		ID: uuid.New().String(),
+		Routes: []routingdomain.Route{
+			routingdomain.RouteForRegistry(unhealthy),
+			routingdomain.RouteForRegistry(healthy),
+		},
+		Algorithm: loadbalancer.AlgorithmRoundRobin,
+	}, newTestLogger(), cacheClient)
+	if err != nil {
+		t.Fatalf("NewLoadBalancer error: %v", err)
+	}
+	t.Cleanup(lb.Close)
+
+	req := &infracontext.RequestContext{}
+	for i := 0; i < 4; i++ {
+		got, nerr := lb.NextRoute(context.Background(), req, nil)
+		if nerr != nil {
+			t.Fatalf("NextRoute error: %v", nerr)
+		}
+		if got.RegistryID() != healthy.ID {
+			t.Fatalf("NextRoute returned %q, want the healthy backend: a cross-slot health read is ignored", got.Registry.Name)
 		}
 	}
 }

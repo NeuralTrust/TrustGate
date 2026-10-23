@@ -413,6 +413,8 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		outcome.Type = verdict.Type
 		outcome.Message = verdict.Message
 		outcome.Body = verdict.Body
+		outcome.StatusCode = verdict.StatusCode
+		outcome.Headers = verdict.Headers
 		outcome.HasTransform = false
 		outcome.Transformed = ""
 		return true
@@ -630,6 +632,8 @@ func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScop
 		scope.AuthID = req.AuthID
 		scope.OwnerID = req.OwnerID
 		scope.KeyBudget = req.KeyBudget
+		scope.KeyGroupID = req.KeyGroupID
+		scope.KeyGroupBudget = req.KeyGroupBudget
 	}
 	return scope
 }

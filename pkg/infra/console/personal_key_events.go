@@ -84,6 +84,8 @@ type personalKeyEventBody struct {
 	AuthID    string     `json:"auth_id"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Renewed   bool       `json:"renewed,omitempty"`
+	// GroupID is the group of a group key, absent on the personal key.
+	GroupID string `json:"group_id,omitempty"`
 }
 
 func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKeyEvent) error {
@@ -101,15 +103,22 @@ func (e *PersonalKeyEvents) Notify(ctx context.Context, event appauth.PersonalKe
 		AuthID:    event.AuthID.String(),
 		ExpiresAt: event.ExpiresAt,
 		Renewed:   event.Renewed,
+		GroupID:   event.GroupID,
 	})
 	if err != nil {
 		return fmt.Errorf("console events: encode: %w", err)
 	}
-	req, err := newSignedRequest(ctx, e.url, e.secret, e.now(), body)
+	return postEvent(ctx, e.client, e.url, e.secret, e.now(), body)
+}
+
+// postEvent posts a signed event and reads the console's answer: any 2xx is
+// a delivery.
+func postEvent(ctx context.Context, client *http.Client, endpoint string, secret []byte, now time.Time, body []byte) error {
+	req, err := newSignedRequest(ctx, endpoint, secret, now, body)
 	if err != nil {
 		return fmt.Errorf("console events: build request: %w", err)
 	}
-	resp, err := e.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("console events: post: %w", err)
 	}

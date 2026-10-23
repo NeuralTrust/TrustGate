@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/clustertest"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/gatewaystate"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -90,4 +91,23 @@ func TestPurgeGatewayState_PagesThroughLargeKeyspaces(t *testing.T) {
 func TestPurgeGatewayState_NilClientIsNoOp(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, gatewaystate.NewPurger(nil).PurgeGatewayState(t.Context(), ids.New[ids.GatewayKind]()))
+}
+
+func TestPurgeGatewayState_ClusterModeDeletesEveryKey(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := clustertest.New(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	deleted := ids.New[ids.GatewayKind]()
+	// More than one SCAN batch, with keys that hash to different slots.
+	total := 450
+	for i := 0; i < total; i++ {
+		require.NoError(t, mr.Set("session:"+deleted.String()+":"+strconv.Itoa(i), "payload"))
+	}
+	require.NoError(t, mr.Set("oauth:gwclient:agw-unscoped", "payload"))
+
+	require.NoError(t, gatewaystate.NewPurger(rdb).PurgeGatewayState(t.Context(), deleted))
+
+	require.Equal(t, []string{"oauth:gwclient:agw-unscoped"}, mr.Keys())
 }

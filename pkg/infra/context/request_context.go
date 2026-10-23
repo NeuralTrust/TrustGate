@@ -23,6 +23,7 @@ import (
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -173,6 +174,13 @@ type RequestContext struct {
 	// the request, nil when it has none. The gateway sets it from the resolved
 	// key, never from a header; plugins read it and never modify it.
 	KeyBudget *authdomain.KeyBudget
+	// KeyGroupID is the directory group of the group key that authenticated
+	// the request, empty for any other credential. KeyGroupBudget is that
+	// group's budget, nil when it has none. The gateway sets both from the
+	// resolved key and the gateway's data, never from a header; plugins read
+	// them and never modify them.
+	KeyGroupID     string
+	KeyGroupBudget *keygroupdomain.Budget
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel

@@ -26,6 +26,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -139,6 +140,12 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	if msg.KeyGroupBudgets, err = encodeJSON(data.KeyGroupBudgets, "key group budget", func(_ int, blob []byte) *snapshotpb.KeyGroupBudget {
+		return &snapshotpb.KeyGroupBudget{Json: blob}
+	}); err != nil {
+		return nil, err
+	}
+
 	msg.SessionRevocations = make([]*snapshotpb.SessionRevocation, 0, len(data.SessionRevocations))
 	for i := range data.SessionRevocations {
 		rev := data.SessionRevocations[i]
@@ -238,6 +245,10 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 			QuotaPerMonth: int(c.GetQuotaPerMonth()),
 			MaxInstances:  int(c.GetMaxInstances()),
 		})
+	}
+
+	if data.KeyGroupBudgets, err = decodeJSON[*snapshotpb.KeyGroupBudget, keygroupdomain.Budget](msg.GetKeyGroupBudgets(), "key group budget", func(m *snapshotpb.KeyGroupBudget) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
 	}
 
 	data.SessionRevocations = make([]readmodel.SessionRevocation, 0, len(msg.GetSessionRevocations()))

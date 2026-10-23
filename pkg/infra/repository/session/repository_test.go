@@ -20,6 +20,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/clustertest"
 	sessionrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/session"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -134,4 +135,23 @@ func TestRepository_EveryTurnOfASessionIsIndexed(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "sess-1", sessionID, "a branch from an earlier turn keeps the session")
 	}
+}
+
+func TestRepository_SaveWithTurnInClusterMode(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := clustertest.New(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = rdb.Close() })
+	repo := sessionrepo.NewRepository(rdb)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Save(ctx, &domain.Session{
+		ID: "sess-1", GatewayID: "gw-1", LastTurnID: "resp_123", ExpiresAt: time.Now().Add(time.Hour),
+	}))
+
+	id, err := repo.FindSessionIDByTurn(ctx, "gw-1", "resp_123")
+	require.NoError(t, err)
+	assert.Equal(t, "sess-1", id)
+	got, err := repo.Get(ctx, "gw-1", "sess-1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
 }

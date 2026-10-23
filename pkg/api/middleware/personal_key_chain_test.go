@@ -34,7 +34,7 @@ import (
 
 func personalKey(t *testing.T, owner string, groups ...string) *authdomain.Auth {
 	t.Helper()
-	key, err := authdomain.NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), owner, time.Now().UTC().Add(24*time.Hour), time.Now().UTC())
+	key, err := authdomain.NewOwnedAPIKeyAuth(ids.New[ids.GatewayKind](), owner, authdomain.KeyGroup{}, ptr(time.Now().UTC().Add(24*time.Hour)), time.Now().UTC())
 	require.NoError(t, err)
 	key.OwnerGroups = groups
 	return key
@@ -124,6 +124,30 @@ func TestChain_PersonalKeyCarriesItsOwnersEmail(t *testing.T) {
 	require.Equal(t, []string{"engineering"}, got.Principal.Groups())
 }
 
+// A group key reaches the Store as its owner, narrowed to its group for Store
+// access: the principal names the group, and still carries every group of the
+// owner, the key's own included, for the MCP policies scoped to groups.
+func TestChain_GroupKeyNamesItsGroup(t *testing.T) {
+	key := personalKey(t, "alice", "engineering", "sre")
+	key.GroupID, key.GroupName = "g-data", "data"
+
+	got, err := storeChain(t, key, "/store/mcp", nil, map[string]string{apiresolver.HeaderAPIKey: key.RawKey})
+
+	require.NoError(t, err)
+	require.Equal(t, "alice", got.Principal.Subject, "installs and accounts stay the owner's")
+	require.Equal(t, "data", got.Principal.KeyGroup())
+	require.Equal(t, []string{"data", "engineering", "sre"}, got.Principal.Groups(), "the key's group joins the owner's")
+	require.Empty(t, got.Principal.StoreSubject(), "Store access is not decided for the owner")
+	require.Equal(t, []string{"data"}, got.Principal.StoreGroups())
+
+	personal := personalKey(t, "alice", "engineering")
+	got, err = storeChain(t, personal, "/store/mcp", nil, map[string]string{apiresolver.HeaderAPIKey: personal.RawKey})
+	require.NoError(t, err)
+	require.Empty(t, got.Principal.KeyGroup(), "the personal key names no group")
+	require.Equal(t, "alice", got.Principal.StoreSubject())
+	require.Equal(t, []string{"engineering"}, got.Principal.StoreGroups())
+}
+
 func TestChain_PersonalKeyIsRefused(t *testing.T) {
 	expired := personalKey(t, "alice")
 	past := time.Now().UTC().Add(-time.Minute)
@@ -164,3 +188,5 @@ func TestChain_ApplicationKeyStaysOffTheStore(t *testing.T) {
 
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
+
+func ptr[T any](v T) *T { return &v }

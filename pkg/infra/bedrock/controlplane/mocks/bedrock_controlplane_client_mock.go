@@ -22,6 +22,65 @@ func (_m *Client) EXPECT() *Client_Expecter {
 	return &Client_Expecter{mock: &_m.Mock}
 }
 
+// CheckCatalogAccess provides a mock function with given fields: ctx, creds
+func (_m *Client) CheckCatalogAccess(ctx context.Context, creds controlplane.Credentials) ([]string, error) {
+	ret := _m.Called(ctx, creds)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CheckCatalogAccess")
+	}
+
+	var r0 []string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials) ([]string, error)); ok {
+		return rf(ctx, creds)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials) []string); ok {
+		r0 = rf(ctx, creds)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, controlplane.Credentials) error); ok {
+		r1 = rf(ctx, creds)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Client_CheckCatalogAccess_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CheckCatalogAccess'
+type Client_CheckCatalogAccess_Call struct {
+	*mock.Call
+}
+
+// CheckCatalogAccess is a helper method to define mock.On call
+//   - ctx context.Context
+//   - creds controlplane.Credentials
+func (_e *Client_Expecter) CheckCatalogAccess(ctx interface{}, creds interface{}) *Client_CheckCatalogAccess_Call {
+	return &Client_CheckCatalogAccess_Call{Call: _e.mock.On("CheckCatalogAccess", ctx, creds)}
+}
+
+func (_c *Client_CheckCatalogAccess_Call) Run(run func(ctx context.Context, creds controlplane.Credentials)) *Client_CheckCatalogAccess_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(controlplane.Credentials))
+	})
+	return _c
+}
+
+func (_c *Client_CheckCatalogAccess_Call) Return(_a0 []string, _a1 error) *Client_CheckCatalogAccess_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Client_CheckCatalogAccess_Call) RunAndReturn(run func(context.Context, controlplane.Credentials) ([]string, error)) *Client_CheckCatalogAccess_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListInvocableModelIDs provides a mock function with given fields: ctx, creds, candidates
 func (_m *Client) ListInvocableModelIDs(ctx context.Context, creds controlplane.Credentials, candidates []string) (controlplane.Availability, error) {
 	ret := _m.Called(ctx, creds, candidates)

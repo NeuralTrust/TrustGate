@@ -129,6 +129,8 @@ func TestConsumerTraceStampsTheAuthIDOnlyWhenOneAuthenticated(t *testing.T) {
 		wantAuthID  string
 		wantSubject string
 		wantMethod  string
+		wantKind    string
+		wantGroupID string
 	}{
 		"application key": {
 			authCtx:     &appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, Principal: keyPrincipal},
@@ -136,6 +138,22 @@ func TestConsumerTraceStampsTheAuthIDOnlyWhenOneAuthenticated(t *testing.T) {
 			wantAuthID:  authID.String(),
 			wantSubject: "billing-service",
 			wantMethod:  string(identity.MethodAPIKey),
+			wantKind:    trace.AuthKindApplication,
+		},
+		"personal key": {
+			authCtx:    &appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, OwnerID: "alice"},
+			wantAuthID: authID.String(),
+			wantKind:   trace.AuthKindPersonal,
+		},
+		"group key": {
+			authCtx:     &appauth.AuthContext{Method: appauth.MethodAPIKey, AuthID: authID, OwnerID: "alice", KeyGroupID: "g-eng"},
+			wantAuthID:  authID.String(),
+			wantKind:    trace.AuthKindPersonal,
+			wantGroupID: "g-eng",
+		},
+		"oauth2 credential": {
+			authCtx:    &appauth.AuthContext{Method: appauth.MethodOAuth2, AuthID: authID},
+			wantAuthID: authID.String(),
 		},
 		"no auth id":      {authCtx: &appauth.AuthContext{Method: appauth.MethodPlayground}},
 		"no auth context": {},
@@ -156,6 +174,8 @@ func TestConsumerTraceStampsTheAuthIDOnlyWhenOneAuthenticated(t *testing.T) {
 			require.Equal(t, tc.wantAuthID, meta.AuthID)
 			require.Equal(t, tc.wantSubject, meta.PrincipalSubject)
 			require.Equal(t, tc.wantMethod, meta.PrincipalMethod)
+			require.Equal(t, tc.wantKind, meta.AuthKind)
+			require.Equal(t, tc.wantGroupID, meta.AuthGroupID)
 		})
 	}
 }

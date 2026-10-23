@@ -94,6 +94,13 @@ const (
 	// consumer acting as the application runs as app:<consumer_id>, and this is
 	// how "which api key or certificate called" survives that.
 	ClaimCredentialSubject = "credential_subject" // #nosec G101 -- JWT claim name, not a credential
+	// ClaimKeyGroup is the claim carrying the directory group a group key is
+	// held for, by name, on the principal of a personal key. The MCP Store
+	// decides such a principal's access as that group alone: Store mode and
+	// grants never read the owner's subject or their other groups. It is read
+	// only on a MethodPersonalKey principal, which the gateway builds itself
+	// from the key, so no token can claim it.
+	ClaimKeyGroup = "key_group"
 	// ClaimGateway is the claim naming the gateway a platform token was minted
 	// for. The control plane resolves store_access per gateway (Access policies
 	// are gateway-scoped), so the token must not be redeemed at another gateway
@@ -204,6 +211,41 @@ func (p *Principal) Groups() []string {
 		return nil
 	}
 	return GroupsFromClaims(p.Claims)
+}
+
+// KeyGroup returns the directory group a group key's principal is narrowed to
+// on the MCP Store, "" for every other principal. Only a personal key's
+// principal is read: a token can carry any claim, and a claim from one must
+// never decide whose Store access applies.
+func (p *Principal) KeyGroup() string {
+	if p == nil || p.Method != MethodPersonalKey {
+		return ""
+	}
+	return StringClaim(p.Claims, ClaimKeyGroup)
+}
+
+// StoreSubject is the subject the MCP Store decides the principal's access for:
+// whose own Store access policy applies and whose direct grants count. A group
+// key's principal has none, so only its group decides. Installations and
+// connected accounts stay the principal's Subject.
+func (p *Principal) StoreSubject() string {
+	if p == nil || p.KeyGroup() != "" {
+		return ""
+	}
+	return p.Subject
+}
+
+// StoreGroups are the groups the MCP Store decides the principal's access by:
+// a group key's one group, every group of any other principal. MCP policies
+// scoped to groups read Groups, which stays every group of the key's owner.
+func (p *Principal) StoreGroups() []string {
+	if p == nil {
+		return nil
+	}
+	if group := p.KeyGroup(); group != "" {
+		return []string{group}
+	}
+	return p.Groups()
 }
 
 // StringClaim returns a trimmed string claim.

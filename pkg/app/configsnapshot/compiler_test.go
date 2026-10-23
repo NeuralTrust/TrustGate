@@ -29,6 +29,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -610,6 +611,68 @@ func TestCompilerShipsOwnedKeys(t *testing.T) {
 			}
 			if found.Budget == nil || *found.Budget != *owned.Budget {
 				t.Fatalf("owned budget = %+v, want %+v", found.Budget, owned.Budget)
+			}
+		})
+	}
+}
+
+type fakeKeyGroupBudgets struct {
+	byGateway map[string][]*keygroupdomain.Budget
+}
+
+func (f fakeKeyGroupBudgets) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*keygroupdomain.Budget, error) {
+	return f.byGateway[gatewayID.String()], nil
+}
+
+func (f fakeKeyGroupBudgets) List(_ context.Context, page, _ int) ([]*keygroupdomain.Budget, int, error) {
+	if page > 1 {
+		return nil, 0, nil
+	}
+	items := flattenByGateway(f.byGateway)
+	return items, len(items), nil
+}
+
+// Group budgets ride the snapshot, so a data plane with no database holds a
+// group key to its group's budget too; a scoped snapshot carries only its own
+// gateway's budgets.
+func TestCompilerShipsKeyGroupBudgets(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	other := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	limit := 40.0
+	budgets := fakeKeyGroupBudgets{byGateway: map[string][]*keygroupdomain.Budget{
+		gw.String(): {
+			{GatewayID: gw, GroupID: "g-sre", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionAlert},
+			{GatewayID: gw, GroupID: "g-eng", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionBlock},
+		},
+		other.String(): {{GatewayID: other, GroupID: "g-eng", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionBlock}},
+	}}
+	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
+
+	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {
+		t.Run(name, func(t *testing.T) {
+			compiler := appsnapshot.NewCompiler(
+				fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}, {ID: other}, {ID: corrupt}}},
+				fakeConsumers{}, registries, fakePolicies{}, fakeAuths{}, fakeCatalog{}, nil,
+				appsnapshot.WithKeyGroupBudgets(budgets),
+			)
+			snapshot, err := compiler.Compile(context.Background())
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got := snapshot.KeyGroupBudgetsByGateway(gw)
+			if len(got) != 2 || got[0].GroupID != "g-eng" || got[1].GroupID != "g-sre" {
+				t.Fatalf("budgets of %s = %+v, want g-eng then g-sre", gw, got)
+			}
+			if len(snapshot.Data().KeyGroupBudgets) != 3 {
+				t.Fatalf("every gateway's budgets ride the global snapshot, got %d", len(snapshot.Data().KeyGroupBudgets))
+			}
+			scoped, err := compiler.CompileFor(context.Background(), other.String())
+			if err != nil {
+				t.Fatalf("compile for %s: %v", other, err)
+			}
+			if got := scoped.Data().KeyGroupBudgets; len(got) != 1 || got[0].GatewayID != other {
+				t.Fatalf("a scoped snapshot carries its own gateway's budgets only, got %+v", got)
 			}
 		})
 	}

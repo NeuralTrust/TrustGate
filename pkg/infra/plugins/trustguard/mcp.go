@@ -203,7 +203,7 @@ func mcpToolsCallPayload(body []byte) (json.RawMessage, error) {
 			params["arguments"] = args
 		}
 	}
-	return json.Marshal(map[string]any{
+	return marshalNoEscape(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
@@ -218,7 +218,7 @@ func mcpToolsResultPayload(body []byte) (json.RawMessage, error) {
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
-	return json.Marshal(map[string]any{
+	return marshalNoEscape(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"result":  result,
@@ -226,5 +226,5 @@ func mcpToolsResultPayload(body []byte) (json.RawMessage, error) {
 }
 
 func llmPayload(input string) (json.RawMessage, error) {
-	return json.Marshal(GuardPayload{Input: input})
+	return marshalNoEscape(GuardPayload{Input: input})
 }

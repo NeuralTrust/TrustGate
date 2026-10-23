@@ -39,10 +39,16 @@ func seedStoreOpenAICatalog(t *testing.T) {
 
 func startStoreProxyPlane(t *testing.T) string {
 	t.Helper()
-	port := GlobalConfig.Server.ProxyPort + 104
+	return startStoreProxyPlaneAt(t, GlobalConfig.Server.ProxyPort+104)
+}
+
+// startStoreProxyPlaneAt starts a full proxy plane on port, with env added to
+// the suite's.
+func startStoreProxyPlaneAt(t *testing.T, port int, env ...string) string {
+	t.Helper()
 	requireFreePorts([]int{port})
 	cmd := exec.Command(gatewayBinaryPath, "proxy") //nolint:gosec // controlled binary path
-	cmd.Env = append(os.Environ(), "SERVER_PROXY_PORT="+strconv.Itoa(port), "PROVIDER_ALLOW_PRIVATE_NETWORKS=true")
+	cmd.Env = append(append(os.Environ(), "SERVER_PROXY_PORT="+strconv.Itoa(port), "PROVIDER_ALLOW_PRIVATE_NETWORKS=true"), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	prefix := fmt.Sprintf("[STORE PROXY:%d] ", port)
 	cmd.Stdout = &prefixWriter{prefix: prefix, w: os.Stdout}
