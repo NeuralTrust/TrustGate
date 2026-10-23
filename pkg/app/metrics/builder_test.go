@@ -93,6 +93,23 @@ func TestBuilder_SetsTenantIDFromMetadata(t *testing.T) {
 	assert.Equal(t, "team-123", evt.TenantID)
 }
 
+func TestBuilder_CarriesTheKeyKindAndGroup(t *testing.T) {
+	rt := trace.New("trace-group-key", trace.Metadata{GatewayID: "gw-1"})
+	rt.SetAuthID("auth-1")
+	rt.SetAuthKey(trace.AuthKindPersonal, "g-eng")
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/store/v1/chat/completions", OwnerID: "alice"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(1_000_000)
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Equal(t, "personal", evt.AuthKind)
+	assert.Equal(t, "g-eng", evt.AuthGroupID)
+	raw, err := json.Marshal(evt)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"auth_kind":"personal","auth_group_id":"g-eng"`)
+}
+
 func TestBuilder_CarriesTheAuthIDOnlyWhenStamped(t *testing.T) {
 	cases := map[string]struct {
 		authID string

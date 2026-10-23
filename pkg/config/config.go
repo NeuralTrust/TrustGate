@@ -361,7 +361,9 @@ type ServerConfig struct {
 	// https://app.neuraltrust.ai/api/internal/trustgate/personal-key-events).
 	// Signed with SecretKey, the secret the console already shares. Empty: the
 	// console is not told, and a new key reaches its models on the console's
-	// next reconcile.
+	// next reconcile. The proxy planes post key_group_budget_reached here too,
+	// the first time a group budget's limit is reached in a month, so set it
+	// on every plane that serves /store/v1 for the console to hear of them.
 	ConsoleEventsURL string
 	// ConsoleModelRequestsURL is where the MCP Store's request tool asks the
 	// console about a request for a provider's models, and files it once the

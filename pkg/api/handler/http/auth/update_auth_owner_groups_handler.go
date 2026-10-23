@@ -60,7 +60,7 @@ func NewUpdateAuthOwnerGroupsHandler(
 
 // Handle godoc
 // @Summary      Set the owner groups of a personal key
-// @Description  Records the directory groups of a personal (owned) key's owner. The body is {"groups": ["<group>", ...], "email": "<owner email>"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
+// @Description  Records the directory groups of a personal (owned) key's owner. The body is {"groups": ["<group>", ...], "email": "<owner email>", "group_name": "<group name>"}; an empty list clears the groups. Names are trimmed, deduplicated and sorted; at most 512 groups of at most 256 characters each. On the MCP Store (/store/mcp) the key runs as its owner with these groups, so Store grants, Store access policies and MCP policies scoped to a group apply as they do to a signed-in session. The platform sends them whenever the owner's membership changes. email is optional: when present it replaces the owner's email (empty clears it), which the key's calls are recorded under in requests and traces as a signed-in session's are; when absent it stays as it is. The secret, the expiry, the budget and the consumers of the key do not change, and a rotation keeps the groups. group_name is optional and only for a group key (a key with a group_id): it records the new directory name of the key's group after a rename, the name the MCP Store matches the key's access against; the group itself never changes. Sent for the owner's personal key it answers 422 personal_key. A group key's groups are its owner's, every group they belong to, like the personal key's. An application key answers 422 application_key; an invalid body answers 422 validation_failed.
 // @Tags         auths
 // @Accept       json
 // @Produce      json
@@ -72,7 +72,7 @@ func NewUpdateAuthOwnerGroupsHandler(
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      422         {object}  httpio.ErrorBody  "An application key (application_key), or invalid groups (validation_failed)"
+// @Failure      422         {object}  httpio.ErrorBody  "An application key (application_key), group_name on a personal key (personal_key), or invalid groups or group_name (validation_failed)"
 // @Router       /v1/gateways/{gateway_id}/auths/{id}/groups [put]
 func (h *UpdateAuthOwnerGroupsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.AuthKind](c)
@@ -89,6 +89,7 @@ func (h *UpdateAuthOwnerGroupsHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Groups:    req.Groups,
 		Email:     req.Email,
+		GroupName: req.GroupName,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

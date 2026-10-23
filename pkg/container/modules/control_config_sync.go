@@ -34,6 +34,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -74,6 +75,8 @@ type compilerReaders struct {
 	TenantCaps ratelimitdomain.TenantCapsRepository
 	// SessionRevocations puts default-IdP revocations into each gateway's snapshot.
 	SessionRevocations sessionrevocation.Store
+	// KeyGroupBudgets puts the group budgets into each gateway's snapshot.
+	KeyGroupBudgets keygroupdomain.Repository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -94,6 +97,7 @@ func ControlConfigSync(c *container.Container) error {
 			r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
 			appsnapshot.WithStoreGrants(r.Grants),
 			appsnapshot.WithStorePolicies(r.StorePolicies),
+			appsnapshot.WithKeyGroupBudgets(r.KeyGroupBudgets),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
 			appsnapshot.WithSessionRevocations(r.SessionRevocations, cfg.Server.MCPDefaultIdP.SessionMaxAge),

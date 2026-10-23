@@ -246,7 +246,10 @@ func (s *scoper) installedRegistries(
 	for _, regs := range byCode {
 		sortRegistries(regs)
 	}
-	groups := principal.Groups()
+	// Access is decided for the principal's Store identity: a group key's
+	// group alone, anyone else's subject and groups. The installs are the
+	// principal's own either way.
+	subject, groups := principal.StoreSubject(), principal.StoreGroups()
 	// None closes this principal's surface. An install, a direct grant and a
 	// group grant all stop here: the rows stay, and a later mode that is not
 	// None exposes them again on the next request. A mode that cannot be
@@ -255,7 +258,7 @@ func (s *scoper) installedRegistries(
 	// default).
 	mode := ResolveMode(ctx, s.modes, ModeQuery{
 		GatewayID: gatewayID,
-		Subject:   principal.Subject,
+		Subject:   subject,
 		Groups:    groups,
 		Fallback:  EffectiveStoreMode(ctx),
 	})
@@ -280,7 +283,7 @@ func (s *scoper) installedRegistries(
 		if !shelf.Enabled {
 			continue
 		}
-		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
+		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, subject) {
 			continue
 		}
 		if countByCode[in.CatalogCode] <= 1 {

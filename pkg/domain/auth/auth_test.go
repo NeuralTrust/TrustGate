@@ -556,12 +556,13 @@ func TestValidateOwnedExpiry(t *testing.T) {
 		at   time.Time
 		want error
 	}{
-		"zero":            {at: time.Time{}, want: ErrOwnedExpiry},
-		"in the past":     {at: now.Add(-time.Hour), want: ErrOwnedExpiry},
-		"now":             {at: now, want: ErrOwnedExpiry},
-		"one second":      {at: now.Add(time.Second)},
-		"exactly 90 days": {at: time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC)},
-		"90 days and 1 s": {at: time.Date(2026, 12, 31, 12, 0, 1, 0, time.UTC), want: ErrOwnedExpiry},
+		"zero":              {at: time.Time{}, want: ErrOwnedExpiry},
+		"in the past":       {at: now.Add(-time.Hour), want: ErrOwnedExpiry},
+		"now":               {at: now, want: ErrOwnedExpiry},
+		"one second":        {at: now.Add(time.Second)},
+		"exactly 366 days":  {at: time.Date(2027, 10, 3, 12, 0, 0, 0, time.UTC)},
+		"366 days and 1 s":  {at: time.Date(2027, 10, 3, 12, 0, 1, 0, time.UTC), want: ErrOwnedExpiry},
+		"a 90-day key fits": {at: now.Add(90 * 24 * time.Hour)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -582,7 +583,7 @@ func TestNewOwnedAPIKeyAuth(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(30 * 24 * time.Hour)
 
-	a, err := NewOwnedAPIKeyAuth(gwID, "alice", expiresAt, now)
+	a, err := NewOwnedAPIKeyAuth(gwID, "alice", KeyGroup{}, ptr(expiresAt), now)
 	if err != nil {
 		t.Fatalf("NewOwnedAPIKeyAuth: %v", err)
 	}
@@ -592,13 +593,17 @@ func TestNewOwnedAPIKeyAuth(t *testing.T) {
 	if a.RawKey == "" || a.KeyHash != HashAPIKey(a.RawKey) || a.KeyPrefix == "" || a.KeySuffix == "" {
 		t.Fatal("an owned key must carry a fresh secret, its hash and its preview")
 	}
-	if _, err := NewOwnedAPIKeyAuth(gwID, " ", expiresAt, now); !errors.Is(err, ErrInvalidOwner) {
+	if _, err := NewOwnedAPIKeyAuth(gwID, " ", KeyGroup{}, ptr(expiresAt), now); !errors.Is(err, ErrInvalidOwner) {
 		t.Fatalf("blank owner: err = %v, want ErrInvalidOwner", err)
 	}
 	if ValidateOwner("") == nil || ValidateOwner("alice") != nil || !errors.Is(ErrInvalidOwner, commonerrors.ErrValidation) {
 		t.Fatal("ValidateOwner must refuse only a blank owner, as a validation error")
 	}
-	if _, err := NewOwnedAPIKeyAuth(gwID, "alice", now.Add(MaxOwnedKeyLifetime+time.Second), now); !errors.Is(err, ErrOwnedExpiry) {
+	if _, err := NewOwnedAPIKeyAuth(gwID, "alice", KeyGroup{}, ptr(now.Add(MaxOwnedKeyLifetime+time.Second)), now); !errors.Is(err, ErrOwnedExpiry) {
 		t.Fatalf("expiry beyond the cap: err = %v, want ErrOwnedExpiry", err)
+	}
+	forever, err := NewOwnedAPIKeyAuth(gwID, "alice", KeyGroup{}, nil, now)
+	if err != nil || forever.ExpiresAt != nil || forever.IsExpired(now.Add(10*MaxOwnedKeyLifetime)) {
+		t.Fatalf("no expiry: auth = %+v, err = %v; want a key that never expires", forever, err)
 	}
 }

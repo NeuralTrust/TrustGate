@@ -719,6 +719,47 @@ func TestConfigure_TheOpenModeDecisionIsMadeForTheRequester(t *testing.T) {
 	}
 }
 
+// A ticket a group key minted is decided for its group alone: the open-mode
+// decision names nobody, and a grant to its owner by name does not install
+// what the group is not granted. The install is still the owner's.
+func TestConfigure_AGroupKeysTicketIsDecidedForItsGroup(t *testing.T) {
+	groupTicket := func(t *testing.T, f configureFixtureT) string {
+		t.Helper()
+		id, err := f.svc.CreateTicket(context.Background(), oauth.ConfigureTicketRequest{
+			GatewayID: f.gw, PrincipalSub: "ana", ConsumerPath: appconsumer.MCPPath("dev"),
+			Code: "com.ahrefs/mcp", Groups: []string{"eng"}, GroupScoped: true, AskReason: true,
+		})
+		if err != nil {
+			t.Fatalf("CreateTicket: %v", err)
+		}
+		return id
+	}
+	submit := func(t *testing.T, f configureFixtureT, id string) *installationdomain.Installation {
+		t.Helper()
+		if _, err := f.svc.Submit(context.Background(), id, map[string]string{oauth.ReasonFormField: "the eng on-call needs it"}); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+		rows := f.rows(t, "com.ahrefs/mcp")
+		if len(rows) != 1 || rows[0].PrincipalSub != "ana" {
+			t.Fatalf("rows = %+v, want ana's install", rows)
+		}
+		return rows[0]
+	}
+
+	toAna := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("com.ahrefs/mcp", nil, []string{"ana"})}, shelf("com.ahrefs/mcp"))
+	if row := submit(t, toAna, groupTicket(t, toAna)); row.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("status = %q: a grant to the owner must not install for her group key", row.Status)
+	}
+	if seenOpenModeSubject != "" {
+		t.Fatalf("the mode was decided for %q, want the group alone", seenOpenModeSubject)
+	}
+
+	toEng := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("com.ahrefs/mcp", []string{"eng"}, nil)}, shelf("com.ahrefs/mcp"))
+	if row := submit(t, toEng, groupTicket(t, toEng)); row.Status != installationdomain.StatusInstalled {
+		t.Fatalf("status = %q: a grant to the group must install", row.Status)
+	}
+}
+
 // A closed variable's set reaches the form: without it the page would render a
 // text box for a value only three strings can take, and every typo would come
 // back as a rejected save.
