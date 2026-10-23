@@ -23,7 +23,7 @@ const (
 )
 
 // Limits are plan caps stamped by the control plane onto each instance.
-// QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
+// BurstPerMin == 0, QuotaPerMonth == 0 and MaxInstances == 0 each mean unlimited.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int
@@ -40,6 +40,11 @@ var knownTiers = map[string]struct{}{
 func IsKnownTier(tier string) bool {
 	_, ok := knownTiers[strings.ToLower(strings.TrimSpace(tier))]
 	return ok
+}
+
+// HasBurstCap reports whether the plan restricts requests per minute.
+func (l Limits) HasBurstCap() bool {
+	return l.BurstPerMin > 0
 }
 
 func (l Limits) HasMonthlyQuota() bool {
