@@ -9398,6 +9398,13 @@ const docTemplate = `{
                 },
                 "status_code": {
                     "type": "integer"
+                },
+                "warnings": {
+                    "description": "Warnings lists non-fatal findings on a connection that succeeded, such as\nmissing Bedrock catalog permissions. Omitted when empty.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
