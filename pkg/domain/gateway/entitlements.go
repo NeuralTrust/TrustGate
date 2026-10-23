@@ -157,8 +157,8 @@ func NormalizeEntitlements(e Entitlements) (Entitlements, error) {
 	if !e.HasStampedLimits() {
 		return Entitlements{}, fmt.Errorf("gateway: entitlements stamped limits must set burst_per_min, quota_per_month, and max_instances together: %w", commonerrors.ErrValidation)
 	}
-	if *e.BurstPerMin <= 0 {
-		return Entitlements{}, fmt.Errorf("gateway: entitlements.burst_per_min must be > 0: %w", commonerrors.ErrValidation)
+	if *e.BurstPerMin < 0 {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements.burst_per_min must be >= 0 (0 means unlimited): %w", commonerrors.ErrValidation)
 	}
 	if *e.QuotaPerMonth < 0 {
 		return Entitlements{}, fmt.Errorf("gateway: entitlements.quota_per_month must be >= 0: %w", commonerrors.ErrValidation)

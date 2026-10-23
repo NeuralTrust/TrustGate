@@ -183,6 +183,25 @@ func TestMeterCountsQuotaForAnUnlimitedPlan(t *testing.T) {
 	assert.EqualValues(t, 7, shared.total("t1", domain.KindQuota, "2026-10"))
 }
 
+// A burst of 0 is no burst cap: nothing is refused per minute, no early sync is
+// asked for, and the burst is still counted.
+func TestMeterZeroBurstIsUnlimited(t *testing.T) {
+	t.Parallel()
+	clock := newClock(midMonth)
+	shared := newShared()
+	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 0, QuotaPerMonth: 0})
+	m := testMeter(r, newBackend(shared), clock, nil)
+
+	require.NoError(t, m.Check(bg, id))
+	drain(m) // a new slot always asks for one sync
+	for i := 1; i < 500; i++ {
+		require.NoError(t, m.Check(bg, id), "request %d", i+1)
+	}
+	assert.Zero(t, len(m.kick), "an uncapped burst never asks for an early sync")
+	require.NoError(t, m.SyncNow(bg))
+	assert.EqualValues(t, 500, shared.total("t1", domain.KindBurst, burstWindow(midMonth)))
+}
+
 func TestMeterPodsLearnTheTenantWideTotalFromTheSync(t *testing.T) {
 	t.Parallel()
 	clock := newClock(midMonth)
