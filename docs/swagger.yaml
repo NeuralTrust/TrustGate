@@ -2111,6 +2111,13 @@ definitions:
         type: string
       status_code:
         type: integer
+      warnings:
+        description: |-
+          Warnings lists non-fatal findings on a connection that succeeded, such as
+          missing Bedrock catalog permissions. Omitted when empty.
+        items:
+          type: string
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink:
     properties:
