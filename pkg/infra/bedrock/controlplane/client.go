@@ -36,6 +36,8 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -123,15 +125,28 @@ type Credentials struct {
 	RoleARN      string
 }
 
+// cacheKeySalt keys the secret digest in CacheKey. It is random per process, so a
+// digest that leaks (a heap dump, a stray log line) cannot be brute-forced
+// offline against guessed secrets. The caches CacheKey feeds live in process
+// memory only, so nothing needs the digest to be stable across restarts or pods.
+var cacheKeySalt = func() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("controlplane: read random cache key salt: " + err.Error())
+	}
+	return b
+}()
+
 // CacheKey identifies the credential set a result belongs to. The secret key and
-// session token enter only as a truncated SHA-256, never raw: two parties who
-// know the same access key ID but not the same secret must not share a cache
-// entry, or one could poison (or read) the other's. The digest is one-way and
-// truncated, so the key is safe to hold in memory maps, but it is still derived
-// from a secret and must not be logged.
+// session token enter only as a truncated HMAC-SHA256 under cacheKeySalt, never
+// raw: two parties who know the same access key ID but not the same secret must
+// not share a cache entry, or one could poison (or read) the other's. The key is
+// safe to hold in memory maps, but it is still derived from a secret and must
+// not be logged.
 func (c Credentials) CacheKey() string {
-	secret := sha256.Sum256([]byte(c.SecretKey + "\x00" + c.SessionToken))
-	return fmt.Sprintf("%s|%s|%v|%s|%s", c.Region, c.AccessKey, c.UseRole, c.RoleARN, hex.EncodeToString(secret[:8]))
+	mac := hmac.New(sha256.New, cacheKeySalt)
+	_, _ = mac.Write([]byte(c.SecretKey + "\x00" + c.SessionToken))
+	return fmt.Sprintf("%s|%s|%v|%s|%s", c.Region, c.AccessKey, c.UseRole, c.RoleARN, hex.EncodeToString(mac.Sum(nil)[:8]))
 }
 
 // Availability is the verdict on a set of candidate model IDs.
