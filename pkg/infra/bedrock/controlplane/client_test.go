@@ -641,10 +641,10 @@ func TestMissingPermission(t *testing.T) {
 func TestCheckCatalogAccess_ReportsOnlyDeniedActions(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == foundationModelsPath:
+		switch r.URL.Path {
+		case foundationModelsPath:
 			_, _ = w.Write([]byte(foundationModelsPayload))
-		case r.URL.Path == inferenceProfilesPath:
+		case inferenceProfilesPath:
 			w.Header().Set("x-amzn-ErrorType", "AccessDeniedException:http://internal.amazon.com/coral/")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"Message":"not authorized to perform: bedrock:ListInferenceProfiles"}`))
@@ -685,10 +685,10 @@ func TestCheckCatalogAccess_AllGranted(t *testing.T) {
 func TestCheckCatalogAccess_DeniedAvailability(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == foundationModelsPath:
+		switch r.URL.Path {
+		case foundationModelsPath:
 			_, _ = w.Write([]byte(foundationModelsPayload))
-		case r.URL.Path == inferenceProfilesPath:
+		case inferenceProfilesPath:
 			_, _ = w.Write([]byte(profilesPayload))
 		default:
 			w.Header().Set("x-amzn-ErrorType", "AccessDeniedException")
@@ -717,13 +717,13 @@ func TestCheckCatalogAccess_ProbesAnActiveOnDemandModel(t *testing.T) {
 	var probed []string
 	var mu sync.Mutex
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == foundationModelsPath:
+		switch r.URL.Path {
+		case foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries":[
 				{"modelId":"profile.only","inferenceTypesSupported":["INFERENCE_PROFILE"],"modelLifecycle":{"status":"ACTIVE"}},
 				{"modelId":"legacy.model","inferenceTypesSupported":["ON_DEMAND"],"modelLifecycle":{"status":"LEGACY"}},
 				{"modelId":"good.model","inferenceTypesSupported":["ON_DEMAND"],"modelLifecycle":{"status":"ACTIVE"}}]}`))
-		case r.URL.Path == inferenceProfilesPath:
+		case inferenceProfilesPath:
 			_, _ = w.Write([]byte(profilesPayload))
 		default:
 			mu.Lock()
