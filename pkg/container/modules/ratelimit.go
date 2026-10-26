@@ -39,9 +39,8 @@ type rateLimitDeps struct {
 	Logger     *slog.Logger
 	Cache      *ratelimitapp.TenantCapsCache `optional:"true"`
 	Snapshot   *adapters.TenantCapsSource    `optional:"true"`
-	// Usage is the plane's usage guard; the monthly quota yields to it
-	// whenever it enforces.
-	Usage *middleware.UsageGuardMiddleware `optional:"true"`
+	// The monthly quota yields to the usage guard whenever it enforces.
+	Usage *middleware.UsageGuardMiddleware
 }
 
 func (p rateLimitDeps) meterOptions() ratelimitapp.Options {
@@ -50,7 +49,7 @@ func (p rateLimitDeps) meterOptions() ratelimitapp.Options {
 		SyncTimeout:     p.Cfg.RateLimit.SyncTimeout,
 		ColdReadTimeout: p.Cfg.RateLimit.ColdReadTimeout,
 		FailedRetention: p.Cfg.RateLimit.FailedRetention,
-		UsageEnforcing:  p.Usage.Enforcing,
+		UsageEnforcing:  p.Usage.Refusing,
 	}
 }
 
