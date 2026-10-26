@@ -46,6 +46,10 @@ message Hello {
   // Older data planes leave it unset and get none, so a list larger than their
   // default receive limit cannot break their stream.
   bool accepts_usage = 3;
+  // accepts_usage_changes says the data plane applies UsageChanges. The
+  // control plane then sends a full UsageSnapshot once and, after it, only
+  // the tenants that changed; without it every change resends the list.
+  bool accepts_usage_changes = 4;
 }
 
 message Ack {
@@ -56,6 +60,7 @@ message ServerMessage {
   oneof msg {
     VersionNotice notice = 1;
     UsageSnapshot usage = 2;
+    UsageChanges usage_changes = 3;
   }
 }
 
@@ -64,7 +69,8 @@ message ServerMessage {
 // plane already holds a newer version for it than as_of_version, so a stream
 // that reconnects to a control plane replica that is behind cannot undo a
 // newer block. The control plane sends one on connect and again after every
-// change; data planes that predate it ignore the message.
+// change, or only until its list is complete when the data plane accepts
+// UsageChanges; data planes that predate it ignore the message.
 message UsageSnapshot {
   repeated TenantUsage exhausted = 1;
   int64 as_of_version = 2;
@@ -76,6 +82,30 @@ message TenantUsage {
   UsageReason reason = 2;
   // version comes from Usage System's global sequence and never decreases.
   int64 version = 3;
+}
+
+// UsageChanges carries the tenants whose usage state changed since the last
+// usage message on the stream, healthy ones included: a tenant listed as
+// healthy is unblocked. Each state applies only when it supersedes the one the
+// data plane holds, so a repeated or older state changes nothing.
+message UsageChanges {
+  repeated TenantUsageState states = 1;
+}
+
+// TenantUsageState is the usage state of one tenant.
+message TenantUsageState {
+  string tenant_id = 1;
+  UsageStatus status = 2;
+  UsageReason reason = 3;
+  // version comes from Usage System's global sequence and never decreases.
+  int64 version = 4;
+}
+
+// UsageStatus is whether a tenant may be served.
+enum UsageStatus {
+  USAGE_STATUS_UNSPECIFIED = 0;
+  USAGE_STATUS_HEALTHY = 1;
+  USAGE_STATUS_EXHAUSTED = 2;
 }
 
 // UsageReason explains why a tenant is exhausted.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -598,5 +599,129 @@ func TestStoreResyncCacheRewritesEveryHeldState(t *testing.T) {
 	store.FlushPending(ctx)
 	if got := len(cache.savedStates()) - before; got != 2 {
 		t.Fatalf("resync wrote %d states, want both held states, healthy ones included", got)
+	}
+}
+
+func tenantsOf(states []domain.TenantState) []string {
+	out := make([]string, 0, len(states))
+	for _, s := range states {
+		out = append(out, s.TenantID)
+	}
+	return out
+}
+
+func TestStoreChangesSinceReturnsEachChangedTenantOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewStore(&memoryCache{}, nil, time.Second)
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", true, 1), state(t, "b", true, 2)})
+	cursor := store.Cursor()
+
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "c", true, 3)})
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", true, 4)})
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "c", false, 5)})
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "b", true, 1)})
+
+	changes, next := store.ChangesSince(cursor)
+	if got := tenantsOf(changes); !slices.Equal(got, []string{"a", "c"}) {
+		t.Fatalf("changed = %v, want a then c, each once and the stale b skipped", got)
+	}
+	if changes[1].Exhausted() || changes[1].Version != 5 {
+		t.Fatalf("c = %+v, want its latest state", changes[1])
+	}
+	if again, _ := store.ChangesSince(next); len(again) != 0 {
+		t.Fatalf("changed since the latest cursor = %v, want nothing", again)
+	}
+}
+
+func TestStoreChangesSinceSeesAnUnblockAtTheSameVersion(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewStore(&memoryCache{}, nil, time.Second)
+	_ = store.ApplySnapshot(ctx, []domain.TenantState{state(t, "a", true, 10), state(t, "b", true, 9)}, 10)
+	cursor := store.Cursor()
+
+	_ = store.ApplySnapshot(ctx, []domain.TenantState{state(t, "b", true, 9)}, 10)
+	changes, _ := store.ChangesSince(cursor)
+	if len(changes) != 1 || changes[0].TenantID != "a" || changes[0].Exhausted() || changes[0].Version != 10 {
+		t.Fatalf("changes = %+v, want a unblocked at version 10", changes)
+	}
+}
+
+func TestStoreChangesSinceSurvivesLogCompaction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewStore(&memoryCache{}, nil, time.Second)
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "early", true, 1)})
+	cursor := store.Cursor()
+
+	for v := int64(2); v < 3*changeLogSlack; v++ {
+		_ = store.Apply(ctx, []domain.TenantState{state(t, "hot", v%2 == 0, v)})
+	}
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "late", true, 3*changeLogSlack)})
+
+	store.mu.RLock()
+	logged := len(store.changes.entries)
+	store.mu.RUnlock()
+	if logged > 2*3+changeLogSlack {
+		t.Fatalf("change log holds %d entries, want it compacted", logged)
+	}
+	changes, _ := store.ChangesSince(cursor)
+	if got := tenantsOf(changes); !slices.Equal(got, []string{"hot", "late"}) {
+		t.Fatalf("changed = %v, want hot then late", got)
+	}
+	if all, _ := store.ChangesSince(0); !slices.Equal(tenantsOf(all), []string{"early", "hot", "late"}) {
+		t.Fatalf("changed since 0 = %v, want every tenant", tenantsOf(all))
+	}
+}
+
+func TestStoreWakesSubscribersWhenItsListsBecomeComplete(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cache := &memoryCache{stored: []domain.TenantState{state(t, "x", true, 5)}}
+	store := NewStore(cache, nil, time.Second)
+	store.RestoreUntilReady(ctx, RestoreOptions{Interval: time.Millisecond, MaxBackoff: time.Millisecond, AwaitSync: true})
+	if !store.Ready() || store.SnapshotAll().AsOfVersion != 0 {
+		t.Fatalf("restored store = ready %v as_of %d, want ready with no as_of version", store.Ready(), store.SnapshotAll().AsOfVersion)
+	}
+	changes, release := store.Subscribe()
+	defer release()
+
+	_ = store.ApplySnapshot(ctx, []domain.TenantState{state(t, "x", true, 5)}, 5)
+	select {
+	case <-changes:
+	default:
+		t.Fatal("a snapshot that completed the lists woke nobody")
+	}
+	if got := store.SnapshotAll().AsOfVersion; got != 5 {
+		t.Fatalf("as_of = %d, want 5", got)
+	}
+
+	_ = store.ApplySnapshot(ctx, []domain.TenantState{state(t, "x", true, 5)}, 5)
+	select {
+	case <-changes:
+		t.Fatal("a later snapshot that changed nothing woke the subscribers")
+	default:
+	}
+}
+
+func TestStoreTenantChangedSince(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewStore(&memoryCache{}, nil, time.Second)
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", true, 1)})
+	cursor := store.Cursor()
+
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "b", true, 2)})
+	if _, changed, next := store.TenantChangedSince(cursor, "a"); changed || next != store.Cursor() {
+		t.Fatalf("a changed = %v next = %d, want unchanged at the latest cursor %d", changed, next, store.Cursor())
+	}
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", false, 3)})
+	got, changed, _ := store.TenantChangedSince(cursor, "a")
+	if !changed || got.Exhausted() || got.Version != 3 {
+		t.Fatalf("a = %+v changed %v, want healthy at 3", got, changed)
+	}
+	if _, changed, _ := store.TenantChangedSince(0, ""); changed {
+		t.Fatal("the empty tenant reported a change")
 	}
 }

@@ -20,6 +20,109 @@ func (_m *Reader) EXPECT() *Reader_Expecter {
 	return &Reader_Expecter{mock: &_m.Mock}
 }
 
+// ChangesSince provides a mock function with given fields: cursor
+func (_m *Reader) ChangesSince(cursor uint64) ([]domainusage.TenantState, uint64) {
+	ret := _m.Called(cursor)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ChangesSince")
+	}
+
+	var r0 []domainusage.TenantState
+	var r1 uint64
+	if rf, ok := ret.Get(0).(func(uint64) ([]domainusage.TenantState, uint64)); ok {
+		return rf(cursor)
+	}
+	if rf, ok := ret.Get(0).(func(uint64) []domainusage.TenantState); ok {
+		r0 = rf(cursor)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]domainusage.TenantState)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(uint64) uint64); ok {
+		r1 = rf(cursor)
+	} else {
+		r1 = ret.Get(1).(uint64)
+	}
+
+	return r0, r1
+}
+
+// Reader_ChangesSince_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ChangesSince'
+type Reader_ChangesSince_Call struct {
+	*mock.Call
+}
+
+// ChangesSince is a helper method to define mock.On call
+//   - cursor uint64
+func (_e *Reader_Expecter) ChangesSince(cursor interface{}) *Reader_ChangesSince_Call {
+	return &Reader_ChangesSince_Call{Call: _e.mock.On("ChangesSince", cursor)}
+}
+
+func (_c *Reader_ChangesSince_Call) Run(run func(cursor uint64)) *Reader_ChangesSince_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(uint64))
+	})
+	return _c
+}
+
+func (_c *Reader_ChangesSince_Call) Return(_a0 []domainusage.TenantState, _a1 uint64) *Reader_ChangesSince_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Reader_ChangesSince_Call) RunAndReturn(run func(uint64) ([]domainusage.TenantState, uint64)) *Reader_ChangesSince_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Cursor provides a mock function with no fields
+func (_m *Reader) Cursor() uint64 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Cursor")
+	}
+
+	var r0 uint64
+	if rf, ok := ret.Get(0).(func() uint64); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(uint64)
+	}
+
+	return r0
+}
+
+// Reader_Cursor_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Cursor'
+type Reader_Cursor_Call struct {
+	*mock.Call
+}
+
+// Cursor is a helper method to define mock.On call
+func (_e *Reader_Expecter) Cursor() *Reader_Cursor_Call {
+	return &Reader_Cursor_Call{Call: _e.mock.On("Cursor")}
+}
+
+func (_c *Reader_Cursor_Call) Run(run func()) *Reader_Cursor_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Reader_Cursor_Call) Return(_a0 uint64) *Reader_Cursor_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Reader_Cursor_Call) RunAndReturn(run func() uint64) *Reader_Cursor_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Ready provides a mock function with no fields
 func (_m *Reader) Ready() bool {
 	ret := _m.Called()
@@ -211,6 +314,70 @@ func (_c *Reader_Subscribe_Call) Return(_a0 <-chan struct{}, _a1 func()) *Reader
 }
 
 func (_c *Reader_Subscribe_Call) RunAndReturn(run func() (<-chan struct{}, func())) *Reader_Subscribe_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// TenantChangedSince provides a mock function with given fields: cursor, tenantID
+func (_m *Reader) TenantChangedSince(cursor uint64, tenantID string) (domainusage.TenantState, bool, uint64) {
+	ret := _m.Called(cursor, tenantID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for TenantChangedSince")
+	}
+
+	var r0 domainusage.TenantState
+	var r1 bool
+	var r2 uint64
+	if rf, ok := ret.Get(0).(func(uint64, string) (domainusage.TenantState, bool, uint64)); ok {
+		return rf(cursor, tenantID)
+	}
+	if rf, ok := ret.Get(0).(func(uint64, string) domainusage.TenantState); ok {
+		r0 = rf(cursor, tenantID)
+	} else {
+		r0 = ret.Get(0).(domainusage.TenantState)
+	}
+
+	if rf, ok := ret.Get(1).(func(uint64, string) bool); ok {
+		r1 = rf(cursor, tenantID)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(uint64, string) uint64); ok {
+		r2 = rf(cursor, tenantID)
+	} else {
+		r2 = ret.Get(2).(uint64)
+	}
+
+	return r0, r1, r2
+}
+
+// Reader_TenantChangedSince_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'TenantChangedSince'
+type Reader_TenantChangedSince_Call struct {
+	*mock.Call
+}
+
+// TenantChangedSince is a helper method to define mock.On call
+//   - cursor uint64
+//   - tenantID string
+func (_e *Reader_Expecter) TenantChangedSince(cursor interface{}, tenantID interface{}) *Reader_TenantChangedSince_Call {
+	return &Reader_TenantChangedSince_Call{Call: _e.mock.On("TenantChangedSince", cursor, tenantID)}
+}
+
+func (_c *Reader_TenantChangedSince_Call) Run(run func(cursor uint64, tenantID string)) *Reader_TenantChangedSince_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(uint64), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Reader_TenantChangedSince_Call) Return(_a0 domainusage.TenantState, _a1 bool, _a2 uint64) *Reader_TenantChangedSince_Call {
+	_c.Call.Return(_a0, _a1, _a2)
+	return _c
+}
+
+func (_c *Reader_TenantChangedSince_Call) RunAndReturn(run func(uint64, string) (domainusage.TenantState, bool, uint64)) *Reader_TenantChangedSince_Call {
 	_c.Call.Return(run)
 	return _c
 }
