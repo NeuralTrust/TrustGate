@@ -51,6 +51,12 @@ type Reader interface {
 	// SnapshotTenant lists tenantID when it is exhausted. An empty tenantID
 	// lists nothing and still carries the watermark.
 	SnapshotTenant(tenantID string) domain.Snapshot
+	// Cursor is the position of the latest change, to pass to ChangesSince.
+	Cursor() uint64
+	// ChangesSince returns the current state of every tenant that changed
+	// after cursor, in the order they last changed, and the cursor to pass
+	// next time.
+	ChangesSince(cursor uint64) ([]domain.TenantState, uint64)
 	// Subscribe returns a channel that receives a value after every change,
 	// coalescing bursts, and a function that releases it.
 	Subscribe() (<-chan struct{}, func())
@@ -73,6 +79,13 @@ type Store struct {
 	generation   uint64
 	ready        atomic.Bool
 
+	// Every write gets the next seq. changedAt holds the seq of each tenant's
+	// last write and changeLog the writes in seq order; entries a later write
+	// to the same tenant made stale are dropped once they pile up.
+	seq       uint64
+	changedAt map[string]uint64
+	changeLog []loggedChange
+
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
 }
@@ -90,18 +103,28 @@ func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Du
 		logger = slog.Default()
 	}
 	return &Store{
-		cache:  cache,
-		logger: logger,
-		writer: newCacheWriter(cache, writeTimeout, logger),
-		states: make(map[string]domain.TenantState),
-		subs:   make(map[chan struct{}]struct{}),
+		cache:     cache,
+		logger:    logger,
+		writer:    newCacheWriter(cache, writeTimeout, logger),
+		states:    make(map[string]domain.TenantState),
+		changedAt: make(map[string]uint64),
+		subs:      make(map[chan struct{}]struct{}),
 	}
 }
+
+type loggedChange struct {
+	seq      uint64
+	tenantID string
+}
+
+// changeLogSlack keeps a small store from compacting its change log on
+// almost every write.
+const changeLogSlack = 1024
 
 // Apply records states following TenantState.Supersedes, wakes the
 // subscribers and queues the states that changed for the cache.
 func (s *Store) Apply(_ context.Context, states []domain.TenantState) error {
-	s.publish(s.merge(states))
+	s.publish(s.merge(states), false)
 	return nil
 }
 
@@ -213,6 +236,29 @@ func (s *Store) SnapshotTenant(tenantID string) domain.Snapshot {
 	return out
 }
 
+// Cursor is the position of the latest change.
+func (s *Store) Cursor() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.seq
+}
+
+// ChangesSince returns the current state of every tenant written after
+// cursor, oldest write first, and the cursor of the latest write. A tenant
+// written several times is returned once.
+func (s *Store) ChangesSince(cursor uint64) ([]domain.TenantState, uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	start := sort.Search(len(s.changeLog), func(i int) bool { return s.changeLog[i].seq > cursor })
+	var out []domain.TenantState
+	for _, change := range s.changeLog[start:] {
+		if s.changedAt[change.tenantID] == change.seq {
+			out = append(out, s.states[change.tenantID])
+		}
+	}
+	return out, max(cursor, s.seq)
+}
+
 // Subscribe returns a coalescing change channel and its release function.
 func (s *Store) Subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
@@ -251,8 +297,12 @@ func (s *Store) ResyncCache() {
 	s.writer.enqueue(states)
 }
 
-func (s *Store) publish(changed []domain.TenantState) {
-	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
+// publish wakes the subscribers when something changed, when the store just
+// became ready, or when its lists just became complete: the data planes that
+// got a list with no as_of version are owed one that can unblock tenants,
+// even when the first snapshot matched what the cache had.
+func (s *Store) publish(changed []domain.TenantState, completed bool) {
+	if becameReady := s.markReady(); len(changed) > 0 || becameReady || completed {
 		s.notify()
 	}
 	s.writer.enqueue(changed)
@@ -266,8 +316,9 @@ func (s *Store) markReady() bool {
 
 // mergeSnapshot computes the changes under the read lock, so the request path
 // keeps reading while a large list is compared, and recomputes them under the
-// write lock only when another merge ran in between.
-func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
+// write lock only when another merge ran in between. It also reports whether
+// this snapshot is the one that made the store's lists complete.
+func (s *Store) mergeSnapshot(snapshot domain.Snapshot) ([]domain.TenantState, bool) {
 	s.mu.RLock()
 	generation := s.generation
 	changed := snapshot.Changes(s.states)
@@ -280,13 +331,13 @@ func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
 	}
 	s.generation++
 	for _, state := range changed {
-		s.states[state.TenantID] = state
-		s.maxVersion = max(s.maxVersion, state.Version)
+		s.writeLocked(state)
 	}
 	s.maxVersion = max(s.maxVersion, snapshot.AsOfVersion)
 	s.snapshotAsOf = max(s.snapshotAsOf, snapshot.AsOfVersion)
+	completed := !s.complete
 	s.complete = true
-	return changed
+	return changed, completed
 }
 
 // listAsOfLocked is the as_of version a list carries. Until a UsageSync
@@ -324,14 +375,31 @@ func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 		if current, ok := s.states[state.TenantID]; ok && !state.Supersedes(current) {
 			continue
 		}
-		s.states[state.TenantID] = state
-		s.maxVersion = max(s.maxVersion, state.Version)
+		s.writeLocked(state)
 		changed = append(changed, state)
 	}
 	if len(changed) > 0 {
 		s.generation++
 	}
 	return changed
+}
+
+func (s *Store) writeLocked(state domain.TenantState) {
+	s.states[state.TenantID] = state
+	s.maxVersion = max(s.maxVersion, state.Version)
+	s.seq++
+	s.changedAt[state.TenantID] = s.seq
+	s.changeLog = append(s.changeLog, loggedChange{seq: s.seq, tenantID: state.TenantID})
+	if len(s.changeLog) > 2*len(s.changedAt)+changeLogSlack {
+		live := s.changeLog[:0]
+		for _, change := range s.changeLog {
+			if s.changedAt[change.tenantID] == change.seq {
+				live = append(live, change)
+			}
+		}
+		clear(s.changeLog[len(live):])
+		s.changeLog = live
+	}
 }
 
 func (s *Store) notify() {

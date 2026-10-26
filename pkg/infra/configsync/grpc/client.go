@@ -61,13 +61,14 @@ type Client struct {
 	acceptsUsage atomic.Bool
 }
 
-// UsageSink receives the usage snapshots the control plane pushes on the Sync
-// stream.
+// UsageSink receives the usage snapshots and changes the control plane
+// pushes on the Sync stream.
 type UsageSink interface {
 	ApplySnapshot(snapshot usagedomain.Snapshot)
+	ApplyChanges(states []usagedomain.TenantState)
 }
 
-// SetUsageSink routes usage snapshots to sink. Without one they are dropped,
+// SetUsageSink routes usage messages to sink. Without one they are dropped,
 // which is what a data plane that does not enforce usage wants.
 func (c *Client) SetUsageSink(sink UsageSink) {
 	c.recvMu.Lock()
@@ -77,8 +78,8 @@ func (c *Client) SetUsageSink(sink UsageSink) {
 }
 
 // recvLimit lifts gRPC's 4 MiB receive default: the control plane sends every
-// exhausted tenant in one usage message, and a message over the limit would
-// break the whole stream, config notices included.
+// exhausted tenant in one usage message when the stream opens, and a message
+// over the limit would break the whole stream, config notices included.
 func recvLimit(maxBytes int) grpc.DialOption {
 	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBytes))
 }
@@ -229,6 +230,9 @@ func (c *Client) Watch(ctx context.Context) (string, error) {
 			if usage := received.msg.GetUsage(); usage != nil && c.usageSink != nil {
 				c.usageSink.ApplySnapshot(usageSnapshotFromProto(usage))
 			}
+			if changes := received.msg.GetUsageChanges(); changes != nil && c.usageSink != nil {
+				c.usageSink.ApplyChanges(usageChangesFromProto(changes))
+			}
 		}
 	}
 }
@@ -283,9 +287,10 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		return nil, streamErr("open sync stream", err)
 	}
 	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
-		InstanceId:         c.instanceID,
-		LastAppliedVersion: c.lastApplied,
-		AcceptsUsage:       c.acceptsUsage.Load(),
+		InstanceId:          c.instanceID,
+		LastAppliedVersion:  c.lastApplied,
+		AcceptsUsage:        c.acceptsUsage.Load(),
+		AcceptsUsageChanges: c.acceptsUsage.Load(),
 	}}}
 	helloResult := make(chan error, 1)
 	go func() { helloResult <- stream.Send(hello) }()

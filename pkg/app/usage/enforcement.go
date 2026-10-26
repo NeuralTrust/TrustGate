@@ -31,8 +31,8 @@ type ExhaustionChecker interface {
 }
 
 // Enforcement is the data plane's copy of the exhausted tenants, fed by the
-// control plane's usage snapshots. Reads load an immutable map without
-// locking; each snapshot that changes something publishes a new copy.
+// control plane's usage snapshots and changes. Reads load an immutable map
+// without locking; each update that changes something publishes a new copy.
 type Enforcement struct {
 	writeMu  sync.Mutex
 	tenants  atomic.Pointer[map[string]domain.TenantState]
@@ -65,6 +65,30 @@ func (e *Enforcement) ApplySnapshot(snapshot domain.Snapshot) {
 	}
 	e.writeMu.Unlock()
 	e.received.Store(true)
+}
+
+// ApplyChanges merges individual tenant states following
+// TenantState.Supersedes. Only a full list counts as received: changes alone
+// say nothing about the tenants they do not mention.
+func (e *Enforcement) ApplyChanges(states []domain.TenantState) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	held := *e.tenants.Load()
+	var next map[string]domain.TenantState
+	for _, state := range states {
+		if current, ok := held[state.TenantID]; ok && !state.Supersedes(current) {
+			continue
+		}
+		if next == nil {
+			next = make(map[string]domain.TenantState, len(held)+len(states))
+			maps.Copy(next, held)
+			held = next
+		}
+		next[state.TenantID] = state
+	}
+	if next != nil {
+		e.tenants.Store(&next)
+	}
 }
 
 // Received reports whether at least one snapshot has been applied.
