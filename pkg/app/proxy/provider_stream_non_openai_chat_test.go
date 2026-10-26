@@ -200,9 +200,7 @@ func TestInvokeStream_NonOpenAIChatCompletion(t *testing.T) {
 						content, finish, reason := []string{fixture.text}, fixture.finish, "stop"
 						if tool {
 							content, finish = fixture.tool, fixture.toolFinish
-							if fixture.provider != "google" {
-								reason = "tool_calls"
-							}
+							reason = "tool_calls"
 						}
 						client := providermocks.NewClient(t)
 						client.EXPECT().CompletionsStream(mock.Anything, mock.Anything, mock.Anything).Return(nonOpenAIChatSequence(fixture.lines(content, finish), nil), nil).Once()
