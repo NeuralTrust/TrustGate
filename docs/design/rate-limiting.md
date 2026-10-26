@@ -100,6 +100,7 @@ A snapshot without `tenant_caps` decodes without caps; the stamped gateway caps 
 | Max instances (create returns 409) | Yes | Unchanged by this change. Applies only with the flag on, with a tenant and a cap |
 | Background sync | Yes | With the flag off there is no meter, no goroutine and no Redis sync client use |
 | Entitlements stamp | Platform JWT only | A tenant JWT that sends `entitlements` gets 422 |
+| Monthly quota with Usage System | Yields to Usage System | Where the plane enforces Usage System's block (`USAGE_SYSTEM_ENABLED`; on DB-less data planes, the snapshot's `usage_enforcement` flag), the monthly quota is still counted in Redis but refuses nothing: Usage System sets the consumption limit (402). The burst is unchanged. Turning Usage System off brings the quota back on the next request, with the month's real totals |
 
 ---
 
