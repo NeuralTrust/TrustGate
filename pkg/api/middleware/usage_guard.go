@@ -59,6 +59,20 @@ func NewUsageGuardMiddleware(checker appusage.ExhaustionChecker, enabled func() 
 	return &UsageGuardMiddleware{checker: checker, enabled: enabled}
 }
 
+// Enforcing reports whether the guard blocks exhausted tenants on this plane
+// right now. It is nil-safe.
+func (m *UsageGuardMiddleware) Enforcing() bool {
+	return m != nil && m.checker != nil && m.enabled != nil && m.enabled()
+}
+
+// Refusing reports whether the guard enforces and holds a usage list from
+// Usage System, so exhausted tenants are refused for real. A data plane
+// waiting for its first complete list, or a store that has only read its
+// cache, refuses nobody. It is nil-safe.
+func (m *UsageGuardMiddleware) Refusing() bool {
+	return m.Enforcing() && appusage.HoldsList(m.checker)
+}
+
 // ForMCP returns a copy of the guard that answers in JSON-RPC.
 func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 	clone := *m
@@ -69,7 +83,7 @@ func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 // Middleware returns the Fiber handler of the guard.
 func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if m.checker == nil || m.enabled == nil || !m.enabled() {
+		if !m.Enforcing() {
 			return c.Next()
 		}
 		gw, ok := appgateway.FromContext(c.UserContext())
