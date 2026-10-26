@@ -171,8 +171,12 @@ type Hello struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	InstanceId         string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	LastAppliedVersion string                 `protobuf:"bytes,2,opt,name=last_applied_version,json=lastAppliedVersion,proto3" json:"last_applied_version,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// accepts_usage says the data plane takes usage messages on this stream.
+	// Older data planes leave it unset and get none, so a list larger than their
+	// default receive limit cannot break their stream.
+	AcceptsUsage  bool `protobuf:"varint,3,opt,name=accepts_usage,json=acceptsUsage,proto3" json:"accepts_usage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -217,6 +221,13 @@ func (x *Hello) GetLastAppliedVersion() string {
 		return x.LastAppliedVersion
 	}
 	return ""
+}
+
+func (x *Hello) GetAcceptsUsage() bool {
+	if x != nil {
+		return x.AcceptsUsage
+	}
+	return false
 }
 
 type Ack struct {
@@ -712,11 +723,12 @@ const file_configsync_proto_rawDesc = "" +
 	"\rClientMessage\x12)\n" +
 	"\x05hello\x18\x01 \x01(\v2\x11.snapshotpb.HelloH\x00R\x05hello\x12#\n" +
 	"\x03ack\x18\x02 \x01(\v2\x0f.snapshotpb.AckH\x00R\x03ackB\x05\n" +
-	"\x03msg\"Z\n" +
+	"\x03msg\"\x7f\n" +
 	"\x05Hello\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x120\n" +
-	"\x14last_applied_version\x18\x02 \x01(\tR\x12lastAppliedVersion\".\n" +
+	"\x14last_applied_version\x18\x02 \x01(\tR\x12lastAppliedVersion\x12#\n" +
+	"\raccepts_usage\x18\x03 \x01(\bR\facceptsUsage\".\n" +
 	"\x03Ack\x12'\n" +
 	"\x0fapplied_version\x18\x01 \x01(\tR\x0eappliedVersion\"~\n" +
 	"\rServerMessage\x123\n" +

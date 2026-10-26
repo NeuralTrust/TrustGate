@@ -61,27 +61,21 @@ type Reader interface {
 // Store is the in-memory usage state of every tenant, backed by a cache that
 // lets a control plane start while Usage System is unreachable.
 type Store struct {
-	cache        domain.StateCache
-	logger       *slog.Logger
-	writeTimeout time.Duration
+	cache  domain.StateCache
+	logger *slog.Logger
+	writer *cacheWriter
 
 	mu           sync.RWMutex
 	states       map[string]domain.TenantState
 	maxVersion   int64
 	snapshotAsOf int64
+	complete     bool
 	generation   uint64
 	ready        atomic.Bool
-
-	pendingMu sync.Mutex
-	pending   map[string]domain.TenantState
 
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
 }
-
-// cacheChunk caps the states written in one round trip, so one slow chunk
-// fails alone instead of the whole list.
-const cacheChunk = 1000
 
 var (
 	_ Applier           = (*Store)(nil)
@@ -96,28 +90,26 @@ func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Du
 		logger = slog.Default()
 	}
 	return &Store{
-		cache:        cache,
-		logger:       logger,
-		writeTimeout: writeTimeout,
-		states:       make(map[string]domain.TenantState),
-		pending:      make(map[string]domain.TenantState),
-		subs:         make(map[chan struct{}]struct{}),
+		cache:  cache,
+		logger: logger,
+		writer: newCacheWriter(cache, writeTimeout, logger),
+		states: make(map[string]domain.TenantState),
+		subs:   make(map[chan struct{}]struct{}),
 	}
 }
 
-// Apply records states, keeping the highest version per tenant, wakes the
-// subscribers and persists the states that changed. A cache failure is logged
-// and does not undo the in-memory change: the cache only serves cold starts.
-func (s *Store) Apply(ctx context.Context, states []domain.TenantState) error {
-	s.publish(ctx, s.merge(states))
+// Apply records states following TenantState.Supersedes, wakes the
+// subscribers and queues the states that changed for the cache.
+func (s *Store) Apply(_ context.Context, states []domain.TenantState) error {
+	s.publish(s.merge(states))
 	return nil
 }
 
 // ApplySnapshot records a full list of exhausted tenants as of asOfVersion,
-// following domain.Snapshot.Changes. asOfVersion becomes the watermark the
-// store hands to the data planes.
-func (s *Store) ApplySnapshot(ctx context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
-	s.publish(ctx, s.mergeSnapshot(domain.Snapshot{Exhausted: exhausted, AsOfVersion: asOfVersion}))
+// following domain.Snapshot.Changes. From the first one on, the store's lists
+// are complete and carry its watermark as their as_of version.
+func (s *Store) ApplySnapshot(_ context.Context, exhausted []domain.TenantState, asOfVersion int64) error {
+	s.publish(s.mergeSnapshot(domain.Snapshot{Exhausted: exhausted, AsOfVersion: asOfVersion}))
 	return nil
 }
 
@@ -128,12 +120,12 @@ func (s *Store) Watermark() int64 {
 	return s.maxVersion
 }
 
-// Restore loads the cached states, skipping any that a snapshot applied in
+// restore loads the cached states, skipping any that a snapshot applied in
 // the meantime already covers. The store becomes ready once it succeeds,
 // except when the cache is empty and awaitSync is set: an empty cache says
 // nothing, so the store waits for Usage System's first snapshot instead of
 // serving an empty list as if nobody were exhausted.
-func (s *Store) Restore(ctx context.Context, awaitSync bool) error {
+func (s *Store) restore(ctx context.Context, awaitSync bool) error {
 	states, err := s.cache.LoadAll(ctx)
 	if err != nil {
 		return fmt.Errorf("usage: load cached states: %w", err)
@@ -159,12 +151,12 @@ type RestoreOptions struct {
 	AwaitSync bool
 }
 
-// RestoreUntilReady retries Restore until it succeeds, the store is ready or
-// ctx ends.
+// RestoreUntilReady loads the cached states, retrying until it succeeds, the
+// store is ready or ctx ends.
 func (s *Store) RestoreUntilReady(ctx context.Context, opts RestoreOptions) {
 	wait := opts.Interval
 	for !s.Ready() {
-		err := s.Restore(ctx, opts.AwaitSync)
+		err := s.restore(ctx, opts.AwaitSync)
 		if err == nil {
 			return
 		}
@@ -195,16 +187,17 @@ func (s *Store) Exhausted(tenantID string) (domain.Reason, bool) {
 	return state.Reason, true
 }
 
-// SnapshotAll lists every exhausted tenant, sorted by tenant.
+// SnapshotAll lists every exhausted tenant, sorted by tenant. The list is
+// sorted after the lock is released, so the request path is not held up.
 func (s *Store) SnapshotAll() domain.Snapshot {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := domain.Snapshot{AsOfVersion: s.maxVersion}
+	out := domain.Snapshot{AsOfVersion: s.listAsOfLocked()}
 	for _, state := range s.states {
 		if state.Exhausted() {
 			out.Exhausted = append(out.Exhausted, state)
 		}
 	}
+	s.mu.RUnlock()
 	sort.Slice(out.Exhausted, func(i, j int) bool { return out.Exhausted[i].TenantID < out.Exhausted[j].TenantID })
 	return out
 }
@@ -213,7 +206,7 @@ func (s *Store) SnapshotAll() domain.Snapshot {
 func (s *Store) SnapshotTenant(tenantID string) domain.Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := domain.Snapshot{AsOfVersion: s.maxVersion}
+	out := domain.Snapshot{AsOfVersion: s.listAsOfLocked()}
 	if state, ok := s.states[tenantID]; ok && tenantID != "" && state.Exhausted() {
 		out.Exhausted = append(out.Exhausted, state)
 	}
@@ -233,86 +226,40 @@ func (s *Store) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// FlushPending writes again the states a failed cache write left behind.
+// FlushPending writes the states waiting for the cache. The store only queues
+// them, so the UsageSync stream never waits on Redis; whoever runs the store
+// flushes on CacheWrites, on a retry timer and once more at shutdown.
 func (s *Store) FlushPending(ctx context.Context) {
-	s.persist(ctx, nil)
+	s.writer.flush(ctx)
 }
 
-// publish wakes the subscribers before it writes the cache, so the data
-// planes never wait on Redis.
-func (s *Store) publish(ctx context.Context, changed []domain.TenantState) {
+// CacheWrites receives a value whenever states are queued for the cache.
+func (s *Store) CacheWrites() <-chan struct{} {
+	return s.writer.wake
+}
+
+// ResyncCache queues every held state again, so a cache that was flushed or
+// lost writes while the store kept running is repopulated. The cache's
+// version check makes rewriting what it already holds a no-op.
+func (s *Store) ResyncCache() {
+	s.mu.RLock()
+	states := make([]domain.TenantState, 0, len(s.states))
+	for _, state := range s.states {
+		states = append(states, state)
+	}
+	s.mu.RUnlock()
+	s.writer.enqueue(states)
+}
+
+func (s *Store) publish(changed []domain.TenantState) {
 	if becameReady := s.markReady(); len(changed) > 0 || becameReady {
 		s.notify()
 	}
-	s.persist(ctx, changed)
+	s.writer.enqueue(changed)
 }
 
-// persist writes changed, together with the states still pending, in chunks.
-// A chunk that has started finishes even when ctx is cancelled, bounded by
-// writeTimeout, so a shutdown does not drop the change being written. The
-// first chunk that fails, and every chunk after it or not started by then,
-// stay pending for the next write or FlushPending: a hung Redis costs one
-// writeTimeout per write, not one per chunk.
-func (s *Store) persist(ctx context.Context, changed []domain.TenantState) {
-	batch := s.takePending(changed)
-	if len(batch) == 0 {
-		return
-	}
-	var failed []domain.TenantState
-	var lastErr error
-	for start := 0; start < len(batch); start += cacheChunk {
-		if err := ctx.Err(); err != nil {
-			failed, lastErr = append(failed, batch[start:]...), err
-			break
-		}
-		chunk := batch[start:min(start+cacheChunk, len(batch))]
-		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.writeTimeout)
-		err := s.cache.SaveAll(writeCtx, chunk)
-		cancel()
-		if err != nil {
-			failed, lastErr = append(failed, batch[start:]...), err
-			break
-		}
-	}
-	if len(failed) > 0 {
-		s.keepPending(failed)
-		s.logger.WarnContext(ctx, "usage: cache states, retrying later", slog.Int("states", len(failed)), slog.Any("error", lastErr))
-	}
-}
-
-func (s *Store) takePending(changed []domain.TenantState) []domain.TenantState {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	if len(s.pending) == 0 {
-		return changed
-	}
-	latest := s.pending
-	s.pending = make(map[string]domain.TenantState)
-	for _, state := range changed {
-		if held, ok := latest[state.TenantID]; !ok || held.Version < state.Version {
-			latest[state.TenantID] = state
-		}
-	}
-	batch := make([]domain.TenantState, 0, len(latest))
-	for _, state := range latest {
-		batch = append(batch, state)
-	}
-	sort.Slice(batch, func(i, j int) bool { return batch[i].TenantID < batch[j].TenantID })
-	return batch
-}
-
-func (s *Store) keepPending(failed []domain.TenantState) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	for _, state := range failed {
-		if held, ok := s.pending[state.TenantID]; !ok || held.Version < state.Version {
-			s.pending[state.TenantID] = state
-		}
-	}
-}
-
-// markReady reports whether this call made the store ready, so the data
-// planes waiting for a first list are woken even when nothing changed.
+// The data planes waiting for a first list are woken even when becoming ready
+// changed nothing, so the caller needs to know it was this call.
 func (s *Store) markReady() bool {
 	return s.ready.CompareAndSwap(false, true)
 }
@@ -338,7 +285,19 @@ func (s *Store) mergeSnapshot(snapshot domain.Snapshot) []domain.TenantState {
 	}
 	s.maxVersion = max(s.maxVersion, snapshot.AsOfVersion)
 	s.snapshotAsOf = max(s.snapshotAsOf, snapshot.AsOfVersion)
+	s.complete = true
 	return changed
+}
+
+// listAsOfLocked is the as_of version a list carries. Until a UsageSync
+// snapshot has been applied the store only holds what the cache had, which
+// can miss states whose writes failed, so its lists claim nothing beyond
+// what they list: a data plane then unblocks no tenant on their account.
+func (s *Store) listAsOfLocked() int64 {
+	if !s.complete {
+		return 0
+	}
+	return s.maxVersion
 }
 
 func (s *Store) mergeRestored(cached []domain.TenantState) []domain.TenantState {
@@ -362,7 +321,7 @@ func (s *Store) merge(states []domain.TenantState) []domain.TenantState {
 func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 	var changed []domain.TenantState
 	for _, state := range states {
-		if current, ok := s.states[state.TenantID]; ok && current.Version >= state.Version {
+		if current, ok := s.states[state.TenantID]; ok && !state.Supersedes(current) {
 			continue
 		}
 		s.states[state.TenantID] = state

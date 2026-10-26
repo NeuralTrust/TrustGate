@@ -77,7 +77,7 @@ type adminSnapshotReadiness func(context.Context) error
 
 func adminReadiness(plane string) container.Module {
 	return func(c *container.Container) error {
-		if plane != "admin" && plane != "run" {
+		if plane != PlaneAdmin && plane != PlaneRun {
 			return nil
 		}
 		if err := c.Provide(func(d *appsnapshot.Dispatcher) adminSnapshotReadiness {
@@ -185,9 +185,6 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewHybridGatewayGuardMiddleware); err != nil {
-		return err
-	}
-	if err := c.Provide(provideUsageGuard); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
