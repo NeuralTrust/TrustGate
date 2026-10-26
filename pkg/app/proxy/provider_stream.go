@@ -183,10 +183,14 @@ func adaptStream(
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	var deferred *finishDeferral
 	var geminiCalls *adapter.GeminiCallIndexer
+	var geminiFinish *geminiClientFinish
 	if crossFormat {
 		deferred = newFinishDeferral(source, target, options)
 		if adapter.IsSameWireFormat(target, adapter.FormatGemini) {
 			geminiCalls = &adapter.GeminiCallIndexer{}
+			if deferred == nil {
+				geminiFinish = &geminiClientFinish{calls: geminiCalls}
+			}
 		}
 	}
 	if deferred != nil {
@@ -285,8 +289,8 @@ func adaptStream(
 				return true
 			}
 
-			if geminiCalls != nil {
-				return emitGeminiUpstream(emit, registry, payload, source, target, geminiCalls, logger)
+			if geminiFinish != nil {
+				return emitGeminiUpstream(emit, registry, payload, source, target, geminiFinish, logger)
 			}
 
 			if usage != nil {
@@ -428,12 +432,31 @@ type finishDeferral struct {
 	geminiCalls   *adapter.GeminiCallIndexer
 }
 
+// geminiClientFinish tracks tool calls across a Gemini upstream for a client
+// whose encoder does not. Gemini reports STOP after a functionCall, and an
+// OpenAI-wire or Mistral client that trusts finish_reason cancels the tool
+// (ENG-2787). Truncation and safety finishes stay as decoded.
+type geminiClientFinish struct {
+	calls   *adapter.GeminiCallIndexer
+	sawTool bool
+}
+
+func (g *geminiClientFinish) prepare(chunk *adapter.CanonicalStreamChunk) {
+	g.calls.Renumber(chunk.ToolCallDeltas)
+	if len(chunk.ToolCallDeltas) > 0 {
+		g.sawTool = true
+	}
+	if g.sawTool && chunk.FinishReason == "stop" {
+		chunk.FinishReason = "tool_calls"
+	}
+}
+
 func emitGeminiUpstream(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	payload []byte,
 	source, target adapter.Format,
-	calls *adapter.GeminiCallIndexer,
+	finish *geminiClientFinish,
 	logger *slog.Logger,
 ) bool {
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
@@ -445,7 +468,7 @@ func emitGeminiUpstream(
 		return true
 	}
 	canonical.ProviderExtensions = nil
-	calls.Renumber(canonical.ToolCallDeltas)
+	finish.prepare(canonical)
 	return encodeAndEmit(emit, registry, canonical, source, logger)
 }
 
