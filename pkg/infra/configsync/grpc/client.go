@@ -231,7 +231,11 @@ func (c *Client) Watch(ctx context.Context) (string, error) {
 				c.usageSink.ApplySnapshot(usageSnapshotFromProto(usage))
 			}
 			if changes := received.msg.GetUsageChanges(); changes != nil && c.usageSink != nil {
-				c.usageSink.ApplyChanges(usageChangesFromProto(changes))
+				states, dropped := usageChangesFromProto(changes)
+				if dropped > 0 {
+					c.logger.WarnContext(ctx, "configsync: dropped usage changes that cannot be applied", slog.Int("dropped", dropped))
+				}
+				c.usageSink.ApplyChanges(states)
 			}
 		}
 	}

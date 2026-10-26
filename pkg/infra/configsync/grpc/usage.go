@@ -17,6 +17,7 @@ package grpc
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -29,6 +30,7 @@ type UsageSource interface {
 	SnapshotTenant(tenantID string) usagedomain.Snapshot
 	Cursor() uint64
 	ChangesSince(cursor uint64) ([]usagedomain.TenantState, uint64)
+	TenantChangedSince(cursor uint64, tenantID string) (usagedomain.TenantState, bool, uint64)
 	Subscribe() (<-chan struct{}, func())
 	// Ready reports whether the source holds a list worth sending. Until it
 	// does nothing is sent: a data plane reads any list as complete.
@@ -47,68 +49,78 @@ func WithUsage(source UsageSource, gateways GatewayResolver) ServiceOption {
 	}
 }
 
-// maxUsageChangesPerMessage bounds a UsageChanges message, so a burst such as
-// every tenant being unblocked at once goes out in several messages.
-const maxUsageChangesPerMessage = 1000
+const (
+	// maxUsageChangesPerMessage bounds a UsageChanges message, so a burst
+	// such as every tenant being unblocked at once goes out in several.
+	maxUsageChangesPerMessage = 1000
+	// usageRetryInterval is how often a stream retries a list it owes, for a
+	// data plane whose config is current and so gets no notices to retry on.
+	usageRetryInterval = 5 * time.Second
+)
 
 // usageStream tracks what one Sync stream has been sent. Only the unscoped
 // in-cluster data planes get every tenant. A data plane scoped to a gateway
 // gets that gateway's tenant, and a scope that is not a gateway id names its
 // tenant directly; it never gets another tenant's state.
 type usageStream struct {
-	svc     *Service
-	scope   string
-	changes bool
+	source   UsageSource
+	gateways GatewayResolver
+	logger   *slog.Logger
+	scope    string
+	changes  bool
 
 	tenantID string
 	resolved bool
-	// listed is set once a data plane that takes changes has been sent a
-	// complete list; from then on it only gets what changed after cursor.
+	// owed is set while the stream owes a list it cannot send: the source is
+	// not ready or a gateway scope did not resolve (unknown, deleted, or the
+	// lookup failed).
+	owed bool
+	// listed is set once a data plane that takes changes has a complete list;
+	// a list with no as_of version unblocks nobody, so until then it gets
+	// full lists.
 	listed bool
 	cursor uint64
 }
 
-func (s *Service) newUsageStream(scope string, acceptsChanges bool) *usageStream {
-	return &usageStream{svc: s, scope: scope, changes: acceptsChanges, resolved: scope == ""}
+func newUsageStream(source UsageSource, gateways GatewayResolver, logger *slog.Logger, scope string, acceptsChanges bool) *usageStream {
+	return &usageStream{source: source, gateways: gateways, logger: logger, scope: scope, changes: acceptsChanges, resolved: scope == ""}
 }
 
-// next returns the usage messages the stream is owed now, and false when it
-// owes one it cannot send yet: the source is not ready or a gateway scope did
-// not resolve (unknown, deleted, or the lookup failed). The data plane then
-// keeps what it has instead of reading an empty list as "nobody is
-// exhausted". A data plane that does not take changes gets the full list
-// every time. One that does gets full lists until one is complete, because a
-// list with no as_of version unblocks nobody and only the next complete list
-// can, and then the tenants that changed since.
-func (u *usageStream) next(ctx context.Context) ([]*snapshotpb.ServerMessage, bool) {
-	if !u.svc.usage.Ready() || !u.resolve(ctx) {
-		return nil, false
+// next returns the usage messages the stream is owed now.
+func (u *usageStream) next(ctx context.Context) []*snapshotpb.ServerMessage {
+	if !u.source.Ready() || !u.resolve(ctx) {
+		if !u.owed && u.source.Ready() {
+			u.logger.WarnContext(ctx, "configsync: no usage list for this scope; retrying on the next usage change, config notice or retry tick",
+				slog.String("scope", u.scope))
+		}
+		u.owed = true
+		return nil
 	}
+	u.owed = false
 	if u.listed {
-		return u.changedSince(), true
+		return u.changedSince()
 	}
-	cursor := u.svc.usage.Cursor()
-	snapshot := u.svc.usage.SnapshotAll()
+	cursor := u.source.Cursor()
+	snapshot := u.source.SnapshotAll()
 	if u.scope != "" {
-		snapshot = u.svc.usage.SnapshotTenant(u.tenantID)
+		snapshot = u.source.SnapshotTenant(u.tenantID)
 	}
 	u.cursor = cursor
 	u.listed = u.changes && snapshot.AsOfVersion > 0
-	return []*snapshotpb.ServerMessage{usageMessage(snapshot)}, true
+	return []*snapshotpb.ServerMessage{usageMessage(snapshot)}
 }
 
 func (u *usageStream) changedSince() []*snapshotpb.ServerMessage {
-	states, cursor := u.svc.usage.ChangesSince(u.cursor)
-	u.cursor = cursor
 	if u.scope != "" {
-		var own []usagedomain.TenantState
-		for _, state := range states {
-			if u.tenantID != "" && state.TenantID == u.tenantID {
-				own = append(own, state)
-			}
+		state, changed, cursor := u.source.TenantChangedSince(u.cursor, u.tenantID)
+		u.cursor = cursor
+		if !changed {
+			return nil
 		}
-		states = own
+		return []*snapshotpb.ServerMessage{usageChangesMessage([]usagedomain.TenantState{state})}
 	}
+	states, cursor := u.source.ChangesSince(u.cursor)
+	u.cursor = cursor
 	var out []*snapshotpb.ServerMessage
 	for start := 0; start < len(states); start += maxUsageChangesPerMessage {
 		out = append(out, usageChangesMessage(states[start:min(start+maxUsageChangesPerMessage, len(states))]))
@@ -125,12 +137,12 @@ func (u *usageStream) resolve(ctx context.Context) bool {
 		u.tenantID, u.resolved = u.scope, true
 		return true
 	}
-	if u.svc.usageGateways == nil {
+	if u.gateways == nil {
 		return false
 	}
-	gw, err := u.svc.usageGateways.FindByID(ctx, gatewayID)
+	gw, err := u.gateways.FindByID(ctx, gatewayID)
 	if err != nil {
-		u.svc.logger.DebugContext(ctx, "configsync: resolve usage scope", slog.String("scope", u.scope), slog.Any("error", err))
+		u.logger.DebugContext(ctx, "configsync: resolve usage scope", slog.String("scope", u.scope), slog.Any("error", err))
 		return false
 	}
 	u.tenantID, u.resolved = gw.TenantID(), true
@@ -166,11 +178,12 @@ func usageChangesMessage(states []usagedomain.TenantState) *snapshotpb.ServerMes
 	return &snapshotpb.ServerMessage{Msg: &snapshotpb.ServerMessage_UsageChanges{UsageChanges: msg}}
 }
 
-// usageChangesFromProto drops the entries it cannot apply: unlike a list, a
-// change has no as_of version to stand in for a missing one, and a state
-// whose status is unknown could unblock a tenant by mistake.
-func usageChangesFromProto(msg *snapshotpb.UsageChanges) []usagedomain.TenantState {
+// usageChangesFromProto drops the entries it cannot apply and counts them:
+// unlike a list, a change has no as_of version to stand in for a missing one,
+// and a state whose status is unknown could unblock a tenant by mistake.
+func usageChangesFromProto(msg *snapshotpb.UsageChanges) ([]usagedomain.TenantState, int) {
 	out := make([]usagedomain.TenantState, 0, len(msg.GetStates()))
+	dropped := 0
 	for _, entry := range msg.GetStates() {
 		var status usagedomain.Status
 		switch entry.GetStatus() {
@@ -179,15 +192,17 @@ func usageChangesFromProto(msg *snapshotpb.UsageChanges) []usagedomain.TenantSta
 		case snapshotpb.UsageStatus_USAGE_STATUS_EXHAUSTED:
 			status = usagedomain.StatusExhausted
 		default:
+			dropped++
 			continue
 		}
 		state, err := usagedomain.NewTenantState(entry.GetTenantId(), status, usageReasonFromProto(entry.GetReason()), entry.GetVersion())
 		if err != nil {
+			dropped++
 			continue
 		}
 		out = append(out, state)
 	}
-	return out
+	return out, dropped
 }
 
 func usageSnapshotFromProto(msg *snapshotpb.UsageSnapshot) usagedomain.Snapshot {
