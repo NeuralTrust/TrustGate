@@ -80,12 +80,14 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 
 	var usageChanges <-chan struct{}
+	var usage *usageStream
 	usageOwed := false
 	if s.usage != nil && hello.GetAcceptsUsage() {
 		changes, release := s.usage.Subscribe()
 		defer release()
 		usageChanges = changes
-		owed, err := s.syncUsage(stream, scope, usageOwed)
+		usage = s.newUsageStream(scope, hello.GetAcceptsUsageChanges())
+		owed, err := s.syncUsage(stream, usage, usageOwed)
 		if err != nil {
 			return err
 		}
@@ -123,14 +125,14 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			// A scope that could not be resolved earlier, such as a gateway
 			// lookup that failed, is tried again with each config change.
 			if usageOwed {
-				owed, err := s.syncUsage(stream, scope, usageOwed)
+				owed, err := s.syncUsage(stream, usage, usageOwed)
 				if err != nil {
 					return err
 				}
 				usageOwed = owed
 			}
 		case <-usageChanges:
-			owed, err := s.syncUsage(stream, scope, usageOwed)
+			owed, err := s.syncUsage(stream, usage, usageOwed)
 			if err != nil {
 				return err
 			}
@@ -139,17 +141,22 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 }
 
-// syncUsage sends the usage list the connection may receive and reports
-// whether one is still owed. It warns once per stretch of owing, not on every
-// attempt, and not while the control plane itself has no list yet.
-func (s *Service) syncUsage(stream snapshotpb.ConfigSync_SyncServer, scope string, owed bool) (bool, error) {
-	msg, ok := s.usageSnapshotFor(stream.Context(), scope)
+// syncUsage sends the usage messages the connection is owed and reports
+// whether a list is still owed. It warns once per stretch of owing, not on
+// every attempt, and not while the control plane itself has no list yet.
+func (s *Service) syncUsage(stream snapshotpb.ConfigSync_SyncServer, usage *usageStream, owed bool) (bool, error) {
+	msgs, ok := usage.next(stream.Context())
 	if ok {
-		return false, stream.Send(msg)
+		for _, msg := range msgs {
+			if err := stream.Send(msg); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
 	}
 	if !owed && s.usage.Ready() {
 		s.logger.WarnContext(stream.Context(), "configsync: no usage list for this scope; retrying on the next usage change or config notice",
-			slog.String("scope", scope))
+			slog.String("scope", usage.scope))
 	}
 	return true, nil
 }

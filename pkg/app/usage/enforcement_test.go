@@ -117,3 +117,28 @@ func TestEnforcementReadsWhileSnapshotsApply(t *testing.T) {
 		t.Fatal("t100 still exhausted after it left the list")
 	}
 }
+
+func TestEnforcementApplyChangesFollowsSupersedes(t *testing.T) {
+	t.Parallel()
+	e := NewEnforcement()
+	e.ApplyChanges([]domain.TenantState{exhausted(t, "a", 5), exhausted(t, "b", 5)})
+	if e.Received() {
+		t.Fatal("changes alone counted as a received list")
+	}
+	if _, ok := e.Exhausted("a"); !ok {
+		t.Fatal("a not blocked by a change")
+	}
+
+	e.ApplyChanges([]domain.TenantState{state(t, "a", false, 4), state(t, "b", false, 5)})
+	if _, ok := e.Exhausted("a"); !ok {
+		t.Fatal("an older change unblocked a")
+	}
+	if _, ok := e.Exhausted("b"); ok {
+		t.Fatal("an unblock at the same version left b blocked")
+	}
+
+	e.ApplyChanges([]domain.TenantState{exhausted(t, "b", 5)})
+	if _, ok := e.Exhausted("b"); ok {
+		t.Fatal("a repeated block at the unblock's version blocked b again")
+	}
+}
