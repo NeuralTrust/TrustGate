@@ -95,8 +95,8 @@ func TestTenantEntitlementsSeed(t *testing.T) {
 	add("text", `{"tier":"free","burst_per_min":"60","quota_per_month":10,"max_instances":5}`)
 	add("partial", `{"tier":"free","burst_per_min":60}`)
 	add("negative", `{"tier":"free","burst_per_min":60,"quota_per_month":-1,"max_instances":5}`)
-	// The domain rejects a burst of 0 and the limiter would answer 429 to every
-	// request, so the seed must not store it.
+	// The seed predates 0 meaning unlimited for burst_per_min and deliberately
+	// still skips a burst-0 stamp, so it must not store it.
 	add("zeroburst", `{"tier":"free","burst_per_min":0,"quota_per_month":1000,"max_instances":5}`)
 	// A usable gateway beside an unusable one still seeds its tenant.
 	add("mixed", `{"tier":"free","burst_per_min":60,"quota_per_month":10000,"max_instances":5}`)
