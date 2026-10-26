@@ -217,7 +217,6 @@ func (m *Meter) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 	return m.admit(resolved)
 }
 
-// decisionLimits drops the monthly cap while Usage System enforces usage.
 func (m *Meter) decisionLimits(limits domain.Limits) domain.Limits {
 	if m.opts.UsageEnforcing != nil && m.opts.UsageEnforcing() {
 		limits.QuotaPerMonth = 0
