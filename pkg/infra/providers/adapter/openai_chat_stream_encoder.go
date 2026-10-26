@@ -28,6 +28,7 @@ type OpenAIChatStreamEncoder struct {
 	started      bool
 	done         bool
 	aborted      bool
+	sawTool      bool
 }
 
 // NewOpenAIChatStreamEncoder returns an encoder with optional terminal usage.
@@ -44,6 +45,9 @@ func (e *OpenAIChatStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte 
 		return e.Abort("upstream reported a stream error")
 	}
 	e.remember(chunk)
+	if len(chunk.ToolCallDeltas) > 0 {
+		e.sawTool = true
+	}
 	if chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
 		return nil
 	}
@@ -53,6 +57,8 @@ func (e *OpenAIChatStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte 
 }
 
 // Finish emits one finish chunk, optional merged usage, and one final DONE marker.
+// A stop after a tool call is reported as tool_calls. Gemini finishes a function
+// call with STOP, and a Chat Completions client cancels the tool otherwise (ENG-2787).
 func (e *OpenAIChatStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done || chunk == nil {
 		return nil
@@ -67,7 +73,11 @@ func (e *OpenAIChatStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 		return e.Abort("upstream stream ended without a finish reason")
 	}
 	e.remember(chunk)
-	lines := e.encode(&CanonicalStreamChunk{FinishReason: chunk.FinishReason})
+	reason := chunk.FinishReason
+	if e.sawTool && reason == "stop" {
+		reason = "tool_calls"
+	}
+	lines := e.encode(&CanonicalStreamChunk{FinishReason: reason})
 	if e.aborted {
 		return lines
 	}
