@@ -73,6 +73,12 @@ type Options struct {
 	FailedRetention time.Duration
 	// MaxBatch is how many tenants share one pipelined round trip.
 	MaxBatch int
+	// UsageEnforcing reports whether Usage System enforces usage on this plane
+	// right now. While it does, the monthly quota is still counted but refuses
+	// nothing, so the two never block for the same thing with different
+	// numbers; turning Usage System off resumes the quota from real totals.
+	// It is read on every request. Nil means never.
+	UsageEnforcing func() bool
 	// SyncTimeout bounds one background sync round trip. A request that already
 	// has a counter does not wait on it. The cold read uses ColdReadTimeout.
 	SyncTimeout time.Duration
@@ -207,7 +213,16 @@ func (m *Meter) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 		}
 		return nil
 	}
+	resolved.Limits = m.decisionLimits(resolved.Limits)
 	return m.admit(resolved)
+}
+
+// decisionLimits drops the monthly cap while Usage System enforces usage.
+func (m *Meter) decisionLimits(limits domain.Limits) domain.Limits {
+	if m.opts.UsageEnforcing != nil && m.opts.UsageEnforcing() {
+		limits.QuotaPerMonth = 0
+	}
+	return limits
 }
 
 func (m *Meter) admit(r Resolved) error {
