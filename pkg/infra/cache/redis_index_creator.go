@@ -30,12 +30,12 @@ type (
 		CreateIndexes(ctx context.Context, keys ...string) error
 	}
 	redisIndexCreator struct {
-		redis  *redis.Client
+		redis  redis.UniversalClient
 		logger *slog.Logger
 	}
 )
 
-func NewRedisIndexCreator(redis *redis.Client, logger *slog.Logger) RedisIndexCreator {
+func NewRedisIndexCreator(redis redis.UniversalClient, logger *slog.Logger) RedisIndexCreator {
 	return &redisIndexCreator{
 		redis:  redis,
 		logger: logger,

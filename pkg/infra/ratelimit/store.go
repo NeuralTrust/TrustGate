@@ -96,7 +96,7 @@ return totals
 // that already has a counter does not wait on it. A cold read waits up to the
 // sync timeout.
 type Store struct {
-	redis  *redis.Client
+	redis  redis.UniversalClient
 	logger *slog.Logger
 	now    func() time.Time
 	loaded atomic.Bool
@@ -115,7 +115,7 @@ func WithFailedRetention(retention time.Duration) StoreOption {
 
 // NewStore wraps the sync client. A nil client is a store that always fails,
 // which the meter treats as Redis being down.
-func NewStore(rc *redis.Client, logger *slog.Logger, opts ...StoreOption) *Store {
+func NewStore(rc redis.UniversalClient, logger *slog.Logger, opts ...StoreOption) *Store {
 	s := &Store{redis: rc, logger: logger, now: time.Now, tokenTTL: domain.TokenTTL(0)}
 	for _, o := range opts {
 		o(s)

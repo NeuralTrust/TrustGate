@@ -53,7 +53,7 @@ func TestStartRateLimitStopFlushesPendingUsageBeforeClosingRedis(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(mr.Close)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	syncClient := &cache.SyncClient{Client: rc}
+	syncClient := &cache.SyncClient{UniversalClient: rc}
 
 	meter := ratelimitapp.NewMeter(
 		oneGatewayResolver{resolved: ratelimitapp.Resolved{Subject: "tenant-1", Limits: domain.Limits{BurstPerMin: 1000, QuotaPerMonth: 1000}}},
@@ -176,7 +176,7 @@ func TestStartRateLimitWarmsTheSyncClientBeforeReturning(t *testing.T) {
 		ratelimitapp.Options{SyncInterval: time.Hour, DisableKick: true},
 		quietLogger(),
 	)
-	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{Client: rc}}, quietLogger())
+	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{UniversalClient: rc}}, quietLogger())
 	defer stop()
 
 	assert.GreaterOrEqual(t, counts.ping.Load(), int64(1), "warmup pings, which is the HELLO/AUTH")
@@ -215,7 +215,7 @@ func TestStartRateLimitWarmupGivesUpWhenRedisHangs(t *testing.T) {
 	)
 
 	start := time.Now()
-	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{Client: rc}}, quietLogger())
+	stop := startRateLimit(rateLimitParams{Meter: meter, SyncRedis: &cache.SyncClient{UniversalClient: rc}}, quietLogger())
 	defer stop()
 	assert.Less(t, time.Since(start), ratelimitapp.DefaultSyncWarmTimeout+time.Second, "warmup is bounded and a failure does not refuse to serve")
 }

@@ -36,7 +36,7 @@ import (
 // segregated view of the broader cache client so the balancer does not depend
 // on gateway caching or TTL-map management it never uses.
 type RedisProvider interface {
-	RedisClient() *redis.Client
+	RedisClient() redis.UniversalClient
 }
 
 type Pool struct {
@@ -390,7 +390,7 @@ func (lb *LoadBalancer) UpdateBackendHealth(ctx context.Context, b *registry.Reg
 	}
 }
 
-func cacheHealthStatus(ctx context.Context, redisClient *redis.Client, key string, status *HealthStatus) error {
+func cacheHealthStatus(ctx context.Context, redisClient redis.UniversalClient, key string, status *HealthStatus) error {
 	statusJSON, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("failed to marshal health status: %w", err)

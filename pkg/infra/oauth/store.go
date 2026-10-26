@@ -41,7 +41,7 @@ const (
 var _ appoauth.FlowStore = (*Store)(nil)
 
 type Store struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 	// sessionMaxAge is MCP_DEFAULT_IDP_SESSION_MAX_AGE. Zero means unset.
 	sessionMaxAge time.Duration
 }
@@ -57,7 +57,7 @@ func (s *Store) SetDefaultIDPSessionMaxAge(d time.Duration) {
 	}
 }
 
-func NewStore(rdb *redis.Client) *Store {
+func NewStore(rdb redis.UniversalClient) *Store {
 	return &Store{rdb: rdb}
 }
 
