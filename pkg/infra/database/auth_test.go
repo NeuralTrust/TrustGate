@@ -63,14 +63,14 @@ func TestNewPoolAuthStrategy(t *testing.T) {
 }
 func TestNewPoolAuthStrategyRejectsUnsupportedLogin(t *testing.T) {
 	loads := 0
-	strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: "gcp"}, authDependencies{
+	strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: "oracle"}, authDependencies{
 		loadConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
 			loads++
 			return aws.Config{Region: "eu-west-1"}, nil
 		},
 	})
 	require.ErrorIs(t, err, errUnsupportedDBLogin)
-	require.ErrorContains(t, err, "gcp")
+	require.ErrorContains(t, err, "oracle")
 	require.Nil(t, strategy)
 	require.Zero(t, loads)
 }

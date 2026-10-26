@@ -1380,6 +1380,11 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%w: DB_SSL_MODE must be %q, %q or %q when POSTGRES_LOGIN=%q", errors.ErrInvalidConfig, "require", "verify-ca", "verify-full", c.Database.Login)
 			}
 		}
+		// Cloud SQL and AlloyDB name an IAM service-account user by its email with
+		// this suffix removed; the full email is rejected at login.
+		if c.Database.Login == PostgresLoginGCP && strings.HasSuffix(strings.ToLower(c.Database.User), gcpServiceAccountSuffix) {
+			return fmt.Errorf("%w: DB_USER must drop the %q suffix when POSTGRES_LOGIN=%q (e.g. name@project.iam)", errors.ErrInvalidConfig, gcpServiceAccountSuffix, PostgresLoginGCP)
+		}
 	}
 	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
 	switch c.Redis.Login {

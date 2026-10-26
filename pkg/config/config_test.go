@@ -327,6 +327,7 @@ func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 		{name: "default preserves configured password", login: "default", password: "configured-password", wantLogin: PostgresLoginDefault, wantPassword: "configured-password"},
 		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAWS},
 		{name: "azure is normalized and drops configured password", login: " AzUrE ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAzure},
+		{name: "gcp is normalized and drops configured password", login: " GcP ", password: "configured-password", sslMode: "verify-ca", wantLogin: PostgresLoginGCP},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -932,7 +933,7 @@ func TestValidate_ServerSecretKey(t *testing.T) {
 }
 
 func TestValidate_TokenLoginSSLModes(t *testing.T) {
-	for _, login := range []PostgresLogin{PostgresLoginAWS, PostgresLoginAzure} {
+	for _, login := range []PostgresLogin{PostgresLoginAWS, PostgresLoginAzure, PostgresLoginGCP} {
 		for mode, valid := range map[string]bool{" ReQuIrE ": true, " VERIFY-CA ": true, "verify-full": true, "disable": false, "allow": false, "prefer": false, "": false, "unknown": false} {
 			t.Run(string(login)+"/"+mode, func(t *testing.T) {
 				cfg := postgresValid()
@@ -950,6 +951,43 @@ func TestValidate_TokenLoginSSLModes(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestValidate_GCPLoginRejectsServiceAccountSuffix(t *testing.T) {
+	for _, user := range []string{"trustgate-db@my-project.iam.gserviceaccount.com", "TrustGate-DB@My-Project.IAM.GServiceAccount.com"} {
+		t.Run(user, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginGCP, "require", user
+			err := cfg.Validate()
+			if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "DB_USER") || !strings.Contains(err.Error(), gcpServiceAccountSuffix) {
+				t.Fatalf("gcp DB_USER %q error must be ErrInvalidConfig naming DB_USER and the suffix: %v", user, err)
+			}
+		})
+	}
+
+	t.Run("gcp accepts the IAM user name", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginGCP, "require", "trustgate-db@my-project.iam"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("other logins keep any DB_USER", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginAWS, "require", "trustgate-db@my-project.iam.gserviceaccount.com"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("DB-less data plane skips the check", func(t *testing.T) {
+		cfg := dbLessValid()
+		cfg.Database.Login, cfg.Database.User = PostgresLoginGCP, "trustgate-db@my-project.iam.gserviceaccount.com"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("DB-less data plane should not validate DB_USER: %v", err)
+		}
+	})
 }
 
 func TestLoadConfig_AzureScope(t *testing.T) {
