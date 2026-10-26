@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc/codes"
@@ -43,6 +44,7 @@ type Service struct {
 
 	usage         UsageSource
 	usageGateways GatewayResolver
+	usageRetry    time.Duration
 }
 
 // NewService builds the ConfigSync server implementation.
@@ -50,7 +52,7 @@ func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, opts ...Se
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Service{hub: hub, source: source, logger: logger}
+	s := &Service{hub: hub, source: source, logger: logger, usageRetry: usageRetryInterval}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -80,16 +82,19 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 
 	var usageChanges <-chan struct{}
-	usageOwed := false
+	var usageRetry <-chan time.Time
+	var usage *usageStream
 	if s.usage != nil && hello.GetAcceptsUsage() {
 		changes, release := s.usage.Subscribe()
 		defer release()
 		usageChanges = changes
-		owed, err := s.syncUsage(stream, scope, usageOwed)
-		if err != nil {
+		retry := time.NewTicker(s.usageRetry)
+		defer retry.Stop()
+		usageRetry = retry.C
+		usage = newUsageStream(s.usage, s.usageGateways, s.logger, scope, hello.GetAcceptsUsageChanges())
+		if err := sendUsage(stream, usage.next(ctx)); err != nil {
 			return err
 		}
-		usageOwed = owed
 	}
 
 	recvErr := make(chan error, 1)
@@ -120,38 +125,32 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
-			// A scope that could not be resolved earlier, such as a gateway
-			// lookup that failed, is tried again with each config change.
-			if usageOwed {
-				owed, err := s.syncUsage(stream, scope, usageOwed)
-				if err != nil {
+			if usage != nil && usage.owed {
+				if err := sendUsage(stream, usage.next(ctx)); err != nil {
 					return err
 				}
-				usageOwed = owed
 			}
 		case <-usageChanges:
-			owed, err := s.syncUsage(stream, scope, usageOwed)
-			if err != nil {
+			if err := sendUsage(stream, usage.next(ctx)); err != nil {
 				return err
 			}
-			usageOwed = owed
+		case <-usageRetry:
+			if usage.owed {
+				if err := sendUsage(stream, usage.next(ctx)); err != nil {
+					return err
+				}
+			}
 		}
 	}
 }
 
-// syncUsage sends the usage list the connection may receive and reports
-// whether one is still owed. It warns once per stretch of owing, not on every
-// attempt, and not while the control plane itself has no list yet.
-func (s *Service) syncUsage(stream snapshotpb.ConfigSync_SyncServer, scope string, owed bool) (bool, error) {
-	msg, ok := s.usageSnapshotFor(stream.Context(), scope)
-	if ok {
-		return false, stream.Send(msg)
+func sendUsage(stream snapshotpb.ConfigSync_SyncServer, msgs []*snapshotpb.ServerMessage) error {
+	for _, msg := range msgs {
+		if err := stream.Send(msg); err != nil {
+			return err
+		}
 	}
-	if !owed && s.usage.Ready() {
-		s.logger.WarnContext(stream.Context(), "configsync: no usage list for this scope; retrying on the next usage change or config notice",
-			slog.String("scope", scope))
-	}
-	return true, nil
+	return nil
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,
