@@ -124,6 +124,19 @@ func (f *fakeUsage) ChangesSince(cursor uint64) ([]usagedomain.TenantState, uint
 	return out, max(cursor, f.seq)
 }
 
+func (f *fakeUsage) TenantChangedSince(cursor uint64, tenantID string) (usagedomain.TenantState, bool, uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if at, ok := f.changedAt[tenantID]; ok && at > cursor && tenantID != "" {
+		return f.states[tenantID], true, max(cursor, f.seq)
+	}
+	return usagedomain.TenantState{}, false, max(cursor, f.seq)
+}
+
+func (s *Service) testUsageStream(scope string, acceptsChanges bool) *usageStream {
+	return newUsageStream(s.usage, s.usageGateways, s.logger, scope, acceptsChanges)
+}
+
 func (f *fakeUsage) Subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	f.mu.Lock()
@@ -298,11 +311,11 @@ func TestUsageSnapshotForScopes(t *testing.T) {
 				src.set([]byte("scoped"), "v1")
 			}
 			svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, tt.gateways))
-			msgs, sent := svc.newUsageStream(tt.scope, false).next(context.Background())
-			if sent != tt.wantSent {
+			msgs := svc.testUsageStream(tt.scope, false).next(context.Background())
+			if sent := len(msgs) > 0; sent != tt.wantSent {
 				t.Fatalf("sent = %v, want %v", sent, tt.wantSent)
 			}
-			if !sent {
+			if !tt.wantSent {
 				return
 			}
 			if len(msgs) != 1 {
@@ -427,7 +440,7 @@ func TestClientWatchReceivesAUsageMessageAboveTheDefaultLimit(t *testing.T) {
 		states = append(states, exhaustedState(t, fmt.Sprintf("00000000-0000-4000-8000-%012d", i), int64(i+1)))
 	}
 	usage := newFakeUsage(states...)
-	msgs, _ := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).newUsageStream("", true).next(context.Background())
+	msgs := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true).next(context.Background())
 	if size := proto.Size(msgs[0]); size <= 4<<20 {
 		t.Fatalf("usage message is %d bytes; the test needs one above 4 MiB", size)
 	}
@@ -660,14 +673,14 @@ func TestSyncSendsADataPlaneThatTakesChangesOnlyWhatChanged(t *testing.T) {
 func TestUsageStreamSendsListsUntilOneIsComplete(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 4))
 	usage.incomplete = true
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).newUsageStream("", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true)
 	ctx := context.Background()
 
-	if msgs, _ := stream.next(ctx); len(msgs) != 1 || msgs[0].GetUsage() == nil || msgs[0].GetUsage().GetAsOfVersion() != 0 {
+	if msgs := stream.next(ctx); len(msgs) != 1 || msgs[0].GetUsage() == nil || msgs[0].GetUsage().GetAsOfVersion() != 0 {
 		t.Fatalf("first = %v, want a list with no as_of version", msgs)
 	}
 	usage.set(exhaustedState(t, "tenant-b", 5))
-	if msgs, _ := stream.next(ctx); len(msgs) != 1 || msgs[0].GetUsage() == nil {
+	if msgs := stream.next(ctx); len(msgs) != 1 || msgs[0].GetUsage() == nil {
 		t.Fatalf("second = %v, want another list while none is complete", msgs)
 	}
 
@@ -675,13 +688,13 @@ func TestUsageStreamSendsListsUntilOneIsComplete(t *testing.T) {
 	usage.incomplete = false
 	usage.mu.Unlock()
 	usage.set(healthyState(t, "tenant-b", 7))
-	msgs, _ := stream.next(ctx)
+	msgs := stream.next(ctx)
 	if len(msgs) != 1 || msgs[0].GetUsage().GetAsOfVersion() != 7 || len(msgs[0].GetUsage().GetExhausted()) != 1 {
 		t.Fatalf("third = %v, want the complete list, which unblocks what it leaves out", msgs)
 	}
 
 	usage.set(exhaustedState(t, "tenant-c", 8))
-	msgs, _ = stream.next(ctx)
+	msgs = stream.next(ctx)
 	if got := changedTenants(t, msgs[0]); len(got) != 1 || got["tenant-c"] != snapshotpb.UsageStatus_USAGE_STATUS_EXHAUSTED {
 		t.Fatalf("changes = %v, want only tenant-c once a complete list went out", got)
 	}
@@ -704,19 +717,19 @@ func TestUsageStreamScopedToAGatewayGetsOnlyItsTenantsChanges(t *testing.T) {
 	gw := tenantGateway(t, "tenant-a")
 	gateways := &countingGateways{fakeGateways: fakeGateways{byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw}}}
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3), exhaustedState(t, "tenant-b", 5))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, gateways)).newUsageStream(gw.ID.String(), true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, gateways)).testUsageStream(gw.ID.String(), true)
 	ctx := context.Background()
 
-	msgs, _ := stream.next(ctx)
+	msgs := stream.next(ctx)
 	if len(msgs) != 1 || len(msgs[0].GetUsage().GetExhausted()) != 1 || msgs[0].GetUsage().GetExhausted()[0].GetTenantId() != "tenant-a" {
 		t.Fatalf("first = %v, want the list with only tenant-a", msgs)
 	}
 	usage.set(healthyState(t, "tenant-b", 6))
-	if msgs, ok := stream.next(ctx); len(msgs) != 0 || !ok {
-		t.Fatalf("sent %v (ok %v) for another tenant's change, want nothing owed", msgs, ok)
+	if msgs := stream.next(ctx); len(msgs) != 0 || stream.owed {
+		t.Fatalf("sent %v (owed %v) for another tenant's change, want nothing owed", msgs, stream.owed)
 	}
 	usage.set(healthyState(t, "tenant-a", 7))
-	msgs, _ = stream.next(ctx)
+	msgs = stream.next(ctx)
 	if got := changedTenants(t, msgs[0]); len(got) != 1 || got["tenant-a"] != snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY {
 		t.Fatalf("changes = %v, want tenant-a unblocked", got)
 	}
@@ -727,14 +740,14 @@ func TestUsageStreamScopedToAGatewayGetsOnlyItsTenantsChanges(t *testing.T) {
 
 func TestUsageStreamScopedToATenantGetsOnlyItsChanges(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3), exhaustedState(t, "tenant-b", 5))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).newUsageStream("tenant-b", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("tenant-b", true)
 	ctx := context.Background()
 
-	if msgs, _ := stream.next(ctx); len(msgs) != 1 || len(msgs[0].GetUsage().GetExhausted()) != 1 {
+	if msgs := stream.next(ctx); len(msgs) != 1 || len(msgs[0].GetUsage().GetExhausted()) != 1 {
 		t.Fatalf("first = %v, want the list with only tenant-b", msgs)
 	}
 	usage.set(healthyState(t, "tenant-a", 6), healthyState(t, "tenant-b", 6))
-	msgs, _ := stream.next(ctx)
+	msgs := stream.next(ctx)
 	if got := changedTenants(t, msgs[0]); len(got) != 1 || got["tenant-b"] != snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY {
 		t.Fatalf("changes = %v, want only tenant-b", got)
 	}
@@ -742,7 +755,7 @@ func TestUsageStreamScopedToATenantGetsOnlyItsChanges(t *testing.T) {
 
 func TestUsageStreamSplitsALargeBurstOfChanges(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "seed", 1))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).newUsageStream("", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true)
 	ctx := context.Background()
 	stream.next(ctx)
 
@@ -751,7 +764,7 @@ func TestUsageStreamSplitsALargeBurstOfChanges(t *testing.T) {
 		burst = append(burst, exhaustedState(t, fmt.Sprintf("tenant-%d", i), int64(i+2)))
 	}
 	usage.set(burst...)
-	msgs, _ := stream.next(ctx)
+	msgs := stream.next(ctx)
 	total := 0
 	for _, msg := range msgs {
 		n := len(msg.GetUsageChanges().GetStates())
@@ -802,13 +815,16 @@ func TestClientWatchFeedsUsageChangesToTheSink(t *testing.T) {
 }
 
 func TestUsageChangesFromProtoDropsWhatItCannotApply(t *testing.T) {
-	got := usageChangesFromProto(&snapshotpb.UsageChanges{States: []*snapshotpb.TenantUsageState{
+	got, dropped := usageChangesFromProto(&snapshotpb.UsageChanges{States: []*snapshotpb.TenantUsageState{
 		{TenantId: "blocked", Status: snapshotpb.UsageStatus_USAGE_STATUS_EXHAUSTED, Reason: snapshotpb.UsageReason_USAGE_REASON_WALLET_EMPTY, Version: 3},
 		{TenantId: "unblocked", Status: snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY, Version: 4},
 		{TenantId: "no-status", Reason: snapshotpb.UsageReason_USAGE_REASON_WALLET_EMPTY, Version: 5},
 		{TenantId: "no-version", Status: snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY},
 		{Status: snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY, Version: 6},
 	}})
+	if dropped != 3 {
+		t.Fatalf("dropped = %d, want 3", dropped)
+	}
 	if len(got) != 2 || got[0].TenantID != "blocked" || !got[0].Exhausted() || got[1].TenantID != "unblocked" || got[1].Exhausted() {
 		t.Fatalf("states = %+v, want only blocked and unblocked", got)
 	}
@@ -893,5 +909,46 @@ func TestUsageFromTheStoreReachesTheDataPlaneAsChanges(t *testing.T) {
 	hub.Broadcast("v1")
 	if err := <-done; err != nil {
 		t.Fatalf("Watch: %v", err)
+	}
+}
+
+func TestSyncRetriesAnOwedListWithoutAnyChange(t *testing.T) {
+	gw := tenantGateway(t, "tenant-a")
+	gateways := &flakyGateways{gw: gw, failing: true}
+	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3))
+	hub := NewHub(discardLogger(), nil)
+	svc := NewService(hub, &fakeSource{}, discardLogger(), WithUsage(usage, gateways))
+	svc.usageRetry = 20 * time.Millisecond
+
+	lis := bufconn.Listen(1 << 20)
+	gsrv := grpc.NewServer(grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srv, &recordingStream{ServerStream: ss, ctx: WithScope(ss.Context(), gw.ID.String())})
+	}))
+	snapshotpb.RegisterConfigSyncServer(gsrv, svc)
+	go func() { _ = gsrv.Serve(lis) }()
+	t.Cleanup(gsrv.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	stream, err := snapshotpb.NewConfigSyncClient(conn).Sync(ctx)
+	if err != nil {
+		t.Fatalf("open sync: %v", err)
+	}
+	if err := stream.Send(&snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{InstanceId: "dp-1", AcceptsUsage: true, AcceptsUsageChanges: true}}}); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	eventually(t, func() bool { return hub.ConnectionCount() == 1 }, "stream never registered")
+	time.Sleep(100 * time.Millisecond)
+
+	gateways.recover()
+	if got := recvUsage(t, stream); len(got.GetExhausted()) != 1 || got.GetExhausted()[0].GetTenantId() != "tenant-a" {
+		t.Fatalf("usage = %v, want tenant-a's list once the gateway resolves, with no change or notice", got)
 	}
 }

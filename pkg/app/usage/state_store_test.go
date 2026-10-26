@@ -661,7 +661,7 @@ func TestStoreChangesSinceSurvivesLogCompaction(t *testing.T) {
 	_ = store.Apply(ctx, []domain.TenantState{state(t, "late", true, 3*changeLogSlack)})
 
 	store.mu.RLock()
-	logged := len(store.changeLog)
+	logged := len(store.changes.entries)
 	store.mu.RUnlock()
 	if logged > 2*3+changeLogSlack {
 		t.Fatalf("change log holds %d entries, want it compacted", logged)
@@ -702,5 +702,26 @@ func TestStoreWakesSubscribersWhenItsListsBecomeComplete(t *testing.T) {
 	case <-changes:
 		t.Fatal("a later snapshot that changed nothing woke the subscribers")
 	default:
+	}
+}
+
+func TestStoreTenantChangedSince(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewStore(&memoryCache{}, nil, time.Second)
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", true, 1)})
+	cursor := store.Cursor()
+
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "b", true, 2)})
+	if _, changed, next := store.TenantChangedSince(cursor, "a"); changed || next != store.Cursor() {
+		t.Fatalf("a changed = %v next = %d, want unchanged at the latest cursor %d", changed, next, store.Cursor())
+	}
+	_ = store.Apply(ctx, []domain.TenantState{state(t, "a", false, 3)})
+	got, changed, _ := store.TenantChangedSince(cursor, "a")
+	if !changed || got.Exhausted() || got.Version != 3 {
+		t.Fatalf("a = %+v changed %v, want healthy at 3", got, changed)
+	}
+	if _, changed, _ := store.TenantChangedSince(0, ""); changed {
+		t.Fatal("the empty tenant reported a change")
 	}
 }

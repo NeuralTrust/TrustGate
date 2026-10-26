@@ -57,6 +57,9 @@ type Reader interface {
 	// after cursor, in the order they last changed, and the cursor to pass
 	// next time.
 	ChangesSince(cursor uint64) ([]domain.TenantState, uint64)
+	// TenantChangedSince returns tenantID's current state when it changed
+	// after cursor, and the cursor to pass next time.
+	TenantChangedSince(cursor uint64, tenantID string) (domain.TenantState, bool, uint64)
 	// Subscribe returns a channel that receives a value after every change,
 	// coalescing bursts, and a function that releases it.
 	Subscribe() (<-chan struct{}, func())
@@ -79,12 +82,7 @@ type Store struct {
 	generation   uint64
 	ready        atomic.Bool
 
-	// Every write gets the next seq. changedAt holds the seq of each tenant's
-	// last write and changeLog the writes in seq order; entries a later write
-	// to the same tenant made stale are dropped once they pile up.
-	seq       uint64
-	changedAt map[string]uint64
-	changeLog []loggedChange
+	changes changeLog
 
 	subsMu sync.Mutex
 	subs   map[chan struct{}]struct{}
@@ -103,23 +101,14 @@ func NewStore(cache domain.StateCache, logger *slog.Logger, writeTimeout time.Du
 		logger = slog.Default()
 	}
 	return &Store{
-		cache:     cache,
-		logger:    logger,
-		writer:    newCacheWriter(cache, writeTimeout, logger),
-		states:    make(map[string]domain.TenantState),
-		changedAt: make(map[string]uint64),
-		subs:      make(map[chan struct{}]struct{}),
+		cache:   cache,
+		logger:  logger,
+		writer:  newCacheWriter(cache, writeTimeout, logger),
+		states:  make(map[string]domain.TenantState),
+		changes: newChangeLog(),
+		subs:    make(map[chan struct{}]struct{}),
 	}
 }
-
-type loggedChange struct {
-	seq      uint64
-	tenantID string
-}
-
-// changeLogSlack keeps a small store from compacting its change log on
-// almost every write.
-const changeLogSlack = 1024
 
 // Apply records states following TenantState.Supersedes, wakes the
 // subscribers and queues the states that changed for the cache.
@@ -240,7 +229,7 @@ func (s *Store) SnapshotTenant(tenantID string) domain.Snapshot {
 func (s *Store) Cursor() uint64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.seq
+	return s.changes.seq
 }
 
 // ChangesSince returns the current state of every tenant written after
@@ -249,14 +238,24 @@ func (s *Store) Cursor() uint64 {
 func (s *Store) ChangesSince(cursor uint64) ([]domain.TenantState, uint64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	start := sort.Search(len(s.changeLog), func(i int) bool { return s.changeLog[i].seq > cursor })
-	var out []domain.TenantState
-	for _, change := range s.changeLog[start:] {
-		if s.changedAt[change.tenantID] == change.seq {
-			out = append(out, s.states[change.tenantID])
-		}
+	tenants, next := s.changes.since(cursor)
+	out := make([]domain.TenantState, 0, len(tenants))
+	for _, tenantID := range tenants {
+		out = append(out, s.states[tenantID])
 	}
-	return out, max(cursor, s.seq)
+	return out, next
+}
+
+// TenantChangedSince returns tenantID's current state when it was written
+// after cursor, and the cursor of the latest write.
+func (s *Store) TenantChangedSince(cursor uint64, tenantID string) (domain.TenantState, bool, uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	changed, next := s.changes.tenantSince(cursor, tenantID)
+	if !changed || tenantID == "" {
+		return domain.TenantState{}, false, next
+	}
+	return s.states[tenantID], true, next
 }
 
 // Subscribe returns a coalescing change channel and its release function.
@@ -387,19 +386,7 @@ func (s *Store) mergeLocked(states []domain.TenantState) []domain.TenantState {
 func (s *Store) writeLocked(state domain.TenantState) {
 	s.states[state.TenantID] = state
 	s.maxVersion = max(s.maxVersion, state.Version)
-	s.seq++
-	s.changedAt[state.TenantID] = s.seq
-	s.changeLog = append(s.changeLog, loggedChange{seq: s.seq, tenantID: state.TenantID})
-	if len(s.changeLog) > 2*len(s.changedAt)+changeLogSlack {
-		live := s.changeLog[:0]
-		for _, change := range s.changeLog {
-			if s.changedAt[change.tenantID] == change.seq {
-				live = append(live, change)
-			}
-		}
-		clear(s.changeLog[len(live):])
-		s.changeLog = live
-	}
+	s.changes.record(state.TenantID)
 }
 
 func (s *Store) notify() {

@@ -318,6 +318,70 @@ func (_c *Reader_Subscribe_Call) RunAndReturn(run func() (<-chan struct{}, func(
 	return _c
 }
 
+// TenantChangedSince provides a mock function with given fields: cursor, tenantID
+func (_m *Reader) TenantChangedSince(cursor uint64, tenantID string) (domainusage.TenantState, bool, uint64) {
+	ret := _m.Called(cursor, tenantID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for TenantChangedSince")
+	}
+
+	var r0 domainusage.TenantState
+	var r1 bool
+	var r2 uint64
+	if rf, ok := ret.Get(0).(func(uint64, string) (domainusage.TenantState, bool, uint64)); ok {
+		return rf(cursor, tenantID)
+	}
+	if rf, ok := ret.Get(0).(func(uint64, string) domainusage.TenantState); ok {
+		r0 = rf(cursor, tenantID)
+	} else {
+		r0 = ret.Get(0).(domainusage.TenantState)
+	}
+
+	if rf, ok := ret.Get(1).(func(uint64, string) bool); ok {
+		r1 = rf(cursor, tenantID)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(uint64, string) uint64); ok {
+		r2 = rf(cursor, tenantID)
+	} else {
+		r2 = ret.Get(2).(uint64)
+	}
+
+	return r0, r1, r2
+}
+
+// Reader_TenantChangedSince_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'TenantChangedSince'
+type Reader_TenantChangedSince_Call struct {
+	*mock.Call
+}
+
+// TenantChangedSince is a helper method to define mock.On call
+//   - cursor uint64
+//   - tenantID string
+func (_e *Reader_Expecter) TenantChangedSince(cursor interface{}, tenantID interface{}) *Reader_TenantChangedSince_Call {
+	return &Reader_TenantChangedSince_Call{Call: _e.mock.On("TenantChangedSince", cursor, tenantID)}
+}
+
+func (_c *Reader_TenantChangedSince_Call) Run(run func(cursor uint64, tenantID string)) *Reader_TenantChangedSince_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(uint64), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Reader_TenantChangedSince_Call) Return(_a0 domainusage.TenantState, _a1 bool, _a2 uint64) *Reader_TenantChangedSince_Call {
+	_c.Call.Return(_a0, _a1, _a2)
+	return _c
+}
+
+func (_c *Reader_TenantChangedSince_Call) RunAndReturn(run func(uint64, string) (domainusage.TenantState, bool, uint64)) *Reader_TenantChangedSince_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewReader creates a new instance of Reader. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewReader(t interface {
