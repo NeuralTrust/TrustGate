@@ -10589,6 +10589,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "burst_per_min": {
+                    "description": "requests per minute per tenant; 0 = unlimited",
                     "type": "integer"
                 },
                 "data_plane": {
@@ -10596,9 +10597,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "max_instances": {
+                    "description": "gateway instances per tenant; 0 = unlimited",
                     "type": "integer"
                 },
                 "quota_per_month": {
+                    "description": "requests per month per tenant; 0 = unlimited",
                     "type": "integer"
                 },
                 "retention_days": {

@@ -33,9 +33,9 @@ const TierFree = ratelimit.TierFree
 // must keep metering normally instead of failing closed.
 type Entitlements struct {
 	Tier          string `json:"tier"`
-	BurstPerMin   *int   `json:"burst_per_min,omitempty"`
-	QuotaPerMonth *int   `json:"quota_per_month,omitempty"`
-	MaxInstances  *int   `json:"max_instances,omitempty"`
+	BurstPerMin   *int   `json:"burst_per_min,omitempty"`   // requests per minute per tenant; 0 = unlimited
+	QuotaPerMonth *int   `json:"quota_per_month,omitempty"` // requests per month per tenant; 0 = unlimited
+	MaxInstances  *int   `json:"max_instances,omitempty"`   // gateway instances per tenant; 0 = unlimited
 	RetentionDays *int   `json:"retention_days,omitempty"`
 	// DataPlane says which data plane serves this gateway's traffic: hosted
 	// (empty, the default) means the SaaS proxy, hybrid means a customer-run
