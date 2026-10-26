@@ -30,6 +30,19 @@ type ExhaustionChecker interface {
 	Exhausted(tenantID string) (domain.Reason, bool)
 }
 
+// ListHolder is implemented by the exhaustion checkers that can tell whether
+// they hold a usage list from Usage System.
+type ListHolder interface {
+	HoldsList() bool
+}
+
+// HoldsList reports whether checker holds a usage list from Usage System. A
+// checker that cannot tell holds none.
+func HoldsList(checker ExhaustionChecker) bool {
+	holder, ok := checker.(ListHolder)
+	return ok && holder.HoldsList()
+}
+
 // Enforcement is the data plane's copy of the exhausted tenants, fed by the
 // control plane's usage snapshots and changes. Reads load an immutable map
 // without locking; each update that changes something publishes a new copy.
@@ -37,6 +50,7 @@ type Enforcement struct {
 	writeMu  sync.Mutex
 	tenants  atomic.Pointer[map[string]domain.TenantState]
 	received atomic.Bool
+	complete atomic.Bool
 }
 
 var _ ExhaustionChecker = (*Enforcement)(nil)
@@ -65,7 +79,14 @@ func (e *Enforcement) ApplySnapshot(snapshot domain.Snapshot) {
 	}
 	e.writeMu.Unlock()
 	e.received.Store(true)
+	if snapshot.AsOfVersion > 0 {
+		e.complete.Store(true)
+	}
 }
+
+// HoldsList reports whether a complete usage list has been applied: one with
+// an as_of version, built from Usage System and not only from a cache.
+func (e *Enforcement) HoldsList() bool { return e.complete.Load() }
 
 // ApplyChanges merges individual tenant states following
 // TenantState.Supersedes. Only a full list counts as received: changes alone

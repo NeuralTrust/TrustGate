@@ -187,6 +187,14 @@ func (s *Store) RestoreUntilReady(ctx context.Context, opts RestoreOptions) {
 // Ready reports whether the store holds a list it can serve.
 func (s *Store) Ready() bool { return s.ready.Load() }
 
+// HoldsList reports whether a UsageSync snapshot has been applied, so the
+// store's lists come from Usage System and not only from the cache.
+func (s *Store) HoldsList() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.complete
+}
+
 // Exhausted reports whether tenantID is exhausted and why, so a plane that
 // holds the store serves requests from it directly.
 func (s *Store) Exhausted(tenantID string) (domain.Reason, bool) {
