@@ -15,6 +15,7 @@
 package ratelimit
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func usageEnforcing(on *atomic.Bool) func(*Options) {
-	return func(o *Options) { o.UsageEnforcing = on.Load }
+func usageRefusing(on *atomic.Bool) func(*Options) {
+	return func(o *Options) { o.UsageRefusing = on.Load }
 }
 
 func TestMeterMonthlyQuotaYieldsToUsageSystem(t *testing.T) {
@@ -34,7 +35,7 @@ func TestMeterMonthlyQuotaYieldsToUsageSystem(t *testing.T) {
 	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 100, QuotaPerMonth: 2})
 	var on atomic.Bool
 	on.Store(true)
-	m := testMeter(r, newBackend(shared), newClock(midMonth), usageEnforcing(&on))
+	m := testMeter(r, newBackend(shared), newClock(midMonth), usageRefusing(&on))
 
 	for i := 0; i < 5; i++ {
 		require.NoError(t, m.Check(bg, id), "request %d past the monthly cap", i+1)
@@ -48,7 +49,7 @@ func TestMeterBurstStillRefusesWhileUsageSystemEnforces(t *testing.T) {
 	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 2, QuotaPerMonth: 1000})
 	var on atomic.Bool
 	on.Store(true)
-	m := testMeter(r, newBackend(newShared()), newClock(midMonth), usageEnforcing(&on))
+	m := testMeter(r, newBackend(newShared()), newClock(midMonth), usageRefusing(&on))
 
 	require.NoError(t, m.Check(bg, id))
 	require.NoError(t, m.Check(bg, id))
@@ -61,7 +62,7 @@ func TestMeterMonthlyQuotaReturnsWhenUsageSystemStops(t *testing.T) {
 	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 100, QuotaPerMonth: 3})
 	var on atomic.Bool
 	on.Store(true)
-	m := testMeter(r, newBackend(newShared()), clock, usageEnforcing(&on))
+	m := testMeter(r, newBackend(newShared()), clock, usageRefusing(&on))
 
 	for i := 0; i < 4; i++ {
 		require.NoError(t, m.Check(bg, id))
@@ -74,4 +75,35 @@ func TestMeterMonthlyQuotaReturnsWhenUsageSystemStops(t *testing.T) {
 
 	on.Store(true)
 	require.NoError(t, m.Check(bg, id), "the flag is read on every request")
+}
+
+func TestMeterReadsTheUsageSignalSafelyUnderLoad(t *testing.T) {
+	t.Parallel()
+	r, id := oneGateway("t1", domain.Limits{BurstPerMin: 1_000_000, QuotaPerMonth: 1_000_000})
+	var on atomic.Bool
+	m := testMeter(r, newBackend(newShared()), newClock(midMonth), usageRefusing(&on))
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				on.Store(!on.Load())
+			}
+		}
+	})
+	var checks sync.WaitGroup
+	for range 8 {
+		checks.Go(func() {
+			for range 200 {
+				_ = m.Check(bg, id)
+			}
+		})
+	}
+	checks.Wait()
+	close(stop)
+	wg.Wait()
 }

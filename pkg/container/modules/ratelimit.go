@@ -39,8 +39,7 @@ type rateLimitDeps struct {
 	Logger     *slog.Logger
 	Cache      *ratelimitapp.TenantCapsCache `optional:"true"`
 	Snapshot   *adapters.TenantCapsSource    `optional:"true"`
-	// The monthly quota yields to the usage guard whenever it enforces.
-	Usage *middleware.UsageGuardMiddleware
+	Usage      *middleware.UsageGuardMiddleware
 }
 
 func (p rateLimitDeps) meterOptions() ratelimitapp.Options {
@@ -49,7 +48,7 @@ func (p rateLimitDeps) meterOptions() ratelimitapp.Options {
 		SyncTimeout:     p.Cfg.RateLimit.SyncTimeout,
 		ColdReadTimeout: p.Cfg.RateLimit.ColdReadTimeout,
 		FailedRetention: p.Cfg.RateLimit.FailedRetention,
-		UsageEnforcing:  p.Usage.Refusing,
+		UsageRefusing:   p.Usage.Refusing,
 	}
 }
 

@@ -27,6 +27,8 @@ import (
 func TestMeterQuotaYieldsOnlyWhereTheUsageGuardRefuses(t *testing.T) {
 	received := appusage.NewEnforcement()
 	received.ApplySnapshot(domain.Snapshot{AsOfVersion: 1})
+	cacheOnly := appusage.NewEnforcement()
+	cacheOnly.ApplySnapshot(domain.Snapshot{})
 	tests := []struct {
 		name  string
 		guard *middleware.UsageGuardMiddleware
@@ -35,13 +37,14 @@ func TestMeterQuotaYieldsOnlyWhereTheUsageGuardRefuses(t *testing.T) {
 		{name: "no usage guard on the plane", guard: nil, want: false},
 		{name: "a plane that cannot enforce usage", guard: middleware.NewUsageGuardMiddleware(nil, nil), want: false},
 		{name: "usage enforcement turned off", guard: middleware.NewUsageGuardMiddleware(received, func() bool { return false }), want: false},
+		{name: "enforced with a list that never came from Usage System", guard: middleware.NewUsageGuardMiddleware(cacheOnly, func() bool { return true }), want: false},
 		{name: "enforced before the first usage list", guard: middleware.NewUsageGuardMiddleware(appusage.NewEnforcement(), func() bool { return true }), want: false},
 		{name: "enforced with a usage list", guard: middleware.NewUsageGuardMiddleware(received, func() bool { return true }), want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := rateLimitDeps{Cfg: &config.Config{}, Usage: tt.guard}.meterOptions()
-			if got := opts.UsageEnforcing(); got != tt.want {
+			if got := opts.UsageRefusing(); got != tt.want {
 				t.Fatalf("meter skips the quota = %v, want %v", got, tt.want)
 			}
 		})
@@ -54,11 +57,11 @@ func TestMeterQuotaFollowsTheUsageFlagOnEveryCall(t *testing.T) {
 	var on atomic.Bool
 	opts := rateLimitDeps{Cfg: &config.Config{}, Usage: middleware.NewUsageGuardMiddleware(received, on.Load)}.meterOptions()
 
-	if opts.UsageEnforcing() {
+	if opts.UsageRefusing() {
 		t.Fatal("quota skipped while usage enforcement is off")
 	}
 	on.Store(true)
-	if !opts.UsageEnforcing() {
+	if !opts.UsageRefusing() {
 		t.Fatal("quota still applied after usage enforcement turned on")
 	}
 }

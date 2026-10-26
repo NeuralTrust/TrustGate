@@ -65,22 +65,12 @@ func (m *UsageGuardMiddleware) Enforcing() bool {
 	return m != nil && m.checker != nil && m.enabled != nil && m.enabled()
 }
 
-// Refusing reports whether the guard enforces and holds a usage list, so
-// exhausted tenants are refused for real. A data plane waiting for its first
-// list, or a store not yet restored, refuses nobody. It is nil-safe.
+// Refusing reports whether the guard enforces and holds a usage list from
+// Usage System, so exhausted tenants are refused for real. A data plane
+// waiting for its first complete list, or a store that has only read its
+// cache, refuses nobody. It is nil-safe.
 func (m *UsageGuardMiddleware) Refusing() bool {
-	return m.Enforcing() && usageListReady(m.checker)
-}
-
-func usageListReady(checker appusage.ExhaustionChecker) bool {
-	switch c := checker.(type) {
-	case interface{ Received() bool }:
-		return c.Received()
-	case interface{ Ready() bool }:
-		return c.Ready()
-	default:
-		return true
-	}
+	return m.Enforcing() && appusage.HoldsList(m.checker)
 }
 
 // ForMCP returns a copy of the guard that answers in JSON-RPC.
