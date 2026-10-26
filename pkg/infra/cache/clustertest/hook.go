@@ -149,3 +149,55 @@ func New(rdb *redis.Client) *redis.Client {
 	rdb.AddHook(Hook{})
 	return rdb
 }
+
+// KeylessScanMessage is the error ScanHook answers a keyless SCAN or KEYS with.
+const KeylessScanMessage = "keyless SCAN or KEYS through a cluster client reaches a single shard"
+
+// ScanHook rejects SCAN and KEYS sent through a cluster client, which routes
+// them to a single shard and so misses the keys of every other one. It belongs
+// on a *redis.ClusterClient only: a scan sent to each master through
+// ForEachMaster runs on the node clients and passes.
+type ScanHook struct{}
+
+var _ redis.Hook = ScanHook{}
+
+func isKeylessScan(cmd redis.Cmder) bool {
+	name := strings.ToLower(cmd.Name())
+	return name == "scan" || name == "keys"
+}
+
+func (ScanHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (ScanHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if isKeylessScan(cmd) {
+			cmd.SetErr(errors.New(KeylessScanMessage))
+			return cmd.Err()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (ScanHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if isKeylessScan(cmd) {
+				cmd.SetErr(errors.New(KeylessScanMessage))
+				return cmd.Err()
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// NewCluster returns a cluster client over the single-node test server at
+// addr, which answers CLUSTER SLOTS with itself, carrying both Hook and
+// ScanHook.
+func NewCluster(addr string) *redis.ClusterClient {
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{Addrs: []string{addr}})
+	rdb.AddHook(Hook{})
+	rdb.AddHook(ScanHook{})
+	return rdb
+}

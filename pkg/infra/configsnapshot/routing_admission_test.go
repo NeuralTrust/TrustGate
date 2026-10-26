@@ -190,7 +190,7 @@ func TestCodecRoutingQuarantinesWrongGatewayReference(t *testing.T) {
 
 type admissionRedis struct{}
 
-func (admissionRedis) RedisClient() *redis.Client { return nil }
+func (admissionRedis) RedisClient() redis.UniversalClient { return nil }
 
 type admissionScorer struct{}
 

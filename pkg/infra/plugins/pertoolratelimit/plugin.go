@@ -85,7 +85,7 @@ return totals
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
-	redis    *redis.Client
+	redis    redis.UniversalClient
 	registry *adapter.Registry
 	now      func() time.Time
 }
@@ -96,7 +96,7 @@ func WithClock(now func() time.Time) Option {
 	return func(p *Plugin) { p.now = now }
 }
 
-func New(redisClient *redis.Client, adapters *adapter.Registry, opts ...Option) *Plugin {
+func New(redisClient redis.UniversalClient, adapters *adapter.Registry, opts ...Option) *Plugin {
 	p := &Plugin{
 		redis:    redisClient,
 		registry: adapters,

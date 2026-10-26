@@ -66,18 +66,7 @@ func RateLimit(c *container.Container) error {
 		if !cfg.RateLimit.Enabled {
 			return nil, nil
 		}
-		return cache.NewSyncClient(cache.Config{
-			Login:             cfg.Redis.Login,
-			Host:              cfg.Redis.Host,
-			Port:              cfg.Redis.Port,
-			Username:          cfg.Redis.Username,
-			Password:          cfg.Redis.Password,
-			DB:                cfg.Redis.DB,
-			TLSEnabled:        cfg.Redis.TLSEnabled,
-			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
-			CacheName:         cfg.Redis.CacheName,
-			AWSServerless:     cfg.Redis.AWSServerless,
-		}, cfg.RateLimit.SyncTimeout, cfg.RateLimit.ColdReadTimeout)
+		return cache.NewSyncClient(redisCacheConfig(cfg.Redis), cfg.RateLimit.SyncTimeout, cfg.RateLimit.ColdReadTimeout)
 	}); err != nil {
 		return err
 	}
@@ -89,7 +78,7 @@ func RateLimit(c *container.Container) error {
 		}
 		return ratelimitapp.NewMeter(
 			p.tierLoader(),
-			inforatelimit.NewStore(p.SyncClient.Client, p.Logger,
+			inforatelimit.NewStore(p.SyncClient.UniversalClient, p.Logger,
 				inforatelimit.WithFailedRetention(p.Cfg.RateLimit.FailedRetention)),
 			ratelimitapp.Options{
 				SyncInterval:    p.Cfg.RateLimit.SyncInterval,

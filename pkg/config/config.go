@@ -65,6 +65,7 @@ const (
 
 	redisLoginDefault = "default"
 	redisLoginAWS     = "aws"
+	redisLoginGCP     = "gcp"
 
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
@@ -127,7 +128,8 @@ const (
 	defaultLogFormat      = "json"
 	defaultLogFileEnabled = false
 
-	defaultSemanticCacheVectorStore = "redis"
+	defaultSemanticCacheVectorStore        = "redis"
+	defaultClusterSemanticCacheVectorStore = "in_memory"
 
 	defaultTrustGuardTimeout = 30 * time.Second
 
@@ -429,6 +431,12 @@ type RedisConfig struct {
 	Username          string
 	CacheName         string
 	AWSServerless     bool
+	// Cluster selects a Redis Cluster client seeded with Host:Port. A cluster
+	// has a single database, so DB must be 0.
+	Cluster bool
+	// TLSCAFile is a PEM bundle that replaces the system roots when verifying
+	// the Redis server certificate.
+	TLSCAFile string
 }
 
 type CacheConfig struct {
@@ -660,14 +668,15 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	redisConfig := getRedisConfig()
 	cfg := &Config{
 		ClientIP:            clientIP,
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
 		Server:              getServerConfig(),
 		Database:            getDatabaseConfig(),
-		Redis:               getRedisConfig(),
+		Redis:               redisConfig,
 		Cache:               getCacheConfig(),
-		SemanticCache:       getSemanticCacheConfig(),
+		SemanticCache:       getSemanticCacheConfig(redisConfig.Cluster),
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
@@ -781,8 +790,13 @@ func getDatabaseConfig() DatabaseConfig {
 func getRedisConfig() RedisConfig {
 	login := normalizeRedisLogin(os.Getenv("REDIS_LOGIN"))
 	password := getEnv("REDIS_PASSWORD", "")
-	if login == redisLoginAWS {
+	if login == redisLoginAWS || login == redisLoginGCP {
 		password = ""
+	}
+	cluster := getEnvBool("REDIS_CLUSTER", false)
+	db := defaultRedisDB
+	if cluster {
+		db = 0
 	}
 
 	return RedisConfig{
@@ -790,12 +804,14 @@ func getRedisConfig() RedisConfig {
 		Host:              getEnv("REDIS_HOST", defaultRedisHost),
 		Port:              getEnvInt("REDIS_PORT", defaultRedisPort),
 		Password:          password,
-		DB:                getEnvInt("REDIS_DB", defaultRedisDB),
+		DB:                getEnvInt("REDIS_DB", db),
 		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),
 		TLSInsecureVerify: getEnvBool("REDIS_TLS_INSECURE_VERIFY", false),
 		Username:          strings.TrimSpace(getEnv("REDIS_USERNAME", "")),
 		CacheName:         strings.TrimSpace(getEnv("REDIS_CACHE_NAME", "")),
 		AWSServerless:     getEnvBool("REDIS_AWS_SERVERLESS", false),
+		Cluster:           cluster,
+		TLSCAFile:         strings.TrimSpace(getEnv("REDIS_TLS_CA_FILE", "")),
 	}
 }
 
@@ -813,9 +829,15 @@ func getCacheConfig() CacheConfig {
 	}
 }
 
-func getSemanticCacheConfig() SemanticCacheConfig {
+// getSemanticCacheConfig defaults the vector store to in_memory on a Redis
+// cluster, which cannot be relied on to serve RediSearch (FT.*).
+func getSemanticCacheConfig(redisCluster bool) SemanticCacheConfig {
+	store := defaultSemanticCacheVectorStore
+	if redisCluster {
+		store = defaultClusterSemanticCacheVectorStore
+	}
 	return SemanticCacheConfig{
-		VectorStore: getEnv("SEMANTIC_CACHE_VECTOR_STORE", defaultSemanticCacheVectorStore),
+		VectorStore: strings.TrimSpace(getEnv("SEMANTIC_CACHE_VECTOR_STORE", store)),
 	}
 }
 
@@ -1381,26 +1403,8 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
-	switch c.Redis.Login {
-	case redisLoginDefault, redisLoginAWS:
-	default:
-		return fmt.Errorf("%w: REDIS_LOGIN must be %q or %q", errors.ErrInvalidConfig, redisLoginDefault, redisLoginAWS)
-	}
-	if c.Redis.Host == "" {
-		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
-	}
-	if c.Redis.Login == redisLoginAWS {
-		c.Redis.Password = ""
-		if !c.Redis.TLSEnabled {
-			return fmt.Errorf("%w: REDIS_TLS_ENABLED must be true when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
-		}
-		if c.Redis.CacheName == "" {
-			return fmt.Errorf("%w: REDIS_CACHE_NAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
-		}
-		if c.Redis.Username == "" {
-			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
-		}
+	if err := c.validateRedis(); err != nil {
+		return err
 	}
 	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
 		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
@@ -1520,6 +1524,54 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+func (c *Config) validateRedis() error {
+	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
+	switch c.Redis.Login {
+	case redisLoginDefault, redisLoginAWS, redisLoginGCP:
+	default:
+		return fmt.Errorf("%w: REDIS_LOGIN must be %q, %q or %q", errors.ErrInvalidConfig, redisLoginDefault, redisLoginAWS, redisLoginGCP)
+	}
+	if c.Redis.Host == "" {
+		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
+	}
+	if c.Redis.Login == redisLoginAWS || c.Redis.Login == redisLoginGCP {
+		c.Redis.Password = ""
+		if !c.Redis.TLSEnabled {
+			return fmt.Errorf("%w: REDIS_TLS_ENABLED must be true when REDIS_LOGIN=%q", errors.ErrInvalidConfig, c.Redis.Login)
+		}
+	}
+	if c.Redis.Login == redisLoginAWS {
+		if c.Redis.CacheName == "" {
+			return fmt.Errorf("%w: REDIS_CACHE_NAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+		if c.Redis.Username == "" {
+			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+	}
+	if c.Redis.TLSCAFile != "" {
+		if !c.Redis.TLSEnabled {
+			return fmt.Errorf("%w: REDIS_TLS_CA_FILE requires REDIS_TLS_ENABLED=true", errors.ErrInvalidConfig)
+		}
+		if c.Redis.TLSInsecureVerify {
+			return fmt.Errorf("%w: REDIS_TLS_CA_FILE and REDIS_TLS_INSECURE_VERIFY are mutually exclusive", errors.ErrInvalidConfig)
+		}
+	}
+	if c.Redis.Cluster {
+		if c.Redis.DB != 0 {
+			return fmt.Errorf("%w: REDIS_DB must be 0 when REDIS_CLUSTER=true (a cluster has a single database)", errors.ErrInvalidConfig)
+		}
+		c.SemanticCache.VectorStore = strings.TrimSpace(c.SemanticCache.VectorStore)
+		if c.SemanticCache.VectorStore == "" {
+			c.SemanticCache.VectorStore = defaultClusterSemanticCacheVectorStore
+		}
+		if c.SemanticCache.VectorStore == defaultSemanticCacheVectorStore {
+			return fmt.Errorf("%w: SEMANTIC_CACHE_VECTOR_STORE=%q is not supported when REDIS_CLUSTER=true (a Redis cluster cannot be relied on to serve RediSearch); use %q or %q",
+				errors.ErrInvalidConfig, defaultSemanticCacheVectorStore, "pgvector", defaultClusterSemanticCacheVectorStore)
+		}
+	}
+	return nil
 }
 
 func (c *Config) validateServerSecretKey() error {
