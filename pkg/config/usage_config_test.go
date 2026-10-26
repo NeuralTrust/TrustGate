@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/base64"
 	stderrors "errors"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ import (
 func TestGetUsageConfigDefaults(t *testing.T) {
 	cfg := getUsageConfig()
 	want := UsageConfig{
-		ReadyTimeout:           DefaultUsageReadyTimeout,
+		ReadyTimeout:           defaultUsageReadyTimeout,
 		GRPCKeepaliveTime:      30 * time.Second,
 		GRPCKeepaliveTimeout:   10 * time.Second,
 		GRPCMaxMessageBytes:    64 << 20,
@@ -35,6 +36,7 @@ func TestGetUsageConfigDefaults(t *testing.T) {
 		CacheRestoreMaxBackoff: time.Minute,
 		CacheWriteTimeout:      3 * time.Second,
 		CacheRetryInterval:     10 * time.Second,
+		CacheResyncInterval:    5 * time.Minute,
 	}
 	if cfg != want {
 		t.Fatalf("getUsageConfig() = %+v, want %+v", cfg, want)
@@ -62,6 +64,7 @@ func TestUsageConfigValidate(t *testing.T) {
 		{name: "zero keepalive", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 0 }},
 		{name: "keepalive under gRPC's floor", mutate: func(u *UsageConfig) { u.GRPCKeepaliveTime = 5 * time.Second }},
 		{name: "zero retry interval", mutate: func(u *UsageConfig) { u.CacheRetryInterval = 0 }},
+		{name: "zero resync interval", mutate: func(u *UsageConfig) { u.CacheResyncInterval = 0 }},
 		{name: "negative ready timeout", mutate: func(u *UsageConfig) { u.ReadyTimeout = -time.Second }},
 		{name: "min backoff above max", mutate: func(u *UsageConfig) { u.ReconnectMinBackoff = time.Hour }},
 		{name: "restore interval above max", mutate: func(u *UsageConfig) { u.CacheRestoreInterval = time.Hour }},
@@ -84,11 +87,32 @@ func TestUsageConfigValidate(t *testing.T) {
 }
 
 func TestConfigSyncMaxRecvBytes(t *testing.T) {
-	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != DefaultConfigSyncGRPCMaxRecvBytes {
-		t.Fatalf("default = %d, want %d", got, DefaultConfigSyncGRPCMaxRecvBytes)
+	if got := getConfigSyncConfig().MaxRecvBytes(); got != 64<<20 {
+		t.Fatalf("default = %d, want 64 MiB", got)
+	}
+	if got := (ConfigSyncConfig{}).MaxRecvBytes(); got != defaultUsageGRPCMaxMessageBytes {
+		t.Fatalf("unset = %d, want the control plane's default usage message limit", got)
 	}
 	t.Setenv("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", "134217728")
-	if got := getConfigSyncConfig().GRPCMaxRecvBytes; got != 128<<20 {
+	if got := getConfigSyncConfig().MaxRecvBytes(); got != 128<<20 {
 		t.Fatalf("from env = %d, want %d", got, 128<<20)
+	}
+
+	valid := ConfigSyncConfig{
+		DataPlaneEnabled: true,
+		Token:            "token",
+		GRPCEndpoint:     "control-plane:9443",
+		LKGPath:          "/tmp/lkg",
+		LKGKey:           base64.StdEncoding.EncodeToString(make([]byte, configSyncKeyBytes)),
+		PollInterval:     time.Second,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("zero takes the default: %v", err)
+	}
+	for _, bad := range []int{-1, 1 << 20, 64<<20 - 1} {
+		valid.GRPCMaxRecvBytes = bad
+		if err := valid.Validate(); !stderrors.Is(err, errors.ErrInvalidConfig) {
+			t.Fatalf("%d is below the floor: Validate() = %v", bad, err)
+		}
 	}
 }

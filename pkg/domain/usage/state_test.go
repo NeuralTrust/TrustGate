@@ -92,3 +92,31 @@ func TestSnapshotChanges(t *testing.T) {
 		t.Fatal("Changes wrote into held")
 	}
 }
+
+func TestTenantStateSupersedes(t *testing.T) {
+	t.Parallel()
+	exhausted := func(v int64) TenantState {
+		return TenantState{TenantID: "t", Status: StatusExhausted, Reason: ReasonWalletEmpty, Version: v}
+	}
+	healthy := func(v int64) TenantState { return TenantState{TenantID: "t", Status: StatusHealthy, Version: v} }
+	tests := []struct {
+		name     string
+		incoming TenantState
+		held     TenantState
+		want     bool
+	}{
+		{name: "newer version", incoming: healthy(5), held: exhausted(4), want: true},
+		{name: "older version", incoming: healthy(3), held: exhausted(4), want: false},
+		{name: "unblock wins a tie", incoming: healthy(4), held: exhausted(4), want: true},
+		{name: "block loses a tie", incoming: exhausted(4), held: healthy(4), want: false},
+		{name: "same state at the same version", incoming: exhausted(4), held: exhausted(4), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.incoming.Supersedes(tt.held); got != tt.want {
+				t.Fatalf("Supersedes = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

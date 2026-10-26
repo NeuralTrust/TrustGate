@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -56,7 +57,8 @@ type Client struct {
 	recvMu              sync.Mutex
 	sendMu              sync.Mutex
 
-	usageSink UsageSink
+	usageSink    UsageSink
+	acceptsUsage atomic.Bool
 }
 
 // UsageSink receives the usage snapshots the control plane pushes on the Sync
@@ -71,15 +73,13 @@ func (c *Client) SetUsageSink(sink UsageSink) {
 	c.recvMu.Lock()
 	defer c.recvMu.Unlock()
 	c.usageSink = sink
+	c.acceptsUsage.Store(sink != nil)
 }
 
 // recvLimit lifts gRPC's 4 MiB receive default: the control plane sends every
 // exhausted tenant in one usage message, and a message over the limit would
 // break the whole stream, config notices included.
 func recvLimit(maxBytes int) grpc.DialOption {
-	if maxBytes <= 0 {
-		maxBytes = config.DefaultConfigSyncGRPCMaxRecvBytes
-	}
 	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBytes))
 }
 
@@ -98,7 +98,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 			Timeout:             cfg.GRPCKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
-		recvLimit(cfg.GRPCMaxRecvBytes),
+		recvLimit(cfg.MaxRecvBytes()),
 	}
 	conn, err := grpc.NewClient(cfg.GRPCEndpoint, opts...)
 	if err != nil {
@@ -285,6 +285,7 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
 		InstanceId:         c.instanceID,
 		LastAppliedVersion: c.lastApplied,
+		AcceptsUsage:       c.acceptsUsage.Load(),
 	}}}
 	helloResult := make(chan error, 1)
 	go func() { helloResult <- stream.Send(hello) }()

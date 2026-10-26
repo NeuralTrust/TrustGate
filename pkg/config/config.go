@@ -162,14 +162,15 @@ const (
 	defaultConfigSyncGRPCListenAddr       = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime    = 30 * time.Second
 	defaultConfigSyncGRPCKeepaliveTimeout = 10 * time.Second
-	// DefaultConfigSyncGRPCMaxRecvBytes matches the default
-	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES.
-	DefaultConfigSyncGRPCMaxRecvBytes       = 64 << 20
-	defaultConfigSyncGRPCMinBackoff         = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff         = 30 * time.Second
-	defaultConfigSyncOutboxRetention        = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows    int64 = 10000
-	defaultConfigSyncAdminLKGMaxAge         = 7 * 24 * time.Hour
+	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
+	// message limit and the data plane's default Sync receive limit: the usage
+	// list goes from one to the other in a single message.
+	defaultGRPCMaxMessageBytes             = 64 << 20
+	defaultConfigSyncGRPCMinBackoff        = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff        = 30 * time.Second
+	defaultConfigSyncOutboxRetention       = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows   int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge        = 7 * 24 * time.Hour
 
 	configSyncKeyBytes = 32
 
@@ -232,7 +233,7 @@ type UsageConfig struct {
 	// GRPCToken is USAGE_SYSTEM_GRPC_TOKEN, sent as a bearer token on the stream.
 	GRPCToken string
 	// GRPCKeepaliveTime is USAGE_SYSTEM_GRPC_KEEPALIVE_TIME, at least
-	// MinUsageGRPCKeepaliveTime: gRPC raises anything shorter to that floor,
+	// minUsageGRPCKeepaliveTime: gRPC raises anything shorter to that floor,
 	// which is also Usage System's keepalive enforcement MinTime.
 	GRPCKeepaliveTime time.Duration
 	// GRPCKeepaliveTimeout is USAGE_SYSTEM_GRPC_KEEPALIVE_TIMEOUT.
@@ -256,6 +257,9 @@ type UsageConfig struct {
 	// CacheRetryInterval is USAGE_CACHE_RETRY_INTERVAL, how often states a
 	// failed Redis write left behind are written again.
 	CacheRetryInterval time.Duration
+	// CacheResyncInterval is USAGE_CACHE_RESYNC_INTERVAL, how often every held
+	// state is written again, so a cache flushed while the plane runs refills.
+	CacheResyncInterval time.Duration
 }
 
 // Validate checks the settings the admin and run planes use when Usage System
@@ -284,13 +288,14 @@ func (u UsageConfig) Validate() error {
 		{"USAGE_CACHE_RESTORE_MAX_BACKOFF", u.CacheRestoreMaxBackoff},
 		{"USAGE_CACHE_WRITE_TIMEOUT", u.CacheWriteTimeout},
 		{"USAGE_CACHE_RETRY_INTERVAL", u.CacheRetryInterval},
+		{"USAGE_CACHE_RESYNC_INTERVAL", u.CacheResyncInterval},
 	} {
 		if d.value <= 0 {
 			return fmt.Errorf("%w: %s must be a positive duration", errors.ErrInvalidConfig, d.key)
 		}
 	}
-	if u.GRPCKeepaliveTime < MinUsageGRPCKeepaliveTime {
-		return fmt.Errorf("%w: USAGE_SYSTEM_GRPC_KEEPALIVE_TIME must be at least %s", errors.ErrInvalidConfig, MinUsageGRPCKeepaliveTime)
+	if u.GRPCKeepaliveTime < minUsageGRPCKeepaliveTime {
+		return fmt.Errorf("%w: USAGE_SYSTEM_GRPC_KEEPALIVE_TIME must be at least %s", errors.ErrInvalidConfig, minUsageGRPCKeepaliveTime)
 	}
 	if u.ReconnectMinBackoff > u.ReconnectMaxBackoff {
 		return fmt.Errorf("%w: USAGE_SYSTEM_RECONNECT_MIN_BACKOFF must not exceed USAGE_SYSTEM_RECONNECT_MAX_BACKOFF", errors.ErrInvalidConfig)
@@ -373,8 +378,8 @@ type ConfigSyncConfig struct {
 	// GRPCMaxRecvBytes is CONFIG_SYNC_GRPC_MAX_RECV_BYTES, the largest message a
 	// data plane accepts on the Sync stream. The usage list travels in one
 	// message, so it must be at least the control plane's
-	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES. Zero means
-	// DefaultConfigSyncGRPCMaxRecvBytes.
+	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES, and never below its 64 MiB default.
+	// Read it through MaxRecvBytes, which applies the default to a zero value.
 	GRPCMaxRecvBytes int
 	OutboxRetention  time.Duration
 	OutboxMaxRows    int64
@@ -468,22 +473,23 @@ type ServerConfig struct {
 const DefaultAdminTokenMaxTTL = time.Hour
 
 const (
-	// DefaultUsageReadyTimeout bounds how long a plane waits for its first
+	// defaultUsageReadyTimeout bounds how long a plane waits for its first
 	// usage list before it reports ready without one.
-	DefaultUsageReadyTimeout = 30 * time.Second
+	defaultUsageReadyTimeout = 30 * time.Second
 
 	defaultUsageGRPCKeepaliveTime      = 30 * time.Second
 	defaultUsageGRPCKeepaliveTimeout   = 10 * time.Second
-	defaultUsageGRPCMaxMessageBytes    = 64 << 20
+	defaultUsageGRPCMaxMessageBytes    = defaultGRPCMaxMessageBytes
 	defaultUsageReconnectMinBackoff    = time.Second
 	defaultUsageReconnectMaxBackoff    = 30 * time.Second
 	defaultUsageCacheRestoreInterval   = 2 * time.Second
 	defaultUsageCacheRestoreMaxBackoff = time.Minute
 	defaultUsageCacheWriteTimeout      = 3 * time.Second
 	defaultUsageCacheRetryInterval     = 10 * time.Second
+	defaultUsageCacheResyncInterval    = 5 * time.Minute
 
-	// MinUsageGRPCKeepaliveTime is gRPC's floor for client keepalive pings.
-	MinUsageGRPCKeepaliveTime = 10 * time.Second
+	// minUsageGRPCKeepaliveTime is gRPC's floor for client keepalive pings.
+	minUsageGRPCKeepaliveTime = 10 * time.Second
 )
 
 type MCPDefaultIdPConfig struct {
@@ -1043,7 +1049,7 @@ func getTrafficLabelsConfig() TrafficLabelsConfig {
 func getUsageConfig() UsageConfig {
 	return UsageConfig{
 		Enabled:                getEnvBool("USAGE_SYSTEM_ENABLED", false),
-		ReadyTimeout:           getEnvDuration("USAGE_READY_TIMEOUT", DefaultUsageReadyTimeout),
+		ReadyTimeout:           getEnvDuration("USAGE_READY_TIMEOUT", defaultUsageReadyTimeout),
 		GRPCAddr:               strings.TrimSpace(getEnv("USAGE_SYSTEM_GRPC_ADDR", "")),
 		GRPCInsecure:           getEnvBool("USAGE_SYSTEM_GRPC_INSECURE", false),
 		GRPCToken:              getEnv("USAGE_SYSTEM_GRPC_TOKEN", ""),
@@ -1056,6 +1062,7 @@ func getUsageConfig() UsageConfig {
 		CacheRestoreMaxBackoff: getEnvDuration("USAGE_CACHE_RESTORE_MAX_BACKOFF", defaultUsageCacheRestoreMaxBackoff),
 		CacheWriteTimeout:      getEnvDuration("USAGE_CACHE_WRITE_TIMEOUT", defaultUsageCacheWriteTimeout),
 		CacheRetryInterval:     getEnvDuration("USAGE_CACHE_RETRY_INTERVAL", defaultUsageCacheRetryInterval),
+		CacheResyncInterval:    getEnvDuration("USAGE_CACHE_RESYNC_INTERVAL", defaultUsageCacheResyncInterval),
 	}
 }
 
@@ -1271,7 +1278,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
 		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
-		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", DefaultConfigSyncGRPCMaxRecvBytes),
+		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
@@ -1472,6 +1479,14 @@ func DBLessDataPlaneEnabled() bool {
 	return getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled)
 }
 
+// MaxRecvBytes is the data plane's Sync receive limit, the default when unset.
+func (cs ConfigSyncConfig) MaxRecvBytes() int {
+	if cs.GRPCMaxRecvBytes == 0 {
+		return defaultGRPCMaxMessageBytes
+	}
+	return cs.GRPCMaxRecvBytes
+}
+
 func (cs ConfigSyncConfig) Validate() error {
 	if !cs.DataPlaneEnabled {
 		return nil
@@ -1495,8 +1510,8 @@ func (cs ConfigSyncConfig) Validate() error {
 	if cs.PollInterval <= 0 {
 		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
 	}
-	if cs.GRPCMaxRecvBytes < 0 {
-		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_MAX_RECV_BYTES must not be negative", errors.ErrInvalidConfig)
+	if cs.GRPCMaxRecvBytes != 0 && cs.GRPCMaxRecvBytes < defaultGRPCMaxMessageBytes {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_MAX_RECV_BYTES must be at least %d, the control plane's default usage message limit", errors.ErrInvalidConfig, defaultGRPCMaxMessageBytes)
 	}
 	return nil
 }

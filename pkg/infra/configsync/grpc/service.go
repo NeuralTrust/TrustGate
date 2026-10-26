@@ -81,15 +81,15 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 
 	var usageChanges <-chan struct{}
 	usageOwed := false
-	if s.usage != nil {
+	if s.usage != nil && hello.GetAcceptsUsage() {
 		changes, release := s.usage.Subscribe()
 		defer release()
 		usageChanges = changes
-		sent, err := s.sendUsage(stream, scope)
+		owed, err := s.syncUsage(stream, scope, usageOwed)
 		if err != nil {
 			return err
 		}
-		usageOwed = !sent
+		usageOwed = owed
 	}
 
 	recvErr := make(chan error, 1)
@@ -120,32 +120,38 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
-			// A scope compiled after the connection opened can now be
-			// resolved, so the list it could not get then is sent now.
+			// A scope that could not be resolved earlier, such as a gateway
+			// lookup that failed, is tried again with each config change.
 			if usageOwed {
-				sent, err := s.sendUsage(stream, scope)
+				owed, err := s.syncUsage(stream, scope, usageOwed)
 				if err != nil {
 					return err
 				}
-				usageOwed = !sent
+				usageOwed = owed
 			}
 		case <-usageChanges:
-			sent, err := s.sendUsage(stream, scope)
+			owed, err := s.syncUsage(stream, scope, usageOwed)
 			if err != nil {
 				return err
 			}
-			usageOwed = !sent
+			usageOwed = owed
 		}
 	}
 }
 
-// sendUsage reports whether a usage list was sent.
-func (s *Service) sendUsage(stream snapshotpb.ConfigSync_SyncServer, scope string) (bool, error) {
+// syncUsage sends the usage list the connection may receive and reports
+// whether one is still owed. It warns once per stretch of owing, not on every
+// attempt, and not while the control plane itself has no list yet.
+func (s *Service) syncUsage(stream snapshotpb.ConfigSync_SyncServer, scope string, owed bool) (bool, error) {
 	msg, ok := s.usageSnapshotFor(stream.Context(), scope)
-	if !ok {
-		return false, nil
+	if ok {
+		return false, stream.Send(msg)
 	}
-	return true, stream.Send(msg)
+	if !owed && s.usage.Ready() {
+		s.logger.WarnContext(stream.Context(), "configsync: no usage list for this scope; retrying on the next usage change or config notice",
+			slog.String("scope", scope))
+	}
+	return true, nil
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,
