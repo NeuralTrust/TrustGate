@@ -3027,6 +3027,7 @@ definitions:
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements:
     properties:
       burst_per_min:
+        description: requests per minute per tenant; 0 = unlimited
         type: integer
       data_plane:
         description: |-
@@ -3038,8 +3039,10 @@ definitions:
           playground trace store all live outside that boundary).
         type: string
       max_instances:
+        description: gateway instances per tenant; 0 = unlimited
         type: integer
       quota_per_month:
+        description: requests per month per tenant; 0 = unlimited
         type: integer
       retention_days:
         type: integer
