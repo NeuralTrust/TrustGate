@@ -26,6 +26,7 @@ import (
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -48,10 +49,10 @@ var (
 )
 
 type ConnectStore struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
-func NewConnectStore(rdb *redis.Client) *ConnectStore {
+func NewConnectStore(rdb redis.UniversalClient) *ConnectStore {
 	return &ConnectStore{rdb: rdb}
 }
 
@@ -281,22 +282,20 @@ func (s *ConnectStore) HasDynamicClient(ctx context.Context, gatewayID ids.Gatew
 		return true, nil
 	}
 	pattern := clientPrefix + escapeRedisGlob(gateway) + "|" + escapeRedisGlob(code) + "|*"
-	var cursor uint64
-	for {
-		keys, next, err := s.rdb.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return false, fmt.Errorf("oauth connect store: scan dynamic client: %w", err)
-		}
+	found := false
+	err = cache.ScanKeys(ctx, s.rdb, pattern, 100, func(_ context.Context, keys []string) error {
 		for _, key := range keys {
 			if dynamicClientForCode(key, gateway, code) {
-				return true, nil
+				found = true
+				return cache.ErrStopScan
 			}
 		}
-		cursor = next
-		if cursor == 0 {
-			return false, nil
-		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("oauth connect store: dynamic client: %w", err)
 	}
+	return found, nil
 }
 
 func dynamicClientForCode(key, gatewayID, code string) bool {

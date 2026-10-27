@@ -37,19 +37,25 @@ func Cache(c *container.Container) error {
 		mgr *cache.TTLMapManager,
 		logger *slog.Logger,
 	) (cache.Client, error) {
-		return cache.NewClient(cache.Config{
-			Login:             cfg.Redis.Login,
-			Host:              cfg.Redis.Host,
-			Port:              cfg.Redis.Port,
-			Username:          cfg.Redis.Username,
-			Password:          cfg.Redis.Password,
-			DB:                cfg.Redis.DB,
-			TLSEnabled:        cfg.Redis.TLSEnabled,
-			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
-			CacheName:         cfg.Redis.CacheName,
-			AWSServerless:     cfg.Redis.AWSServerless,
-		}, mgr, logger)
+		return cache.NewClient(redisCacheConfig(cfg.Redis), mgr, logger)
 	})
+}
+
+func redisCacheConfig(settings config.RedisConfig) cache.Config {
+	return cache.Config{
+		Login:             settings.Login,
+		Host:              settings.Host,
+		Port:              settings.Port,
+		Username:          settings.Username,
+		Password:          settings.Password,
+		DB:                settings.DB,
+		TLSEnabled:        settings.TLSEnabled,
+		TLSInsecureVerify: settings.TLSInsecureVerify,
+		CacheName:         settings.CacheName,
+		AWSServerless:     settings.AWSServerless,
+		Cluster:           settings.Cluster,
+		TLSCAFile:         settings.TLSCAFile,
+	}
 }
 
 func StartCacheJanitor(ctx context.Context, mgr *cache.TTLMapManager) {

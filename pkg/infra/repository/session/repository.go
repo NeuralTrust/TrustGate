@@ -32,10 +32,10 @@ const (
 )
 
 type repository struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
-func NewRepository(rdb *redis.Client) domain.Repository {
+func NewRepository(rdb redis.UniversalClient) domain.Repository {
 	return &repository{rdb: rdb}
 }
 

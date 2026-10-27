@@ -17,9 +17,11 @@ package cache
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -32,7 +34,7 @@ type Client interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key string, value string, expiration time.Duration) error
 	Delete(ctx context.Context, key string) error
-	RedisClient() *redis.Client
+	RedisClient() redis.UniversalClient
 	CreateTTLMap(name string, ttl time.Duration) *TTLMap
 	GetTTLMap(name string) *TTLMap
 	ClearAllTTLMaps()
@@ -49,58 +51,108 @@ type Config struct {
 	Username          string
 	CacheName         string
 	AWSServerless     bool
+	// Cluster builds a Redis Cluster client seeded with Host:Port.
+	Cluster bool
+	// TLSCAFile is a PEM bundle used as the root CAs that verify the server.
+	TLSCAFile string
 }
 
 var _ Client = (*client)(nil)
 
 type client struct {
-	redisClient *redis.Client
+	redisClient redis.UniversalClient
 	localCache  sync.Map
 	ttlManager  *TTLMapManager
 	logger      *slog.Logger
 }
 
-func buildRedisOptions(config Config, provider credentialsProvider) *redis.Options {
+var errRedisTLSCAInsecure = errors.New("a redis TLS CA file cannot be combined with insecure verification")
+
+func buildRedisOptions(config Config, provider credentialsProvider) (*redis.Options, error) {
 	options := &redis.Options{
 		Addr: fmt.Sprintf("%s:%d", config.Host, config.Port),
 		DB:   config.DB,
 	}
+	options.Username = config.Username
 	if provider == nil {
-		options.Username = config.Username
 		options.Password = config.Password
 		if config.TLSEnabled {
-			options.TLSConfig = &tls.Config{
-				InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
+			tlsConfig, err := buildTLSConfig(config, 0)
+			if err != nil {
+				return nil, err
 			}
+			options.TLSConfig = tlsConfig
 		}
-		return options
+		return options, nil
 	}
-	options.Username = config.Username
 	options.Password = ""
 	options.CredentialsProviderContext = provider
-	options.TLSConfig = &tls.Config{
-		MinVersion:         tls.VersionTLS12,
+	tlsConfig, err := buildTLSConfig(config, tls.VersionTLS12)
+	if err != nil {
+		return nil, err
+	}
+	options.TLSConfig = tlsConfig
+	return options, nil
+}
+
+// buildTLSConfig leaves ServerName empty: the TLS dialer takes it from the
+// address it dials, which on a cluster is each node's own address.
+func buildTLSConfig(config Config, minVersion uint16) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		MinVersion:         minVersion,
 		InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
 	}
-	return options
+	if config.TLSCAFile == "" {
+		return tlsConfig, nil
+	}
+	if config.TLSInsecureVerify {
+		return nil, errRedisTLSCAInsecure
+	}
+	roots, err := loadCertPool(config.TLSCAFile)
+	if err != nil {
+		return nil, err
+	}
+	tlsConfig.RootCAs = roots
+	return tlsConfig, nil
+}
+
+func loadCertPool(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path) // #nosec G304 -- the path is operator configuration
+	if err != nil {
+		return nil, fmt.Errorf("read redis TLS CA file: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("redis TLS CA file %q holds no PEM certificate", path)
+	}
+	return roots, nil
 }
 
 func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Client, error) {
+	return newClient(config, manager, logger, defaultRedisAuthDependencies())
+}
+
+func newClient(config Config, manager *TTLMapManager, logger *slog.Logger, deps redisAuthDependencies) (Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	provider, err := newCredentialsProvider(ctx, &config, defaultRedisAuthDependencies())
+	provider, err := newCredentialsProvider(ctx, &config, deps)
 	if err != nil {
 		return nil, fmt.Errorf("configure redis authentication: %w", err)
 	}
 
-	options := buildRedisOptions(config, provider)
-	redisClient := redis.NewClient(options)
+	options, err := buildRedisOptions(config, provider)
+	if err != nil {
+		return nil, fmt.Errorf("configure redis TLS: %w", err)
+	}
+	redisClient := newUniversalClient(options, config.Cluster)
 
 	if err := redisClient.Ping(ctx).Err(); err != nil {
+		_ = redisClient.Close()
 		logger.Error("failed to connect to redis",
 			slog.String("host", config.Host),
 			slog.Int("port", config.Port),
+			slog.Bool("cluster", config.Cluster),
 			slog.String("error", err.Error()),
 		)
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
@@ -109,6 +161,7 @@ func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Clie
 	logger.Info(bootlog.RedisConnected,
 		slog.String("host", config.Host),
 		slog.Int("port", config.Port),
+		slog.Bool("cluster", config.Cluster),
 	)
 
 	return &client{
@@ -148,7 +201,7 @@ func (c *client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *client) RedisClient() *redis.Client {
+func (c *client) RedisClient() redis.UniversalClient {
 	return c.redisClient
 }
 
