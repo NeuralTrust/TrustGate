@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package semantic provides a Redis Stack (RediSearch) vector store used by the
-// semantic cache plugin to look up and persist responses by embedding
-// similarity, scoped per rule via a hashed tag.
+// Package semantic provides a Redis vector store used by the semantic cache
+// plugin to look up and persist responses by embedding similarity, scoped per
+// rule via a hashed tag. It needs a server with the FT.* search commands:
+// Redis Stack (RediSearch), Valkey with valkey-search, or Memorystore with
+// vector search.
 package semantic
 
 import (
@@ -66,7 +68,7 @@ type Store interface {
 
 var _ Store = (*RedisStore)(nil)
 
-// RedisStore implements Store against Redis Stack RediSearch.
+// RedisStore implements Store against a Redis server with FT.* vector search.
 type RedisStore struct {
 	client    redis.UniversalClient
 	indexName string
@@ -117,19 +119,7 @@ func (s *RedisStore) EnsureIndex(ctx context.Context, dimension int) error {
 		return nil
 	}
 
-	args := []interface{}{
-		"FT.CREATE", s.indexName,
-		"ON", "HASH",
-		"PREFIX", "1", keyPrefix,
-		"SCHEMA",
-		"rule_id", "TAG", "SEPARATOR", ",",
-		"response", "TEXT", "NOINDEX",
-		"embedding", "VECTOR", "FLAT", "6",
-		"TYPE", "FLOAT32",
-		"DIM", strconv.Itoa(dimension),
-		"DISTANCE_METRIC", "COSINE",
-	}
-	if err := s.client.Do(ctx, args...).Err(); err != nil {
+	if err := s.client.Do(ctx, createIndexArgs(s.indexName, dimension)...).Err(); err != nil {
 		return fmt.Errorf("semantic: create vector index: %w", err)
 	}
 
@@ -138,6 +128,24 @@ func (s *RedisStore) EnsureIndex(ctx context.Context, dimension int) error {
 		s.logger.Info("semantic vector index created", slog.String("index", s.indexName))
 	}
 	return nil
+}
+
+// createIndexArgs builds the FT.CREATE command. The schema holds only TAG and
+// VECTOR fields, the subset valkey-search and Memorystore accept; they reject
+// TEXT. The response is not indexed: it stays in the hash and FT.SEARCH's
+// RETURN reads it from there.
+func createIndexArgs(indexName string, dimension int) []interface{} {
+	return []interface{}{
+		"FT.CREATE", indexName,
+		"ON", "HASH",
+		"PREFIX", "1", keyPrefix,
+		"SCHEMA",
+		"rule_id", "TAG", "SEPARATOR", ",",
+		"embedding", "VECTOR", "FLAT", "6",
+		"TYPE", "FLOAT32",
+		"DIM", strconv.Itoa(dimension),
+		"DISTANCE_METRIC", "COSINE",
+	}
 }
 
 // Lookup returns the topK nearest cached responses for the rule, ordered by
@@ -166,11 +174,7 @@ func (s *RedisStore) Lookup(ctx context.Context, ruleID string, emb *embedding.E
 		}
 		return nil, nil
 	}
-	resSlice, err := result.Slice()
-	if err != nil {
-		return nil, nil
-	}
-	return parseSearch(resSlice), nil
+	return parseSearch(result.Val()), nil
 }
 
 // Store persists a response keyed by its embedding under the rule's tag.
@@ -227,9 +231,23 @@ func (s *RedisStore) PutExact(ctx context.Context, ruleID, key, response string,
 	return nil
 }
 
-// parseSearch converts the raw FT.SEARCH reply into candidates. The reply shape
-// is [count, key1, [field, value, ...], key2, [...], ...].
-func parseSearch(res []interface{}) []Candidate {
+// parseSearch converts the raw FT.SEARCH reply into candidates. The client
+// speaks RESP3, where RediSearch answers with a map and valkey-search with the
+// RESP2 array, so both shapes are accepted.
+func parseSearch(reply interface{}) []Candidate {
+	switch res := reply.(type) {
+	case []interface{}:
+		return parseSearchArray(res)
+	case map[interface{}]interface{}:
+		return parseSearchMap(res)
+	default:
+		return nil
+	}
+}
+
+// parseSearchArray reads the array reply:
+// [count, key1, [field, value, ...], key2, [...], ...].
+func parseSearchArray(res []interface{}) []Candidate {
 	if len(res) < 2 {
 		return nil
 	}
@@ -243,6 +261,36 @@ func parseSearch(res []interface{}) []Candidate {
 		fields, ok := res[i+1].([]interface{})
 		if !ok {
 			continue
+		}
+		response, similarity := parseFields(fields)
+		if response != "" {
+			candidates = append(candidates, Candidate{Response: response, Similarity: similarity})
+		}
+	}
+	return candidates
+}
+
+// parseSearchMap reads the RESP3 map reply, whose "results" entries carry the
+// returned fields under "extra_attributes".
+func parseSearchMap(res map[interface{}]interface{}) []Candidate {
+	results, ok := res["results"].([]interface{})
+	if !ok || len(results) == 0 {
+		return nil
+	}
+
+	candidates := make([]Candidate, 0, len(results))
+	for _, r := range results {
+		doc, ok := r.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		attrs, ok := doc["extra_attributes"].(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		fields := make([]interface{}, 0, 2*len(attrs))
+		for k, v := range attrs {
+			fields = append(fields, k, v)
 		}
 		response, similarity := parseFields(fields)
 		if response != "" {
