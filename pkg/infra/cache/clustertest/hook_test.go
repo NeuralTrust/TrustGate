@@ -61,3 +61,23 @@ func TestHook(t *testing.T) {
 	require.ErrorContains(t, script.Run(ctx, rdb, []string{"foo", "bar"}).Err(), "CROSSSLOT")
 	require.NoError(t, script.Run(ctx, rdb, []string{"{t}foo", "{t}bar"}).Err())
 }
+
+func TestNewClusterRejectsKeylessScanButNotPerMasterScan(t *testing.T) {
+	mr := miniredis.RunT(t)
+	require.NoError(t, mr.Set("foo", "1"))
+	rdb := clustertest.NewCluster(mr.Addr())
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+
+	require.ErrorContains(t, rdb.Scan(ctx, 0, "*", 10).Err(), clustertest.KeylessScanMessage)
+	require.ErrorContains(t, rdb.Keys(ctx, "*").Err(), clustertest.KeylessScanMessage)
+	require.ErrorContains(t, rdb.MGet(ctx, "foo", "bar").Err(), "CROSSSLOT")
+
+	var found []string
+	require.NoError(t, rdb.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+		keys, _, err := node.Scan(ctx, 0, "*", 10).Result()
+		found = append(found, keys...)
+		return err
+	}))
+	require.Equal(t, []string{"foo"}, found)
+}

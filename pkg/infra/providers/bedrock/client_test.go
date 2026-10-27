@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -49,7 +50,7 @@ func TestNewBedrockBackendError(t *testing.T) {
 		be := newBedrockBackendError(err)
 		require.NotNil(t, be)
 		assert.Equal(t, http.StatusBadRequest, be.StatusCode)
-		assert.JSONEq(t, `{"error":"ValidationException","message":"Invocation of model ID is not supported."}`, string(be.Body))
+		assert.JSONEq(t, `{"__type":"ValidationException","message":"Invocation of model ID is not supported."}`, string(be.Body))
 	})
 
 	t.Run("ignores non HTTP errors", func(t *testing.T) {
@@ -70,6 +71,89 @@ func TestNewBedrockBackendError(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, http.StatusForbidden, be.StatusCode)
 	})
+}
+
+func awsResponseError(status int, apiErr error) error {
+	return &awshttp.ResponseError{
+		ResponseError: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+			Err:      apiErr,
+		},
+		RequestID: "request-id",
+	}
+}
+
+func TestBedrockBackendErrorReachesTranslatedClients(t *testing.T) {
+	validation := newBedrockBackendError(awsResponseError(http.StatusBadRequest,
+		&bedrockTypes.ValidationException{Message: aws.String("messages.0.content: Field required")}))
+	require.NotNil(t, validation)
+
+	t.Run("anthropic client keeps the bedrock message", func(t *testing.T) {
+		got := adapter.ClientErrorBody(validation.Body, validation.StatusCode, adapter.FormatAnthropic, adapter.FormatBedrock)
+		assert.JSONEq(t, `{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content: Field required"}}`, string(got))
+	})
+
+	t.Run("openai client keeps the bedrock message", func(t *testing.T) {
+		got := adapter.ClientErrorBody(validation.Body, validation.StatusCode, adapter.FormatOpenAI, adapter.FormatBedrock)
+		var env struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(got, &env))
+		assert.Equal(t, "messages.0.content: Field required", env.Error.Message)
+	})
+
+	t.Run("credentials in the message are masked", func(t *testing.T) {
+		be := newBedrockBackendError(awsResponseError(http.StatusBadRequest,
+			&bedrockTypes.ValidationException{Message: aws.String("bad key sk-abcdef1234567890")}))
+		require.NotNil(t, be)
+		got := adapter.ClientErrorBody(be.Body, be.StatusCode, adapter.FormatAnthropic, adapter.FormatBedrock)
+		assert.NotContains(t, string(got), "sk-abcdef1234567890")
+		assert.Contains(t, string(got), "[REDACTED]")
+	})
+}
+
+func TestBedrockBackendErrorModelNotFound(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		err    error
+		want   bool
+	}{
+		{
+			name:   "no access to the model",
+			status: http.StatusForbidden,
+			err:    &bedrockTypes.AccessDeniedException{Message: aws.String("You don't have access to the model with the specified model ID.")},
+			want:   true,
+		},
+		{
+			name:   "model not found",
+			status: http.StatusNotFound,
+			err:    &bedrockTypes.ResourceNotFoundException{Message: aws.String("Model not found.")},
+			want:   true,
+		},
+		{
+			name:   "invalid model identifier",
+			status: http.StatusBadRequest,
+			err:    &bedrockTypes.ValidationException{Message: aws.String("The provided model identifier is invalid.")},
+			want:   true,
+		},
+		{
+			name:   "iam denial is not a missing model",
+			status: http.StatusForbidden,
+			err: &bedrockTypes.AccessDeniedException{Message: aws.String(
+				"User: arn:aws:iam::123456789012:user/gw is not authorized to perform: bedrock:InvokeModel")},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			be := newBedrockBackendError(awsResponseError(tc.status, tc.err))
+			require.NotNil(t, be)
+			assert.Equal(t, tc.want, adapter.BodyCarriesModelNotFound(be.Body))
+		})
+	}
 }
 
 func TestBedrockErrorPayload(t *testing.T) {

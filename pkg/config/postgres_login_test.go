@@ -35,7 +35,8 @@ func TestParsePostgresLogin(t *testing.T) {
 		{name: "aws is trimmed and lowercased", in: " AwS ", want: PostgresLoginAWS},
 		{name: "unknown is rejected", in: " iam ", wantErr: true},
 		{name: "azure is trimmed and lowercased", in: " AZURE ", want: PostgresLoginAzure},
-		{name: "unsupported cloud is rejected", in: "gcp", wantErr: true},
+		{name: "gcp is trimmed and lowercased", in: " GcP ", want: PostgresLoginGCP},
+		{name: "unsupported cloud is rejected", in: "oracle", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +60,7 @@ func TestParsePostgresLogin(t *testing.T) {
 }
 
 func TestPostgresLoginUsesTokenAuth(t *testing.T) {
-	for login, want := range map[PostgresLogin]bool{"": false, PostgresLoginDefault: false, PostgresLoginAWS: true, PostgresLoginAzure: true} {
+	for login, want := range map[PostgresLogin]bool{"": false, PostgresLoginDefault: false, PostgresLoginAWS: true, PostgresLoginAzure: true, PostgresLoginGCP: true} {
 		if got := login.UsesTokenAuth(); got != want {
 			t.Errorf("PostgresLogin(%q).UsesTokenAuth() = %t, want %t", login, got, want)
 		}

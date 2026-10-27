@@ -31,7 +31,7 @@ import (
 //
 // Best effort by design: managed offerings (GCP Memorystore) block CONFIG, so
 // unreadable settings are skipped silently rather than reported as problems.
-func WarnIfVolatile(ctx context.Context, rc *redis.Client, logger *slog.Logger) {
+func WarnIfVolatile(ctx context.Context, rc redis.UniversalClient, logger *slog.Logger) {
 	if rc == nil || logger == nil {
 		return
 	}
