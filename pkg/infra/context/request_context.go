@@ -82,6 +82,29 @@ type NativeMaskSource struct {
 type NativeMaskLog struct {
 	mu      sync.Mutex
 	sources []NativeMaskSource
+	base    []byte
+}
+
+// Rebase records the body a policy that injects content wrote onto a native call.
+// It is relayed as written, so the masks that follow are carried onto it rather
+// than onto the bytes the client sent.
+func (l *NativeMaskLog) Rebase(body []byte) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.base = body
+	l.mu.Unlock()
+}
+
+// Base returns the body the last Rebase recorded, or nil when no policy injected.
+func (l *NativeMaskLog) Base() []byte {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.base
 }
 
 // Add records a mask.

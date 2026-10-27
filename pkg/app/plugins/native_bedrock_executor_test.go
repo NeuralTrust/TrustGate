@@ -240,3 +240,95 @@ func TestRegistry_AcceptsAStoredOnMaskFailure(t *testing.T) {
 		assert.NoError(t, reg.Validate("masker", map[string]any{"on_mask_failure": stored}), "%v", stored)
 	}
 }
+
+// nativeInjector injects into native calls only when its settings opt in.
+type nativeInjector struct {
+	fakePlugin
+}
+
+func (n *nativeInjector) BedrockNative() BedrockNativeBehavior { return BedrockNativeSkips }
+
+func (n *nativeInjector) BedrockNativeFor(settings map[string]any) BedrockNativeBehavior {
+	if settings["opt_in"] == true {
+		return BedrockNativeInjects
+	}
+	return BedrockNativeSkips
+}
+
+func TestNativeBedrock_AnInjectionIsRelayedAndBecomesTheMaskBase(t *testing.T) {
+	t.Parallel()
+	injected := []byte(`{"system":[{"text":"t"}],"messages":[]}`)
+
+	t.Run("opted in, the injection is applied", func(t *testing.T) {
+		t.Parallel()
+		var calls int32
+		p := &nativeInjector{fakePlugin{name: "tmpl", stages: []policy.Stage{policy.StagePreRequest}, calls: &calls,
+			result: &Result{StatusCode: 200, RequestBody: injected}}}
+		req := nativeRequest(`{"messages":[]}`)
+		_, _, err := runNative(t, policy.StagePreRequest, req, &infracontext.ResponseContext{}, p, map[string]any{"opt_in": true}, policy.ModeEnforce)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, atomic.LoadInt32(&calls))
+		assert.Equal(t, string(injected), string(req.Body))
+		assert.Equal(t, string(injected), string(req.NativeMask.Base()))
+		assert.Empty(t, req.NativeMask.Sources(policy.StagePreRequest), "an injection is not a mask")
+	})
+	t.Run("not opted in, the plugin is skipped as before", func(t *testing.T) {
+		t.Parallel()
+		var calls int32
+		p := &nativeInjector{fakePlugin{name: "tmpl", stages: []policy.Stage{policy.StagePreRequest}, calls: &calls,
+			result: &Result{StatusCode: 200, RequestBody: injected}}}
+		req := nativeRequest(`{"messages":[]}`)
+		_, _, err := runNative(t, policy.StagePreRequest, req, &infracontext.ResponseContext{}, p, nil, policy.ModeEnforce)
+		require.NoError(t, err)
+		assert.Zero(t, atomic.LoadInt32(&calls))
+		assert.Equal(t, `{"messages":[]}`, string(req.Body))
+		assert.Nil(t, req.NativeMask.Base())
+	})
+}
+
+func TestNativeBedrock_AnInjectionAfterAMaskIsRefused(t *testing.T) {
+	t.Parallel()
+	run := func(t *testing.T, maskFirst bool) (*infracontext.RequestContext, error) {
+		t.Helper()
+		masker := &nativeFake{fakePlugin: fakePlugin{name: "masker", stages: []policy.Stage{policy.StagePreRequest},
+			execFn: func(in ExecInput) (*Result, error) {
+				return &Result{StatusCode: 200, RequestBody: append([]byte(`{"masked":1,`), in.Request.Body[1:]...)}, nil
+			}}, behavior: BedrockNativeMasks}
+		tmpl := &nativeInjector{fakePlugin{name: "tmpl", stages: []policy.Stage{policy.StagePreRequest},
+			execFn: func(in ExecInput) (*Result, error) {
+				return &Result{StatusCode: 200, RequestBody: append([]byte(`{"system":"t",`), in.Request.Body[1:]...)}, nil
+			}}}
+		maskPriority, tmplPriority := 2, 1
+		if maskFirst {
+			maskPriority, tmplPriority = 1, 2
+		}
+		pols := policies(t,
+			polSpec{slug: "masker", enabled: true, priority: maskPriority, stages: []policy.Stage{policy.StagePreRequest}, mode: policy.ModeEnforce},
+			polSpec{slug: "tmpl", enabled: true, priority: tmplPriority, stages: []policy.Stage{policy.StagePreRequest}, mode: policy.ModeEnforce},
+		)
+		pols[1].Settings = map[string]any{"opt_in": true}
+		req := nativeRequest(`{"messages":[]}`)
+		_, err := NewExecutor(newRegistry(t, masker, tmpl), nil).RunStage(context.Background(), StageInput{
+			Stage: policy.StagePreRequest, Policies: pols, Request: req, Response: &infracontext.ResponseContext{},
+		})
+		return req, err
+	}
+
+	t.Run("injection first: the mask is recorded on top of the injected body", func(t *testing.T) {
+		t.Parallel()
+		req, err := run(t, false)
+		require.NoError(t, err)
+		assert.Equal(t, `{"system":"t","messages":[]}`, string(req.NativeMask.Base()))
+		assert.Equal(t, `{"masked":1,"system":"t","messages":[]}`, string(req.Body))
+		assert.Len(t, req.NativeMask.Sources(policy.StagePreRequest), 1)
+	})
+	t.Run("mask first: the injection is refused", func(t *testing.T) {
+		t.Parallel()
+		_, err := run(t, true)
+		pe, ok := AsPluginError(err)
+		require.True(t, ok, "%v", err)
+		assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+		assert.Equal(t, BedrockNativePassthrough, pe.Type)
+		assert.Contains(t, pe.Message, "must run before the masking policies")
+	})
+}

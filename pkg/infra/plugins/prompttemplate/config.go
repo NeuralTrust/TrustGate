@@ -106,6 +106,10 @@ type config struct {
 	EscapeJSONControlChars   *bool                 `mapstructure:"escape_json_control_chars"`
 }
 
+type nativeOptIn struct {
+	ApplyOnNativeBedrock bool `mapstructure:"apply_on_native_bedrock"`
+}
+
 func parseConfig(settings map[string]any) (*config, error) {
 	cfg, err := pluginutil.Parse[config](settings)
 	if err != nil {
