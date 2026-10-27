@@ -70,9 +70,39 @@ func TestRedisStoreExactRoundTrip(t *testing.T) {
 func TestParseSearch(t *testing.T) {
 	tests := []struct {
 		name string
-		res  []interface{}
+		res  interface{}
 		want []Candidate
 	}{
+		{
+			name: "nil reply",
+			res:  nil,
+			want: nil,
+		},
+		{
+			name: "resp3 map single hit",
+			res: map[interface{}]interface{}{
+				"total_results": int64(1),
+				"results": []interface{}{
+					map[interface{}]interface{}{
+						"id": "semantic_cache:abc:1",
+						"extra_attributes": map[interface{}]interface{}{
+							"response":          "cached body",
+							"__embedding_score": "0.05",
+						},
+						"values": []interface{}{},
+					},
+				},
+			},
+			want: []Candidate{{Response: "cached body", Similarity: 0.95}},
+		},
+		{
+			name: "resp3 map empty",
+			res: map[interface{}]interface{}{
+				"total_results": int64(0),
+				"results":       []interface{}{},
+			},
+			want: nil,
+		},
 		{
 			name: "empty",
 			res:  []interface{}{int64(0)},
@@ -107,6 +137,29 @@ func TestParseSearch(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// valkey-search and Memorystore reject any FT.CREATE that declares a TEXT field.
+func TestCreateIndexArgs_PortableSchema(t *testing.T) {
+	args := createIndexArgs("idx", 1536)
+
+	require.GreaterOrEqual(t, len(args), 2)
+	assert.Equal(t, []interface{}{"FT.CREATE", "idx"}, args[:2])
+	assert.Contains(t, args, "1536")
+	for _, arg := range args {
+		assert.NotEqual(t, "TEXT", arg, "schema must not declare a TEXT field")
+	}
+
+	var schema []interface{}
+	for i, arg := range args {
+		if arg == "SCHEMA" {
+			schema = args[i+1:]
+			break
+		}
+	}
+	require.NotEmpty(t, schema)
+	assert.Equal(t, []interface{}{"rule_id", "TAG"}, schema[0:2])
+	assert.NotContains(t, schema, "response")
 }
 
 func TestHashID_Deterministic(t *testing.T) {
