@@ -767,6 +767,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Strip raw C0 control bytes from substituted values before insertion.",
 					Default:     true,
 				},
+				{
+					Key:         "apply_on_native_bedrock",
+					Label:       "Apply On Native Bedrock Routes",
+					Type:        FieldTypeBoolean,
+					Description: "Also apply the templates to native Bedrock Runtime calls (/model/{id}/converse, converse-stream, invoke, invoke-with-response-stream). Only the system and messages fields are edited; every other field is relayed as sent. InvokeModel bodies in a model-native prompt shape (Llama, Mistral, Titan, Cohere) cannot be edited: in enforce mode they are rejected, in observe mode recorded as skipped. Templates with per-request variables change a cached prompt prefix. When off, the policy is skipped on native calls.",
+					Default:     false,
+				},
 			},
 		},
 	},

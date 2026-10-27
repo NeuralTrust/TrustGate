@@ -283,7 +283,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			whole.Transformed = head + verdict.Transformed
 			verdict = &whole
 		}
-		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+		if in.Request.IsBedrockNative() && verdict.HasTransform && Blocks(entry.mode) && bedrockNativeOfEntry(entry) != BedrockNativeMasks {
 			// A transform that is not a mask cannot be carried out on a relayed
 			// call: it ends the stream like a block, never fails open.
 			verdict = &SegmentVerdict{Block: true, Type: BedrockNativePassthrough, Message: NativeRewriteRefusal(entry.plugin.Name(), policy.StagePreResponse).Message}
@@ -571,7 +571,7 @@ func (e *executor) runOne(
 }
 
 func skipsNative(req *infracontext.RequestContext, entry chainEntry) bool {
-	return req.IsBedrockNative() && BedrockNativeOf(entry.plugin) == BedrockNativeSkips
+	return req.IsBedrockNative() && bedrockNativeOfEntry(entry) == BedrockNativeSkips
 }
 
 // nativeRewriteVerdict is the one place a native call's rewrites are classified.
@@ -585,14 +585,25 @@ func nativeRewriteVerdict(
 	if !req.IsBedrockNative() || res == nil || !Blocks(entry.mode) || !rewritesNativeBytes(stage, req, resp, res) {
 		return nil
 	}
-	if BedrockNativeOf(entry.plugin) != BedrockNativeMasks {
+	switch bedrockNativeOfEntry(entry) {
+	case BedrockNativeMasks:
+		req.NativeMask.Add(infracontext.NativeMaskSource{
+			Plugin: entry.plugin.Name(),
+			Stage:  stage,
+		})
+		return nil
+	case BedrockNativeInjects:
+		if stage != policy.StagePreRequest {
+			return NativeRewriteRefusal(entry.plugin.Name(), stage)
+		}
+		if len(req.NativeMask.Sources(policy.StagePreRequest)) > 0 {
+			return NativeInjectAfterMask(entry.plugin.Name())
+		}
+		req.NativeMask.Rebase(res.RequestBody)
+		return nil
+	default:
 		return NativeRewriteRefusal(entry.plugin.Name(), stage)
 	}
-	req.NativeMask.Add(infracontext.NativeMaskSource{
-		Plugin: entry.plugin.Name(),
-		Stage:  stage,
-	})
-	return nil
 }
 
 // withoutRewrites is the result of an entry that does not enforce, on a native
