@@ -21,6 +21,7 @@ import (
 
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -42,10 +43,10 @@ var _ appgateway.StatePurger = (*Purger)(nil)
 // match reaps the live credentials of a working gateway, which is exactly the
 // incident this type exists to avoid repeating.
 type Purger struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
-func NewPurger(rdb *redis.Client) *Purger {
+func NewPurger(rdb redis.UniversalClient) *Purger {
 	return &Purger{rdb: rdb}
 }
 
@@ -56,26 +57,20 @@ func (p *Purger) PurgeGatewayState(ctx context.Context, gatewayID ids.GatewayID)
 	}
 
 	pattern := "*" + gatewayID.String() + "*"
-	var cursor uint64
-	for {
-		keys, next, err := p.rdb.Scan(ctx, cursor, pattern, scanBatch).Result()
-		if err != nil {
-			return fmt.Errorf("gatewaystate: scan %q: %w", pattern, err)
+	err := cache.ScanKeys(ctx, p.rdb, pattern, scanBatch, func(ctx context.Context, keys []string) error {
+		// One DEL per key: the keys of a batch hash to different slots, which
+		// a cluster-mode Redis rejects as a single multi-key DEL (CROSSSLOT).
+		pipe := p.rdb.Pipeline()
+		for _, key := range keys {
+			pipe.Del(ctx, key)
 		}
-		if len(keys) > 0 {
-			// One DEL per key: the keys of a batch hash to different slots, which
-			// a cluster-mode Redis rejects as a single multi-key DEL (CROSSSLOT).
-			pipe := p.rdb.Pipeline()
-			for _, key := range keys {
-				pipe.Del(ctx, key)
-			}
-			if _, err := pipe.Exec(ctx); err != nil {
-				return fmt.Errorf("gatewaystate: delete %d keys: %w", len(keys), err)
-			}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("delete %d keys: %w", len(keys), err)
 		}
-		cursor = next
-		if cursor == 0 {
-			return nil
-		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("gatewaystate: %w", err)
 	}
+	return nil
 }

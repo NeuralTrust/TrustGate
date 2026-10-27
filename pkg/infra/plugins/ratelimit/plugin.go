@@ -33,7 +33,7 @@ const PluginName = "rate_limiter"
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
-	redis *redis.Client
+	redis redis.UniversalClient
 	now   func() time.Time
 	newID func() string
 }
@@ -48,7 +48,7 @@ func WithIDGenerator(newID func() string) Option {
 	return func(p *Plugin) { p.newID = newID }
 }
 
-func New(redisClient *redis.Client, opts ...Option) *Plugin {
+func New(redisClient redis.UniversalClient, opts ...Option) *Plugin {
 	p := &Plugin{
 		redis: redisClient,
 		now:   time.Now,

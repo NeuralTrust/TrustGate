@@ -45,18 +45,31 @@ type redisTokenBuilder func(ctx context.Context, cacheName, region, user string,
 type credentialsProvider func(ctx context.Context) (username, password string, err error)
 
 type redisAuthDependencies struct {
-	loadConfig awsConfigLoader
-	buildToken redisTokenBuilder
+	loadConfig         awsConfigLoader
+	buildToken         redisTokenBuilder
+	loadGCPTokenSource gcpTokenSourceLoader
 }
 
 func defaultRedisAuthDependencies() redisAuthDependencies {
-	return redisAuthDependencies{loadConfig: awsconfig.LoadDefaultConfig, buildToken: buildElastiCacheAuthToken}
+	return redisAuthDependencies{
+		loadConfig:         awsconfig.LoadDefaultConfig,
+		buildToken:         buildElastiCacheAuthToken,
+		loadGCPTokenSource: defaultGCPTokenSource,
+	}
 }
 
 func newCredentialsProvider(ctx context.Context, cfg *Config, deps redisAuthDependencies) (credentialsProvider, error) {
-	if cfg.Login != redisLoginAWS {
+	switch cfg.Login {
+	case redisLoginAWS:
+		return newAWSCredentialsProvider(ctx, cfg, deps)
+	case redisLoginGCP:
+		return newGCPCredentialsProvider(deps)
+	default:
 		return nil, nil
 	}
+}
+
+func newAWSCredentialsProvider(ctx context.Context, cfg *Config, deps redisAuthDependencies) (credentialsProvider, error) {
 	awsConfig, err := deps.loadConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load aws redis authentication config: %w", err)

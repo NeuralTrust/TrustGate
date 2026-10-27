@@ -34,7 +34,7 @@ import (
 
 type nilRedis struct{}
 
-func (nilRedis) RedisClient() *redis.Client { return nil }
+func (nilRedis) RedisClient() redis.UniversalClient { return nil }
 
 func baselineRegistry(provider string, pricing *registrydomain.Pricing) *registrydomain.Registry {
 	return &registrydomain.Registry{

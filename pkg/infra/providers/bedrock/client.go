@@ -307,11 +307,13 @@ func newBedrockBackendError(err error) *registrydomain.BackendError {
 	return registrydomain.NewBackendError(statusCode, body)
 }
 
+// bedrockErrorPayload writes the AWS JSON error envelope, the shape Bedrock
+// itself returns, so the error readers in the adapter find the message.
 func bedrockErrorPayload(err error) map[string]string {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		return map[string]string{
-			"error":   apiErr.ErrorCode(),
+			"__type":  apiErr.ErrorCode(),
 			"message": apiErr.ErrorMessage(),
 		}
 	}

@@ -111,3 +111,20 @@ func TestPurgeGatewayState_ClusterModeDeletesEveryKey(t *testing.T) {
 
 	require.Equal(t, []string{"oauth:gwclient:agw-unscoped"}, mr.Keys())
 }
+
+func TestPurgeGatewayState_ClusterClientScansEveryMaster(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := clustertest.NewCluster(mr.Addr())
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	deleted := ids.New[ids.GatewayKind]()
+	for i := 0; i < 450; i++ {
+		require.NoError(t, mr.Set("session:"+deleted.String()+":"+strconv.Itoa(i), "payload"))
+	}
+	require.NoError(t, mr.Set("oauth:gwclient:agw-unscoped", "payload"))
+
+	require.NoError(t, gatewaystate.NewPurger(rdb).PurgeGatewayState(t.Context(), deleted))
+
+	require.Equal(t, []string{"oauth:gwclient:agw-unscoped"}, mr.Keys())
+}

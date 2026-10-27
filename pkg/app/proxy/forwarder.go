@@ -265,6 +265,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	} else if short != nil {
 		return nativeShortCircuit(in.Request, short, policydomain.StagePreRequest), nil
 	}
+	if base := in.Request.NativeMask.Base(); base != nil {
+		nativeBody = base
+	}
 	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
 		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
 		if pe != nil {

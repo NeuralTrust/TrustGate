@@ -37,13 +37,13 @@ const PluginName = "token_rate_limiter"
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
-	redis    *redis.Client
+	redis    redis.UniversalClient
 	registry *adapter.Registry
 	pricing  appcatalog.PricingResolver
 	now      func() time.Time
 }
 
-func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
+func New(redisClient redis.UniversalClient, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
 	return &Plugin{redis: redisClient, registry: registry, pricing: pricing, now: time.Now}
 }
 
