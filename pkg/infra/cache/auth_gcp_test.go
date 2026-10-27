@@ -165,9 +165,35 @@ func TestGCPCredentialsProviderFailsClosed(t *testing.T) {
 	t.Run("stuck fetch times out", func(t *testing.T) {
 		source := &fakeGCPTokenSource{expires: time.Hour, release: make(chan struct{})}
 		defer close(source.release)
-		_, err := gcpToken(source, 10*time.Millisecond)
+		fetcher := &gcpTokenFetcher{tokens: source, timeout: 10 * time.Millisecond}
+		_, err := fetcher.token()
 		require.ErrorIs(t, err, errGCPTokenTimeout)
 	})
+}
+
+func TestGCPTokenFetcherRunsOneFetchWhileTheEndpointStalls(t *testing.T) {
+	source := &fakeGCPTokenSource{expires: time.Hour, release: make(chan struct{})}
+	fetcher := &gcpTokenFetcher{
+		tokens:  oauth2.ReuseTokenSourceWithExpiry(nil, source, gcpTokenRefreshMargin),
+		timeout: 5 * time.Millisecond,
+	}
+	for range 20 {
+		_, err := fetcher.token()
+		require.ErrorIs(t, err, errGCPTokenTimeout)
+	}
+	close(source.release)
+	require.Eventually(t, func() bool {
+		fetcher.mutex.Lock()
+		defer fetcher.mutex.Unlock()
+		return fetcher.pending == nil
+	}, time.Second, time.Millisecond)
+	require.Equal(t, 1, source.requests())
+
+	fetcher.timeout = time.Second
+	token, err := fetcher.token()
+	require.NoError(t, err)
+	require.Equal(t, "token-1", token)
+	require.Equal(t, 1, source.requests())
 }
 
 func TestGCPCredentialsProviderIgnoresTheConnectionDeadline(t *testing.T) {

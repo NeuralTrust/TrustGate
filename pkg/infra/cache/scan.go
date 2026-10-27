@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -32,30 +31,64 @@ var ErrStopScan = errors.New("cache: stop scan")
 // through a cluster client reaches a single node and silently misses the keys
 // of every other shard, so on a cluster each master is scanned on its own. fn
 // is never called concurrently, and keys it receives may be used with rdb.
+// On a cluster a stop or an error from fn ends the scan of every master. A
+// master whose SCAN fails does not end the others, and its error is returned
+// only when fn neither stops nor fails.
 func ScanKeys(ctx context.Context, rdb redis.UniversalClient, pattern string, count int64, fn func(ctx context.Context, keys []string) error) error {
 	cluster, ok := rdb.(*redis.ClusterClient)
 	if !ok {
 		return ignoreStop(scanNode(ctx, rdb, pattern, count, fn))
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// ForEachMaster keeps whichever error arrives first and never cancels the
+	// other masters, so the outcome is tracked here instead.
 	var (
-		mutex   sync.Mutex
-		stopped atomic.Bool
+		mutex     sync.Mutex
+		stopped   bool
+		failure   error
+		nodeError error
 	)
 	serial := func(ctx context.Context, keys []string) error {
 		mutex.Lock()
 		defer mutex.Unlock()
-		if stopped.Load() {
+		if stopped || failure != nil {
 			return ErrStopScan
 		}
 		err := fn(ctx, keys)
-		if errors.Is(err, ErrStopScan) {
-			stopped.Store(true)
+		switch {
+		case errors.Is(err, ErrStopScan):
+			stopped = true
+			cancel()
+		case err != nil:
+			failure = err
+			cancel()
 		}
 		return err
 	}
-	return ignoreStop(cluster.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
-		return scanNode(ctx, node, pattern, count, serial)
-	}))
+	err := cluster.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+		err := scanNode(ctx, node, pattern, count, serial)
+		if err != nil && !errors.Is(err, ErrStopScan) {
+			mutex.Lock()
+			if nodeError == nil && failure == nil {
+				nodeError = err
+			}
+			mutex.Unlock()
+		}
+		return err
+	})
+	mutex.Lock()
+	defer mutex.Unlock()
+	switch {
+	case stopped:
+		return nil
+	case failure != nil:
+		return failure
+	case nodeError != nil:
+		return nodeError
+	default:
+		return ignoreStop(err)
+	}
 }
 
 func scanNode(ctx context.Context, node redis.Cmdable, pattern string, count int64, fn func(ctx context.Context, keys []string) error) error {
