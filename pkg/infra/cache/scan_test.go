@@ -104,3 +104,51 @@ func TestScanKeysReturnsCallbackAndScanErrors(t *testing.T) {
 	err = cache.ScanKeys(t.Context(), rdb, "scan:*", 10, func(context.Context, []string) error { return nil })
 	require.ErrorContains(t, err, `scan "scan:*"`)
 }
+
+// twoMasterCluster returns a cluster client whose slots are split between two
+// test servers, so ForEachMaster scans both at the same time.
+func twoMasterCluster(t *testing.T) (*redis.ClusterClient, *miniredis.Miniredis, *miniredis.Miniredis) {
+	t.Helper()
+	first, second := miniredis.RunT(t), miniredis.RunT(t)
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		ClusterSlots: func(context.Context) ([]redis.ClusterSlot, error) {
+			return []redis.ClusterSlot{
+				{Start: 0, End: 8191, Nodes: []redis.ClusterNode{{Addr: first.Addr()}}},
+				{Start: 8192, End: 16383, Nodes: []redis.ClusterNode{{Addr: second.Addr()}}},
+			}, nil
+		},
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	return rdb, first, second
+}
+
+func TestScanKeysClusterStopWinsOverAFailingMaster(t *testing.T) {
+	rdb, first, second := twoMasterCluster(t)
+	require.NoError(t, second.Set("scan:found", "v"))
+	first.SetError("LOADING")
+	for range 50 {
+		found := false
+		err := cache.ScanKeys(t.Context(), rdb, "scan:*", 10, func(context.Context, []string) error {
+			found = true
+			return cache.ErrStopScan
+		})
+		require.NoError(t, err)
+		require.True(t, found)
+	}
+}
+
+func TestScanKeysClusterReturnsTheFirstCallbackError(t *testing.T) {
+	rdb, first, second := twoMasterCluster(t)
+	seedScanKeys(t, first, 30)
+	seedScanKeys(t, second, 30)
+	boom := errors.New("boom")
+	for range 50 {
+		calls := 0
+		err := cache.ScanKeys(t.Context(), rdb, "scan:*", 10, func(context.Context, []string) error {
+			calls++
+			return boom
+		})
+		require.ErrorIs(t, err, boom)
+		require.Equal(t, 1, calls)
+	}
+}

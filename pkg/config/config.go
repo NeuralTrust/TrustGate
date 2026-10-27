@@ -837,7 +837,7 @@ func getSemanticCacheConfig(redisCluster bool) SemanticCacheConfig {
 		store = defaultClusterSemanticCacheVectorStore
 	}
 	return SemanticCacheConfig{
-		VectorStore: strings.TrimSpace(getEnv("SEMANTIC_CACHE_VECTOR_STORE", store)),
+		VectorStore: strings.ToLower(strings.TrimSpace(getEnv("SEMANTIC_CACHE_VECTOR_STORE", store))),
 	}
 }
 
@@ -1550,6 +1550,11 @@ func (c *Config) validateRedis() error {
 			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
 		}
 	}
+	// Memorystore IAM authentication sends the token with no username, so a
+	// configured one would be dropped without notice.
+	if c.Redis.Login == redisLoginGCP && c.Redis.Username != "" {
+		return fmt.Errorf("%w: REDIS_USERNAME must be empty when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginGCP)
+	}
 	if c.Redis.TLSCAFile != "" {
 		if !c.Redis.TLSEnabled {
 			return fmt.Errorf("%w: REDIS_TLS_CA_FILE requires REDIS_TLS_ENABLED=true", errors.ErrInvalidConfig)
@@ -1562,7 +1567,7 @@ func (c *Config) validateRedis() error {
 		if c.Redis.DB != 0 {
 			return fmt.Errorf("%w: REDIS_DB must be 0 when REDIS_CLUSTER=true (a cluster has a single database)", errors.ErrInvalidConfig)
 		}
-		c.SemanticCache.VectorStore = strings.TrimSpace(c.SemanticCache.VectorStore)
+		c.SemanticCache.VectorStore = strings.ToLower(strings.TrimSpace(c.SemanticCache.VectorStore))
 		if c.SemanticCache.VectorStore == "" {
 			c.SemanticCache.VectorStore = defaultClusterSemanticCacheVectorStore
 		}

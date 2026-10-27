@@ -23,9 +23,10 @@ func newUniversalClient(options *redis.Options, cluster bool) redis.UniversalCli
 	return redis.NewClusterClient(clusterOptions(options))
 }
 
-// clusterOptions carries every setting the standalone options define into the
-// cluster options, which apply them to each node's client. A cluster has a
-// single database, so DB has no counterpart.
+// clusterOptions copies the standalone settings this package uses into the
+// cluster options, which apply them to each node's client. A field added to
+// redis.Options must be copied here too or it is lost in cluster mode. A cluster
+// has a single database, so DB has no counterpart.
 func clusterOptions(options *redis.Options) *redis.ClusterOptions {
 	return &redis.ClusterOptions{
 		Addrs:                      []string{options.Addr},

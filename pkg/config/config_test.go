@@ -492,6 +492,14 @@ func TestValidate_RedisGCPLogin(t *testing.T) {
 			t.Fatalf("error %v must be ErrInvalidConfig naming REDIS_TLS_ENABLED and gcp", err)
 		}
 	})
+	t.Run("rejects a username", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Redis = RedisConfig{Login: redisLoginGCP, Host: "r", Username: "default", TLSEnabled: true}
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "REDIS_USERNAME") {
+			t.Fatalf("error %v must be ErrInvalidConfig naming REDIS_USERNAME", err)
+		}
+	})
 }
 
 func TestLoadConfig_RedisUnsetKeepsStandaloneDefaults(t *testing.T) {
@@ -518,6 +526,7 @@ func TestLoadConfig_RedisCluster(t *testing.T) {
 		{name: "explicit db 0", db: "0", dbSet: true, wantDB: 0, wantStore: "in_memory"},
 		{name: "explicit non-zero db is rejected", db: "3", dbSet: true, wantErr: "REDIS_DB"},
 		{name: "explicit redis store is rejected", store: "redis", storeSet: true, wantErr: "SEMANTIC_CACHE_VECTOR_STORE"},
+		{name: "mixed-case redis store is rejected", store: " Redis ", storeSet: true, wantErr: "SEMANTIC_CACHE_VECTOR_STORE"},
 		{name: "explicit pgvector store is kept", store: "pgvector", storeSet: true, wantStore: "pgvector"},
 		{name: "explicit in_memory store is kept", store: "in_memory", storeSet: true, wantStore: "in_memory"},
 	}

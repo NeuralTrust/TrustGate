@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -65,11 +66,12 @@ func newGCPCredentialsProvider(deps redisAuthDependencies) (credentialsProvider,
 	if err != nil {
 		return nil, fmt.Errorf("load google cloud redis authentication credential: %w", err)
 	}
-	// The reuse source holds its lock across a refresh, so a burst of new pooled
-	// connections collapses into a single token request.
-	tokens := oauth2.ReuseTokenSourceWithExpiry(nil, source, gcpTokenRefreshMargin)
+	fetcher := &gcpTokenFetcher{
+		tokens:  oauth2.ReuseTokenSourceWithExpiry(nil, source, gcpTokenRefreshMargin),
+		timeout: gcpTokenFetchTimeout,
+	}
 	return func(context.Context) (string, string, error) {
-		token, err := gcpToken(tokens, gcpTokenFetchTimeout)
+		token, err := fetcher.token()
 		if err != nil {
 			return "", "", fmt.Errorf("fetch google cloud redis access token: %w", err)
 		}
@@ -77,32 +79,60 @@ func newGCPCredentialsProvider(deps redisAuthDependencies) (credentialsProvider,
 	}, nil
 }
 
-// gcpToken bounds a fetch that oauth2 offers no context for. It deliberately
-// ignores the connection's deadline: callers queue on the reuse source's lock,
-// and a deadline that started before the wait would be spent by the time they
-// reach the fetch.
-func gcpToken(tokens oauth2.TokenSource, timeout time.Duration) (string, error) {
-	type result struct {
-		token *oauth2.Token
-		err   error
+// gcpTokenFetcher bounds a fetch that oauth2 offers no context for, and runs
+// at most one fetch at a time: callers that arrive while a fetch is running
+// wait for it instead of starting their own. A caller that times out leaves
+// the fetch running, so a stalled token endpoint holds one goroutine, not one
+// per new connection.
+type gcpTokenFetcher struct {
+	tokens  oauth2.TokenSource
+	timeout time.Duration
+
+	mutex   sync.Mutex
+	pending *gcpTokenFetch
+}
+
+type gcpTokenFetch struct {
+	done  chan struct{}
+	token string
+	err   error
+}
+
+// token deliberately ignores the connection's deadline: a caller may join a
+// fetch that is already running, and a deadline that started before the
+// connection was dialed could be spent before the fetch can finish.
+func (f *gcpTokenFetcher) token() (string, error) {
+	f.mutex.Lock()
+	fetch := f.pending
+	if fetch == nil {
+		fetch = &gcpTokenFetch{done: make(chan struct{})}
+		f.pending = fetch
+		go f.run(fetch)
 	}
-	results := make(chan result, 1)
-	go func() {
-		token, err := tokens.Token()
-		results <- result{token, err}
-	}()
-	timer := time.NewTimer(timeout)
+	f.mutex.Unlock()
+
+	timer := time.NewTimer(f.timeout)
 	defer timer.Stop()
 	select {
-	case fetched := <-results:
-		if fetched.err != nil {
-			return "", fetched.err
-		}
-		if fetched.token.AccessToken == "" {
-			return "", errGCPTokenEmpty
-		}
-		return fetched.token.AccessToken, nil
+	case <-fetch.done:
+		return fetch.token, fetch.err
 	case <-timer.C:
 		return "", errGCPTokenTimeout
 	}
+}
+
+func (f *gcpTokenFetcher) run(fetch *gcpTokenFetch) {
+	token, err := f.tokens.Token()
+	switch {
+	case err != nil:
+		fetch.err = err
+	case token.AccessToken == "":
+		fetch.err = errGCPTokenEmpty
+	default:
+		fetch.token = token.AccessToken
+	}
+	f.mutex.Lock()
+	f.pending = nil
+	f.mutex.Unlock()
+	close(fetch.done)
 }
