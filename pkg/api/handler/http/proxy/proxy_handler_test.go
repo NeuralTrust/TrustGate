@@ -591,8 +591,9 @@ func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
 	const geminiFrame = `data: {"error":{"code":500,"message":"upstream stream terminated unexpectedly","status":"INTERNAL"}}`
 	const chunk = `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}`
 	paths := map[string]string{
-		"gemini": "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-		"vertex": "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"gemini":         "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex":         "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex express": "/" + consumerSlug + "/v1beta1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
 	}
 	tests := map[string]func(yield func([]byte, error) bool){
 		"mid-stream error": func(yield func([]byte, error) bool) {
