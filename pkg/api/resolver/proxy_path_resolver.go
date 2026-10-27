@@ -212,29 +212,43 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 }
 
 var (
-	vertexAPIVersions  = map[string]struct{}{"v1": {}, "v1beta1": {}}
-	vertexChatActions  = map[string]struct{}{"generateContent": {}, "streamGenerateContent": {}}
-	vertexPathSegments = []string{"", "", "projects", "", "locations", "", "publishers", "google", "models", ""}
+	vertexAPIVersions = map[string]struct{}{"v1": {}, "v1beta1": {}}
+	vertexChatActions = map[string]struct{}{"generateContent": {}, "streamGenerateContent": {}}
+	// vertexPathLayouts are the full regional path and the express-mode path,
+	// which Google SDKs send without project and location when they
+	// authenticate with an API key. The model segment is always the last one.
+	vertexPathLayouts = [][]string{
+		{"", "", "projects", "", "locations", "", "publishers", "google", "models", ""},
+		{"", "", "publishers", "google", "models", ""},
+	}
 )
 
-const (
-	vertexVersionIndex = 1
-	vertexModelIndex   = 9
-)
+const vertexVersionIndex = 1
 
 // isVertexGenerateContentPath matches
-// /{v1|v1beta1}/projects/*/locations/*/publishers/google/models/{model}:{action}.
+// /{v1|v1beta1}/projects/*/locations/*/publishers/google/models/{model}:{action}
+// and its express-mode form /{v1|v1beta1}/publishers/google/models/{model}:{action}.
 // Project and location are ignored: the upstream URL comes from the registry.
 func isVertexGenerateContentPath(rest string) bool {
 	parts := strings.Split(rest, pathSeparator)
-	if len(parts) != len(vertexPathSegments) {
+	for _, layout := range vertexPathLayouts {
+		if matchesVertexLayout(parts, layout) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesVertexLayout(parts, layout []string) bool {
+	if len(parts) != len(layout) {
 		return false
 	}
 	if _, ok := vertexAPIVersions[parts[vertexVersionIndex]]; !ok {
 		return false
 	}
-	for i, want := range vertexPathSegments {
-		if i == vertexVersionIndex || i == vertexModelIndex {
+	modelIndex := len(layout) - 1
+	for i, want := range layout {
+		if i == vertexVersionIndex || i == modelIndex {
 			continue
 		}
 		if want == "" && i > 0 && parts[i] == "" {
@@ -244,7 +258,7 @@ func isVertexGenerateContentPath(rest string) bool {
 			return false
 		}
 	}
-	model, action := adapter.SplitGeminiModelAction(parts[vertexModelIndex])
+	model, action := adapter.SplitGeminiModelAction(parts[modelIndex])
 	if model == "" {
 		return false
 	}
