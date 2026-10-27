@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -119,6 +120,24 @@ func (rb *requestBody) applyFormat(provider, sourceFormat string, mcp bool, body
 	default:
 		return &passThrough{decision: decisionSkippedFormat, reason: "unsupported_format:" + string(format)}
 	}
+}
+
+// applyNativeFormat picks the body shape of a native Bedrock call: Converse for
+// the Converse operations, and for InvokeModel the format the body is written in.
+// The prompt shapes of InvokeModel (Llama, Mistral, Titan, Cohere) embed
+// model-specific chat markup that a template cannot be placed into safely, so
+// they are returned as a passThrough.
+func (rb *requestBody) applyNativeFormat(op bedrocknative.Op, body []byte) *passThrough {
+	rb.native = body
+	format := adapter.FormatBedrock
+	if !op.IsConverse() {
+		f, shape, ok := adapter.BedrockInvokeRequestFormat(body)
+		if !ok {
+			return &passThrough{decision: decisionSkippedShape, reason: "unsupported_native_shape:" + shape}
+		}
+		format = f
+	}
+	return rb.applyFormat("", string(format), false, body)
 }
 
 func (rb *requestBody) vetoResponses(f adapter.Format, body []byte) *passThrough {
