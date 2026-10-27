@@ -89,6 +89,10 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.Cfg.Redis.Cluster {
+		p.Logger.Info("semantic cache does not use Redis in cluster mode",
+			slog.String("vector_store", p.Cfg.SemanticCache.VectorStore))
+	}
 
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),

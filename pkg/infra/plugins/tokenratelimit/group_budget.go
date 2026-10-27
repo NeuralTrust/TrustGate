@@ -79,7 +79,7 @@ type GroupBudget struct {
 // NewGroupBudget returns the stage over the token_rate_limiter's counter
 // store, response decoders and pricing. notifier may be nil: limits are still
 // enforced, and nobody is told.
-func NewGroupBudget(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver, notifier keygroupdomain.Notifier, logger *slog.Logger) *GroupBudget {
+func NewGroupBudget(redisClient redis.UniversalClient, registry *adapter.Registry, pricing appcatalog.PricingResolver, notifier keygroupdomain.Notifier, logger *slog.Logger) *GroupBudget {
 	if logger == nil {
 		logger = slog.Default()
 	}

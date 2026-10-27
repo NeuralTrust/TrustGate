@@ -120,7 +120,7 @@ func TestSyncClientFirstCallSucceedsAfterASlowBackgroundDial(t *testing.T) {
 			return conn, err
 		},
 	}
-	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, syncTimeout))}
+	c := &SyncClient{UniversalClient: redis.NewClient(buildSyncOptions(options, syncTimeout, syncTimeout))}
 	t.Cleanup(func() { _ = c.Close() })
 
 	select { // the first tick comes after the warm-up dial
@@ -173,7 +173,7 @@ func TestSyncClientSlowFirstReadFitsTheColdReadBudget(t *testing.T) {
 			return &slowFirstRead{Conn: conn, delay: slowRead}, nil
 		},
 	}
-	c := &SyncClient{Client: redis.NewClient(buildSyncOptions(options, syncTimeout, coldRead))}
+	c := &SyncClient{UniversalClient: redis.NewClient(buildSyncOptions(options, syncTimeout, coldRead))}
 	t.Cleanup(func() { _ = c.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), coldRead)
