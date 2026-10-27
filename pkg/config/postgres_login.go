@@ -34,13 +34,18 @@ const (
 	PostgresLoginAWS PostgresLogin = "aws"
 	// PostgresLoginAzure authenticates with a short-lived Microsoft Entra ID token.
 	PostgresLoginAzure PostgresLogin = "azure"
+	// PostgresLoginGCP authenticates with a short-lived Google Cloud IAM token
+	// (Cloud SQL or AlloyDB).
+	PostgresLoginGCP PostgresLogin = "gcp"
 )
 
 // DefaultAzureScope is the Entra ID scope for Azure Database for PostgreSQL in
 // the public cloud. Sovereign clouds use a different one, hence DB_AZURE_SCOPE.
 const DefaultAzureScope = "https://ossrdbms-aad.database.windows.net/.default"
 
-var postgresLogins = []PostgresLogin{PostgresLoginDefault, PostgresLoginAWS, PostgresLoginAzure}
+const gcpServiceAccountSuffix = ".gserviceaccount.com"
+
+var postgresLogins = []PostgresLogin{PostgresLoginDefault, PostgresLoginAWS, PostgresLoginAzure, PostgresLoginGCP}
 
 // ParsePostgresLogin normalizes raw and rejects any value outside the supported
 // set. An empty value selects PostgresLoginDefault.
