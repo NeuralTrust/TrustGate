@@ -524,3 +524,202 @@ func TestLive_PromptCache_UsageFold(t *testing.T) {
 		})
 	}
 }
+
+// liveThinking is the thinking option for BEDROCK_LIVE_THINKING_MODELS:
+// BEDROCK_LIVE_THINKING=adaptive for models that only take adaptive thinking
+// (Claude 5), with the highest effort so the model does think, and enabled
+// with a budget otherwise.
+func liveThinking() string {
+	if os.Getenv("BEDROCK_LIVE_THINKING") == "adaptive" {
+		return `{"type": "adaptive"}, "output_config": {"effort": "max"}`
+	}
+	return `{"type": "enabled", "budget_tokens": 1024}`
+}
+
+const liveWeatherTool = `{"name": "get_weather", "description": "Current weather for a city.",
+	"input_schema": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}`
+
+type anthropicLiveBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  *string         `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+}
+
+// anthropicTurn runs one Anthropic Messages request through the proxy path
+// with thinking on, buffered or streamed, and returns the assistant content
+// as the client would hold it.
+func anthropicTurn(t *testing.T, model, messages string, stream bool) []anthropicLiveBlock {
+	t.Helper()
+	reg := adapter.NewRegistry()
+	wire, err := reg.AdaptRequest([]byte(`{"model": "ignored-by-config", "max_tokens": 4096,
+		"thinking": `+liveThinking()+`, "tools": [`+liveWeatherTool+`], "messages": `+messages+`}`),
+		adapter.FormatAnthropic, adapter.FormatBedrock)
+	require.NoError(t, err)
+
+	if !stream {
+		raw, err := NewBedrockClient().Completions(liveContext(t), liveConfig(model), wire)
+		require.NoError(t, err, "Bedrock rejected the Converse body: %s", wire)
+		out, err := reg.AdaptResponse(raw, adapter.FormatAnthropic, adapter.FormatBedrock)
+		require.NoError(t, err)
+		var resp struct {
+			Content []anthropicLiveBlock `json:"content"`
+		}
+		require.NoError(t, json.Unmarshal(out, &resp))
+		return resp.Content
+	}
+
+	seq, err := NewBedrockClient().CompletionsStream(liveContext(t), liveConfig(model), wire)
+	require.NoError(t, err, "Bedrock rejected the Converse body: %s", wire)
+	enc := adapter.NewAnthropicStreamEncoder(adapter.FormatBedrock).EmitSignedReasoning()
+	var sse [][]byte
+	var finish *adapter.CanonicalStreamChunk
+	for line, streamErr := range seq {
+		require.NoError(t, streamErr)
+		payload := bytes.TrimPrefix(bytes.TrimSpace(line), []byte("data: "))
+		if len(payload) == 0 {
+			continue
+		}
+		chunk, err := reg.DecodeStreamChunkFor(payload, adapter.FormatBedrock)
+		require.NoError(t, err)
+		if chunk == nil {
+			continue
+		}
+		if chunk.FinishReason != "" {
+			finish = chunk
+			continue
+		}
+		sse = append(sse, enc.Content(chunk)...)
+	}
+	require.NotNil(t, finish)
+	sse = append(sse, enc.Finish(finish)...)
+	return anthropicBlocksFromSSE(t, sse)
+}
+
+func anthropicBlocksFromSSE(t *testing.T, lines [][]byte) []anthropicLiveBlock {
+	t.Helper()
+	var blocks []anthropicLiveBlock
+	var inputs []strings.Builder
+	for _, line := range lines {
+		payload, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data: "))
+		if !ok {
+			continue
+		}
+		var ev struct {
+			Type         string             `json:"type"`
+			Index        int                `json:"index"`
+			ContentBlock anthropicLiveBlock `json:"content_block"`
+			Delta        struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				Thinking    string `json:"thinking"`
+				Signature   string `json:"signature"`
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &ev), "%s", payload)
+		switch ev.Type {
+		case "content_block_start":
+			require.Equal(t, len(blocks), ev.Index)
+			blocks = append(blocks, ev.ContentBlock)
+			inputs = append(inputs, strings.Builder{})
+		case "content_block_delta":
+			b := &blocks[ev.Index]
+			switch ev.Delta.Type {
+			case "text_delta":
+				b.Text += ev.Delta.Text
+			case "thinking_delta":
+				thinking := *b.Thinking + ev.Delta.Thinking
+				b.Thinking = &thinking
+			case "signature_delta":
+				b.Signature = ev.Delta.Signature
+			case "input_json_delta":
+				inputs[ev.Index].WriteString(ev.Delta.PartialJSON)
+			}
+		}
+	}
+	for i := range blocks {
+		if blocks[i].Type == "tool_use" && inputs[i].Len() > 0 {
+			blocks[i].Input = json.RawMessage(inputs[i].String())
+		}
+	}
+	return blocks
+}
+
+// TestLive_AnthropicThinking_ToolLoop runs a tool loop with thinking and sends
+// turn 1's content back exactly as the client got it, signatures included.
+func TestLive_AnthropicThinking_ToolLoop(t *testing.T) {
+	for _, model := range liveModelsFrom(t, "BEDROCK_LIVE_THINKING_MODELS") {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", model, stream), func(t *testing.T) {
+				first := `[{"role": "user", "content": "What is the weather in Madrid? Use the tool."}]`
+				turn1 := anthropicTurn(t, model, first, stream)
+
+				var toolID string
+				for _, b := range turn1 {
+					switch b.Type {
+					case "thinking":
+						require.NotNil(t, b.Thinking, "a thinking block always carries its text field")
+						assert.NotEmpty(t, b.Signature, "a thinking block comes back signed")
+					case "tool_use":
+						toolID = b.ID
+					}
+				}
+				t.Logf("turn 1 blocks: %s", liveBlockTypes(turn1))
+				require.NotEmpty(t, toolID, "the model called the tool")
+
+				assistant, err := json.Marshal(turn1)
+				require.NoError(t, err)
+				second := `[{"role": "user", "content": "What is the weather in Madrid? Use the tool."},
+					{"role": "assistant", "content": ` + string(assistant) + `},
+					{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "` + toolID + `", "content": "22C, sunny"}]}]`
+				turn2 := anthropicTurn(t, model, second, stream)
+				t.Logf("turn 2 blocks: %s", liveBlockTypes(turn2))
+				var answer string
+				for _, b := range turn2 {
+					answer += b.Text
+				}
+				assert.Contains(t, answer, "22")
+			})
+		}
+	}
+}
+
+// TestLive_AnthropicThinking_RedactedRoundTrip asks for a redacted thinking
+// block with the test string Anthropic documents and sends the turn back. A
+// model that ignores the string still returns a signed block, sent back the
+// same way.
+func TestLive_AnthropicThinking_RedactedRoundTrip(t *testing.T) {
+	const trigger = "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+	for _, model := range liveModelsFrom(t, "BEDROCK_LIVE_THINKING_MODELS") {
+		t.Run(model, func(t *testing.T) {
+			turn1 := anthropicTurn(t, model, `[{"role": "user", "content": "`+trigger+` Is 17 prime?"}]`, false)
+			t.Logf("turn 1 blocks: %s", liveBlockTypes(turn1))
+			reasoning := false
+			for _, b := range turn1 {
+				reasoning = reasoning || b.Type == "redacted_thinking" || b.Type == "thinking"
+			}
+			if !reasoning {
+				t.Skip("the model returned no reasoning block")
+			}
+			assistant, err := json.Marshal(turn1)
+			require.NoError(t, err)
+			turn2 := anthropicTurn(t, model, `[{"role": "user", "content": "`+trigger+` Is 17 prime?"},
+				{"role": "assistant", "content": `+string(assistant)+`},
+				{"role": "user", "content": "And 21?"}]`, false)
+			t.Logf("turn 2 blocks: %s", liveBlockTypes(turn2))
+		})
+	}
+}
+
+func liveBlockTypes(blocks []anthropicLiveBlock) string {
+	types := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		types = append(types, b.Type)
+	}
+	return strings.Join(types, ",")
+}

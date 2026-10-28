@@ -24,7 +24,11 @@ import (
 // converseAnthropicOnlyFields are the additionalModelRequestFields keys the
 // Converse encoder writes for an Anthropic client, in the spelling only Claude
 // models take.
-var converseAnthropicOnlyFields = []string{"top_k"}
+var converseAnthropicOnlyFields = []string{"top_k", "thinking", "output_config"}
+
+// ConverseReasoningFields are the additionalModelRequestFields keys that turn
+// on or steer Claude's reasoning.
+var ConverseReasoningFields = []string{"thinking", "output_config"}
 
 // AnthropicFieldsUnsupportedError reports Anthropic options sent to a Bedrock
 // model of another family.
@@ -156,9 +160,9 @@ func withoutToolStrict(toolConfig json.RawMessage) (json.RawMessage, bool, error
 var (
 	anthropicConverseMapped = []string{
 		"model", "system", "messages", "max_tokens", "temperature", "top_p", "top_k",
-		"stream", "stop_sequences", "tools", "tool_choice", "cache_control", "output_config",
+		"stream", "stop_sequences", "tools", "tool_choice", "cache_control", "output_config", "thinking",
 	}
-	anthropicOutputConfigMapped = []string{"format"}
+	anthropicOutputConfigMapped = []string{"format", "effort"}
 )
 
 // AnthropicKeysUnmappedOnConverse lists, sorted, the keys of an Anthropic
@@ -186,4 +190,87 @@ func AnthropicKeysUnmappedOnConverse(body []byte) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// DropConverseAdditionalFields removes keys from the
+// additionalModelRequestFields of a Converse body and returns the ones it
+// found.
+func DropConverseAdditionalFields(body []byte, keys ...string) ([]byte, []string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body, nil, nil
+	}
+	additional, ok := raw["additionalModelRequestFields"]
+	if !ok {
+		return body, nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(additional, &fields); err != nil {
+		return body, nil, nil
+	}
+	var dropped []string
+	for _, key := range keys {
+		if _, ok := fields[key]; ok {
+			delete(fields, key)
+			dropped = append(dropped, key)
+		}
+	}
+	if len(dropped) == 0 {
+		return body, nil, nil
+	}
+	if len(fields) == 0 {
+		delete(raw, "additionalModelRequestFields")
+	} else {
+		encoded, err := json.Marshal(fields)
+		if err != nil {
+			return body, nil, err
+		}
+		raw["additionalModelRequestFields"] = encoded
+	}
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body, nil, err
+	}
+	return out, dropped, nil
+}
+
+// StripConverseReasoningHistory removes the reasoning blocks of earlier
+// assistant turns from a Converse body. A turn left empty is dropped and its
+// neighbours merged, as Converse requires alternating, non-empty turns. It
+// reports whether a block was removed.
+func StripConverseReasoningHistory(body []byte) ([]byte, bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body, false, nil
+	}
+	var msgs []ConverseMessage
+	if err := json.Unmarshal(raw["messages"], &msgs); err != nil {
+		return body, false, nil
+	}
+	stripped := false
+	out := make([]ConverseMessage, 0, len(msgs))
+	for _, m := range msgs {
+		kept := m.Content[:0:0]
+		for _, b := range m.Content {
+			if b.ReasoningContent != nil {
+				stripped = true
+				continue
+			}
+			kept = append(kept, b)
+		}
+		out = appendConverseMessage(out, ConverseMessage{Role: m.Role, Content: kept})
+	}
+	if !stripped {
+		return body, false, nil
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return body, false, err
+	}
+	raw["messages"] = encoded
+	result, err := json.Marshal(raw)
+	if err != nil {
+		return body, false, err
+	}
+	return result, true, nil
 }

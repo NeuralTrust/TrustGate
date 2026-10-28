@@ -870,3 +870,26 @@ func TestDecodeConverseBody_WithoutOutputOptions(t *testing.T) {
 	assert.Nil(t, params.input("m").OutputConfig)
 	assert.Nil(t, params.input("m").AdditionalModelRequestFields)
 }
+
+func TestConverseParams_WithAnthropicBetas(t *testing.T) {
+	params, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":[{"text":"hi"}]}],
+		"additionalModelRequestFields":{"thinking":{"type":"adaptive"}}}`))
+	require.NoError(t, err)
+
+	params.withAnthropicBetas("")
+	raw, err := params.input("m").AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"thinking":{"type":"adaptive"}}`, string(raw))
+
+	params.withAnthropicBetas("interleaved-thinking-2025-05-14,context-1m-2025-08-07")
+	raw, err = params.streamInput("m").AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"thinking":{"type":"adaptive"},"anthropic_beta":["interleaved-thinking-2025-05-14","context-1m-2025-08-07"]}`, string(raw))
+
+	bare, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+	require.NoError(t, err)
+	bare.withAnthropicBetas("context-1m-2025-08-07")
+	raw, err = bare.input("m").AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"anthropic_beta":["context-1m-2025-08-07"]}`, string(raw))
+}
