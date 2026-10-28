@@ -410,6 +410,12 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(cfg *config.Config) *oauthhttp.ClientMetadataHandler {
+		return oauthhttp.NewClientMetadataHandler(cfg.Server.MCPOAuthPublicBaseURL,
+			infraoauth.RegisteredClientName(cfg.Server.MCPOAuthClientName))
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
 		return err
 	}
