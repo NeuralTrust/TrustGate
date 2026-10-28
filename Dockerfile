@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27.3-trixie@sha256:290a54a1f70d617560f843301bcb32b339f1687e8e0bff49ebc043903aeb19d8 AS builder
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS builder
 
 WORKDIR /build
 
