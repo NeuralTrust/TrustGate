@@ -58,6 +58,9 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/projects/p/locations/europe-west1/publishers/google/models/gemini-2.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-2.5-flash:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1/publishers/google/models/gemini-2.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1beta1/publishers/google/models/gemini-3.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1beta1/publishers/google/models/gemini-3.5-flash:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
 	for _, tc := range cases {
 		route, err := ResolveProxyPath(tc.path)
@@ -127,6 +130,7 @@ func TestGeminiModelFromPath(t *testing.T) {
 		"/v1beta/models/:generateContent":                                                                       "",
 		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":                  "gemini-2.5-flash",
 		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent":    "gemini-2.5-pro",
+		"/slug/v1beta1/publishers/google/models/gemini-3.5-flash:generateContent":                               "gemini-3.5-flash",
 		"/v1/chat/completions":                                                                                  "",
 		"/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent":                                               "eu.amazon.nova-lite-v1:0",
 		"/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent":                                 "mistral.mistral-7b-instruct-v0:2",
@@ -147,6 +151,7 @@ func TestResolveProxyPathKeepsColonsInGeminiModelIDs(t *testing.T) {
 		"/slug/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent",
 		"/slug/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent",
 		"/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0:generateContent",
+		"/slug/v1/publishers/google/models/eu.amazon.nova-lite-v1:0:generateContent",
 	} {
 		route, err := ResolveProxyPath(path)
 		if err != nil {
@@ -202,6 +207,17 @@ func TestResolveProxyPathRejectsMalformedVertexPaths(t *testing.T) {
 		"/slug/v2/projects/p/locations/r/publishers/google/models/gemini-pro:generateContent",
 		"/slug/v1/projects/p/regions/r/publishers/google/models/gemini-pro:generateContent",
 		"/slug/v1/projects/p/locations/r/extra/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/publishers/google/models/:generateContent",
+		"/slug/v1/publishers/google/models/gemini-pro",
+		"/slug/v1/publishers/google/models/gemini-pro:countTokens",
+		"/slug/v1/publishers/google/models/eu.amazon.nova-lite-v1:0",
+		"/slug/v1/publishers/anthropic/models/claude:rawPredict",
+		"/slug/v1/publishers/anthropic/models/claude:generateContent",
+		"/slug/v2/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1beta/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/locations/r/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/publishers/google/gemini-pro:generateContent",
+		"/slug/v1/publishers/google/models/gemini-pro:generateContent/extra",
 	}
 	for _, path := range paths {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
