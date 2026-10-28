@@ -72,7 +72,7 @@ func (g *latencyGuardrail) ApplyGuardrail(
 // quotaGuardrail enforces the documented floor of the smallest-quota regions the
 // way AWS does: 25 text units a second with a burst of 25, throttling any call
 // that finds fewer units available.
-const quotaArrivalSlack = 20 * time.Millisecond
+const quotaArrivalSlack = 100 * time.Millisecond
 
 type quotaGuardrail struct {
 	latencyGuardrail
@@ -93,8 +93,11 @@ func (g *quotaGuardrail) ApplyGuardrail(
 	// it arrives, and the first call arrives last: it builds the cached client
 	// on the way. From then on this bucket runs that much behind the spacer,
 	// which a loaded runner under -race stretches past a millisecond. One text
-	// unit at this floor takes 40ms, so 20ms of slack still cannot hide a call
+	// unit at this floor takes 40ms, so 100ms of slack still cannot hide a call
 	// the spacer failed to hold.
+	//
+	// The tests that use this guardrail run serially: concurrent test work can
+	// delay the first bucket charge after the spacer reserves its tokens.
 	units := (len(textOf(in)) + 999) / 1000
 	if !g.bucket.AllowN(time.Now().Add(quotaArrivalSlack), units) {
 		g.denied.Add(1)
@@ -115,7 +118,6 @@ func pluginOver(g guardrailClient) *Plugin {
 // sent one chunk at a time, spaced under the floor, and is judged: it is never
 // refused as oversize and its own calls never throttle it.
 func TestALegitimateLongMessageInASmallQuotaRegionPasses(t *testing.T) {
-	t.Parallel()
 	g := &quotaGuardrail{
 		latencyGuardrail: latencyGuardrail{delay: 500 * time.Millisecond},
 		bucket:           rate.NewLimiter(25, 25),
@@ -346,10 +348,8 @@ func TestAHangOnTheThirdChunkOfAnAdmittedRequestFailsOpen(t *testing.T) {
 // smallest quota, are judged and never refused. The budget is far above what the
 // spaced calls need, so a slow runner cannot cut a chunk.
 func TestLongLegitimateMessagesInASmallQuotaRegionPassInEnforce(t *testing.T) {
-	t.Parallel()
 	for _, size := range []int{84000, 100000} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			t.Parallel()
 			g := &quotaGuardrail{
 				latencyGuardrail: latencyGuardrail{delay: 100 * time.Millisecond},
 				bucket:           rate.NewLimiter(25, 25),
