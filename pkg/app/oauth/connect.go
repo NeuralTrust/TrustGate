@@ -613,7 +613,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	if identity, ok := connectAuditIdentity(&st.Ticket); ok {
-		s.auditor.ProviderLinked(ctx, identity, cfg.Provider)
+		s.auditor.ProviderLinked(ctx, identity, cfg.Provider, st.Ticket.InstanceID)
 	}
 	return st.TicketID, nil
 }

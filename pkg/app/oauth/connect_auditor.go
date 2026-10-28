@@ -34,7 +34,7 @@ type ConnectAuditIdentity struct {
 //go:generate mockery --name=ConnectAuditor --dir=. --output=./mocks --filename=oauth_connect_auditor_mock.go --case=underscore --with-expecter
 type ConnectAuditor interface {
 	TicketCreated(ctx context.Context, identity ConnectAuditIdentity)
-	ProviderLinked(ctx context.Context, identity ConnectAuditIdentity, providerID string)
+	ProviderLinked(ctx context.Context, identity ConnectAuditIdentity, providerID, instanceID string)
 	ProviderUnlinked(ctx context.Context, identity ConnectAuditIdentity, providerID string)
 }
 
@@ -53,9 +53,12 @@ func (a *connectAuditor) TicketCreated(ctx context.Context, identity ConnectAudi
 func (a *connectAuditor) ProviderLinked(
 	ctx context.Context,
 	identity ConnectAuditIdentity,
-	providerID string,
+	providerID, instanceID string,
 ) {
-	a.log(ctx, connectAuditProviderLinked, identity, slog.String("provider_id", providerID))
+	a.log(ctx, connectAuditProviderLinked, identity,
+		slog.String("provider_id", providerID),
+		slog.String("instance_id", instanceID),
+	)
 }
 
 func (a *connectAuditor) ProviderUnlinked(
