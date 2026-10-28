@@ -136,6 +136,7 @@ func (r *CanonicalRequest) Clone() *CanonicalRequest {
 		m.Images = slices.Clone(m.Images)
 		m.ToolCalls = slices.Clone(m.ToolCalls)
 		m.Cache = cloneBreakpoint(m.Cache)
+		m.Thinking = slices.Clone(m.Thinking)
 	}
 	c.Tools = slices.Clone(r.Tools)
 	for i := range c.Tools {

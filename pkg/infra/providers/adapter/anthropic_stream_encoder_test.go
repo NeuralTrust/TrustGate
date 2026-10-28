@@ -178,3 +178,51 @@ func TestAnthropicStreamEncoder_EndsOnce(t *testing.T) {
 	assert.Empty(t, e.Abort("again"))
 	assert.Empty(t, e.Content(&CanonicalStreamChunk{Delta: "more"}))
 }
+
+func TestAnthropicStreamEncoder_SignedReasoningFromConverse(t *testing.T) {
+	e := NewAnthropicStreamEncoder(FormatBedrock).EmitSignedReasoning()
+	var out bytes.Buffer
+	for _, chunk := range []*CanonicalStreamChunk{
+		{Role: "assistant"},
+		{ReasoningDelta: "17 has "},
+		{ReasoningDelta: "no divisors"},
+		{ReasoningSignature: "sig-1"},
+		{RedactedReasoning: []byte("opaque")},
+		{Delta: "Yes."},
+	} {
+		out.Write(bytes.Join(e.Content(chunk), nil))
+	}
+	out.Write(bytes.Join(e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}), nil))
+	stream := out.String()
+
+	for _, want := range []string{
+		`"index":0,"content_block":{"type":"thinking","thinking":"","signature":""}`,
+		`"index":0,"delta":{"type":"thinking_delta","thinking":"17 has "}`,
+		`"index":0,"delta":{"type":"thinking_delta","thinking":"no divisors"}`,
+		`"index":0,"delta":{"type":"signature_delta","signature":"sig-1"}`,
+		`"type":"content_block_stop","index":0`,
+		`"index":1,"content_block":{"type":"redacted_thinking","data":"b3BhcXVl"}`,
+		`"type":"content_block_stop","index":1`,
+		`"index":2,"delta":{"type":"text_delta","text":"Yes."}`,
+	} {
+		assert.Contains(t, stream, want)
+	}
+	order := []string{"thinking_delta", "signature_delta", `"redacted_thinking"`, "text_delta", `"stop_reason":"end_turn"`}
+	last := -1
+	for _, marker := range order {
+		at := strings.Index(stream, marker)
+		require.Greater(t, at, last, "%s out of order", marker)
+		last = at
+	}
+}
+
+func TestAnthropicStreamEncoder_ReasoningStaysHiddenByDefault(t *testing.T) {
+	e := NewAnthropicStreamEncoder(FormatBedrock)
+	lines := e.Content(&CanonicalStreamChunk{Role: "assistant"})
+	lines = append(lines, e.Content(&CanonicalStreamChunk{ReasoningDelta: "thinking out loud"})...)
+	lines = append(lines, e.Content(&CanonicalStreamChunk{Delta: "Yes."})...)
+
+	stream := string(bytes.Join(lines, nil))
+	assert.NotContains(t, stream, "thinking")
+	assert.Contains(t, stream, `"index":0,"delta":{"type":"text_delta","text":"Yes."}`)
+}
