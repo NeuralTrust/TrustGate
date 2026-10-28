@@ -122,6 +122,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if !supportedFormat(format) {
 		return p.skip(in, cfg, decisionSkippedFormat), nil
 	}
+	// Most requests hold nothing to compress; one pass over the raw body
+	// settles that before the guards and the decode parse it in full.
+	if !mayCompress(in.Request.Body, cfg) {
+		return p.decide(in, cfg, false, nil), nil
+	}
 	// The canonical round-trip is lossy for shapes it does not model
 	// (multimodal parts, cache_control annotations, unmodeled fields). A
 	// request that might lose data on re-encode is never touched.
