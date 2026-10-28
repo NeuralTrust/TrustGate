@@ -30,6 +30,7 @@ const (
 	MetricsWorkersStopped      = "✅ metrics workers stopped"
 	TrafficLabelsStarted       = "🏷️  traffic labels started"
 	TrafficLabelsStopped       = "✅ traffic labels stopped"
+	UsageRecordsEnabled        = "🧾 usage records enabled"
 )
 
 func rolePrefix(name string) string {

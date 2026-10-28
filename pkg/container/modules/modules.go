@@ -21,11 +21,20 @@ func All(plane string, dbless bool) []container.Option {
 		return dataPlaneModules()
 	}
 	opts := fullModules()
-	return append(opts, container.WithModule(adminReadiness(plane)))
+	return append(opts, container.WithModule(adminReadiness(plane)), container.WithModule(usageForPlane(plane)))
 }
 
+// Plane names, as the binary's first argument gives them.
+const (
+	PlaneAdmin  = "admin"
+	PlaneProxy  = "proxy"
+	PlaneMCP    = "mcp"
+	PlaneRun    = "run"
+	PlaneWorker = "worker"
+)
+
 func isDataPlane(plane string) bool {
-	return plane == "proxy" || plane == "mcp" || plane == "worker"
+	return plane == PlaneProxy || plane == PlaneMCP || plane == PlaneWorker
 }
 
 func fullModules() []container.Option {
@@ -36,6 +45,7 @@ func fullModules() []container.Option {
 		container.WithModule(CacheEvents),
 		container.WithModule(Session),
 		container.WithModule(Telemetry),
+		container.WithModule(UsageRecords),
 		container.WithModule(Auth),
 		container.WithModule(KeyGroups),
 		container.WithModule(Policy),
@@ -55,6 +65,7 @@ func fullModules() []container.Option {
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(Usage),
 		container.WithModule(ControlConfigSync),
 	}
 }
@@ -67,6 +78,7 @@ func dataPlaneModules() []container.Option {
 		container.WithModule(CacheEvents),
 		container.WithModule(Session),
 		container.WithModule(Telemetry),
+		container.WithModule(UsageRecords),
 		container.WithModule(Plugins),
 		container.WithModule(LoadBalancer),
 		container.WithModule(Providers),

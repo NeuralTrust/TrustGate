@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"google.golang.org/grpc"
@@ -96,6 +97,7 @@ func dialClient(t *testing.T, lis *bufconn.Listener, instanceID string) *Client 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		recvLimit(config.ConfigSyncConfig{}.MaxRecvBytes()),
 	)
 	if err != nil {
 		t.Fatalf("dial: %v", err)

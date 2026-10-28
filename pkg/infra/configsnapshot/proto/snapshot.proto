@@ -61,6 +61,12 @@ message Snapshot {
   // unknown fields) and holds no group to a budget until it runs a build that
   // reads the field.
   repeated KeyGroupBudget key_group_budgets = 16;
+  // usage_enforcement is true when the control plane enforces Usage System
+  // states: the data plane then blocks exhausted tenants and is not ready until
+  // it has received the list of them. False (the default, omitted on the wire)
+  // keeps the snapshot bytes and version identical to a control plane without
+  // the feature.
+  bool usage_enforcement = 17;
 }
 
 // KeyGroupBudget is one directory group's budget on a gateway

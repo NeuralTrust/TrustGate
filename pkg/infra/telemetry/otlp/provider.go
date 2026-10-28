@@ -101,7 +101,9 @@ func newGRPCExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 		}
 		return otlploggrpc.New(ctx, append(opts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(tlsCfg)))...)
 	}
-	if len(s.Headers) > 0 {
+	if s.ownHeaders {
+		opts = append(opts, otlploggrpc.WithHeaders(nonNilHeaders(s.Headers)))
+	} else if len(s.Headers) > 0 {
 		opts = append(opts, otlploggrpc.WithHeaders(s.Headers))
 	}
 	if s.Compression == compressionGzip {
@@ -130,7 +132,7 @@ func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 			opts = append(opts, otlploghttp.WithURLPath(path))
 		}
 	}
-	if s.guarded {
+	if s.guarded || s.ownHeaders {
 		opts = append(opts, otlploghttp.WithHeaders(nonNilHeaders(s.Headers)))
 	} else if len(s.Headers) > 0 {
 		opts = append(opts, otlploghttp.WithHeaders(s.Headers))

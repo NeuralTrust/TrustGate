@@ -43,11 +43,11 @@ func TestMetricsUsesTrustedIngressIP(t *testing.T) {
 			c := app.AcquireCtx(raw)
 			defer app.ReleaseCtx(c)
 			if protocol == "llm" {
-				m := NewMetricsMiddleware(nil, cfg)
+				m := NewMetricsMiddleware(nil, nil, cfg)
 				require.Equal(t, "203.0.113.42", m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).IP)
 				require.Equal(t, "203.0.113.42", m.buildRequestContext(c, "gw").IP)
 			} else {
-				m := NewMCPMetricsMiddleware(nil, cfg)
+				m := NewMCPMetricsMiddleware(nil, nil, cfg)
 				require.Equal(t, "203.0.113.42", m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).IP)
 				require.Equal(t, "203.0.113.42", m.buildRequestContext(c, "gw").IP)
 			}
@@ -113,9 +113,9 @@ func TestMetricsDelayedCompletionSurvivesRequestReuse(t *testing.T) {
 			app := fiber.New()
 			app.Get("/healthz", func(c *fiber.Ctx) error { return c.SendString("healthy") })
 			if protocol == "llm" {
-				app.Use(NewMetricsMiddleware(worker, cfg).Middleware())
+				app.Use(NewMetricsMiddleware(worker, nil, cfg).Middleware())
 			} else {
-				app.Use(NewMCPMetricsMiddleware(worker, cfg).Middleware())
+				app.Use(NewMCPMetricsMiddleware(worker, nil, cfg).Middleware())
 			}
 			var pending *trace.RequestTrace
 			app.Post("/*", func(c *fiber.Ctx) error {
@@ -155,7 +155,7 @@ func TestStreamFinalizerOwnsOutputUntilAsyncCompletion(t *testing.T) {
 	rt.AddAsync()
 	output := []byte("data: original")
 	headers := map[string][]string{"Content-Type": {"text/event-stream"}}
-	m := &MetricsMiddleware{worker: worker}
+	m := &MetricsMiddleware{worker: worker, telemetryEnabled: true}
 	m.streamFinalizer(rt, time.Now(), "gw", nil)(&infracontext.RequestContext{}, output, 200, headers)
 	for i := range output {
 		output[i] = 'x'
@@ -183,7 +183,7 @@ func TestMetricsTraceMetadataCarriesOnlyTheEffectiveSessionID(t *testing.T) {
 			if tc.session != nil {
 				c.SetUserContext(infracontext.WithSession(c.UserContext(), *tc.session))
 			}
-			m := NewMetricsMiddleware(nil, &config.Config{})
+			m := NewMetricsMiddleware(nil, nil, &config.Config{})
 			require.Equal(t, tc.want, m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).SessionID)
 		})
 	}

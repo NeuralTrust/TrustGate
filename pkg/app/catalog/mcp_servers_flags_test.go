@@ -85,7 +85,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 201, "the seed grew or shrank; re-audit the flags")
 
 	self := 0
 	for _, s := range servers {
@@ -137,7 +137,9 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// Each one needs a non-secret URL variable the admin sets, one registry
 	// row per value.
 	// 100 after Enginy joined as a self-service DCR server.
-	require.Equal(t, 100, self, "self_service count changed")
+	// 101 after Aircall joined, self-service through a client ID metadata
+	// document (it has no DCR).
+	require.Equal(t, 101, self, "self_service count changed")
 }
 
 // requiredNonSecretURLVariable reports a host, path or other placeholder an

@@ -2114,7 +2114,9 @@ func TestHandleStore_TrafficLabelingDoesNotSeeStoreRequests(t *testing.T) {
 	gw, err := gatewaydomain.New("acme")
 	require.NoError(t, err)
 	gw.TrafficLabeling = &trafficlabel.Config{Enabled: true, RegistryID: ids.New[ids.RegistryKind]().String(), Model: "gpt-4o-mini"}
-	labels := middleware.NewTrafficLabelsMiddleware(labelmocks.NewIntake(t), labelmocks.NewRecorder(t), &config.Config{})
+	labelsCfg := &config.Config{}
+	labelsCfg.Telemetry.Enabled = true
+	labels := middleware.NewTrafficLabelsMiddleware(labelmocks.NewIntake(t), labelmocks.NewRecorder(t), labelsCfg)
 	withGateway := func(c *fiber.Ctx) error {
 		c.SetUserContext(appgateway.WithGateway(c.UserContext(), gw))
 		return c.Next()

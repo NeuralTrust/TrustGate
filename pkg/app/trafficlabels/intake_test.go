@@ -85,6 +85,7 @@ func consumerLabelSets() []trafficlabel.LabelSet {
 func candidate(cfg *trafficlabel.Config) Candidate {
 	return Candidate{
 		GatewayID:    "gw-1",
+		TenantID:     "tenant-1",
 		ConsumerID:   "consumer-1",
 		TraceID:      "trace-1",
 		SourceFormat: adapter.FormatOpenAI,
@@ -125,6 +126,7 @@ func TestIntake_EnqueuesTheBuiltRequest(t *testing.T) {
 
 	assert.Equal(t, "gw-1", req.GatewayID)
 	assert.Equal(t, "consumer-1", req.ConsumerID)
+	assert.Equal(t, "tenant-1", req.TenantID)
 	assert.Equal(t, "trace-1", req.TraceID)
 	assert.Equal(t, "INV-42\nyes, do it", req.Text)
 	assert.Equal(t, trafficlabel.HashText(req.Text), req.TextHash)

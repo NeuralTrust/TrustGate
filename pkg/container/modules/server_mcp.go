@@ -40,6 +40,7 @@ type mcpMiddlewares struct {
 	Auth               *middleware.MCPAuthMiddleware
 	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
 	Metrics            *middleware.MCPMetricsMiddleware
+	UsageGuard         *middleware.UsageGuardMiddleware
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
@@ -60,6 +61,7 @@ func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
 		m.Auth,
 		m.HybridGatewayGuard,
 		m.Metrics,
+		m.UsageGuard.ForMCP(),
 	)
 }
 
@@ -86,6 +88,8 @@ type mcpRouterParams struct {
 	PersonalKeyHandler *oauthhttp.PersonalKeyHandler `optional:"true"`
 	// ModelRequestHandler is nil where the console takes no model requests.
 	ModelRequestHandler *oauthhttp.ModelRequestHandler `optional:"true"`
+	// ClientMetadataHandler publishes the connect client_id document.
+	ClientMetadataHandler *oauthhttp.ClientMetadataHandler
 }
 
 type mcpServerParams struct {
@@ -124,6 +128,7 @@ func ServerMCP(c *container.Container) error {
 				ops,
 				router.WithPersonalKeyHandler(p.PersonalKeyHandler),
 				router.WithModelRequestHandler(p.ModelRequestHandler),
+				router.WithClientMetadataHandler(p.ClientMetadataHandler),
 			)
 		},
 		dig.Name("mcp"),
