@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -256,6 +257,11 @@ type RuntimeScope struct {
 	// KeyBudget is the spending limit of the authenticated personal key, nil
 	// when it has none. It is shared with the request: read it, never modify it.
 	KeyBudget *authdomain.KeyBudget
+	// KeyGroupID is the directory group of the authenticated group key, empty
+	// for any other credential, and KeyGroupBudget that group's budget, nil
+	// when it has none. Shared with the request: read them, never modify them.
+	KeyGroupID     string
+	KeyGroupBudget *keygroupdomain.Budget
 }
 
 // Subject resolves the partition for this execution: gateway-wide when the

@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -41,7 +43,7 @@ type recordingStream struct {
 func (s *recordingStream) Context() context.Context { return s.ctx }
 
 func TestStreamInterceptorInjectsScope(t *testing.T) {
-	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: "tok"}}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: "tok"}}, discardLogger(), nil)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
@@ -63,5 +65,45 @@ func TestStreamInterceptorInjectsScope(t *testing.T) {
 	}
 	if seen != "" {
 		t.Fatalf("shared-mode scope = %q, want empty", seen)
+	}
+}
+
+func TestIdentityContextRoundTrip(t *testing.T) {
+	want := configsyncrevocation.Identity{Scope: "gw-1", JTI: "j", IssuedAt: 7, Signed: true, InstanceScoped: true}
+	got, ok := IdentityFromContext(WithIdentity(context.Background(), want))
+	if !ok || got != want {
+		t.Fatalf("IdentityFromContext = (%+v, %v), want (%+v, true)", got, ok, want)
+	}
+	if _, ok := IdentityFromContext(context.Background()); ok {
+		t.Fatal("IdentityFromContext on a bare context reported an identity")
+	}
+}
+
+func TestStreamInterceptorInjectsSignedIdentity(t *testing.T) {
+	cfg := newSignedTestConfig(t)
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger(), nil)
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
+	token := mint(t, testSecret, jwt.SigningMethodHS256, instanceClaims("gw-1", "jti-1", 100))
+	md := metadata.New(map[string]string{authMetadataKey: bearerPrefix + token})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	var (
+		seenScope string
+		seenID    configsyncrevocation.Identity
+		hasID     bool
+	)
+	handler := func(_ any, ss grpc.ServerStream) error {
+		seenScope = ScopeFromContext(ss.Context())
+		seenID, hasID = IdentityFromContext(ss.Context())
+		return nil
+	}
+	if err := auth.StreamServerInterceptor()(nil, &recordingStream{ctx: ctx}, &grpc.StreamServerInfo{}, handler); err != nil {
+		t.Fatalf("interceptor: %v", err)
+	}
+	want := configsyncrevocation.Identity{Scope: "gw-1", JTI: "jti-1", IssuedAt: 100, Signed: true, InstanceScoped: true}
+	if seenScope != "gw-1" || !hasID || seenID != want {
+		t.Fatalf("scope = %q, identity = (%+v, %v); want gw-1 and %+v", seenScope, seenID, hasID, want)
 	}
 }

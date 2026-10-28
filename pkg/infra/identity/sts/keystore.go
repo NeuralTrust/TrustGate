@@ -35,7 +35,7 @@ const SharedSigningKeyRedisKey = "trustgate:sts:signing-key:pkcs8-pem"
 // replicas via Redis. It returns the stored key when present; otherwise it
 // generates one and stores it with SETNX so concurrent replicas converge on a
 // single key instead of each minting with its own ephemeral key.
-func ResolveSharedSigningKey(ctx context.Context, rdb *redis.Client, logger *slog.Logger) (string, error) {
+func ResolveSharedSigningKey(ctx context.Context, rdb redis.UniversalClient, logger *slog.Logger) (string, error) {
 	if rdb == nil {
 		return "", errors.New("sts: redis client is required to auto-provision a signing key")
 	}

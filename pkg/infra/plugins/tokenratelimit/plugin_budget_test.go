@@ -271,6 +271,26 @@ func registryPriced(model string) *infracontext.RequestContext {
 	return req
 }
 
+// TestPlugin_KeyPartition_FailClosedReportsErrorClass covers the one counter
+// failure that refuses the request (a key-partitioned budget read in enforce):
+// it carries the error class like every fail-open one.
+func TestPlugin_KeyPartition_FailClosedReportsErrorClass(t *testing.T) {
+	p := newDownPlugin(t)
+	span := trace.New("t", trace.Metadata{}).StartSpan(trace.SpanPlugin, PluginName)
+	in := scopedInput(policy.StagePreRequest, keyBudget("24h", 1000), llmRequest(`{"model":"gpt-4o-mini"}`, nil), &infracontext.ResponseContext{}, aliceScope)
+	in.Mode = policy.ModeEnforce
+	in.Event = metrics.NewEventContext(span)
+
+	_, err := p.Execute(context.Background(), in)
+	require.Error(t, err)
+	attrs := span.PluginAttrsCopy()
+	assert.Equal(t, decisionFailedClosed, attrs.Decision)
+	data, ok := attrs.Extras.(TokenRateLimiterData)
+	require.True(t, ok, "extras should carry token rate limiter data")
+	assert.Equal(t, "read_counter", data.FailureDetail)
+	assert.Equal(t, "connection", data.FailureErrorClass)
+}
+
 func TestPlugin_KeyPartition_CounterStoreDown(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()

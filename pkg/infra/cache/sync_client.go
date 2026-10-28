@@ -40,7 +40,7 @@ const minDialTimeout = time.Second
 // type from the shared client so the two cannot be mixed up in the container,
 // and so a test can count the commands each one receives.
 type SyncClient struct {
-	*redis.Client
+	redis.UniversalClient
 }
 
 // NewSyncClient builds a client for the background plan-counter sync and for the
@@ -57,16 +57,31 @@ type SyncClient struct {
 // not silent: go-redis logs "failed to dial after N attempts" through its
 // internal logger (5 attempts, 100 ms backoff, per dial), and then probes at
 // most about once a second instead of hammering Redis.
+//
+// On a cluster the constructor starts loading the slot map in the background
+// and returns without waiting: node clients, and so the connections
+// syncMinIdleConns keeps warm, exist only once the slots are known.
 func NewSyncClient(config Config, syncTimeout, coldReadTimeout time.Duration) (*SyncClient, error) {
+	return newSyncClient(config, syncTimeout, coldReadTimeout, defaultRedisAuthDependencies())
+}
+
+func newSyncClient(config Config, syncTimeout, coldReadTimeout time.Duration, deps redisAuthDependencies) (*SyncClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	provider, err := newCredentialsProvider(ctx, &config, defaultRedisAuthDependencies())
+	provider, err := newCredentialsProvider(ctx, &config, deps)
 	if err != nil {
 		return nil, fmt.Errorf("configure redis authentication: %w", err)
 	}
-	options := buildSyncOptions(buildRedisOptions(config, provider), syncTimeout, coldReadTimeout)
-	return &SyncClient{Client: redis.NewClient(options)}, nil
+	options, err := buildRedisOptions(config, provider)
+	if err != nil {
+		return nil, fmt.Errorf("configure redis TLS: %w", err)
+	}
+	client := newUniversalClient(buildSyncOptions(options, syncTimeout, coldReadTimeout), config.Cluster)
+	if cluster, ok := client.(*redis.ClusterClient); ok {
+		cluster.ReloadState(ctx)
+	}
+	return &SyncClient{UniversalClient: client}, nil
 }
 
 func buildSyncOptions(options *redis.Options, syncTimeout, coldReadTimeout time.Duration) *redis.Options {

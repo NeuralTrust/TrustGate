@@ -50,6 +50,7 @@ var modelMissingMarkers = []string{
 	"invalid model",
 	"identifier is invalid",
 	"does not have access",
+	"don't have access",
 	"no access",
 }
 

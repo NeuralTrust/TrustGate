@@ -23,6 +23,9 @@ type TestConnectionResponse struct {
 	StatusCode int    `json:"status_code,omitempty"`
 	LatencyMs  int64  `json:"latency_ms"`
 	Message    string `json:"message,omitempty"`
+	// Warnings lists non-fatal findings on a connection that succeeded, such as
+	// missing Bedrock catalog permissions. Omitted when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func FromTestConnectionResult(r appregistry.TestConnectionResult) TestConnectionResponse {
@@ -33,5 +36,6 @@ func FromTestConnectionResult(r appregistry.TestConnectionResult) TestConnection
 		StatusCode: r.StatusCode,
 		LatencyMs:  r.LatencyMs,
 		Message:    r.Message,
+		Warnings:   r.Warnings,
 	}
 }

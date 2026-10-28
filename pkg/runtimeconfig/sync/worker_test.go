@@ -46,6 +46,18 @@ func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 
 func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
 
+func (h *recordingHandler) count(msg string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, r := range h.records {
+		if r.Message == msg {
+			n++
+		}
+	}
+	return n
+}
+
 func (h *recordingHandler) levelFor(msg string) (slog.Level, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -555,4 +567,36 @@ func TestJittered_StaysWithinSpread(t *testing.T) {
 	}
 
 	assert.Equal(t, time.Duration(0), jittered(0))
+}
+
+func TestWorker_RunRefusedTokenLogsOnceAndSkipsCatchUp(t *testing.T) {
+	t.Parallel()
+
+	const refusedMsg = "config-sync token refused by the control plane; serving the last applied snapshot until the token is replaced"
+	refused := fmt.Errorf("configsync: open sync stream: %w: rpc error: code = Unauthenticated", ErrTransportUnauthenticated)
+	fetcher := &fakeFetcher{results: []fetchResult{{raw: []byte("initial"), version: stringCodec{}.Version([]byte("initial"))}}}
+	transport := &fakeTransport{ch: make(chan watchMsg, 3)}
+	for range 3 {
+		transport.ch <- watchMsg{err: refused}
+	}
+	h := &recordingHandler{}
+	worker := NewWorker[string](fetcher, NewMemoryStore[string](), transport, nil, stringCodec{}, slog.New(h), WorkerConfig{
+		PollInterval: time.Hour,
+		MinBackoff:   time.Millisecond,
+		MaxBackoff:   time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+
+	require.Eventually(t, func() bool { return len(transport.ch) == 0 }, 2*time.Second, time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	assert.Equal(t, 1, h.count(refusedMsg), "a refused token is reported once per streak")
+	assert.Equal(t, 0, h.count("change stream watch failed"))
+	assert.Equal(t, 0, h.count("catch-up converge after stream break failed"))
+	assert.Equal(t, 1, fetcher.callCount(), "no catch-up converge runs while the token is refused")
 }

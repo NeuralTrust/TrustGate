@@ -457,7 +457,7 @@ func (s *slot) admit(limits domain.Limits, now time.Time) (kick bool, err error)
 	s.burst.pending++
 	s.quota.pending++
 
-	kick = s.burst.pending >= kickThreshold(limits.BurstPerMin)
+	kick = limits.HasBurstCap() && s.burst.pending >= kickThreshold(limits.BurstPerMin)
 	if limits.HasMonthlyQuota() && s.quota.pending >= kickThreshold(limits.QuotaPerMonth) {
 		kick = true
 	}
@@ -467,7 +467,7 @@ func (s *slot) admit(limits domain.Limits, now time.Time) (kick bool, err error)
 // exceeded is the memory decision: would one more unit go past a cap? The
 // counters must already be rolled to now.
 func (s *slot) exceeded(limits domain.Limits, now time.Time) *Exceeded {
-	if s.burst.total()+1 > int64(limits.BurstPerMin) {
+	if limits.HasBurstCap() && s.burst.total()+1 > int64(limits.BurstPerMin) {
 		return &Exceeded{
 			Reason:     ReasonBurst,
 			Limit:      limits.BurstPerMin,

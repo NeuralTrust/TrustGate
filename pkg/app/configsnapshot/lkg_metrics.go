@@ -17,9 +17,8 @@ package configsnapshot
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
-	"go.opentelemetry.io/otel"
+	"github.com/NeuralTrust/TrustGate/pkg/common/otelcount"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -82,13 +81,6 @@ func recordLKGLoad(ctx context.Context, result string) {
 	addLKGCounter(ctx, AdminLKGLoadMetric, "persisted snapshot rows seen at boot by result (ok, expired, key_mismatch, undecryptable, checksum_mismatch, error)", result)
 }
 
-// addLKGCounter resolves the instrument on each call: the SDK returns the same
-// one for the same name, and both events are rare.
 func addLKGCounter(ctx context.Context, name, description, result string) {
-	counter, err := otel.Meter("trustgate/configsync").Int64Counter(name, metric.WithDescription(description))
-	if err != nil {
-		slog.Warn("failed to create lkg counter", slog.String("metric", name), slog.String("error", err.Error()))
-		return
-	}
-	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	otelcount.Add(ctx, "trustgate/configsync", name, description, 1, attribute.String("result", result))
 }

@@ -107,6 +107,35 @@ func TestNormalizeEntitlements_FullStampOK(t *testing.T) {
 	}
 }
 
+// The control plane stamps every cap of an unmetered install as 0.
+func TestNormalizeEntitlements_ZeroBurstIsUnlimited(t *testing.T) {
+	t.Parallel()
+	got, err := RequireStampedEntitlements(Entitlements{
+		Tier:          "enterprise",
+		BurstPerMin:   intPtr(0),
+		QuotaPerMonth: intPtr(0),
+		MaxInstances:  intPtr(0),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	limits, ok := got.ResolveLimits()
+	if !ok {
+		t.Fatal("expected stamped limits")
+	}
+	if limits.HasBurstCap() {
+		t.Fatal("HasBurstCap() = true, want false for a burst of 0")
+	}
+}
+
+func TestNormalizeEntitlements_RejectsNegativeBurst(t *testing.T) {
+	t.Parallel()
+	_, err := NormalizeEntitlements(Entitlements{Tier: "free", BurstPerMin: intPtr(-1), QuotaPerMonth: intPtr(0), MaxInstances: intPtr(0)})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
 func TestNormalizeEntitlements_RejectsCapsBeyondInt32(t *testing.T) {
 	t.Parallel()
 	over := 1 << 31

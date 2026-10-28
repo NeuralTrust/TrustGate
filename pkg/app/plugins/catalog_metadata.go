@@ -767,6 +767,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Strip raw C0 control bytes from substituted values before insertion.",
 					Default:     true,
 				},
+				{
+					Key:         "apply_on_native_bedrock",
+					Label:       "Apply On Native Bedrock Routes",
+					Type:        FieldTypeBoolean,
+					Description: "Also apply the templates to native Bedrock Runtime calls (/model/{id}/converse, converse-stream, invoke, invoke-with-response-stream). Only the system and messages fields are edited; every other field is relayed as sent. InvokeModel bodies in a model-native prompt shape (Llama, Mistral, Titan, Cohere) cannot be edited: in enforce mode they are rejected, in observe mode recorded as skipped. Templates with per-request variables change a cached prompt prefix. When off, the policy is skipped on native calls.",
+					Default:     false,
+				},
 			},
 		},
 	},
@@ -857,7 +864,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. If TrustGuard is unavailable, slow or rejects the credentials, the request goes through uninspected and the event records failed_open. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block when the direction includes the response.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. With failure_mode open (default), if TrustGuard is unavailable, slow or rejects the credentials, the request goes through uninspected and the event records failed_open; with closed it is blocked in enforce and only recorded in observe. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block when the direction includes the response.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -879,6 +886,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
+				},
+				{
+					Key:         "failure_mode",
+					Label:       "Failure mode",
+					Type:        FieldTypeEnum,
+					Description: "What happens when TrustGuard cannot evaluate a request: open lets it through, closed blocks it (enforce) or records it (observe).",
+					Enum:        enumOptions("open", "closed"),
+					Default:     "open",
 				},
 			},
 		},

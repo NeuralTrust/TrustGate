@@ -574,7 +574,29 @@ func blockedHeadError(source adapter.Format, outcome *appplugins.SegmentOutcome)
 	if message == "" {
 		message = streamBlockMessage
 	}
-	return streamError(source, outcome.Type, message)
+	pe := streamError(source, outcome.Type, message)
+	if outcome.StatusCode != 0 {
+		pe.StatusCode = outcome.StatusCode
+	}
+	if outcome.Headers != nil {
+		pe.Headers = outcome.Headers
+	}
+	// The plugin's own body is what the buffered leg returns. It replaces the
+	// generic envelope, and an adapted one, so both legs answer with one schema.
+	if len(outcome.Body) > 0 {
+		pe.Body = outcome.Body
+	}
+	// streamError stamped the direction header while the status was still 403.
+	// A refusal that names another status is not a policy block, so the header
+	// does not belong on it. A 403 keeps the header, including when the plugin
+	// replaced the header map.
+	if pe.StatusCode != http.StatusForbidden {
+		headers := cloneResponseHeaders(pe.Headers)
+		deleteResponseHeader(headers, appplugins.BlockDirectionHeader)
+		pe.Headers = headers
+		return pe
+	}
+	return appplugins.WithBlockDirection(pe, appplugins.BlockDirectionOutput)
 }
 
 func streamError(source adapter.Format, errType, message string) *appplugins.PluginError {

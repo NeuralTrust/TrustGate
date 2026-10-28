@@ -130,6 +130,9 @@ type forwarder struct {
 	models     appcatalog.BedrockModelResolver
 	masker     NativeBodyMasker
 	maxRetries int
+	// groupBudget holds a group key's store requests to its group's budget;
+	// nil when the plane enforces none.
+	groupBudget *groupBudgetStage
 
 	nativeToolHold   time.Duration
 	nativeLookupWait time.Duration
@@ -251,8 +254,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
 	}
-	policies := in.Consumer.Policies
-	plan := in.Consumer.PolicyPlan
+	policies, plan := f.groupBudget.extend(in.Request, in.Consumer.Policies, in.Consumer.PolicyPlan)
 
 	nativeBody := nativeBodySnapshot(in.Request)
 	if nativeBody != nil {
@@ -262,6 +264,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	} else if short != nil {
 		return nativeShortCircuit(in.Request, short, policydomain.StagePreRequest), nil
+	}
+	if base := in.Request.NativeMask.Base(); base != nil {
+		nativeBody = base
 	}
 	if nativeBody != nil && !bytes.Equal(nativeBody, in.Request.Body) {
 		masked, pe := f.carryNativeMask(ctx, policydomain.StagePreRequest, in.Request, nativeBody, in.Request.Body, f.masker.MaskRequestWhy)
@@ -723,6 +728,7 @@ func (f *forwarder) finalizeStream(
 		remaining, pe := guard.Run(ctx, stream)
 		if pe != nil {
 			f.drainAsync(remaining)
+			retimeSpanAtHeadRefusal(span, startedAt)
 			return applyPlanRateLimitDialect(dto.request, pluginErrorResult(pe))
 		}
 		stream = remaining
@@ -874,6 +880,22 @@ func retimeSpanOnStreamEnd(
 			}
 		}
 	}
+}
+
+// retimeSpanAtHeadRefusal ends the provider LLM span where the head verdict
+// refused the stream, which is where the stream ended for the client. The head
+// drain and the guard's hold elapsed inside the span, and the metrics fold takes
+// the streamed policies' time back out of the attempt on exactly that premise
+// (providerLatency in pkg/app/metrics). Left at time-to-first-byte, the hold was
+// taken out of the upstream's share instead, clamping provider_ms to zero when
+// the hold was the longer of the two, and the remainder reported it as
+// gateway_ms. The drain the refusal hands off runs after the client got its
+// answer, so it is not counted.
+func retimeSpanAtHeadRefusal(span *trace.Span, startedAt time.Time) {
+	if span == nil {
+		return
+	}
+	span.SetLatency(time.Since(startedAt))
 }
 
 // drainAsync drains an abandoned provider stream in the background so the

@@ -33,15 +33,17 @@ type authDependencies struct {
 	loadConfig          awsConfigLoader
 	buildToken          authTokenBuilder
 	loadAzureCredential azureCredentialLoader
+	loadGCPTokenSource  gcpTokenSourceLoader
 }
 
 var authStrategyFactories = map[config.PostgresLogin]authStrategyFactory{
 	config.PostgresLoginAWS:   newAWSAuthStrategy,
 	config.PostgresLoginAzure: newAzureAuthStrategy,
+	config.PostgresLoginGCP:   newGCPAuthStrategy,
 }
 
 func defaultAuthDependencies() authDependencies {
-	return authDependencies{loadConfig: defaultAWSConfigLoader(), buildToken: buildAuthToken, loadAzureCredential: defaultAzureCredential}
+	return authDependencies{loadConfig: defaultAWSConfigLoader(), buildToken: buildAuthToken, loadAzureCredential: defaultAzureCredential, loadGCPTokenSource: defaultGCPTokenSource}
 }
 func newPoolAuthStrategy(ctx context.Context, cfg *config.DatabaseConfig, dependencies authDependencies) (poolAuthStrategy, error) {
 	if !cfg.Login.UsesTokenAuth() {

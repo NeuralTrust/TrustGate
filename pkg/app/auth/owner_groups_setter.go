@@ -35,14 +35,19 @@ type SetOwnerGroupsInput struct {
 	// Email, when set, replaces the owner's email; empty clears it. Nil
 	// leaves it as it is.
 	Email *string
+	// GroupName, when set, is the new directory name of a group key's group,
+	// after a rename. Nil leaves it as it is. The owner's personal key has no
+	// group to rename and answers domain.ErrPersonalKey.
+	GroupName *string
 }
 
 //go:generate mockery --name=OwnerGroupsSetter --dir=. --output=./mocks --filename=auth_owner_groups_setter_mock.go --case=underscore --with-expecter
 
 // OwnerGroupsSetter records the directory groups of a personal key's owner,
-// which the MCP Store reads in place of a session's groups claim, and their
-// email, which the key's calls are shown under. The secret, the expiry, the
-// budget and the links of the key stay as they are.
+// which the MCP Store reads in place of a session's groups claim, their email,
+// which the key's calls are shown under, and a group key's group name. The
+// secret, the expiry, the budget, the group and the links of the key stay as
+// they are.
 type OwnerGroupsSetter interface {
 	SetOwnerGroups(ctx context.Context, in SetOwnerGroupsInput) (*domain.Auth, error)
 }
@@ -94,6 +99,11 @@ func (s *ownerGroupsSetter) SetOwnerGroups(ctx context.Context, in SetOwnerGroup
 	}
 	if in.Email != nil {
 		if err := existing.SetOwnerEmail(*in.Email, now); err != nil {
+			return nil, err
+		}
+	}
+	if in.GroupName != nil {
+		if err := existing.SetGroupName(*in.GroupName, now); err != nil {
 			return nil, err
 		}
 	}

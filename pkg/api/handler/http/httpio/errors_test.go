@@ -66,6 +66,8 @@ func TestMapDomainError(t *testing.T) {
 		{name: "wrapped owned key → 422 owned_key", err: fmt.Errorf("rotate: %w", authdomain.ErrOwnedKey), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "owned_key", wantMsgPart: "only its owner"},
 		{name: "concurrent rotation → 409", err: authdomain.ErrRotatedConcurrently, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "rotated by another request"},
 		{name: "budget on an application key → 422 application_key", err: authdomain.ErrApplicationKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "application_key", wantMsgPart: "token_rate_limiter"},
+		{name: "group name on a personal key → 422 personal_key", err: authdomain.ErrPersonalKey, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "personal_key", wantMsgPart: "belongs to no group"},
+		{name: "invalid group → 422 validation_failed", err: fmt.Errorf("%w: group_name is required with a group_id", authdomain.ErrInvalidKeyGroup), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "group_name is required"},
 		{name: "invalid key budget → 422", err: authdomain.ErrInvalidBudget, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid budget"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
 		{

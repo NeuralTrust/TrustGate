@@ -41,7 +41,7 @@ func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) 
 
 // Handle godoc
 // @Summary      List auths
-// @Description  Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget.
+// @Description  Returns a paginated list of auths in a gateway. Personal (owned) keys are excluded unless owner_id or owned=true asks for them; each owned key carries owner_id and, when it has one, its budget. A group key, one held for a directory group, also carries group_id and group_name.
 // @Tags         auths
 // @Produce      json
 // @Security     BearerAuth
@@ -50,7 +50,7 @@ func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) 
 // @Param        name        query     string  false  "Alias of search"
 // @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, oidc, mtls)"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
-// @Param        owner_id    query     string  false  "List only the personal key of this owner. Without it, personal keys are excluded"
+// @Param        owner_id    query     string  false  "List every key of this owner: their personal key and their group keys. Without it, personal keys are excluded"
 // @Param        owned       query     bool    false  "true lists only personal keys, of every owner; false lists only application keys, as when it is absent. Not allowed with owner_id (422 invalid_filter)"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"

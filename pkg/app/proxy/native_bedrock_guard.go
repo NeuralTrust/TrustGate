@@ -70,8 +70,9 @@ func nativeResponseChanged(provider *ProviderResponse, plugin *infracontext.Resp
 // call. "You don't have access to the model" is how a Bedrock account that has
 // not enabled a model answers, which another registry, with another account,
 // may well have, so it counts as a miss for the probing over Bedrock
-// registries. It is scoped to native calls: elsewhere a 403 stays terminal. If
-// every registry misses, the last AWS answer is relayed as it came.
+// registries. It is scoped to native calls: elsewhere a 403 is a miss only when
+// its body says the model is missing. If every registry misses, the last AWS
+// answer is relayed as it came.
 func nativeAccessDenied(req *infracontext.RequestContext, resp *ProviderResponse) bool {
 	if !req.IsBedrockNative() || resp == nil {
 		return false

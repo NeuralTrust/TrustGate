@@ -38,9 +38,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type sr1BoundsRedis struct{ client *redis.Client }
+type sr1BoundsRedis struct{ client redis.UniversalClient }
 
-func (s sr1BoundsRedis) RedisClient() *redis.Client { return s.client }
+func (s sr1BoundsRedis) RedisClient() redis.UniversalClient { return s.client }
 
 func TestSR1ForwarderBounds(t *testing.T) {
 	low := baselineRegistry("openai", nil)

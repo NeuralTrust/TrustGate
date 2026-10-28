@@ -43,8 +43,9 @@ type Repository interface {
 	// UpdateBudget writes only the budget and updated_at of a and returns the
 	// stored auth, so it never undoes a concurrent rotation of the secret.
 	UpdateBudget(ctx context.Context, a *Auth) (*Auth, error)
-	// UpdateOwner writes only the owner groups, owner email and updated_at of
-	// a and returns the stored auth, for the same reason as UpdateBudget.
+	// UpdateOwner writes only the owner groups, owner email, group name and
+	// updated_at of a and returns the stored auth, for the same reason as
+	// UpdateBudget.
 	UpdateOwner(ctx context.Context, a *Auth) (*Auth, error)
 	// RotateKey writes the secret and expiry of a rotated key, but only while
 	// the stored secret is still previousHash; otherwise it returns
@@ -57,7 +58,12 @@ type Repository interface {
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)
-	FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*Auth, error)
+	// FindByOwnerAndGroup returns the key ownerID holds on gatewayID for the
+	// group groupID, or their personal key when groupID is empty.
+	FindByOwnerAndGroup(ctx context.Context, gatewayID ids.GatewayID, ownerID, groupID string) (*Auth, error)
+	// ListByOwner returns every key ownerID holds on gatewayID, their personal
+	// key and their group keys, newest first.
+	ListByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) ([]*Auth, error)
 	FindEnabledByTypes(ctx context.Context, types []Type) ([]*Auth, error)
 	// ListEnabledByGatewayAndType lists the enabled application credentials of
 	// authType on gatewayID. Personal keys are left out: they are never an

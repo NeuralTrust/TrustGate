@@ -36,6 +36,10 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +47,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -120,11 +125,28 @@ type Credentials struct {
 	RoleARN      string
 }
 
-// CacheKey identifies the credential set a result belongs to. It deliberately
-// omits the secret key: the access key (or assumed role) plus region already
-// identify the account whose catalog was read.
+// cacheKeySalt keys the secret digest in CacheKey. It is random per process, so a
+// digest that leaks (a heap dump, a stray log line) cannot be brute-forced
+// offline against guessed secrets. The caches CacheKey feeds live in process
+// memory only, so nothing needs the digest to be stable across restarts or pods.
+var cacheKeySalt = func() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("controlplane: read random cache key salt: " + err.Error())
+	}
+	return b
+}()
+
+// CacheKey identifies the credential set a result belongs to. The secret key and
+// session token enter only as a truncated HMAC-SHA256 under cacheKeySalt, never
+// raw: two parties who know the same access key ID but not the same secret must
+// not share a cache entry, or one could poison (or read) the other's. The key is
+// safe to hold in memory maps, but it is still derived from a secret and must
+// not be logged.
 func (c Credentials) CacheKey() string {
-	return fmt.Sprintf("%s|%s|%v|%s", c.Region, c.AccessKey, c.UseRole, c.RoleARN)
+	mac := hmac.New(sha256.New, cacheKeySalt)
+	_, _ = mac.Write([]byte(c.SecretKey + "\x00" + c.SessionToken))
+	return fmt.Sprintf("%s|%s|%v|%s|%s", c.Region, c.AccessKey, c.UseRole, c.RoleARN, hex.EncodeToString(mac.Sum(nil)[:8]))
 }
 
 // Availability is the verdict on a set of candidate model IDs.
@@ -157,6 +179,15 @@ type Client interface {
 	// bedrock:GetProvisionedModelThroughput. The region of the ARN is queried,
 	// which is where the resource lives.
 	ResolveModelARN(ctx context.Context, creds Credentials, arn string) (string, error)
+
+	// CheckCatalogAccess probes the three control plane permissions catalog
+	// narrowing needs (ListFoundationModels, ListInferenceProfiles and
+	// GetFoundationModelAvailability) with one cheap call each, and returns the
+	// IAM actions the credentials are denied, in a stable order. Credentials that
+	// hold only the runtime permissions (InvokeModel) get all three back. An error
+	// is returned only when the probe itself could not run (no credentials, AWS
+	// unreachable), never for a denied action.
+	CheckCatalogAccess(ctx context.Context, creds Credentials) ([]string, error)
 }
 
 var _ Client = (*client)(nil)
@@ -340,6 +371,9 @@ type foundationModelsResponse struct {
 	ModelSummaries []struct {
 		ModelID                 string   `json:"modelId"`
 		InferenceTypesSupported []string `json:"inferenceTypesSupported"`
+		ModelLifecycle          struct {
+			Status string `json:"status"`
+		} `json:"modelLifecycle"`
 	} `json:"modelSummaries"`
 }
 
@@ -461,8 +495,12 @@ func (c *client) get(
 		return fmt.Errorf("bedrock controlplane: read %s: %w", path, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("bedrock controlplane: %s returned %d: %s",
-			path, resp.StatusCode, strings.TrimSpace(string(body)))
+		return &APIError{
+			Path:      path,
+			Status:    resp.StatusCode,
+			Body:      strings.TrimSpace(string(body)),
+			ErrorType: errorType(resp.Header.Get("x-amzn-ErrorType"), body),
+		}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("bedrock controlplane: decode %s: %w", path, err)
@@ -638,4 +676,150 @@ func (c *client) ResolveModelARN(ctx context.Context, creds Credentials, arn str
 		return "", ErrUnsupportedARN
 	}
 	return "", fmt.Errorf("bedrock controlplane: %s names no model", arn)
+}
+
+// APIError is a non-2xx answer of the control plane.
+type APIError struct {
+	Path   string
+	Status int
+	Body   string
+	// ErrorType is the AWS error name ("AccessDeniedException",
+	// "UnrecognizedClientException"...), read from the x-amzn-ErrorType header or
+	// the body's __type; empty when AWS did not say.
+	ErrorType string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("bedrock controlplane: %s returned %d: %s", e.Path, e.Status, e.Body)
+}
+
+// errorType extracts the AWS error name. The header looks like
+// "AccessDeniedException:http://internal.amazon.com/coral/..." and the body's
+// __type may carry a namespace prefix ("com.amazon...#AccessDeniedException").
+func errorType(header string, body []byte) string {
+	name := header
+	if name == "" {
+		var payload struct {
+			Type string `json:"__type"`
+		}
+		if json.Unmarshal(body, &payload) == nil {
+			name = payload.Type
+		}
+	}
+	if k := strings.Index(name, ":"); k >= 0 {
+		name = name[:k]
+	}
+	if k := strings.LastIndex(name, "#"); k >= 0 {
+		name = name[k+1:]
+	}
+	return name
+}
+
+var notAuthorizedAction = regexp.MustCompile(`not authorized to perform: (bedrock:[A-Za-z]+)`)
+
+func (e *APIError) accessDenied() bool {
+	if e.Status != http.StatusForbidden {
+		return false
+	}
+	if e.ErrorType != "" {
+		return e.ErrorType == "AccessDeniedException" || e.ErrorType == "AccessDenied"
+	}
+	// No error name from AWS: only AWS's own IAM denial wording counts.
+	return notAuthorizedAction.MatchString(e.Body)
+}
+
+// MissingPermission reports whether err is an IAM denial (an AccessDenied 403)
+// and, when it can tell, the action that was denied. The action comes from AWS's
+// own message, and otherwise from the endpoint called. Every other failure —
+// invalid or expired credentials (UnrecognizedClient, InvalidSignature,
+// ExpiredToken), throttling, 5xx, network — returns ("", false): it says nothing
+// about permissions and must not be reported or remembered as one.
+func MissingPermission(err error) (string, bool) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !apiErr.accessDenied() {
+		return "", false
+	}
+	if m := notAuthorizedAction.FindStringSubmatch(apiErr.Body); m != nil {
+		return m[1], true
+	}
+	switch {
+	case apiErr.Path == foundationModelsPath:
+		return "bedrock:ListFoundationModels", true
+	case apiErr.Path == inferenceProfilesPath:
+		return "bedrock:ListInferenceProfiles", true
+	case strings.HasPrefix(apiErr.Path, availabilityPath):
+		return "bedrock:GetFoundationModelAvailability", true
+	}
+	return "", true
+}
+
+func (c *client) CheckCatalogAccess(ctx context.Context, creds Credentials) ([]string, error) {
+	if creds.Region == "" {
+		return nil, ErrRegionRequired
+	}
+	cfg, err := c.loadConfig(ctx, creds)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock controlplane: load aws config: %w", err)
+	}
+	awsCreds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock controlplane: retrieve aws credentials: %w", err)
+	}
+
+	var missing []string
+	record := func(action string, err error) error {
+		if err == nil {
+			return nil
+		}
+		if got, denied := MissingPermission(err); denied {
+			if got == "" {
+				got = action
+			}
+			if !slices.Contains(missing, got) {
+				missing = append(missing, got)
+			}
+			return nil
+		}
+		return err
+	}
+
+	var models foundationModelsResponse
+	if err := record("bedrock:ListFoundationModels",
+		c.get(ctx, awsCreds, creds.Region, foundationModelsPath, nil, &models)); err != nil {
+		return nil, err
+	}
+
+	query := url.Values{}
+	query.Set("type", profileTypeSystemDefined)
+	query.Set("maxResults", "1")
+	var profiles inferenceProfilesResponse
+	if err := record("bedrock:ListInferenceProfiles",
+		c.get(ctx, awsCreds, creds.Region, inferenceProfilesPath, query, &profiles)); err != nil {
+		return nil, err
+	}
+
+	// Availability needs a real model ID to ask about: one ListInvocableModelIDs
+	// could itself offer (ON_DEMAND) and that is not retired. Without one the
+	// permission is simply not probed. A failure that is not a permission denial
+	// also means "not probed": it must not discard the listing results above.
+	for _, summary := range models.ModelSummaries {
+		if summary.ModelID == "" || !slices.Contains(summary.InferenceTypesSupported, inferenceTypeOnDemand) {
+			continue
+		}
+		if status := summary.ModelLifecycle.Status; status != "" && status != "ACTIVE" {
+			continue
+		}
+		var payload availabilityResponse
+		err := c.get(ctx, awsCreds, creds.Region, availabilityPath+url.PathEscape(summary.ModelID), nil, &payload)
+		if action, denied := MissingPermission(err); denied {
+			if action == "" {
+				action = "bedrock:GetFoundationModelAvailability"
+			}
+			if !slices.Contains(missing, action) {
+				missing = append(missing, action)
+			}
+		}
+		break
+	}
+	return missing, nil
 }

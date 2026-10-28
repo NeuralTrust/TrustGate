@@ -24,6 +24,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -66,6 +67,10 @@ type Data struct {
 	// UsageEnforcement tells the data plane to block exhausted tenants and to
 	// wait for the list of them before it reports ready.
 	UsageEnforcement bool
+	// KeyGroupBudgets are the budgets of the directory groups whose keys the
+	// gateways above serve. A snapshot from before the field carries none, and
+	// a data plane that does not know it holds no group to a budget.
+	KeyGroupBudgets []keygroupdomain.Budget
 }
 
 // SessionRevocation is one default-IdP subject revoked at RevokedAt.
@@ -101,6 +106,7 @@ type Snapshot struct {
 	authsByGateway      map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth
 	authsByAPIKeyHash   map[string]*authdomain.Auth
 	authsByOwner        map[authOwnerKey]*authdomain.Auth
+	authsOfOwner        map[authOwnerKey][]*authdomain.Auth
 	authsEnabledByAge   []*authdomain.Auth
 	authsEnabledGateway map[ids.GatewayID][]*authdomain.Auth
 
@@ -114,6 +120,8 @@ type Snapshot struct {
 
 	tenantCaps       map[string]*ratelimitdomain.TenantCaps
 	sessionRevokedAt map[sessionRevocationKey]time.Time
+
+	keyGroupBudgetsByGateway map[ids.GatewayID][]*keygroupdomain.Budget
 }
 
 type sessionRevocationKey struct {
@@ -143,6 +151,7 @@ func Build(data Data) *Snapshot {
 		authsByGateway:         make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
 		authsByAPIKeyHash:      make(map[string]*authdomain.Auth),
 		authsByOwner:           make(map[authOwnerKey]*authdomain.Auth),
+		authsOfOwner:           make(map[authOwnerKey][]*authdomain.Auth),
 		authsEnabledGateway:    make(map[ids.GatewayID][]*authdomain.Auth),
 		catalogByProviderSlug:  make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
 		catalogByProviderCode:  make(map[string][]*catalogdomain.Model),
@@ -151,6 +160,8 @@ func Build(data Data) *Snapshot {
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
 		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
 		sessionRevokedAt:       make(map[sessionRevocationKey]time.Time, len(data.SessionRevocations)),
+
+		keyGroupBudgetsByGateway: make(map[ids.GatewayID][]*keygroupdomain.Budget),
 	}
 	for i := range s.data.TenantCaps {
 		c := &s.data.TenantCaps[i]
@@ -171,8 +182,22 @@ func Build(data Data) *Snapshot {
 	s.buildAuths()
 	s.buildCatalog()
 	s.buildStoreGrants()
+	s.buildKeyGroupBudgets()
 
 	return s
+}
+
+func (s *Snapshot) buildKeyGroupBudgets() {
+	for i := range s.data.KeyGroupBudgets {
+		b := &s.data.KeyGroupBudgets[i]
+		s.keyGroupBudgetsByGateway[b.GatewayID] = append(s.keyGroupBudgetsByGateway[b.GatewayID], b)
+	}
+}
+
+// KeyGroupBudgetsByGateway returns the group budgets of gatewayID. The
+// budgets are the snapshot's own: read them, never modify them.
+func (s *Snapshot) KeyGroupBudgetsByGateway(gatewayID ids.GatewayID) []*keygroupdomain.Budget {
+	return s.keyGroupBudgetsByGateway[gatewayID]
 }
 
 func (s *Snapshot) buildStoreGrants() {
@@ -308,8 +333,15 @@ func (s *Snapshot) buildAuths() {
 			s.authsByAPIKeyHash[a.KeyHash] = a
 		}
 		if a.IsOwned() {
-			s.authsByOwner[authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID}] = a
+			s.authsByOwner[authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID, groupID: a.GroupID}] = a
+			owner := authOwnerKey{gatewayID: a.GatewayID, ownerID: a.OwnerID}
+			s.authsOfOwner[owner] = append(s.authsOfOwner[owner], a)
 		}
+	}
+	for _, keys := range s.authsOfOwner {
+		sort.SliceStable(keys, func(a, b int) bool {
+			return recencyDescIDAsc(keys[a].CreatedAt, keys[a].ID.String(), keys[b].CreatedAt, keys[b].ID.String())
+		})
 	}
 
 	enabled := make([]*authdomain.Auth, 0, len(s.data.Auths))
@@ -526,18 +558,31 @@ func (s *Snapshot) AuthByAPIKeyHash(keyHash string) (*authdomain.Auth, bool) {
 	return a, ok
 }
 
+// authOwnerKey names one key of an owner: the one held for groupID, their
+// personal key when groupID is empty. Without a group it also names the owner,
+// for the list of all their keys.
 type authOwnerKey struct {
 	gatewayID ids.GatewayID
 	ownerID   string
+	groupID   string
 }
 
-// AuthByOwner returns the personal key ownerID holds on gatewayID.
-func (s *Snapshot) AuthByOwner(gatewayID ids.GatewayID, ownerID string) (*authdomain.Auth, bool) {
+// AuthByOwnerAndGroup returns the key ownerID holds on gatewayID for groupID,
+// their personal key when groupID is empty.
+func (s *Snapshot) AuthByOwnerAndGroup(gatewayID ids.GatewayID, ownerID, groupID string) (*authdomain.Auth, bool) {
 	if ownerID == "" {
 		return nil, false
 	}
-	a, ok := s.authsByOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID}]
+	a, ok := s.authsByOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID, groupID: groupID}]
 	return a, ok
+}
+
+// AuthsByOwner returns every key ownerID holds on gatewayID, newest first.
+func (s *Snapshot) AuthsByOwner(gatewayID ids.GatewayID, ownerID string) []*authdomain.Auth {
+	if ownerID == "" {
+		return nil
+	}
+	return s.authsOfOwner[authOwnerKey{gatewayID: gatewayID, ownerID: ownerID}]
 }
 
 func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Auth {
