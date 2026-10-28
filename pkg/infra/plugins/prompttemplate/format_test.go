@@ -297,6 +297,12 @@ func TestAnthropicSystemBlocks(t *testing.T) {
 		got, _ := runPlugin(t, policy.ModeEnforce, injectSettings("system", "merge", "INJ"), "anthropic", "", `{"system":"old","messages":[]}`)
 		assert.JSONEq(t, `{"system":"old\n\nINJ","messages":[]}`, got)
 	})
+	t.Run("model options outside messages and system travel untouched", func(t *testing.T) {
+		const options = `"top_k":40,"thinking":{"type":"adaptive"},"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"type":"object"}}}`
+		got, data := runPlugin(t, policy.ModeEnforce, injectSettings("system", "merge", "INJ"), "anthropic", "", `{"system":"old","messages":[],`+options+`}`)
+		assert.JSONEq(t, `{"system":"old\n\nINJ","messages":[],`+options+`}`, got)
+		assert.Equal(t, []string{"a"}, data.InjectedIDs)
+	})
 }
 
 func TestModeAEventIsHonest(t *testing.T) {

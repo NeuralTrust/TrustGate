@@ -310,6 +310,60 @@ func TestLive_Completions_AnthropicIngress(t *testing.T) {
 	}
 }
 
+// TestLive_Completions_AnthropicOptions sends the Anthropic options the
+// Converse encoder maps (structured output, top_k, a strict tool) to Claude
+// models. Set BEDROCK_LIVE_MODELS to Claude models that still take top_k:
+// Claude 5 models refuse it as deprecated.
+func TestLive_Completions_AnthropicOptions(t *testing.T) {
+	for _, model := range liveModels(t) {
+		t.Run(model, func(t *testing.T) {
+			reg := adapter.NewRegistry()
+			wire, err := reg.AdaptRequest([]byte(`{
+				"model": "ignored-by-config",
+				"max_tokens": 256,
+				"top_k": 40,
+				"messages": [{"role": "user", "content": "Give the colour of a clear daytime sky."}],
+				"tools": [{"name": "lookup", "description": "Unused.", "strict": true,
+					"input_schema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"], "additionalProperties": false}}],
+				"output_config": {"format": {"type": "json_schema", "schema": {
+					"type": "object", "properties": {"colour": {"type": "string"}}, "required": ["colour"], "additionalProperties": false}}}
+			}`), adapter.FormatAnthropic, adapter.FormatBedrock)
+			require.NoError(t, err)
+
+			raw, err := NewBedrockClient().Completions(liveContext(t), liveConfig(model), wire)
+			require.NoError(t, err, "Bedrock rejected the Converse body: %s", wire)
+
+			out, err := reg.AdaptResponse(raw, adapter.FormatAnthropic, adapter.FormatBedrock)
+			require.NoError(t, err)
+			var resp struct {
+				Content []struct {
+					Type  string          `json:"type"`
+					Text  string          `json:"text"`
+					Input json.RawMessage `json:"input"`
+				} `json:"content"`
+			}
+			require.NoError(t, json.Unmarshal(out, &resp))
+			require.NotEmpty(t, resp.Content)
+			for _, block := range resp.Content {
+				switch block.Type {
+				case "text":
+					t.Logf("structured answer: %s", block.Text)
+					var answer struct {
+						Colour string `json:"colour"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(block.Text), &answer), "the answer follows the schema")
+					assert.Contains(t, strings.ToLower(answer.Colour), "blue")
+				case "tool_use":
+					t.Logf("strict tool call: %s", block.Input)
+					var input map[string]any
+					require.NoError(t, json.Unmarshal(block.Input, &input))
+					assert.Contains(t, input, "q", "a strict call carries its required argument")
+				}
+			}
+		})
+	}
+}
+
 func cachedPrefix() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run %d. You are a terse assistant. Reference material follows.\n", time.Now().UnixNano())

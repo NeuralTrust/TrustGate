@@ -462,6 +462,12 @@ func (p *providerInvoker) prepare(
 
 	sentModel := resolveSentModel(body, req)
 	body = adapter.OmitUnsupportedReasoningEffort(body, sentModel)
+	if crossFormat && adapter.IsSameWireFormat(sourceFormat, adapter.FormatAnthropic) && targetFormat == adapter.FormatBedrock {
+		body, err = p.prepareAnthropicConverse(ctx, req, body, sentModel)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	prep := &preparedInvocation{
 		client: client,

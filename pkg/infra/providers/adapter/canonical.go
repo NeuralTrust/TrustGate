@@ -41,6 +41,10 @@ type CanonicalRequest struct {
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
 	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
+	// Anthropic is set by the Anthropic decoder alone. Encoders that map these
+	// options do it only when it is set, so another source keeps the meaning
+	// its own fields of the same name have.
+	Anthropic *CanonicalAnthropicOptions `json:"anthropic,omitempty"`
 	// DroppedInputItems counts the input items a decoder left out because it
 	// could not read them; callers that inspect the request log it.
 	DroppedInputItems int `json:"-"`
@@ -107,6 +111,9 @@ type CanonicalTool struct {
 	// verbatim. It is nil for function tools.
 	Format json.RawMessage           `json:"format,omitempty"`
 	Cache  *CanonicalCacheBreakpoint `json:"cache,omitempty"`
+	// Strict asks the provider to hold the call's arguments to Schema. Only
+	// the Anthropic decoder sets it.
+	Strict *bool `json:"strict,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.
@@ -125,6 +132,13 @@ type CanonicalToolCall struct {
 	// Arguments holds a raw JSON string for function calls and the freeform
 	// text input for ToolKindCustom calls.
 	Arguments string `json:"arguments"`
+}
+
+// CanonicalAnthropicOptions holds the Anthropic Messages options that have no
+// neutral field. OutputFormat is the client's output_config.format object,
+// verbatim.
+type CanonicalAnthropicOptions struct {
+	OutputFormat json.RawMessage `json:"output_format,omitempty"`
 }
 
 // CanonicalRespFormat controls the response format.
