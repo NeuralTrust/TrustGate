@@ -72,6 +72,9 @@ type requestBody struct {
 	// format is the wire format the body was recognised as; empty when it
 	// could not be resolved.
 	format adapter.Format
+	// native holds the bytes of a native Bedrock call, which is relayed as sent:
+	// marshal then patches only the top-level fields that changed into them.
+	native []byte
 }
 
 type bodyShape int
@@ -285,26 +288,66 @@ func (rb *requestBody) firstSystemIndex() int {
 }
 
 func (rb *requestBody) marshal() ([]byte, error) {
+	if err := rb.encodeFields(); err != nil {
+		return nil, err
+	}
+	if rb.native != nil {
+		return rb.patchNative()
+	}
+	out, err := json.Marshal(rb.fields)
+	if err != nil {
+		return nil, fmt.Errorf("encode request body: %w", err)
+	}
+	return out, nil
+}
+
+func (rb *requestBody) encodeFields() error {
 	if rb.fields == nil {
 		rb.fields = map[string]json.RawMessage{}
 	}
 	if rb.systemDirty {
 		encoded, err := json.Marshal(rb.system)
 		if err != nil {
-			return nil, fmt.Errorf("encode system: %w", err)
+			return fmt.Errorf("encode system: %w", err)
 		}
 		rb.fields["system"] = encoded
 	}
 	if rb.messagesDirty {
 		encoded, err := json.Marshal(rb.messages)
 		if err != nil {
-			return nil, fmt.Errorf("encode messages: %w", err)
+			return fmt.Errorf("encode messages: %w", err)
 		}
 		rb.fields["messages"] = encoded
 	}
-	out, err := json.Marshal(rb.fields)
+	return nil
+}
+
+// patchNative writes the fields that differ from the native body into its bytes.
+// A field the plugin did not edit still holds the client's raw value, so it
+// compares equal and is left as sent.
+func (rb *requestBody) patchNative() ([]byte, error) {
+	original := map[string]json.RawMessage{}
+	if err := json.Unmarshal(rb.native, &original); err != nil {
+		return nil, fmt.Errorf("decode request body: %w", err)
+	}
+	set := map[string]json.RawMessage{}
+	for k, v := range rb.fields {
+		if o, ok := original[k]; !ok || !bytes.Equal(o, v) {
+			set[k] = v
+		}
+	}
+	var remove []string
+	for k := range original {
+		if _, ok := rb.fields[k]; !ok {
+			remove = append(remove, k)
+		}
+	}
+	if len(set) == 0 && len(remove) == 0 {
+		return rb.native, nil
+	}
+	out, err := adapter.PatchTopLevelFields(rb.native, set, remove)
 	if err != nil {
-		return nil, fmt.Errorf("encode request body: %w", err)
+		return nil, fmt.Errorf("patch request body: %w", err)
 	}
 	return out, nil
 }
@@ -334,6 +377,7 @@ func (rb *requestBody) clone() *requestBody {
 		hasSystemBlocks: rb.hasSystemBlocks,
 		rawDirty:        rb.rawDirty,
 		format:          rb.format,
+		native:          rb.native,
 	}
 }
 

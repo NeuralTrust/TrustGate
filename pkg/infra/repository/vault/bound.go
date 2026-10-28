@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -71,32 +72,30 @@ func (r *redisRepository) ExistsBound(ctx context.Context, gatewayID ids.Gateway
 		return false, nil
 	}
 	match := fmt.Sprintf("%s:%s:*", redisKeyPrefix, escapeGlob(gatewayID.String()))
-	var cursor uint64
-	for {
-		keys, next, err := r.rc.Scan(ctx, cursor, match, redisScanBatchSize).Result()
-		if err != nil {
-			return false, fmt.Errorf("vault repository: scan bound credentials: %w", err)
-		}
+	found := false
+	err := cache.ScanKeys(ctx, r.rc, match, redisScanBatchSize, func(ctx context.Context, keys []string) error {
 		for _, key := range keys {
 			stored, err := r.load(ctx, key)
 			if err != nil {
 				if errors.Is(err, domain.ErrNotFound) {
 					continue
 				}
-				return false, err
+				return err
 			}
 			if stored.GatewayID != gatewayID {
 				continue
 			}
 			if providerBoundToCode(stored.Provider, code) {
-				return true, nil
+				found = true
+				return cache.ErrStopScan
 			}
 		}
-		cursor = next
-		if cursor == 0 {
-			return false, nil
-		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("vault repository: bound credentials: %w", err)
 	}
+	return found, nil
 }
 
 func (r *fallbackRepository) ExistsBound(ctx context.Context, gatewayID ids.GatewayID, code string) (bool, error) {

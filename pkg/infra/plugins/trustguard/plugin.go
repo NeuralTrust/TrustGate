@@ -273,7 +273,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	mcpMode := in.Request.MCP
-	if !mcpMode && (p.registry == nil || in.Request.Provider == "") {
+	if !mcpMode && in.Request.Provider == "" {
+		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonProviderMissing, nil)
+	}
+	if !mcpMode && p.registry == nil {
 		return passThrough(), nil
 	}
 
@@ -312,6 +315,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		protocol = protocolMCP
 	}
 	body := GuardRequest{
+		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
 		Payload:         payload,
 		Direction:       direction,
@@ -474,6 +478,15 @@ func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, o
 	// on every streamed request is one digest, not a parse.
 	cfg, err := p.config(settings)
 	if err != nil {
+		if p.failClosedOf(settings) && !rawDirectionIs(settings, legRequest) {
+			// A closed policy whose settings do not parse stays on the stream
+			// chain with the default cadence, so inspectSegment can refuse (or,
+			// in observe, record) the parse failure instead of the response
+			// streaming out uninspected with nothing on the record.
+			var defaults pluginutil.StreamingSettings
+			defaults.ApplyDefaults(streamingDefaults)
+			return true, defaults.OptionsWithin(maxStreamWindowBytes)
+		}
 		return false, appplugins.StreamOptions{}
 	}
 	if !cfg.selectsStage(policy.StagePreResponse) {
@@ -772,6 +785,7 @@ func (p *Plugin) transformDegraded(
 	data.DegradedReason = reason
 	data.FailureReason = failureReasonTransformFailed
 	sharedReason, detail := sharedFailure(failureReasonTransformFailed, reason)
+	// No FailClosed here on purpose: a transform that cannot be applied is already input-class.
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
 		Plugin:  PluginName,
@@ -1062,16 +1076,18 @@ func (p *Plugin) guardFailureOmitting(
 	err error,
 ) (*appplugins.Result, error) {
 	sharedReason, detail := sharedFailure(reason, "")
+	failClosed := p.failClosed(in)
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:    ctx,
-		Plugin: PluginName,
-		Stage:  in.Stage,
-		Mode:   in.Mode,
-		Reason: sharedReason,
-		Detail: detail,
-		Err:    err,
-		Logger: p.logger,
-		Event:  in.Event,
+		FailClosed: failClosed,
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		Reason:     sharedReason,
+		Detail:     detail,
+		Err:        err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	if outcome.Abandoned {
 		return outcome.Returns()
@@ -1085,6 +1101,9 @@ func (p *Plugin) guardFailureOmitting(
 		FailureReason:           reason,
 		FailureClass:            string(outcome.Class),
 		AttachmentsNotInspected: attachmentsOmitted,
+	}
+	if failClosed {
+		failure.FailureMode = failureModeClosed
 	}
 	if reason == failureReasonVerdictIncomplete {
 		failure.FailureDetail = detail
@@ -1105,6 +1124,21 @@ const retryMinShare = 4
 // budget left at now.
 func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
 	return deadline.Sub(now) >= budget/retryMinShare
+}
+
+// failClosed reports whether the policy asks to refuse what TrustGuard cannot
+// evaluate (failure_mode: closed). Settings that do not parse are read
+// leniently (failureModeFromRaw), so a closed policy whose settings are invalid
+// is refused as config_invalid instead of silently failing open.
+func (p *Plugin) failClosed(in appplugins.ExecInput) bool {
+	return p.failClosedOf(in.Config.Settings)
+}
+
+func (p *Plugin) failClosedOf(settings map[string]any) bool {
+	if cfg, err := p.config(settings); err == nil {
+		return cfg.failClosed()
+	}
+	return failureModeFromRaw(settings) == failureModeClosed
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {

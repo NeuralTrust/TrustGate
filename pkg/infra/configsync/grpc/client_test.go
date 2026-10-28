@@ -123,7 +123,7 @@ func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {
 	src := &fakeSource{}
 	raw := bytes.Repeat([]byte("abcd"), (3*snapshotChunkSize)/4+3)
 	src.set(raw, "v-big")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 
 	got, version, notModified, err := client.Fetch(context.Background(), "")
@@ -144,7 +144,7 @@ func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {
 func TestClient_FetchNotModified(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 
 	_, version, notModified, err := client.Fetch(context.Background(), "v1")
@@ -191,7 +191,7 @@ func TestClient_WatchAckRoundTrip(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 	ctx := context.Background()
 
@@ -225,7 +225,7 @@ func TestClient_WatchReconnectsOnStreamBreak(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	hub := NewHub(discardLogger(), nil)
-	lis, gsrv := newBufServer(t, NewService(hub, src, discardLogger()))
+	lis, gsrv := newBufServer(t, NewService(hub, src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 	ctx := context.Background()
 
@@ -326,4 +326,18 @@ func firstConn(h *Hub) *connection {
 		return c
 	}
 	return nil
+}
+
+func TestStreamErr_MarksRefusedTokens(t *testing.T) {
+	refused := status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
+	got := streamErr("open sync stream", refused)
+	if !errors.Is(got, configsync.ErrTransportUnauthenticated) {
+		t.Fatalf("streamErr(%v) = %v, want ErrTransportUnauthenticated", refused, got)
+	}
+	if errors.Is(got, configsync.ErrTransportUnavailable) {
+		t.Fatal("a refused token must not be treated as a self-healing disconnect")
+	}
+	if !errors.Is(got, refused) {
+		t.Fatal("streamErr must wrap the original error")
+	}
 }

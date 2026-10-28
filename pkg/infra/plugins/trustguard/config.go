@@ -33,6 +33,13 @@ const (
 )
 
 const (
+	failureModeOpen   = "open"
+	failureModeClosed = "closed"
+	// defaultFailureMode is today's behaviour: a failed call lets the request through.
+	defaultFailureMode = failureModeOpen
+)
+
+const (
 	defaultStreamingHeadChars            = 400
 	defaultStreamingMinCharsBetweenEvals = 2048
 	defaultStreamingMaxHoldMS            = 800
@@ -54,8 +61,14 @@ type Settings struct {
 	//
 	// The key name is fixed by the policy catalog. Its values are legs, not the
 	// input/output direction reported to TrustGuard per evaluate call.
-	Direction   string                       `mapstructure:"direction"`
-	CollectorID string                       `mapstructure:"collector_id"`
+	Direction   string `mapstructure:"direction"`
+	CollectorID string `mapstructure:"collector_id"`
+	// FailureMode is what a request costs when TrustGuard cannot evaluate it:
+	// "open" lets it through, "closed" blocks it in a mode that blocks and
+	// records it in observe. It is forwarded to TrustGuard as X-Failure-Mode and
+	// applied to this plugin's own failures calling it. Input failures (a body
+	// TrustGuard refused for its size) are refused in both.
+	FailureMode string                       `mapstructure:"failure_mode"`
 	Streaming   pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
@@ -87,14 +100,43 @@ func (s *Settings) applyDefaults() {
 	if s.Direction == "" {
 		s.Direction = defaultLegs
 	}
+	if s.FailureMode == "" {
+		s.FailureMode = defaultFailureMode
+	}
 	s.Streaming.ApplyDefaults(streamingDefaults)
 }
+
+// failureModeFromRaw reads failure_mode straight from a settings map that may
+// not parse: it is closed only when the key (any case, as mapstructure matches
+// it) is a string equal-fold to "closed", and open for everything else. It is
+// used only to decide what a failure costs, so a policy that asked for closed
+// does not silently fail open because some other key made its settings invalid.
+// It never validates: parseConfig is still the one that rejects a bad value.
+func failureModeFromRaw(settings map[string]any) string {
+	for key, v := range settings {
+		if !strings.EqualFold(key, "failure_mode") {
+			continue
+		}
+		if mode, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(mode), failureModeClosed) {
+			return failureModeClosed
+		}
+	}
+	return failureModeOpen
+}
+
+// failClosed reports whether this policy refuses what TrustGuard cannot evaluate.
+func (s Settings) failClosed() bool { return s.FailureMode == failureModeClosed }
 
 func (s *Settings) validate() error {
 	switch s.Direction {
 	case legRequest, legResponse, legRequestResponse:
 	default:
 		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
+	}
+	switch s.FailureMode {
+	case failureModeOpen, failureModeClosed:
+	default:
+		return fmt.Errorf("trustguard: failure_mode must be one of open, closed")
 	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")
@@ -129,4 +171,15 @@ func (p *Plugin) RetiredSettings() []string {
 		pluginutil.SettingOnError, "on_timeout", "timeout", pluginutil.SettingOnMaskFailure,
 		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
 	}
+}
+
+// rawDirectionIs reports whether the unparsed settings name leg as their direction.
+func rawDirectionIs(settings map[string]any, leg string) bool {
+	for key, v := range settings {
+		if strings.EqualFold(key, "direction") {
+			d, ok := v.(string)
+			return ok && d == leg
+		}
+	}
+	return false
 }

@@ -1021,7 +1021,87 @@ func TestAdaptStream_OpenAIClientGetsSignedGeminiFunctionCall(t *testing.T) {
 			assert.Equal(t, tt.wantCalls, calls)
 			assert.Empty(t, content, "a signed functionCall carries no text")
 			assert.Equal(t, tt.wantReasoning, reasoning)
-			assert.Len(t, finishes, 1)
+			assert.Equal(t, []string{"tool_calls"}, finishes)
+		})
+	}
+}
+
+func TestAdaptStream_GeminiStopAfterToolCallFinishesAsToolCalls(t *testing.T) {
+	call := `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"trustgate_list_tools","args":{},"id":"call_648169"}}],"role":"model"},"index":0}],"responseId":"GN_1","modelVersion":"gemini-3.5-flash-lite"}`
+	role := `data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"index":0}],"responseId":"GN_1","modelVersion":"gemini-3.5-flash-lite"}`
+	stop := `data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP","index":0}],"responseId":"GN_1","modelVersion":"gemini-3.5-flash-lite"}`
+	usage := `data: {"usageMetadata":{"promptTokenCount":11381,"candidatesTokenCount":13,"totalTokenCount":11394,"cachedContentTokenCount":8111},"responseId":"GN_1","modelVersion":"gemini-3.5-flash-lite"}`
+	text := `data: {"candidates":[{"content":{"parts":[{"text":"hello"}],"role":"model"},"index":0}]}`
+	textStop := `data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}]}`
+	maxTokens := `data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"MAX_TOKENS"}]}`
+	safety := `data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}`
+	sameChunk := `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}],"role":"model"},"finishReason":"STOP"}]}`
+
+	tests := []struct {
+		name   string
+		source adapter.Format
+		lines  []string
+		want   string
+	}{
+		{
+			name:   "split chunks",
+			source: adapter.FormatOpenAI,
+			lines:  []string{call, role, stop, usage},
+			want:   "tool_calls",
+		},
+		{
+			name:   "function call and STOP in one chunk",
+			source: adapter.FormatOpenAI,
+			lines:  []string{sameChunk},
+			want:   "tool_calls",
+		},
+		{
+			name:   "text STOP stays stop",
+			source: adapter.FormatOpenAI,
+			lines:  []string{text, textStop},
+			want:   "stop",
+		},
+		{
+			name:   "MAX_TOKENS after a call stays length",
+			source: adapter.FormatOpenAI,
+			lines:  []string{call, maxTokens},
+			want:   "length",
+		},
+		{
+			name:   "SAFETY after a call stays SAFETY",
+			source: adapter.FormatOpenAI,
+			lines:  []string{call, safety},
+			want:   "SAFETY",
+		},
+		{
+			name:   "mistral client",
+			source: adapter.FormatMistral,
+			lines:  []string{call, stop, "data: [DONE]"},
+			want:   "tool_calls",
+		},
+		{
+			name:   "azure client",
+			source: adapter.FormatAzure,
+			lines:  []string{call, stop},
+			want:   "tool_calls",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(linesSeq(tt.lines...), adapter.NewRegistry(), tt.source, adapter.FormatGemini, slog.Default(), nil))
+
+			var finishes []string
+			for _, chunk := range dataChunks(t, lines) {
+				choices, _ := chunk["choices"].([]any)
+				if len(choices) == 0 {
+					continue
+				}
+				choice, _ := choices[0].(map[string]any)
+				if fr, _ := choice["finish_reason"].(string); fr != "" {
+					finishes = append(finishes, fr)
+				}
+			}
+			assert.Equal(t, []string{tt.want}, finishes)
 		})
 	}
 }

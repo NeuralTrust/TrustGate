@@ -65,6 +65,7 @@ const (
 
 	redisLoginDefault = "default"
 	redisLoginAWS     = "aws"
+	redisLoginGCP     = "gcp"
 
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
@@ -130,7 +131,8 @@ const (
 	defaultLogFormat      = "json"
 	defaultLogFileEnabled = false
 
-	defaultSemanticCacheVectorStore = "redis"
+	defaultSemanticCacheVectorStore        = "redis"
+	defaultClusterSemanticCacheVectorStore = "in_memory"
 
 	defaultTrustGuardTimeout = 30 * time.Second
 
@@ -165,12 +167,15 @@ const (
 	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
 	// message limit and the data plane's default Sync receive limit: the usage
 	// list goes from one to the other in a single message.
-	defaultGRPCMaxMessageBytes             = 64 << 20
-	defaultConfigSyncGRPCMinBackoff        = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff        = 30 * time.Second
-	defaultConfigSyncOutboxRetention       = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows   int64 = 10000
-	defaultConfigSyncAdminLKGMaxAge        = 7 * 24 * time.Hour
+	defaultGRPCMaxMessageBytes                    = 64 << 20
+	defaultConfigSyncGRPCMinBackoff               = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff               = 30 * time.Second
+	defaultConfigSyncOutboxRetention              = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows          int64 = 10000
+	defaultConfigSyncAdminLKGMaxAge               = 7 * 24 * time.Hour
+	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
+	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
+	minConfigSyncTokenRevocationRefresh           = time.Second
 
 	configSyncKeyBytes = 32
 
@@ -349,6 +354,14 @@ const (
 	ConfigSyncAuthModeComposite = "composite"
 )
 
+// Config-sync token revocation modes. Shadow only reports the tokens enforce
+// would reject, so revocations can be measured before anything is refused.
+const (
+	ConfigSyncTokenRevocationOff     = "off"
+	ConfigSyncTokenRevocationShadow  = "shadow"
+	ConfigSyncTokenRevocationEnforce = "enforce"
+)
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled     bool
 	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -388,6 +401,12 @@ type ConfigSyncConfig struct {
 	AdminLKGEnabled bool
 	// AdminLKGMaxAge refuses a persisted snapshot older than this.
 	AdminLKGMaxAge time.Duration
+	// TokenRevocationMode decides what the control plane does with a revoked
+	// config-sync token: off, shadow or enforce.
+	TokenRevocationMode string
+	// TokenRevocationRefreshInterval is how often each control replica reloads
+	// the stored revocations.
+	TokenRevocationRefreshInterval time.Duration
 }
 
 type ServerConfig struct {
@@ -456,7 +475,9 @@ type ServerConfig struct {
 	// https://app.neuraltrust.ai/api/internal/trustgate/personal-key-events).
 	// Signed with SecretKey, the secret the console already shares. Empty: the
 	// console is not told, and a new key reaches its models on the console's
-	// next reconcile.
+	// next reconcile. The proxy planes post key_group_budget_reached here too,
+	// the first time a group budget's limit is reached in a month, so set it
+	// on every plane that serves /store/v1 for the console to hear of them.
 	ConsoleEventsURL string
 	// ConsoleModelRequestsURL is where the MCP Store's request tool asks the
 	// console about a request for a provider's models, and files it once the
@@ -542,6 +563,12 @@ type RedisConfig struct {
 	Username          string
 	CacheName         string
 	AWSServerless     bool
+	// Cluster selects a Redis Cluster client seeded with Host:Port. A cluster
+	// has a single database, so DB must be 0.
+	Cluster bool
+	// TLSCAFile is a PEM bundle that replaces the system roots when verifying
+	// the Redis server certificate.
+	TLSCAFile string
 }
 
 type CacheConfig struct {
@@ -782,14 +809,15 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	redisConfig := getRedisConfig()
 	cfg := &Config{
 		ClientIP:            clientIP,
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
 		Server:              getServerConfig(),
 		Database:            getDatabaseConfig(),
-		Redis:               getRedisConfig(),
+		Redis:               redisConfig,
 		Cache:               getCacheConfig(),
-		SemanticCache:       getSemanticCacheConfig(),
+		SemanticCache:       getSemanticCacheConfig(redisConfig.Cluster),
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
@@ -905,8 +933,13 @@ func getDatabaseConfig() DatabaseConfig {
 func getRedisConfig() RedisConfig {
 	login := normalizeRedisLogin(os.Getenv("REDIS_LOGIN"))
 	password := getEnv("REDIS_PASSWORD", "")
-	if login == redisLoginAWS {
+	if login == redisLoginAWS || login == redisLoginGCP {
 		password = ""
+	}
+	cluster := getEnvBool("REDIS_CLUSTER", false)
+	db := defaultRedisDB
+	if cluster {
+		db = 0
 	}
 
 	return RedisConfig{
@@ -914,12 +947,14 @@ func getRedisConfig() RedisConfig {
 		Host:              getEnv("REDIS_HOST", defaultRedisHost),
 		Port:              getEnvInt("REDIS_PORT", defaultRedisPort),
 		Password:          password,
-		DB:                getEnvInt("REDIS_DB", defaultRedisDB),
+		DB:                getEnvInt("REDIS_DB", db),
 		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),
 		TLSInsecureVerify: getEnvBool("REDIS_TLS_INSECURE_VERIFY", false),
 		Username:          strings.TrimSpace(getEnv("REDIS_USERNAME", "")),
 		CacheName:         strings.TrimSpace(getEnv("REDIS_CACHE_NAME", "")),
 		AWSServerless:     getEnvBool("REDIS_AWS_SERVERLESS", false),
+		Cluster:           cluster,
+		TLSCAFile:         strings.TrimSpace(getEnv("REDIS_TLS_CA_FILE", "")),
 	}
 }
 
@@ -937,9 +972,15 @@ func getCacheConfig() CacheConfig {
 	}
 }
 
-func getSemanticCacheConfig() SemanticCacheConfig {
+// getSemanticCacheConfig defaults the vector store to in_memory on a Redis
+// cluster, which cannot be relied on to serve RediSearch (FT.*).
+func getSemanticCacheConfig(redisCluster bool) SemanticCacheConfig {
+	store := defaultSemanticCacheVectorStore
+	if redisCluster {
+		store = defaultClusterSemanticCacheVectorStore
+	}
 	return SemanticCacheConfig{
-		VectorStore: getEnv("SEMANTIC_CACHE_VECTOR_STORE", defaultSemanticCacheVectorStore),
+		VectorStore: strings.ToLower(strings.TrimSpace(getEnv("SEMANTIC_CACHE_VECTOR_STORE", store))),
 	}
 }
 
@@ -1283,6 +1324,9 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
 		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
+			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
+		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
 	}
 }
 
@@ -1547,27 +1591,14 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%w: DB_SSL_MODE must be %q, %q or %q when POSTGRES_LOGIN=%q", errors.ErrInvalidConfig, "require", "verify-ca", "verify-full", c.Database.Login)
 			}
 		}
-	}
-	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
-	switch c.Redis.Login {
-	case redisLoginDefault, redisLoginAWS:
-	default:
-		return fmt.Errorf("%w: REDIS_LOGIN must be %q or %q", errors.ErrInvalidConfig, redisLoginDefault, redisLoginAWS)
-	}
-	if c.Redis.Host == "" {
-		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
-	}
-	if c.Redis.Login == redisLoginAWS {
-		c.Redis.Password = ""
-		if !c.Redis.TLSEnabled {
-			return fmt.Errorf("%w: REDIS_TLS_ENABLED must be true when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		// Cloud SQL and AlloyDB name an IAM service-account user by its email with
+		// this suffix removed; the full email is rejected at login.
+		if c.Database.Login == PostgresLoginGCP && strings.HasSuffix(strings.ToLower(c.Database.User), gcpServiceAccountSuffix) {
+			return fmt.Errorf("%w: DB_USER must drop the %q suffix when POSTGRES_LOGIN=%q (e.g. name@project.iam)", errors.ErrInvalidConfig, gcpServiceAccountSuffix, PostgresLoginGCP)
 		}
-		if c.Redis.CacheName == "" {
-			return fmt.Errorf("%w: REDIS_CACHE_NAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
-		}
-		if c.Redis.Username == "" {
-			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
-		}
+	}
+	if err := c.validateRedis(); err != nil {
+		return err
 	}
 	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
 		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
@@ -1594,6 +1625,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
 	}
 	if err := c.ConfigSync.validateAuthMode(); err != nil {
+		return err
+	}
+	if err := c.ConfigSync.validateTokenRevocation(); err != nil {
 		return err
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
@@ -1652,6 +1686,42 @@ func (cs ConfigSyncConfig) validateAuthMode() error {
 	}
 }
 
+// AcceptsSignedTokens reports whether the config-sync channel verifies signed
+// per-instance JWTs, which are the only tokens revocation applies to.
+func (cs ConfigSyncConfig) AcceptsSignedTokens() bool {
+	return cs.AuthMode == ConfigSyncAuthModeSigned || cs.AuthMode == ConfigSyncAuthModeComposite
+}
+
+// RevocationMode returns the token revocation mode, shadow when unset.
+func (cs ConfigSyncConfig) RevocationMode() string {
+	if cs.TokenRevocationMode == "" {
+		return defaultConfigSyncTokenRevocationMode
+	}
+	return cs.TokenRevocationMode
+}
+
+// RevocationRefreshInterval returns how often revocations are reloaded, the
+// default when unset.
+func (cs ConfigSyncConfig) RevocationRefreshInterval() time.Duration {
+	if cs.TokenRevocationRefreshInterval == 0 {
+		return defaultConfigSyncTokenRevocationRefresh
+	}
+	return cs.TokenRevocationRefreshInterval
+}
+
+func (cs ConfigSyncConfig) validateTokenRevocation() error {
+	switch cs.RevocationMode() {
+	case ConfigSyncTokenRevocationOff, ConfigSyncTokenRevocationShadow, ConfigSyncTokenRevocationEnforce:
+	default:
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_MODE must be %q, %q or %q", errors.ErrInvalidConfig,
+			ConfigSyncTokenRevocationOff, ConfigSyncTokenRevocationShadow, ConfigSyncTokenRevocationEnforce)
+	}
+	if cs.RevocationRefreshInterval() < minConfigSyncTokenRevocationRefresh {
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL must be at least %s, since each reload gets one interval to finish", errors.ErrInvalidConfig, minConfigSyncTokenRevocationRefresh)
+	}
+	return nil
+}
+
 func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 	if cs.JWTSecret == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_SECRET", errors.ErrInvalidConfig, cs.AuthMode)
@@ -1664,6 +1734,59 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+func (c *Config) validateRedis() error {
+	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
+	switch c.Redis.Login {
+	case redisLoginDefault, redisLoginAWS, redisLoginGCP:
+	default:
+		return fmt.Errorf("%w: REDIS_LOGIN must be %q, %q or %q", errors.ErrInvalidConfig, redisLoginDefault, redisLoginAWS, redisLoginGCP)
+	}
+	if c.Redis.Host == "" {
+		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
+	}
+	if c.Redis.Login == redisLoginAWS || c.Redis.Login == redisLoginGCP {
+		c.Redis.Password = ""
+		if !c.Redis.TLSEnabled {
+			return fmt.Errorf("%w: REDIS_TLS_ENABLED must be true when REDIS_LOGIN=%q", errors.ErrInvalidConfig, c.Redis.Login)
+		}
+	}
+	if c.Redis.Login == redisLoginAWS {
+		if c.Redis.CacheName == "" {
+			return fmt.Errorf("%w: REDIS_CACHE_NAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+		if c.Redis.Username == "" {
+			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+	}
+	// Memorystore IAM authentication sends the token with no username, so a
+	// configured one would be dropped without notice.
+	if c.Redis.Login == redisLoginGCP && c.Redis.Username != "" {
+		return fmt.Errorf("%w: REDIS_USERNAME must be empty when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginGCP)
+	}
+	if c.Redis.TLSCAFile != "" {
+		if !c.Redis.TLSEnabled {
+			return fmt.Errorf("%w: REDIS_TLS_CA_FILE requires REDIS_TLS_ENABLED=true", errors.ErrInvalidConfig)
+		}
+		if c.Redis.TLSInsecureVerify {
+			return fmt.Errorf("%w: REDIS_TLS_CA_FILE and REDIS_TLS_INSECURE_VERIFY are mutually exclusive", errors.ErrInvalidConfig)
+		}
+	}
+	if c.Redis.Cluster {
+		if c.Redis.DB != 0 {
+			return fmt.Errorf("%w: REDIS_DB must be 0 when REDIS_CLUSTER=true (a cluster has a single database)", errors.ErrInvalidConfig)
+		}
+		c.SemanticCache.VectorStore = strings.ToLower(strings.TrimSpace(c.SemanticCache.VectorStore))
+		if c.SemanticCache.VectorStore == "" {
+			c.SemanticCache.VectorStore = defaultClusterSemanticCacheVectorStore
+		}
+		if c.SemanticCache.VectorStore == defaultSemanticCacheVectorStore {
+			return fmt.Errorf("%w: SEMANTIC_CACHE_VECTOR_STORE=%q is not supported when REDIS_CLUSTER=true (a Redis cluster cannot be relied on to serve RediSearch); use %q or %q",
+				errors.ErrInvalidConfig, defaultSemanticCacheVectorStore, "pgvector", defaultClusterSemanticCacheVectorStore)
+		}
+	}
+	return nil
 }
 
 func (c *Config) validateServerSecretKey() error {

@@ -25,7 +25,7 @@ import (
 // Deps carries the backend handles a Store may need; only the field matching
 // the selected kind is required.
 type Deps struct {
-	Redis  *redis.Client
+	Redis  redis.UniversalClient
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 }

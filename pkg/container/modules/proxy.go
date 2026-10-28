@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"fmt"
 	"log/slog"
 
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
@@ -24,12 +25,17 @@ import (
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/console"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
@@ -59,6 +65,9 @@ func Proxy(c *container.Container) error {
 	if err := c.Provide(func(client cache.Client) loadbalancer.RedisProvider { return client }); err != nil {
 		return err
 	}
+	if err := c.Provide(newGroupBudget); err != nil {
+		return err
+	}
 	// The stream guard needs the same adapter registry under its own narrow
 	// view; dig resolves by exact type, so bind it here as the invoker does.
 	if err := c.Provide(func(
@@ -73,6 +82,7 @@ func Proxy(c *container.Container) error {
 		limiter ratelimitapp.Checker,
 		registry *adapter.Registry,
 		bedrockModels appcatalog.BedrockModelResolver,
+		groupBudget *tokenratelimit.GroupBudget,
 		cfg *config.Config,
 		logger *slog.Logger,
 	) appproxy.Forwarder {
@@ -80,6 +90,7 @@ func Proxy(c *container.Container) error {
 			factory, cacheClient, manager, invoker, executor, sessions, resolver, listing, limiter, cfg, logger,
 			appproxy.WithStreamCodec(registry),
 			appproxy.WithForwarderBedrockModelResolver(bedrockModels),
+			appproxy.WithGroupBudget(groupBudget),
 		)
 	}); err != nil {
 		return err
@@ -107,4 +118,28 @@ func Proxy(c *container.Container) error {
 			WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs)).
 			WithLogger(logger)
 	})
+}
+
+// newGroupBudget is the stage that holds a group key's store requests to its
+// group's budget, on the token_rate_limiter's counters and pricing. When
+// CONSOLE_EVENTS_URL is set on this plane it tells the console the first time
+// a limit is reached in a month; without it limits are enforced and nobody is
+// told.
+func newGroupBudget(
+	cfg *config.Config,
+	cacheClient cache.Client,
+	registry *adapter.Registry,
+	pricing appcatalog.PricingResolver,
+	gateways gatewaydomain.Repository,
+	logger *slog.Logger,
+) (*tokenratelimit.GroupBudget, error) {
+	var notifier keygroupdomain.Notifier
+	if endpoint := cfg.Server.ConsoleEventsURL; endpoint != "" {
+		events, err := console.NewKeyGroupBudgetEvents(endpoint, cfg.Server.SecretKey, gateways, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", commonerrors.ErrInvalidConfig, err)
+		}
+		notifier = events
+	}
+	return tokenratelimit.NewGroupBudget(cacheClient.RedisClient(), registry, pricing, notifier, logger), nil
 }

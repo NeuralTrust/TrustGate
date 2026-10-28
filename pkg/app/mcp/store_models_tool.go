@@ -35,10 +35,12 @@ import (
 // with their personal key.
 const StoreModelsToolName = StoreToolNamePrefix + "models"
 
-// OwnedKeyFinder finds the personal key a user holds on a gateway.
+// OwnedKeyFinder finds the keys a user holds on a gateway: the one a request
+// was made with, by id, and their personal key, by owner.
 // authdomain.Repository satisfies it.
 type OwnedKeyFinder interface {
-	FindByOwner(ctx context.Context, gatewayID ids.GatewayID, ownerID string) (*authdomain.Auth, error)
+	FindByID(ctx context.Context, id ids.AuthID) (*authdomain.Auth, error)
+	FindByOwnerAndGroup(ctx context.Context, gatewayID ids.GatewayID, ownerID, groupID string) (*authdomain.Auth, error)
 }
 
 // StoreModel is one model a personal key reaches, and the provider serving it.
@@ -71,9 +73,11 @@ type storeModelsProvider struct {
 	Models   []string `json:"models"`
 }
 
-// models answers the tool with what the caller's personal key reaches: the
-// same list its /store/v1/models gives, grouped by provider, and where to call
-// them. The key itself is never part of the answer.
+// models answers the tool with what the caller's key reaches: the same list
+// its /store/v1/models gives, grouped by provider, and where to call them. The
+// key is the one the call was made with when that is one of the caller's own,
+// a group key included, and their personal key otherwise. The key itself is
+// never part of the answer.
 func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage, error) {
 	if t.ownedKeys == nil || t.modelLister == nil {
 		return nil, fmt.Errorf("%w: models are not available here", ErrStoreToolUnavailable)
@@ -92,7 +96,7 @@ func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage
 			map[string]any{"available": false, "providers": []storeModelsProvider{}},
 		)
 	}
-	key, err := t.ownedKeys.FindByOwner(ctx, gw.ID, principal.Subject)
+	key, err := t.callerKey(ctx, gw.ID, principal.Subject)
 	switch {
 	case errors.Is(err, authdomain.ErrNotFound):
 		return marshalToolResult(
@@ -142,6 +146,21 @@ func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage
 	}
 	fmt.Fprintf(&b, "\nFor a provider not listed here, the user can ask for its models %s.", t.requestModelsHow())
 	return marshalToolResult(b.String(), structured)
+}
+
+// callerKey is the key the request was made with when the caller owns it on
+// this gateway, else the caller's personal key. A session, which carries no
+// key, and an application key both get the personal key.
+func (t *storeTool) callerKey(ctx context.Context, gatewayID ids.GatewayID, owner string) (*authdomain.Auth, error) {
+	if authID, ok := appconsumer.AuthIDFromContext(ctx); ok && !authID.IsNil() {
+		switch key, err := t.ownedKeys.FindByID(ctx, authID); {
+		case err == nil && key.IsOwned() && key.OwnerID == owner && key.GatewayID == gatewayID:
+			return key, nil
+		case err != nil && !errors.Is(err, authdomain.ErrNotFound):
+			return nil, err
+		}
+	}
+	return t.ownedKeys.FindByOwnerAndGroup(ctx, gatewayID, owner, "")
 }
 
 // requestModelsHow says where a user asks for a provider's models: the request

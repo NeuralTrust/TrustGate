@@ -311,14 +311,14 @@ func TestInstallationsOperationsAreRegisteredByServer(t *testing.T) {
 		GRPCKeepaliveTime:    30 * time.Second,
 		GRPCKeepaliveTimeout: 10 * time.Second,
 	}
-	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger(), nil)
 	if err != nil {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
 	source := &fakeSource{}
 	source.set([]byte("payload"), "v1")
 	installations := NewInstallationsService(newMemInstallations(), nil, nil, discardLogger())
-	server, err := NewServer(cfg, NewService(NewHub(discardLogger(), nil), source, discardLogger()), installations, auth, discardLogger())
+	server, err := NewServer(cfg, NewService(NewHub(discardLogger(), nil), source, discardLogger(), nil), installations, auth, discardLogger())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

@@ -134,20 +134,33 @@ func TestPersonalKeysAreIndexedByOwnerAndNeverListedAsCredentials(t *testing.T) 
 	gw, other := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
 	application := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-app", CreatedAt: baseTime}
 	alice := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-alice", OwnerID: "alice", CreatedAt: baseTime}
+	aliceEng := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-alice-eng", OwnerID: "alice", GroupID: "g-eng", GroupName: "engineering", CreatedAt: baseTime.Add(time.Hour)}
 	aliceElsewhere := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: other, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-alice-2", OwnerID: "alice", CreatedAt: baseTime}
 
-	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{application, alice, aliceElsewhere}})
+	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{application, alice, aliceEng, aliceElsewhere}})
 
-	got, ok := snap.AuthByOwner(gw, "alice")
+	got, ok := snap.AuthByOwnerAndGroup(gw, "alice", "")
 	require.True(t, ok)
-	assert.Equal(t, alice.ID, got.ID)
-	got, ok = snap.AuthByOwner(other, "alice")
+	assert.Equal(t, alice.ID, got.ID, "no group is the personal key")
+	got, ok = snap.AuthByOwnerAndGroup(gw, "alice", "g-eng")
 	require.True(t, ok)
-	assert.Equal(t, aliceElsewhere.ID, got.ID, "one key per owner per gateway")
-	_, ok = snap.AuthByOwner(gw, "bob")
+	assert.Equal(t, aliceEng.ID, got.ID)
+	_, ok = snap.AuthByOwnerAndGroup(gw, "alice", "g-sre")
 	assert.False(t, ok)
-	_, ok = snap.AuthByOwner(gw, "")
+	got, ok = snap.AuthByOwnerAndGroup(other, "alice", "")
+	require.True(t, ok)
+	assert.Equal(t, aliceElsewhere.ID, got.ID, "one key per owner and group per gateway")
+	_, ok = snap.AuthByOwnerAndGroup(gw, "bob", "")
+	assert.False(t, ok)
+	_, ok = snap.AuthByOwnerAndGroup(gw, "", "")
 	assert.False(t, ok, "an application key has no owner to look it up by")
+
+	owned := snap.AuthsByOwner(gw, "alice")
+	require.Len(t, owned, 2)
+	assert.Equal(t, aliceEng.ID, owned[0].ID, "newest first")
+	assert.Equal(t, alice.ID, owned[1].ID)
+	assert.Empty(t, snap.AuthsByOwner(gw, "bob"))
+	assert.Empty(t, snap.AuthsByOwner(gw, ""))
 
 	listed := snap.AuthsEnabledByGatewayAndType(gw, authdomain.TypeAPIKey)
 	require.Len(t, listed, 1)

@@ -15,9 +15,11 @@
 package request
 
 // UpdateAuthOwnerGroupsRequest is the directory groups of a personal key's
-// owner, and optionally their email. An empty list clears the groups; an
-// empty email clears it, and no email leaves it as it is.
+// owner, and optionally their email and, for a group key, its group's name.
+// An empty list clears the groups; an empty email clears it, and no email
+// leaves it as it is. No group_name leaves the group's name as it is.
 type UpdateAuthOwnerGroupsRequest struct {
-	Groups []string `json:"groups" example:"engineering,sre"`
-	Email  *string  `json:"email,omitempty" example:"alice@example.com"`
+	Groups    []string `json:"groups" example:"engineering,sre"`
+	Email     *string  `json:"email,omitempty" example:"alice@example.com"`
+	GroupName *string  `json:"group_name,omitempty" example:"engineering"`
 }

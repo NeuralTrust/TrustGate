@@ -267,3 +267,63 @@ func TestConnectionTester_InvalidProvider(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, commonerrors.ErrValidation)
 }
+
+type fakeCatalogChecker struct {
+	warnings []string
+	calls    int
+}
+
+func (f *fakeCatalogChecker) CheckCatalogAccess(context.Context, string, *domain.TargetAuth) []string {
+	f.calls++
+	return f.warnings
+}
+
+// Runtime-only IAM (InvokeModel) is a working connection: the missing catalog
+// permissions are reported as warnings, never as a failure.
+func TestConnectionTester_SuccessCarriesCatalogWarnings(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	locator := locatormocks.NewProviderLocator(t)
+	probe := providermocks.NewConnectionTester(t)
+	probe.EXPECT().TestConnection(mock.Anything, mock.Anything).
+		Return(providers.ProbeResult{OK: true, Stage: providers.StageAuthentication}).Once()
+	locator.EXPECT().Get("bedrock").Return(nil, nil).Once()
+	locator.EXPECT().GetTester("bedrock").Return(probe, nil).Once()
+
+	checker := &fakeCatalogChecker{warnings: []string{"Missing IAM permission bedrock:ListInferenceProfiles"}}
+	svc := appregistry.NewConnectionTester(finder, locator, newTestLogger(), appregistry.WithCatalogAccessChecker(checker))
+	res, err := svc.Test(context.Background(), appregistry.TestConnectionInput{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Provider:  "bedrock",
+		Auth:      domain.NewAPIKeyAuth("k"),
+	})
+
+	require.NoError(t, err)
+	assert.True(t, res.OK)
+	assert.Equal(t, []string{"Missing IAM permission bedrock:ListInferenceProfiles"}, res.Warnings)
+	assert.Equal(t, 1, checker.calls)
+}
+
+func TestConnectionTester_FailedProbeSkipsCatalogCheck(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	locator := locatormocks.NewProviderLocator(t)
+	probe := providermocks.NewConnectionTester(t)
+	probe.EXPECT().TestConnection(mock.Anything, mock.Anything).
+		Return(providers.ProbeResult{OK: false, Stage: providers.StageAuthentication, StatusCode: 403}).Once()
+	locator.EXPECT().Get("bedrock").Return(nil, nil).Once()
+	locator.EXPECT().GetTester("bedrock").Return(probe, nil).Once()
+
+	checker := &fakeCatalogChecker{warnings: []string{"x"}}
+	svc := appregistry.NewConnectionTester(finder, locator, newTestLogger(), appregistry.WithCatalogAccessChecker(checker))
+	res, err := svc.Test(context.Background(), appregistry.TestConnectionInput{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Provider:  "bedrock",
+		Auth:      domain.NewAPIKeyAuth("k"),
+	})
+
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.Empty(t, res.Warnings)
+	assert.Zero(t, checker.calls)
+}

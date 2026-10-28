@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -74,6 +75,17 @@ func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
 	return appplugins.BedrockNativeSkips
 }
 
+// BedrockNativeFor injects into native Bedrock calls only for a policy that opted
+// in with apply_on_native_bedrock: a policy saved before the setting existed keeps
+// being skipped there.
+func (p *Plugin) BedrockNativeFor(settings map[string]any) appplugins.BedrockNativeBehavior {
+	opt, err := pluginutil.Parse[nativeOptIn](settings)
+	if err != nil || !opt.ApplyOnNativeBedrock {
+		return appplugins.BedrockNativeSkips
+	}
+	return appplugins.BedrockNativeInjects
+}
+
 // RewritesLocally opts into running ahead of the same-priority rewriters that
 // send content to a third party: what this plugin rewrites never leaves the
 // gateway (RUN-1745).
@@ -101,7 +113,13 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	properties, hadProperties := rb.takeProperties()
 
-	if skip := rb.applyFormat(in.Request.Provider, in.Request.SourceFormat, in.Request.MCP, in.Request.Body); skip != nil {
+	var skip *passThrough
+	if in.Request.IsBedrockNative() {
+		skip = rb.applyNativeFormat(in.Request.BedrockNative.Op, in.Request.Body)
+	} else {
+		skip = rb.applyFormat(in.Request.Provider, in.Request.SourceFormat, in.Request.MCP, in.Request.Body)
+	}
+	if skip != nil {
 		return skipRequest(in, cfg, skip, rb, hadProperties)
 	}
 

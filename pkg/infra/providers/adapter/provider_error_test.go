@@ -69,6 +69,16 @@ func TestBodyCarriesModelNotFound(t *testing.T) {
 			true,
 		},
 		{
+			"bedrock access denied to the model",
+			`{"__type":"AccessDeniedException","message":"You don't have access to the model with the specified model ID."}`,
+			true,
+		},
+		{
+			"bedrock access denied without a model",
+			`{"__type":"AccessDeniedException","message":"You don't have access to this guardrail."}`,
+			false,
+		},
+		{
 			"anthropic not found",
 			`{"type":"error","error":{"type":"not_found_error","message":"model: claude-99 not found"}}`,
 			true,

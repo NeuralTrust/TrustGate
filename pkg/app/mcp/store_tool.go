@@ -283,7 +283,8 @@ func (t *storeTool) install(
 		PrincipalSub: principal.Subject,
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
-		Groups:       principal.Groups(),
+		Groups:       principal.StoreGroups(),
+		GroupScoped:  principal.KeyGroup() != "",
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
 		RegistryID:   registryID,
@@ -438,7 +439,8 @@ func (t *storeTool) configureLink(
 		ConsumerPath: consumerPath,
 		Code:         code,
 		InstanceID:   instanceID,
-		Groups:       principal.Groups(),
+		Groups:       principal.StoreGroups(),
+		GroupScoped:  principal.KeyGroup() != "",
 		AskReason:    askReason,
 	})
 	if err != nil {
@@ -828,7 +830,9 @@ func (t *storeTool) search(
 		}
 	}
 	principal := identity.PrincipalFromContext(ctx)
-	groups := principal.Groups()
+	// Availability is decided for the principal's Store identity; what is
+	// installed is the principal's own.
+	groups, grantee := principal.StoreGroups(), principal.StoreSubject()
 	subject := ""
 	if principal != nil {
 		subject = principal.Subject
@@ -877,7 +881,7 @@ func (t *storeTool) search(
 		// caller whether install is instant for them or files a request.
 		// A code this principal already installed is reported as installed,
 		// ahead of whether they could install it again.
-		state := storeAvailability(access, entry.Code, mode, groups, subject)
+		state := storeAvailability(access, entry.Code, mode, groups, grantee)
 		if _, ok := installed[entry.Code]; ok {
 			state = storeStateInstalled
 		}
@@ -945,11 +949,7 @@ func (t *storeTool) StoreOffer(ctx context.Context, rc *appconsumer.RoutableCons
 		return StoreOffer{}, err
 	}
 	principal := identity.PrincipalFromContext(ctx)
-	groups := principal.Groups()
-	subject := ""
-	if principal != nil {
-		subject = principal.Subject
-	}
+	groups, subject := principal.StoreGroups(), principal.StoreSubject()
 	all := t.catalog.ListMCPServers()
 	offered := make([]catalogdomain.MCPServer, 0, len(all))
 	for i := range all {
@@ -996,8 +996,8 @@ func (t *storeTool) effectiveStoreMode(ctx context.Context, rc *appconsumer.Rout
 	principal := identity.PrincipalFromContext(ctx)
 	query := appstore.ModeQuery{GatewayID: rc.Consumer.GatewayID, Fallback: appstore.EffectiveStoreMode(ctx)}
 	if principal != nil {
-		query.Subject = principal.Subject
-		query.Groups = principal.Groups()
+		query.Subject = principal.StoreSubject()
+		query.Groups = principal.StoreGroups()
 	}
 	return appstore.ResolveMode(ctx, t.modes, query)
 }

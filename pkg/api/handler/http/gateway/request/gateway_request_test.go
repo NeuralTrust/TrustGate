@@ -115,6 +115,7 @@ func TestCreateGatewayRequest_ValidateEntitlements(t *testing.T) {
 		{name: "stamped standard ok", req: CreateGatewayRequest{Slug: "acme", Entitlements: &standard}, wantTier: "standard"},
 		{name: "stamped enterprise normalizes tier", req: CreateGatewayRequest{Slug: "acme", Entitlements: &enterprise}, wantTier: "enterprise"},
 		{name: "unknown tier rejected", req: CreateGatewayRequest{Slug: "acme", Entitlements: &domain.Entitlements{Tier: "gold", BurstPerMin: intPtr(1), QuotaPerMonth: intPtr(1), MaxInstances: intPtr(1)}}, wantErr: true},
+		{name: "unlimited stamp ok", req: CreateGatewayRequest{Slug: "acme", Entitlements: &domain.Entitlements{Tier: "enterprise", BurstPerMin: intPtr(0), QuotaPerMonth: intPtr(0), MaxInstances: intPtr(0)}}, wantTier: "enterprise"},
 	}
 
 	for _, tt := range tests {

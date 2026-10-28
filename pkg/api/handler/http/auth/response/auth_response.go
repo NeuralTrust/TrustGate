@@ -47,6 +47,13 @@ type AuthResponse struct {
 	// OwnerEmail is the email of a personal key's owner, which the key's calls
 	// are shown under. Absent means none was recorded.
 	OwnerEmail string `json:"owner_email,omitempty"`
+	// GroupID is the directory group a group key is held for, which its spend
+	// is attributed to. Absent on the owner's personal key and on application
+	// keys.
+	GroupID string `json:"group_id,omitempty"`
+	// GroupName is GroupID's directory name, which the MCP Store matches the
+	// key's access against. Absent wherever GroupID is.
+	GroupName string `json:"group_name,omitempty"`
 	// Consumers are the consumers this auth reaches, which is what a caller
 	// needs before revoking one: a key can be attached to several, so
 	// disabling it stops more than the endpoint the reader was looking at.
@@ -135,6 +142,8 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Budget:      fromBudget(a.Budget),
 		OwnerGroups: a.OwnerGroups,
 		OwnerEmail:  a.OwnerEmail,
+		GroupID:     a.GroupID,
+		GroupName:   a.GroupName,
 		CreatedAt:   a.CreatedAt,
 		UpdatedAt:   a.UpdatedAt,
 	}

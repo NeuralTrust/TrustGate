@@ -56,12 +56,23 @@ message Snapshot {
   // Shipping the field does not block a deploy of older data planes.
   // A missing list is not a revocation.
   repeated SessionRevocation session_revocations = 15;
+  // Budgets of the directory groups whose keys the gateways in this snapshot
+  // serve. A data plane built before this field ignores it (proto3 skips
+  // unknown fields) and holds no group to a budget until it runs a build that
+  // reads the field.
+  repeated KeyGroupBudget key_group_budgets = 16;
   // usage_enforcement is true when the control plane enforces Usage System
   // states: the data plane then blocks exhausted tenants and is not ready until
   // it has received the list of them. False (the default, omitted on the wire)
   // keeps the snapshot bytes and version identical to a control plane without
   // the feature.
-  bool usage_enforcement = 16;
+  bool usage_enforcement = 17;
+}
+
+// KeyGroupBudget is one directory group's budget on a gateway
+// (keygroup.Budget as JSON).
+message KeyGroupBudget {
+  bytes json = 1;
 }
 
 // SessionRevocation is one default-IdP subject whose sessions were revoked.

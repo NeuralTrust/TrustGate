@@ -24,12 +24,14 @@ import (
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -122,6 +124,7 @@ type adminRouterParams struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+	RevokeConfigSyncTokens    *configsynchttp.RevokeTokensHandler
 
 	StoreRequests  *storehttp.RequestsHandler
 	StoreGrants    *storehttp.GrantsHandler
@@ -130,6 +133,7 @@ type adminRouterParams struct {
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
 	StoreLLMKey      *storehttp.LLMKeyHandler
+	KeyGroupBudgets  *keygrouphttp.BudgetHandler `optional:"true"`
 }
 
 type adminServerParams struct {
@@ -145,6 +149,11 @@ func ServerAdmin(c *container.Container) error {
 	}
 	if err := c.Provide(func(repo *configsyncconnrepo.Repository) *configsynchttp.ListConnectionsHandler {
 		return configsynchttp.NewListConnectionsHandler(repo)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(revoker appconfigsyncrevocation.Revoker) *configsynchttp.RevokeTokensHandler {
+		return configsynchttp.NewRevokeTokensHandler(revoker)
 	}); err != nil {
 		return err
 	}
@@ -206,12 +215,14 @@ func ServerAdmin(c *container.Container) error {
 				GetTrace: p.GetTrace,
 
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
+				RevokeConfigSyncTokens:    p.RevokeConfigSyncTokens,
 				StoreRequests:             p.StoreRequests,
 				StoreGrants:               p.StoreGrants,
 				StorePolicies:             p.StorePolicies,
 				StorePrincipal:            p.StorePrincipal,
 				StoreMaterialize:          p.StoreMaterialize,
 				StoreLLMKey:               p.StoreLLMKey,
+				KeyGroupBudgets:           p.KeyGroupBudgets,
 			})
 		},
 		dig.Name("admin"),

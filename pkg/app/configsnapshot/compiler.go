@@ -30,6 +30,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
@@ -65,6 +66,10 @@ type Compiler struct {
 	// grants, which fails closed (nobody is granted under Selected access).
 	grants        StoreGrantReader
 	storePolicies StorePolicyReader
+	// keyGroupBudgets is optional: the group budgets ride the snapshot when a
+	// reader is wired (WithKeyGroupBudgets), so a data plane with no database
+	// holds group keys to them too.
+	keyGroupBudgets KeyGroupBudgetReader
 	// sharedOAuth is optional: it fills the platform's shared OAuth client
 	// secret into the registries that use that client (WithSharedOAuth).
 	sharedOAuth mcpoauth.Provider
@@ -111,6 +116,13 @@ type StorePolicyReader interface {
 	ListPolicies(ctx context.Context, page, size int) ([]*storeaccessdomain.Policy, int, error)
 }
 
+// KeyGroupBudgetReader is the read side the compiler needs for the budgets of
+// directory groups' keys.
+type KeyGroupBudgetReader interface {
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*keygroupdomain.Budget, error)
+	List(ctx context.Context, page, size int) ([]*keygroupdomain.Budget, int, error)
+}
+
 // CompilerOption tunes NewCompiler.
 type CompilerOption func(*Compiler)
 
@@ -131,6 +143,11 @@ func WithSharedOAuth(p mcpoauth.Provider) CompilerOption {
 // snapshot.
 func WithStorePolicies(r StorePolicyReader) CompilerOption {
 	return func(c *Compiler) { c.storePolicies = r }
+}
+
+// WithKeyGroupBudgets includes the group budgets in every snapshot.
+func WithKeyGroupBudgets(r KeyGroupBudgetReader) CompilerOption {
+	return func(c *Compiler) { c.keyGroupBudgets = r }
 }
 
 // WithPlaygroundTokenKeys sets the verification keys every compiled snapshot
@@ -542,6 +559,7 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.Auths = append(dst.Auths, gwData.Auths...)
 	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
 	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
+	dst.KeyGroupBudgets = append(dst.KeyGroupBudgets, gwData.KeyGroupBudgets...)
 }
 
 func mergeCatalog(dst *readmodel.Data, catalog readmodel.Data) {
@@ -628,6 +646,7 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		auths         []*authdomain.Auth
 		grants        []*storeaccessdomain.Grant
 		storePolicies []*storeaccessdomain.Policy
+		budgets       []*keygroupdomain.Budget
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
@@ -668,6 +687,14 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 			return err
 		})
 	}
+	if c.keyGroupBudgets != nil {
+		g.Go(func() (err error) {
+			budgets, err = listAll(gctx, "key group budgets", func(ctx context.Context, page int) ([]*keygroupdomain.Budget, int, error) {
+				return c.keyGroupBudgets.List(ctx, page, compilerBulkPageSize)
+			})
+			return err
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -680,6 +707,9 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
 	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
 		data.StorePolicies = append(data.StorePolicies, x)
+	})
+	groupByGateway(byGateway, budgets, func(x *keygroupdomain.Budget) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x keygroupdomain.Budget) {
+		data.KeyGroupBudgets = append(data.KeyGroupBudgets, x)
 	})
 	for _, data := range byGateway {
 		for i := range data.Registries {
@@ -893,6 +923,18 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 			data.StorePolicies = append(data.StorePolicies, *p)
 		}
 	}
+	if c.keyGroupBudgets != nil {
+		budgets, err := c.keyGroupBudgets.ListByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list key group budgets for gateway %s: %w", gatewayID, err)
+		}
+		for _, b := range budgets {
+			if b == nil {
+				continue
+			}
+			data.KeyGroupBudgets = append(data.KeyGroupBudgets, *b)
+		}
+	}
 	return nil
 }
 
@@ -1049,6 +1091,13 @@ func sortData(data *readmodel.Data) {
 			return a.PrincipalType < b.PrincipalType
 		}
 		return a.PrincipalID < b.PrincipalID
+	})
+	sort.SliceStable(data.KeyGroupBudgets, func(i, j int) bool {
+		a, b := data.KeyGroupBudgets[i], data.KeyGroupBudgets[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		return a.GroupID < b.GroupID
 	})
 	sort.SliceStable(data.Providers, func(i, j int) bool { return data.Providers[i].Code < data.Providers[j].Code })
 	sort.SliceStable(data.CatalogModels, func(i, j int) bool {

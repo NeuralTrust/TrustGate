@@ -337,6 +337,9 @@ func streamErr(op string, err error) error {
 	if recoverableStreamErr(err) {
 		return fmt.Errorf("configsync: %s: %w: %w", op, configsync.ErrTransportUnavailable, err)
 	}
+	if status.Code(err) == codes.Unauthenticated {
+		return fmt.Errorf("configsync: %s: %w: %w", op, configsync.ErrTransportUnauthenticated, err)
+	}
 	return fmt.Errorf("configsync: %s: %w", op, err)
 }
 

@@ -68,7 +68,7 @@ var _ Store = (*RedisStore)(nil)
 
 // RedisStore implements Store against Redis Stack RediSearch.
 type RedisStore struct {
-	client    *redis.Client
+	client    redis.UniversalClient
 	indexName string
 	logger    *slog.Logger
 
@@ -89,7 +89,7 @@ func WithIndexName(name string) Option {
 }
 
 // NewRedisStore builds a vector store over the given Redis client.
-func NewRedisStore(client *redis.Client, logger *slog.Logger, opts ...Option) *RedisStore {
+func NewRedisStore(client redis.UniversalClient, logger *slog.Logger, opts ...Option) *RedisStore {
 	s := &RedisStore{
 		client:    client,
 		indexName: defaultIndexName,

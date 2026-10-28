@@ -327,6 +327,7 @@ func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 		{name: "default preserves configured password", login: "default", password: "configured-password", wantLogin: PostgresLoginDefault, wantPassword: "configured-password"},
 		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAWS},
 		{name: "azure is normalized and drops configured password", login: " AzUrE ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAzure},
+		{name: "gcp is normalized and drops configured password", login: " GcP ", password: "configured-password", sslMode: "verify-ca", wantLogin: PostgresLoginGCP},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -456,6 +457,155 @@ func TestValidate_RedisAWSGateRejects(t *testing.T) {
 				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.wantContains)
 			}
 		})
+	}
+}
+
+func TestLoadConfig_RedisGCPLogin(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("REDIS_LOGIN", " GcP ")
+	t.Setenv("REDIS_PASSWORD", "configured-password")
+	t.Setenv("REDIS_TLS_ENABLED", "true")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Redis.Login != redisLoginGCP || cfg.Redis.Password != "" {
+		t.Errorf("redis login/password = %q/%q, want %q with the password dropped", cfg.Redis.Login, cfg.Redis.Password, redisLoginGCP)
+	}
+}
+
+func TestValidate_RedisGCPLogin(t *testing.T) {
+	t.Run("passes with TLS and needs no username or cache name", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Redis = RedisConfig{Login: redisLoginGCP, Host: "r", Password: "static-password", TLSEnabled: true}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("gcp redis config should validate: %v", err)
+		}
+		if cfg.Redis.Password != "" {
+			t.Errorf("Redis.Password = %q, want blanked on gcp login", cfg.Redis.Password)
+		}
+	})
+	t.Run("requires TLS", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Redis = RedisConfig{Login: redisLoginGCP, Host: "r"}
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "REDIS_TLS_ENABLED") || !strings.Contains(err.Error(), redisLoginGCP) {
+			t.Fatalf("error %v must be ErrInvalidConfig naming REDIS_TLS_ENABLED and gcp", err)
+		}
+	})
+	t.Run("rejects a username", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Redis = RedisConfig{Login: redisLoginGCP, Host: "r", Username: "default", TLSEnabled: true}
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "REDIS_USERNAME") {
+			t.Fatalf("error %v must be ErrInvalidConfig naming REDIS_USERNAME", err)
+		}
+	})
+}
+
+func TestLoadConfig_RedisUnsetKeepsStandaloneDefaults(t *testing.T) {
+	minimumEnv(t)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Redis.Cluster || cfg.Redis.TLSCAFile != "" || cfg.Redis.DB != defaultRedisDB {
+		t.Errorf("redis defaults changed: %+v", cfg.Redis)
+	}
+	if cfg.SemanticCache.VectorStore != defaultSemanticCacheVectorStore {
+		t.Errorf("SemanticCache.VectorStore = %q, want %q", cfg.SemanticCache.VectorStore, defaultSemanticCacheVectorStore)
+	}
+}
+
+func TestLoadConfig_RedisCluster(t *testing.T) {
+	tests := []struct {
+		name, db, store, wantStore, wantErr string
+		dbSet, storeSet                     bool
+		wantDB                              int
+	}{
+		{name: "unset db resolves to 0 and the store to in_memory", wantDB: 0, wantStore: "in_memory"},
+		{name: "explicit db 0", db: "0", dbSet: true, wantDB: 0, wantStore: "in_memory"},
+		{name: "explicit non-zero db is rejected", db: "3", dbSet: true, wantErr: "REDIS_DB"},
+		{name: "explicit redis store is rejected", store: "redis", storeSet: true, wantErr: "SEMANTIC_CACHE_VECTOR_STORE"},
+		{name: "mixed-case redis store is rejected", store: " Redis ", storeSet: true, wantErr: "SEMANTIC_CACHE_VECTOR_STORE"},
+		{name: "explicit pgvector store is kept", store: "pgvector", storeSet: true, wantStore: "pgvector"},
+		{name: "explicit in_memory store is kept", store: "in_memory", storeSet: true, wantStore: "in_memory"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("REDIS_CLUSTER", "true")
+			if tc.dbSet {
+				t.Setenv("REDIS_DB", tc.db)
+			}
+			if tc.storeSet {
+				t.Setenv("SEMANTIC_CACHE_VECTOR_STORE", tc.store)
+			}
+			cfg, err := LoadConfig()
+			if tc.wantErr != "" {
+				if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "REDIS_CLUSTER") {
+					t.Fatalf("error %v must be ErrInvalidConfig naming %s and REDIS_CLUSTER", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if !cfg.Redis.Cluster || cfg.Redis.DB != tc.wantDB || cfg.SemanticCache.VectorStore != tc.wantStore {
+				t.Errorf("cluster=%t db=%d store=%q, want true/%d/%q", cfg.Redis.Cluster, cfg.Redis.DB, cfg.SemanticCache.VectorStore, tc.wantDB, tc.wantStore)
+			}
+		})
+	}
+}
+
+func TestValidate_RedisClusterResolvesAnEmptyVectorStore(t *testing.T) {
+	cfg := postgresValid()
+	cfg.Redis = RedisConfig{Host: "r", Cluster: true}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("cluster config should validate: %v", err)
+	}
+	if cfg.SemanticCache.VectorStore != defaultClusterSemanticCacheVectorStore {
+		t.Errorf("SemanticCache.VectorStore = %q, want %q", cfg.SemanticCache.VectorStore, defaultClusterSemanticCacheVectorStore)
+	}
+}
+
+func TestValidate_RedisTLSCAFile(t *testing.T) {
+	tests := []struct {
+		name, wantErr string
+		redis         RedisConfig
+	}{
+		{name: "with TLS", redis: RedisConfig{Host: "r", TLSEnabled: true, TLSCAFile: "/etc/redis/ca.pem"}},
+		{name: "without TLS", redis: RedisConfig{Host: "r", TLSCAFile: "/etc/redis/ca.pem"}, wantErr: "REDIS_TLS_ENABLED"},
+		{name: "with insecure verify", redis: RedisConfig{Host: "r", TLSEnabled: true, TLSInsecureVerify: true, TLSCAFile: "/etc/redis/ca.pem"}, wantErr: "REDIS_TLS_INSECURE_VERIFY"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.Redis = tc.redis
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "REDIS_TLS_CA_FILE") {
+				t.Fatalf("error %v must be ErrInvalidConfig naming REDIS_TLS_CA_FILE and %s", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RedisTLSCAFile(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("REDIS_TLS_ENABLED", "true")
+	t.Setenv("REDIS_TLS_CA_FILE", " /etc/redis/ca.pem ")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Redis.TLSCAFile != "/etc/redis/ca.pem" {
+		t.Errorf("Redis.TLSCAFile = %q, want trimmed path", cfg.Redis.TLSCAFile)
 	}
 }
 
@@ -932,7 +1082,7 @@ func TestValidate_ServerSecretKey(t *testing.T) {
 }
 
 func TestValidate_TokenLoginSSLModes(t *testing.T) {
-	for _, login := range []PostgresLogin{PostgresLoginAWS, PostgresLoginAzure} {
+	for _, login := range []PostgresLogin{PostgresLoginAWS, PostgresLoginAzure, PostgresLoginGCP} {
 		for mode, valid := range map[string]bool{" ReQuIrE ": true, " VERIFY-CA ": true, "verify-full": true, "disable": false, "allow": false, "prefer": false, "": false, "unknown": false} {
 			t.Run(string(login)+"/"+mode, func(t *testing.T) {
 				cfg := postgresValid()
@@ -950,6 +1100,43 @@ func TestValidate_TokenLoginSSLModes(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestValidate_GCPLoginRejectsServiceAccountSuffix(t *testing.T) {
+	for _, user := range []string{"trustgate-db@my-project.iam.gserviceaccount.com", "TrustGate-DB@My-Project.IAM.GServiceAccount.com"} {
+		t.Run(user, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginGCP, "require", user
+			err := cfg.Validate()
+			if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "DB_USER") || !strings.Contains(err.Error(), gcpServiceAccountSuffix) {
+				t.Fatalf("gcp DB_USER %q error must be ErrInvalidConfig naming DB_USER and the suffix: %v", user, err)
+			}
+		})
+	}
+
+	t.Run("gcp accepts the IAM user name", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginGCP, "require", "trustgate-db@my-project.iam"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("other logins keep any DB_USER", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Login, cfg.Database.SSLMode, cfg.Database.User = PostgresLoginAWS, "require", "trustgate-db@my-project.iam.gserviceaccount.com"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("DB-less data plane skips the check", func(t *testing.T) {
+		cfg := dbLessValid()
+		cfg.Database.Login, cfg.Database.User = PostgresLoginGCP, "trustgate-db@my-project.iam.gserviceaccount.com"
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("DB-less data plane should not validate DB_USER: %v", err)
+		}
+	})
 }
 
 func TestLoadConfig_AzureScope(t *testing.T) {

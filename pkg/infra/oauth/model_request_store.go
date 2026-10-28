@@ -29,12 +29,12 @@ const modelRequestTicketPrefix = "oauth:model-request:ticket:"
 // ModelRequestStore keeps the MCP Store model request page's tickets in
 // Redis, for as long as a link lives.
 type ModelRequestStore struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
 var _ appoauth.ModelRequestStore = (*ModelRequestStore)(nil)
 
-func NewModelRequestStore(rdb *redis.Client) *ModelRequestStore {
+func NewModelRequestStore(rdb redis.UniversalClient) *ModelRequestStore {
 	return &ModelRequestStore{rdb: rdb}
 }
 

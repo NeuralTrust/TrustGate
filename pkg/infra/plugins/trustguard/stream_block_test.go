@@ -235,7 +235,15 @@ func TestAGateRequestSpendsOneGateUnitAndOneGuardUnitPerEvaluate(t *testing.T) {
 		Subject: "tenant-1", Limits: ratelimitdomain.Limits{BurstPerMin: 100, QuotaPerMonth: 100},
 	}}
 	backend := &recordingBackend{}
-	meter := ratelimitapp.NewMeter(resolver, backend, ratelimitapp.Options{SyncInterval: time.Hour, DisableKick: true}, nil)
+	// The burst window is a minute of wall clock and the sync drops what a
+	// window it has left still owed, so a request and a sync on either side of
+	// a minute boundary would report no burst unit. The clock is held mid-minute.
+	now := time.Date(2026, time.October, 15, 12, 0, 30, 0, time.UTC)
+	meter := ratelimitapp.NewMeter(resolver, backend, ratelimitapp.Options{
+		SyncInterval: time.Hour,
+		DisableKick:  true,
+		Now:          func() time.Time { return now },
+	}, nil)
 
 	g := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, g).URL)

@@ -32,6 +32,14 @@ type Event struct {
 	PrincipalMethod  string `json:"principal_method,omitempty"`
 	PrincipalEmail   string `json:"principal_email,omitempty"`
 
+	// AuthKind is "personal" for a key a user owns, their personal key or a
+	// group key, and "application" for any other api key; absent for any
+	// other credential.
+	AuthKind string `json:"auth_kind,omitempty"`
+	// AuthGroupID is the directory group a group key is held for, which the
+	// request's spend is attributed to; absent on every other auth.
+	AuthGroupID string `json:"auth_group_id,omitempty"`
+
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`
 	EndTimestamp int64  `json:"end_timestamp"`

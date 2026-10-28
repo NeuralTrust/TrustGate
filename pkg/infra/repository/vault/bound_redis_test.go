@@ -19,7 +19,10 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/clustertest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	"github.com/alicebob/miniredis/v2"
 )
 
 func TestRedisRepository_ExistsBoundMatchesCodeNotSibling(t *testing.T) {
@@ -72,5 +75,37 @@ func TestFallbackRepository_ExistsBoundOrsStores(t *testing.T) {
 	found, err = checker.ExistsBound(ctx, gw, code)
 	if err != nil || !found {
 		t.Fatalf("fallback credential missed: found=%v err=%v", found, err)
+	}
+}
+
+func TestRedisRepository_ClusterClientScansEveryMaster(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := clustertest.NewCluster(mr.Addr())
+	t.Cleanup(func() { _ = rdb.Close() })
+	cipher, err := crypto.NewCipher("test-secret-key-that-is-long-enough-1234567890")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	repo := vaultrepo.NewRedisRepository(rdb, cipher)
+	ctx := context.Background()
+	gw := ids.New[ids.GatewayKind]()
+	const code = "com.vercel/mcp"
+	for _, provider := range []string{"github", "atlassian", code + "|abcd"} {
+		if err := repo.Upsert(ctx, newTestCredential(t, gw, "user-1", provider, "a", "r")); err != nil {
+			t.Fatalf("upsert %s: %v", provider, err)
+		}
+	}
+
+	creds, err := repo.ListByPrincipal(ctx, gw, "user-1")
+	if err != nil || len(creds) != 3 {
+		t.Fatalf("list by principal on a cluster: %d credentials, err=%v", len(creds), err)
+	}
+	found, err := repo.ExistsBound(ctx, gw, code)
+	if err != nil || !found {
+		t.Fatalf("exists bound on a cluster: found=%v err=%v", found, err)
+	}
+	found, err = repo.ExistsBound(ctx, gw, "com.example/absent")
+	if err != nil || found {
+		t.Fatalf("absent code on a cluster: found=%v err=%v", found, err)
 	}
 }

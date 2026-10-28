@@ -44,6 +44,17 @@ type TestConnectionResult struct {
 	StatusCode int
 	LatencyMs  int64
 	Message    string
+	// Warnings are non-fatal findings on a connection that works: the provider
+	// accepted the credentials but something the console relies on is degraded.
+	Warnings []string
+}
+
+// CatalogAccessChecker reports, for a connection that already works, the
+// permissions the model catalog needs and the credentials lack. It also drops
+// whatever the catalog cached for those credentials, so the result a user sees
+// after fixing their IAM policy is not stale.
+type CatalogAccessChecker interface {
+	CheckCatalogAccess(ctx context.Context, provider string, auth *domain.TargetAuth) []string
 }
 
 //go:generate mockery --name=ConnectionTester --dir=. --output=./mocks --filename=registry_connection_tester_mock.go --case=underscore --with-expecter
@@ -57,14 +68,33 @@ type connectionTester struct {
 	finder  Finder
 	locator factory.ProviderLocator
 	logger  *slog.Logger
+	catalog CatalogAccessChecker
 }
 
-func NewConnectionTester(finder Finder, locator factory.ProviderLocator, logger *slog.Logger) ConnectionTester {
-	return &connectionTester{
+// ConnectionTesterOption tunes NewConnectionTester.
+type ConnectionTesterOption func(*connectionTester)
+
+// WithCatalogAccessChecker makes successful probes also report missing catalog
+// permissions as warnings.
+func WithCatalogAccessChecker(c CatalogAccessChecker) ConnectionTesterOption {
+	return func(t *connectionTester) { t.catalog = c }
+}
+
+func NewConnectionTester(
+	finder Finder,
+	locator factory.ProviderLocator,
+	logger *slog.Logger,
+	opts ...ConnectionTesterOption,
+) ConnectionTester {
+	t := &connectionTester{
 		finder:  finder,
 		locator: locator,
 		logger:  logger,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (TestConnectionResult, error) {
@@ -116,6 +146,11 @@ func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (Te
 		slog.Int64("latency_ms", latency.Milliseconds()),
 	)
 
+	var warnings []string
+	if result.OK && t.catalog != nil {
+		warnings = t.catalog.CheckCatalogAccess(ctx, provider, auth)
+	}
+
 	return TestConnectionResult{
 		OK:         result.OK,
 		Stage:      string(result.Stage),
@@ -123,6 +158,7 @@ func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (Te
 		StatusCode: result.StatusCode,
 		LatencyMs:  latency.Milliseconds(),
 		Message:    result.Message,
+		Warnings:   warnings,
 	}, nil
 }
 
