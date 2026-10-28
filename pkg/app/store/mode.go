@@ -35,7 +35,9 @@ type ModeResolver interface {
 	Mode(ctx context.Context, gatewayID ids.GatewayID) string
 }
 
-// ModeQuery contains the explicit inputs used to resolve Store access.
+// ModeQuery contains the explicit inputs used to resolve Store access. Subject
+// is empty for a group key, whose mode is its group's alone (see
+// identity.Principal.StoreSubject).
 type ModeQuery struct {
 	GatewayID ids.GatewayID
 	Subject   string
@@ -61,14 +63,17 @@ func (r *modeResolver) Mode(ctx context.Context, gatewayID ids.GatewayID) string
 	principal := identity.PrincipalFromContext(ctx)
 	query := ModeQuery{GatewayID: gatewayID, Fallback: EffectiveStoreMode(ctx)}
 	if principal != nil {
-		query.Subject = principal.Subject
-		query.Groups = principal.Groups()
+		query.Subject = principal.StoreSubject()
+		query.Groups = principal.StoreGroups()
 	}
 	return r.Resolve(ctx, query)
 }
 
+// Resolve reads the policies for anyone it can name: a subject, or for a group
+// key only its group. Without either there is nobody a policy could name.
 func (r *modeResolver) Resolve(ctx context.Context, query ModeQuery) string {
-	if r != nil && r.policies != nil && strings.TrimSpace(query.Subject) != "" && !query.GatewayID.IsNil() {
+	named := strings.TrimSpace(query.Subject) != "" || len(query.Groups) > 0
+	if r != nil && r.policies != nil && named && !query.GatewayID.IsNil() {
 		policies, err := r.policies.ListPoliciesByGateway(ctx, query.GatewayID)
 		if err != nil {
 			slog.WarnContext(ctx, "store: policy lookup failed; failing closed to curated",

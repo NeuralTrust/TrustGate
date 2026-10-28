@@ -85,7 +85,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 199, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
 
 	self := 0
 	for _, s := range servers {
@@ -136,7 +136,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	// 99 after Aha, Algolia, Gorgias, n8n, Shopify and Vanta left self-service.
 	// Each one needs a non-secret URL variable the admin sets, one registry
 	// row per value.
-	require.Equal(t, 99, self, "self_service count changed")
+	// 100 after Enginy joined as a self-service DCR server.
+	require.Equal(t, 100, self, "self_service count changed")
 }
 
 // requiredNonSecretURLVariable reports a host, path or other placeholder an

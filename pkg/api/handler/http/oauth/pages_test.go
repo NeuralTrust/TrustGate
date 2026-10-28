@@ -867,3 +867,43 @@ func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 		t.Fatalf("a page with a resume link sends the user there instead, body:\n%s", body)
 	}
 }
+
+// The hint a browser that keeps the tab open gets sits in the connected panel
+// with its space already taken, so showing it leaves the close and Disconnect
+// buttons where the user aimed.
+func TestSingleConnectPage_CloseHintKeepsTheButtonsInPlace(t *testing.T) {
+	t.Parallel()
+	render := func(resume string) string {
+		return renderToString(t, func(c *fiber.Ctx) error {
+			return renderConnectPage(c, &appoauth.ConnectPage{
+				ConsumerPath: "/store/mcp",
+				Code:         "app.linear/mcp",
+				ResumeURL:    resume,
+				ClientName:   "Claude",
+				Providers: []appoauth.ProviderStatus{{
+					Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+				}},
+			}, "tk", "", mustMCPCatalog(t))
+		})
+	}
+	body := render("")
+	const hintTag = `<span class="done-body" id="close-hint">`
+	hint := strings.Index(body, hintTag)
+	if hint < 0 {
+		t.Fatalf("the hint must render without the hidden attribute, body:\n%s", body)
+	}
+	if done, foot := strings.Index(body, `<div class="done">`), strings.Index(body, `<div class="card-foot">`); done < 0 || foot < 0 || hint < done || hint > foot {
+		t.Fatalf("the hint must sit in the connected panel, above the footer, body:\n%s", body)
+	}
+	for _, want := range []string{"#close-hint{display:block;margin-top:6px;visibility:hidden}", "#close-hint.shown{visibility:visible}", "h.classList.add('shown')"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the hint must reserve its space and be revealed in place with %q, body:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "h.hidden=false") {
+		t.Fatalf("revealing the hint must not toggle hidden, which reflows the card, body:\n%s", body)
+	}
+	if body := render("https://app.example.com/back"); strings.Contains(body, `id="close-hint"`) {
+		t.Fatalf("a page with a resume link has no close hint, body:\n%s", body)
+	}
+}

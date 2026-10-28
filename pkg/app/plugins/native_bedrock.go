@@ -42,14 +42,18 @@ const BedrockNativePassthrough = "native_bedrock_passthrough"
 //     strips a tool): it cannot be carried out, and the call is refused;
 //   - masks: a plugin that masks text runs, and its change is carried onto the bytes
 //     the client sent; if that cannot be done safely the call is refused, recorded with its cause;
+//   - injects: a plugin that adds content to the request runs before any mask and
+//     writes the bytes it relays itself, editing only the fields it injects into;
+//     the masks that follow are carried onto that body;
 //   - skips: a plugin that transforms the request (a template, an injected tool, a
 //     compressed prompt, a cache) has nowhere to write and is not run.
 type BedrockNativeBehavior string
 
 const (
-	BedrockNativeRuns  BedrockNativeBehavior = "runs"
-	BedrockNativeSkips BedrockNativeBehavior = "skips"
-	BedrockNativeMasks BedrockNativeBehavior = "masks"
+	BedrockNativeRuns    BedrockNativeBehavior = "runs"
+	BedrockNativeSkips   BedrockNativeBehavior = "skips"
+	BedrockNativeMasks   BedrockNativeBehavior = "masks"
+	BedrockNativeInjects BedrockNativeBehavior = "injects"
 )
 
 // BedrockNativeAware is the opt-in a plugin declares to behave differently from
@@ -58,6 +62,13 @@ const (
 // registry wiring test enumerates the plugins that declare anything.
 type BedrockNativeAware interface {
 	BedrockNative() BedrockNativeBehavior
+}
+
+// BedrockNativeConfigurable is the opt-in of a plugin whose behaviour on a native
+// call depends on its settings. It takes precedence over BedrockNativeAware, which
+// stays the behaviour the plugin declares with no settings.
+type BedrockNativeConfigurable interface {
+	BedrockNativeFor(settings map[string]any) BedrockNativeBehavior
 }
 
 // BedrockNativeSkipReporter is the opt-in of a plugin that is skipped on native calls
@@ -73,6 +84,13 @@ func BedrockNativeOf(d PluginDescriptor) BedrockNativeBehavior {
 		return a.BedrockNative()
 	}
 	return BedrockNativeRuns
+}
+
+func bedrockNativeOfEntry(entry chainEntry) BedrockNativeBehavior {
+	if c, ok := entry.plugin.(BedrockNativeConfigurable); ok {
+		return c.BedrockNativeFor(entry.config.Settings)
+	}
+	return BedrockNativeOf(entry.plugin)
 }
 
 // skippedData is the extras of a leg the plugin did not run on. The console
@@ -112,6 +130,19 @@ func NativeRewriteRefusal(plugin string, stage policy.Stage) *PluginError {
 		Type:       BedrockNativePassthrough,
 		Message: fmt.Sprintf("policy %s would rewrite the %s of a native Bedrock call, which is relayed as sent; the call is refused",
 			plugin, rewriteSubject(stage)),
+	}
+}
+
+// NativeInjectAfterMask is the refusal of an injection into a native call that a
+// mask already changed: the masked body went through the canonical model, so
+// injecting into it would relay what the client never sent. The policy that
+// injects must run before the policies that mask.
+func NativeInjectAfterMask(plugin string) *PluginError {
+	return &PluginError{
+		StatusCode: http.StatusForbidden,
+		Type:       BedrockNativePassthrough,
+		Message: fmt.Sprintf("policy %s would inject into a native Bedrock request a mask already changed; it must run before the masking policies, and the call is refused",
+			plugin),
 	}
 }
 

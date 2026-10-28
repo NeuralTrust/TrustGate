@@ -23,12 +23,13 @@ import (
 )
 
 func TestBuildRedisOptionsDefaultLoginIncludesACLUsername(t *testing.T) {
-	options := buildRedisOptions(Config{
+	options, err := buildRedisOptions(Config{
 		Host:     "redis.example",
 		Port:     6379,
 		Username: "acl-user",
 		Password: "secret",
 	}, nil)
+	require.NoError(t, err)
 
 	require.Equal(t, "redis.example:6379", options.Addr)
 	require.Equal(t, "acl-user", options.Username)
@@ -38,18 +39,19 @@ func TestBuildRedisOptionsDefaultLoginIncludesACLUsername(t *testing.T) {
 }
 
 func TestBuildRedisOptionsDefaultLoginEmptyUsername(t *testing.T) {
-	options := buildRedisOptions(Config{
+	options, err := buildRedisOptions(Config{
 		Host:     "redis.example",
 		Port:     6379,
 		Password: "secret",
 	}, nil)
+	require.NoError(t, err)
 
 	require.Empty(t, options.Username)
 	require.Equal(t, "secret", options.Password)
 }
 
 func TestBuildRedisOptionsDefaultLoginTLS(t *testing.T) {
-	options := buildRedisOptions(Config{
+	options, err := buildRedisOptions(Config{
 		Host:              "redis.example",
 		Port:              6380,
 		Username:          "acl-user",
@@ -57,6 +59,7 @@ func TestBuildRedisOptionsDefaultLoginTLS(t *testing.T) {
 		TLSEnabled:        true,
 		TLSInsecureVerify: true,
 	}, nil)
+	require.NoError(t, err)
 
 	require.NotNil(t, options.TLSConfig)
 	require.True(t, options.TLSConfig.InsecureSkipVerify)
@@ -67,7 +70,7 @@ func TestBuildRedisOptionsAWSLoginUsesIAMCredentialsProvider(t *testing.T) {
 	provider := func(context.Context) (string, string, error) {
 		return "iam-user", "sigv4-token", nil
 	}
-	options := buildRedisOptions(Config{
+	options, err := buildRedisOptions(Config{
 		Login:         "aws",
 		Host:          "redis.example",
 		Port:          6379,
@@ -76,6 +79,7 @@ func TestBuildRedisOptionsAWSLoginUsesIAMCredentialsProvider(t *testing.T) {
 		TLSEnabled:    true,
 		AWSServerless: true,
 	}, provider)
+	require.NoError(t, err)
 
 	require.Equal(t, "iam-user", options.Username)
 	require.Empty(t, options.Password)

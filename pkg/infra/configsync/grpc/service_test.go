@@ -27,7 +27,7 @@ import (
 
 func TestService_SyncUnregistersOnClose(t *testing.T) {
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, &fakeSource{}, discardLogger()))
+	lis, _ := newBufServer(t, NewService(hub, &fakeSource{}, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 
 	go func() { _, _ = client.Watch(context.Background()) }()
@@ -43,7 +43,7 @@ func TestService_SyncNoInitialNoticeWhenUpToDate(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), nil))
 	client := dialClient(t, lis, "dp-1")
 	client.mu.Lock()
 	client.lastApplied = "v1"
@@ -65,7 +65,7 @@ func TestService_SyncNoInitialNoticeWhenUpToDate(t *testing.T) {
 }
 
 func TestService_SyncRejectsNonHelloFirstMessage(t *testing.T) {
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil))
 	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -91,7 +91,7 @@ func TestService_SyncRejectsNonHelloFirstMessage(t *testing.T) {
 func TestService_GetSnapshotStreamsHeaderThenChunks(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("hello-world"), "v1")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

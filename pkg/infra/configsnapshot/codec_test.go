@@ -17,6 +17,7 @@ package configsnapshot_test
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
@@ -360,11 +362,81 @@ func TestCodecRoundTripsOwnedAuthBudget(t *testing.T) {
 	gotAuth, ok := snap.AuthByAPIKeyHash(auth.KeyHash)
 	require.True(t, ok)
 	assert.Equal(t, auth.Budget, gotAuth.Budget)
-	gotAuth, ok = snap.AuthByOwner(auth.GatewayID, "alice")
+	gotAuth, ok = snap.AuthByOwnerAndGroup(auth.GatewayID, "alice", "")
 	require.True(t, ok)
 	assert.Equal(t, auth.Budget, gotAuth.Budget)
 
 	reraw, err := codec.Encode(snap)
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsGroupKey(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	consumer, auth := applicationFixture()
+	consumer.Audience = consumerdomain.AudiencePersonal
+	auth.OwnerID = "alice"
+	auth.GroupID = "g-eng"
+	auth.GroupName = "engineering"
+
+	raw, _, authJSON := encodeConsumerAndAuth(t, consumer, auth)
+	assert.Contains(t, authJSON, `"group_id":"g-eng","group_name":"engineering"`)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	gotAuth, ok := snap.AuthByOwnerAndGroup(auth.GatewayID, "alice", "g-eng")
+	require.True(t, ok)
+	assert.Equal(t, "engineering", gotAuth.GroupName)
+	_, ok = snap.AuthByOwnerAndGroup(auth.GatewayID, "alice", "")
+	assert.False(t, ok, "a group key is not its owner's personal key")
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsKeyGroupBudgets(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.From[ids.GatewayKind](uuid.MustParse("0199a000-0000-7000-8000-000000000001"))
+	monthly, member := 100.5, 20.0
+	at := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	budget := keygroupdomain.Budget{
+		GatewayID: gw, GroupID: "g-eng", MonthlyLimitUSD: &monthly, MemberMonthlyLimitUSD: &member,
+		MemberOverrides: map[string]float64{"alice": 50}, Action: keygroupdomain.ActionBlock, CreatedAt: at, UpdatedAt: at,
+	}
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "budgets", KeyGroupBudgets: []keygroupdomain.Budget{budget}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	got := snap.KeyGroupBudgetsByGateway(gw)
+	require.Len(t, got, 1)
+	assert.Equal(t, budget, *got[0])
+	assert.Empty(t, snap.KeyGroupBudgetsByGateway(ids.New[ids.GatewayKind]()))
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+// A plane that predates group keys decodes the auth JSON of one as a personal
+// key's, unknown fields ignored: the snapshot stays readable while the fleet
+// rolls.
+func TestGroupKeyJSONDecodesOnAnOlderPlane(t *testing.T) {
+	t.Parallel()
+	_, auth := applicationFixture()
+	auth.OwnerID = "alice"
+	auth.GroupID = "g-eng"
+	auth.GroupName = "engineering"
+	blob, err := json.Marshal(&auth)
+	require.NoError(t, err)
+
+	var older struct {
+		ID      ids.AuthID `json:"id"`
+		OwnerID string     `json:"owner_id"`
+	}
+	require.NoError(t, json.Unmarshal(blob, &older))
+	assert.Equal(t, auth.ID, older.ID)
+	assert.Equal(t, "alice", older.OwnerID)
 }

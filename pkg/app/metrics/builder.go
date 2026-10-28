@@ -78,6 +78,8 @@ func (b *Builder) Build(
 		SessionID:        meta.SessionID,
 		IP:               meta.IP,
 		AuthID:           meta.AuthID,
+		AuthKind:         meta.AuthKind,
+		AuthGroupID:      meta.AuthGroupID,
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,

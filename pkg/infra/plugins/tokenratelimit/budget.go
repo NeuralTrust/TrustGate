@@ -196,6 +196,13 @@ func resolvedModel(req *infracontext.RequestContext) string {
 // dodged by leaving the model out; every other policy keeps counting such a
 // request under the requested ref, as it always has.
 func modelFor(cfg *config, req *infracontext.RequestContext) string {
+	return chargedModel(req, cfg.keyPartitioned())
+}
+
+// chargedModel is the model a request is counted against. With
+// servedDefault, a request that names no model is counted against the default
+// model of the routed registry, the one it will be served with.
+func chargedModel(req *infracontext.RequestContext, servedDefault bool) string {
 	if req == nil {
 		return ""
 	}
@@ -209,7 +216,7 @@ func modelFor(cfg *config, req *infracontext.RequestContext) string {
 			return m
 		}
 	}
-	if cfg.keyPartitioned() && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
+	if servedDefault && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
 		return req.DefaultModel
 	}
 	return req.RequestedModel
@@ -358,8 +365,9 @@ func (p *Plugin) handleExceeded(
 // (subject to the ctx exception below) — our own infrastructure fails open in
 // every mode, including enforce, unlike a third-party guardrail. data is
 // whatever the caller already knows (provider, model, cost-cap telemetry);
-// this only adds FailureReason/FailureDetail on top of it, so that context is
-// not lost the way a bare TokenRateLimiterData would lose it.
+// this only adds FailureReason/FailureDetail/FailureErrorClass on top of it,
+// so that context is not lost the way a bare TokenRateLimiterData would lose
+// it.
 //
 // A ctx the caller itself canceled (or let deadline out) is not a
 // counter-store outage — HandleCounterFailure reports that back as a non-nil
@@ -389,6 +397,7 @@ func (p *Plugin) counterUnavailable(
 	data.Stage = string(stage)
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setTokenExtras(event, data)
 	return result, nil
 }
@@ -412,6 +421,7 @@ func failClosed(
 	data.Stage = string(policy.StagePreRequest)
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setTokenExtras(event, data)
 	appplugins.SetDecisionFromOutcome(event, decisionFailedClosed)
 	return budgetUnavailableError()

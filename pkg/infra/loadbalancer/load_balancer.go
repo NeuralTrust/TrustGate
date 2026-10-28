@@ -17,6 +17,7 @@ package loadbalancer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -35,7 +36,7 @@ import (
 // segregated view of the broader cache client so the balancer does not depend
 // on gateway caching or TTL-map management it never uses.
 type RedisProvider interface {
-	RedisClient() *redis.Client
+	RedisClient() redis.UniversalClient
 }
 
 type Pool struct {
@@ -263,9 +264,11 @@ func (lb *LoadBalancer) NextRoute(
 	return nil, fmt.Errorf("no available routes")
 }
 
-// healthMap fetches the health status of every backend in the pool with a
-// single MGET, avoiding one Redis round-trip per candidate on the hot path. It
-// returns nil when Redis is unavailable so callers fail open.
+// healthMap fetches the health status of every backend in the pool with one
+// pipelined round trip of single-key GETs, avoiding a round trip per candidate
+// on the hot path. It is not an MGET: the keys hash to different slots, which a
+// cluster-mode Redis rejects with CROSSSLOT. It returns nil when Redis is
+// unavailable so callers fail open.
 func (lb *LoadBalancer) healthMap(ctx context.Context) map[string]bool {
 	redisClient := lb.cache.RedisClient()
 	if redisClient == nil || len(lb.backendIDs) == 0 {
@@ -275,14 +278,26 @@ func (lb *LoadBalancer) healthMap(ctx context.Context) map[string]bool {
 	for i, id := range lb.backendIDs {
 		keys[i] = healthKey(id)
 	}
-	vals, err := redisClient.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil
+	pipe := redisClient.Pipeline()
+	cmds := make([]*redis.StringCmd, len(keys))
+	for i, key := range keys {
+		cmds[i] = pipe.Get(ctx, key)
 	}
+	// Exec returns the first command error, including redis.Nil for a missing
+	// key; each command is inspected below instead.
+	_, _ = pipe.Exec(ctx)
 	health := make(map[string]bool, len(lb.backendIDs))
 	now := time.Now()
-	for i, v := range vals {
-		health[lb.backendIDs[i]] = parseHealthForSelection(v, lb.healthRetryAfter[i], now)
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		switch {
+		case err == nil:
+			health[lb.backendIDs[i]] = parseHealthForSelection(raw, lb.healthRetryAfter[i], now)
+		case errors.Is(err, redis.Nil):
+			health[lb.backendIDs[i]] = parseHealthForSelection(nil, lb.healthRetryAfter[i], now)
+		default:
+			return nil
+		}
 	}
 	return health
 }
@@ -375,7 +390,7 @@ func (lb *LoadBalancer) UpdateBackendHealth(ctx context.Context, b *registry.Reg
 	}
 }
 
-func cacheHealthStatus(ctx context.Context, redisClient *redis.Client, key string, status *HealthStatus) error {
+func cacheHealthStatus(ctx context.Context, redisClient redis.UniversalClient, key string, status *HealthStatus) error {
 	statusJSON, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("failed to marshal health status: %w", err)

@@ -34,6 +34,13 @@ const (
 	trustGuardBlockResponse = `{"status":"block","findings":[{"source":{"kind":"detector","plugin":"prompt_guard"},` +
 		`"signal":{"type":"` + trustGuardBlockReason + `"},"outcome":{"action":"block"}}],` +
 		`"trace_id":"tg-trace-1","request_id":"tg-req-1"}`
+
+	// trustGuardBlockedClientBody is blockBody's rendering of trustGuardBlockResponse
+	// on the output leg. A buffered refusal and a streamed head-gate refusal both
+	// return it.
+	trustGuardBlockedClientBody = `{"status":"block","message":"Request blocked by security policy: ` +
+		trustGuardBlockReason + `.","type":"trustguard_blocked","direction":"output","reason":"` +
+		trustGuardBlockReason + `","plugin":"prompt_guard","trace_id":"tg-trace-1","request_id":"tg-req-1"}`
 )
 
 var TrustGuardFunctionalStub *trustGuardStub

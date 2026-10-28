@@ -36,13 +36,13 @@ const traceKeyPrefix = "playground:trace:"
 const saveTimeout = 2 * time.Second
 
 type Store struct {
-	rdb     *redis.Client
+	rdb     redis.UniversalClient
 	enabled bool
 	ttl     time.Duration
 	logger  *slog.Logger
 }
 
-func NewStore(rdb *redis.Client, cfg config.PlaygroundConfig, logger *slog.Logger) *Store {
+func NewStore(rdb redis.UniversalClient, cfg config.PlaygroundConfig, logger *slog.Logger) *Store {
 	return &Store{
 		rdb:     rdb,
 		enabled: cfg.TraceStoreEnabled,

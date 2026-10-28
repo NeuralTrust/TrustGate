@@ -686,14 +686,43 @@ func TestForward_AccessDeniedOnANonNativeRequestStaysTerminal(t *testing.T) {
 	first := backendFor(gatewayID, "openai")
 	second := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, first, second)
+	denied := awsAccessDenied("r")
+	denied.Body = []byte(`{"message":"User: arn:aws:iam::123456789012:user/gw is not authorized to perform: bedrock:InvokeModel"}`)
 	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(awsAccessDenied("r"), nil).Once()
+	invoker.EXPECT().Invoke(mock.Anything, mock.Anything, mock.Anything).Return(denied, nil).Once()
 
 	res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID, Consumer: rc, Request: &infracontext.RequestContext{Body: []byte(`{"model":"gpt-x"}`)},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, res.StatusCode, "no probing outside native calls")
+}
+
+// The Bedrock client answers a translated call that a model is not enabled on
+// its account with the AWS envelope; another registry may have it, so it is
+// probed like any missing model.
+func TestForward_TranslatedBedrockNoModelAccessProbesTheNext(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	first := backendFor(gatewayID, "bedrock")
+	second := backendFor(gatewayID, "bedrock")
+	rc := routableConsumerWith(gatewayID, first, second)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool { return bk.ID == first.ID }), mock.Anything).
+		Return(&appproxy.ProviderResponse{
+			StatusCode: http.StatusForbidden,
+			Body:       []byte(`{"__type":"AccessDeniedException","message":"You don't have access to the model with the specified model ID."}`),
+		}, nil).Once()
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool { return bk.ID == second.ID }), mock.Anything).
+		Return(nativeOKResponse(), nil).Once()
+
+	res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID, Consumer: rc, Request: &infracontext.RequestContext{Body: []byte(`{"model":"claude-x"}`)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
 }
 
 // A text document the view cannot read is refused, never left out of the view

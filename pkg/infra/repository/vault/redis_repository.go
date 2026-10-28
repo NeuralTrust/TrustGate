@@ -27,6 +27,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -65,11 +66,11 @@ return 0
 `)
 
 type redisRepository struct {
-	rc     *redis.Client
+	rc     redis.UniversalClient
 	cipher domain.Encrypter
 }
 
-func NewRedisRepository(rc *redis.Client, cipher domain.Encrypter) *redisRepository {
+func NewRedisRepository(rc redis.UniversalClient, cipher domain.Encrypter) *redisRepository {
 	return &redisRepository{rc: rc, cipher: cipher}
 }
 
@@ -200,36 +201,29 @@ func (r *redisRepository) Find(ctx context.Context, gatewayID ids.GatewayID, pri
 
 func (r *redisRepository) ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*domain.Credential, error) {
 	match := fmt.Sprintf("%s:%s:%s:*", redisKeyPrefix, escapeGlob(gatewayID.String()), escapeGlob(principalSub))
-	var (
-		cursor uint64
-		out    []*domain.Credential
-	)
-	for {
-		keys, next, err := r.rc.Scan(ctx, cursor, match, redisScanBatchSize).Result()
-		if err != nil {
-			return nil, fmt.Errorf("vault repository: scan: %w", err)
-		}
+	var out []*domain.Credential
+	err := cache.ScanKeys(ctx, r.rc, match, redisScanBatchSize, func(ctx context.Context, keys []string) error {
 		for _, key := range keys {
 			stored, err := r.load(ctx, key)
 			if err != nil {
 				if errors.Is(err, domain.ErrNotFound) {
 					continue
 				}
-				return nil, err
+				return err
 			}
 			if stored.GatewayID != gatewayID || stored.PrincipalSub != principalSub {
 				continue
 			}
 			cred, err := r.decrypt(stored)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			out = append(out, cred)
 		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("vault repository: list by principal: %w", err)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Provider < out[j].Provider
