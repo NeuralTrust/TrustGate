@@ -766,7 +766,7 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 
 	out.Usage = openaiUsageFromCanonical(resp.Usage)
 
-	if resp.Reasoning != nil {
+	if r := resp.Reasoning; r != nil && (r.Summary != nil || r.ThinkingText != "" || len(r.Effort) > 0) {
 		summary := resp.Reasoning.Summary
 		if summary == nil && resp.Reasoning.ThinkingText != "" {
 			s := resp.Reasoning.ThinkingText

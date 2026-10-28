@@ -590,19 +590,29 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// converseAnthropicModelFields writes the Anthropic sampling options Converse
-// has no field for under the names Claude takes them by. Other sources leave
-// them out: their top_k is not an Anthropic option, and a model of another
-// family would refuse it.
+// converseAnthropicModelFields writes the Anthropic options Converse has no
+// field for under the names Claude takes them by. Other sources leave them
+// out: their top_k is not an Anthropic option, and a model of another family
+// would refuse it.
 func converseAnthropicModelFields(req *CanonicalRequest) map[string]json.RawMessage {
-	if req.TopK == nil {
+	fields := map[string]json.RawMessage{}
+	if req.TopK != nil {
+		if topK, err := json.Marshal(*req.TopK); err == nil {
+			fields["top_k"] = topK
+		}
+	}
+	if len(req.Anthropic.Thinking) > 0 {
+		fields["thinking"] = req.Anthropic.Thinking
+	}
+	if req.Anthropic.Effort != "" {
+		if oc, err := json.Marshal(map[string]string{"effort": req.Anthropic.Effort}); err == nil {
+			fields["output_config"] = oc
+		}
+	}
+	if len(fields) == 0 {
 		return nil
 	}
-	topK, err := json.Marshal(*req.TopK)
-	if err != nil {
-		return nil
-	}
-	return map[string]json.RawMessage{"top_k": topK}
+	return fields
 }
 
 // converseOutputConfigFrom maps an Anthropic output_config.format onto the
@@ -713,7 +723,10 @@ func converseMessageFromCanonical(m CanonicalMessage, names converseDocumentName
 			imageAt = at
 		}
 	}
-	blocks := make([]ConverseContentBlock, 0, len(images)+len(documents)+3+len(m.ToolCalls))
+	blocks := make([]ConverseContentBlock, 0, len(m.Thinking)+len(images)+len(documents)+3+len(m.ToolCalls))
+	if role == converseRoleAssistant {
+		blocks = append(blocks, converseReasoningBlocks(m.Thinking)...)
+	}
 	for i, img := range images {
 		block, err := converseImageFromCanonical(img)
 		if err != nil {
@@ -806,6 +819,22 @@ func converseDocumentFromCanonical(doc CanonicalDocument, names converseDocument
 func converseImageFormat(mediaType string) (string, bool) {
 	format, ok := strings.CutPrefix(mediaType, "image/")
 	return format, ok && format != ""
+}
+
+// converseReasoningBlocks sends an assistant turn's reasoning back as it came,
+// signature and redacted payload included.
+func converseReasoningBlocks(thinking []CanonicalThinkingBlock) []ConverseContentBlock {
+	blocks := make([]ConverseContentBlock, 0, len(thinking))
+	for _, t := range thinking {
+		if len(t.Redacted) > 0 {
+			blocks = append(blocks, ConverseContentBlock{ReasoningContent: &ConverseReasoningContent{RedactedContent: t.Redacted}})
+			continue
+		}
+		blocks = append(blocks, ConverseContentBlock{ReasoningContent: &ConverseReasoningContent{
+			ReasoningText: &ConverseReasoningText{Text: t.Text, Signature: t.Signature},
+		}})
+	}
+	return blocks
 }
 
 // converseToolInput turns the canonical arguments string into the JSON object
@@ -926,6 +955,7 @@ func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error)
 			cr.Role = msg.Role
 		}
 		var thinking []string
+		var blocks []CanonicalThinkingBlock
 		for _, b := range msg.Content {
 			switch {
 			case b.ToolUse != nil:
@@ -935,13 +965,19 @@ func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error)
 					Arguments: converseToolInputArguments(b.ToolUse.Input),
 				})
 			case b.ReasoningContent != nil && b.ReasoningContent.ReasoningText != nil:
-				thinking = append(thinking, b.ReasoningContent.ReasoningText.Text)
+				text := b.ReasoningContent.ReasoningText
+				if text.Text != "" {
+					thinking = append(thinking, text.Text)
+				}
+				blocks = append(blocks, CanonicalThinkingBlock{Text: text.Text, Signature: text.Signature})
+			case b.ReasoningContent != nil && len(b.ReasoningContent.RedactedContent) > 0:
+				blocks = append(blocks, CanonicalThinkingBlock{Redacted: b.ReasoningContent.RedactedContent})
 			default:
 				cr.Content += b.Text
 			}
 		}
-		if len(thinking) > 0 {
-			cr.Reasoning = &CanonicalReasoning{ThinkingText: strings.Join(thinking, "\n\n")}
+		if len(blocks) > 0 {
+			cr.Reasoning = &CanonicalReasoning{ThinkingText: strings.Join(thinking, "\n\n"), Blocks: blocks}
 		}
 	}
 	return cr, nil
@@ -1074,10 +1110,11 @@ func converseDeltaToCanonical(d *ConverseContentBlockDelta) *CanonicalStreamChun
 			ArgumentsDelta: d.Delta.ToolUse.Input,
 		}}}
 	case d.Delta.ReasoningContent != nil:
-		if d.Delta.ReasoningContent.Text == "" {
+		r := d.Delta.ReasoningContent
+		if r.Text == "" && r.Signature == "" && len(r.RedactedContent) == 0 {
 			return nil
 		}
-		return &CanonicalStreamChunk{ReasoningDelta: d.Delta.ReasoningContent.Text}
+		return &CanonicalStreamChunk{ReasoningDelta: r.Text, ReasoningSignature: r.Signature, RedactedReasoning: r.RedactedContent}
 	case d.Delta.Text != "":
 		return &CanonicalStreamChunk{Delta: d.Delta.Text}
 	default:

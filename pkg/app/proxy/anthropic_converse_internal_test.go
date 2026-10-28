@@ -35,25 +35,52 @@ func additionalFields(t *testing.T, body []byte) map[string]json.RawMessage {
 
 func TestPrepareAnthropicConverse(t *testing.T) {
 	p := &providerInvoker{logger: slog.Default()}
-	body := []byte(`{"messages":[],"additionalModelRequestFields":{"top_k":40}}`)
+	body := []byte(`{"messages":[
+		{"role":"user","content":[{"text":"q"}]},
+		{"role":"assistant","content":[{"reasoningContent":{"reasoningText":{"text":"t","signature":"s"}}},{"text":"a"}]},
+		{"role":"user","content":[{"text":"q2"}]}],
+		"additionalModelRequestFields":{"top_k":40,"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}}`)
+	betas := map[string][]string{"anthropic-beta": {"claude-code-20250219,interleaved-thinking-2025-05-14,oauth-2025-04-20"}}
+	forward := map[string]any{"reasoning": "forward"}
+	const claude = "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
 	ctx := context.Background()
 
-	t.Run("claude keeps the fields", func(t *testing.T) {
-		req := &infracontext.RequestContext{Body: []byte(`{"messages":[],"metadata":{}}`)}
-		out, err := p.prepareAnthropicConverse(ctx, req, body, "eu.anthropic.claude-sonnet-4-5-20250929-v1:0")
+	t.Run("a registry that forwards reasoning sends it and the betas bedrock takes", func(t *testing.T) {
+		got, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{Headers: betas}, forward, body, claude)
 		require.NoError(t, err)
-		assert.Equal(t, body, out)
+		assert.Equal(t, body, got.body)
+		assert.Equal(t, "interleaved-thinking-2025-05-14", got.betas)
+		assert.True(t, got.signedReasoning)
+	})
+
+	t.Run("by default reasoning and its history stay behind", func(t *testing.T) {
+		got, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{Headers: betas}, nil, body, claude)
+		require.NoError(t, err)
+		assert.Empty(t, got.betas)
+		assert.False(t, got.signedReasoning)
+		assert.Equal(t, map[string]json.RawMessage{"top_k": json.RawMessage(`40`)}, additionalFields(t, got.body))
+		assert.NotContains(t, string(got.body), "reasoningContent")
+	})
+
+	t.Run("a model the ID hides gets reasoning but no betas", func(t *testing.T) {
+		got, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{Headers: betas}, forward, body,
+			"arn:aws:bedrock:eu-west-1:1:application-inference-profile/x")
+		require.NoError(t, err)
+		assert.Empty(t, got.betas)
+		assert.Equal(t, body, got.body)
 	})
 
 	t.Run("another family is refused on the routed leg", func(t *testing.T) {
-		_, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{}, body, "amazon.nova-pro-v1:0")
+		_, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{}, forward, body, "amazon.nova-pro-v1:0")
 		require.ErrorIs(t, err, ErrInvalidRequestPayload)
-		assert.Contains(t, err.Error(), "top_k")
+		assert.Contains(t, err.Error(), "thinking")
 	})
 
-	t.Run("another family on a fallback leg loses the fields", func(t *testing.T) {
-		out, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{FallbackLeg: true}, body, "amazon.nova-pro-v1:0")
+	t.Run("another family on a fallback leg loses the fields and the history", func(t *testing.T) {
+		got, err := p.prepareAnthropicConverse(ctx, &infracontext.RequestContext{FallbackLeg: true, Headers: betas}, forward, body, "amazon.nova-pro-v1:0")
 		require.NoError(t, err)
-		assert.Nil(t, additionalFields(t, out))
+		assert.Empty(t, got.betas)
+		assert.Nil(t, additionalFields(t, got.body))
+		assert.NotContains(t, string(got.body), "reasoningContent")
 	})
 }
