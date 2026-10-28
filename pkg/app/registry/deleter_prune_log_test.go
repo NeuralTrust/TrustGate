@@ -82,6 +82,61 @@ func TestDeleter_Delete_LogsThePrunedConsumerRouting(t *testing.T) {
 	}
 }
 
+func TestDeleter_Delete_LogsThePrunedPolicies(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.RegistryKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	emptied := ids.New[ids.PolicyKind]()
+	narrowed := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Registry{ID: id, GatewayID: gwID}, nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.PruneReport{Policies: []domain.PolicyPrune{
+		{PolicyID: emptied, Emptied: true},
+		{PolicyID: narrowed},
+	}}, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	deleter := appregistry.NewDeleter(repo, newCacheManager(), publisher, logger, nil)
+	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if lines := prunedRoutingLines(logs.String()); len(lines) != 0 {
+		t.Fatalf("consumer prune log lines = %v, want none when only policies changed", lines)
+	}
+	lines := prunedPolicyLines(logs.String())
+	if len(lines) != 2 {
+		t.Fatalf("policy prune log lines = %d, want one per pruned policy:\n%s", len(lines), logs.String())
+	}
+	for _, want := range []string{
+		"level=INFO",
+		"registry_id=" + id.String(),
+		"gateway_id=" + gwID.String(),
+		"policy_id=" + emptied.String(),
+		"emptied=true",
+	} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("policy prune log line %q is missing %q", lines[0], want)
+		}
+	}
+	for _, want := range []string{
+		"registry_id=" + id.String(),
+		"gateway_id=" + gwID.String(),
+		"policy_id=" + narrowed.String(),
+		"emptied=false",
+	} {
+		if !strings.Contains(lines[1], want) {
+			t.Fatalf("policy prune log line %q is missing %q", lines[1], want)
+		}
+	}
+}
+
 func TestDeleter_Delete_LogsNothingWhenNoConsumerChanged(t *testing.T) {
 	t.Parallel()
 	id := ids.New[ids.RegistryKind]()
@@ -110,6 +165,16 @@ func prunedRoutingLines(out string) []string {
 	var lines []string
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "registry delete pruned consumer routing") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func prunedPolicyLines(out string) []string {
+	var lines []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "registry delete pruned policy scope") {
 			lines = append(lines, line)
 		}
 	}
