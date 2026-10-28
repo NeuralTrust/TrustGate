@@ -16,6 +16,8 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -101,4 +103,24 @@ func TestStreamGuard_RegexMatchReachingIntoReleasedTextStillCuts(t *testing.T) {
 
 	assert.Equal(t, "card 411111", text, "the second half is never released")
 	assert.True(t, g.stopped)
+}
+
+func TestStreamGuard_RegexMasksStreamedChatToolCallArguments(t *testing.T) {
+	t.Parallel()
+	args := `{"command":"echo secret","note":"keep"}`
+	g := regexGuard(t, streamGuardConfig{holdChatTools: true}, "secret", "[MASK]")
+
+	run := runChatToolGuard(t, g, chatToolStream(singleCallDeltas(t, args)...), nil)
+
+	require.Nil(t, run.pe)
+	require.False(t, g.wasCut(), "cut message: %s, cause: %s", g.cutMessage, g.maskCause)
+	fragments := argumentFragments(t, run.out, "function", "arguments")
+	require.NotEmpty(t, fragments)
+	masked := strings.Join(fragments, "")
+	assert.NotContains(t, masked, "secret")
+	assert.Equal(t, `{"command":"echo [MASK]","note":"keep"}`, masked)
+	var decoded map[string]string
+	require.NoError(t, json.Unmarshal([]byte(masked), &decoded))
+	assert.Equal(t, "[MASK]", strings.TrimPrefix(decoded["command"], "echo "))
+	assert.Equal(t, "keep", decoded["note"])
 }

@@ -177,9 +177,10 @@ const (
 )
 
 // SegmentVerdict is a plugin's answer for one StreamSegment. Transformed, when
-// HasTransform is set, replaces the whole of StreamSegment.Accumulated: the
-// caller owns a single contiguous buffer and rewrites it in place, so splicing
-// per-segment fragments back together is never required.
+// HasTransform is set, replaces the whole of StreamSegment.Accumulated.
+// TransformedToolCalls, when non-nil, replaces ToolCalls in the same way. The
+// caller owns both cumulative values, so splicing per-segment fragments back
+// together is never required.
 //
 // Fingerprints digests what the plugin reported on this segment down to what
 // stays the same about a finding while the payload under it grows. A plugin
@@ -198,10 +199,11 @@ type SegmentVerdict struct {
 	StatusCode int
 	// Headers are copied onto that response. Nil leaves the headers the head
 	// gate sets itself.
-	Headers      map[string][]string
-	HasTransform bool
-	Transformed  string
-	Fingerprints []string
+	Headers              map[string][]string
+	HasTransform         bool
+	Transformed          string
+	TransformedToolCalls []adapter.CanonicalToolCall
+	Fingerprints         []string
 	// Incomplete is the typed failure (ExternalStreamFailure) of a verdict that
 	// is usable but did not cover everything the policy asked for: a mask came
 	// back while another filter produced no verdict. The verdict is applied as
@@ -317,10 +319,11 @@ type SegmentOutcome struct {
 	// StatusCode is the HTTP status of that refusal. Zero is a 403.
 	StatusCode int
 	// Headers travel with the refusal. Nil leaves the head gate's own headers.
-	Headers      map[string][]string
-	HasTransform bool
-	Transformed  string
-	Fingerprints []StreamFinding
+	Headers              map[string][]string
+	HasTransform         bool
+	Transformed          string
+	TransformedToolCalls []adapter.CanonicalToolCall
+	Fingerprints         []StreamFinding
 }
 
 // StreamFinding is one finding fingerprint and the chain entry that reported

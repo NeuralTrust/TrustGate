@@ -781,30 +781,33 @@ func (g *streamGuard) inspect(ctx context.Context) {
 // and an encode that produced nothing has no event to put the mask in.
 func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 	produced := g.text.String()
-	if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
-		return g.cannotMask(adapter.MaskCauseNoWindow)
+	if outcome.Transformed == g.inspected {
+		if outcome.TransformedToolCalls == nil {
+			return g.cannotMask(adapter.MaskCauseNotAReplacement)
+		}
+	} else {
+		if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
+			return g.cannotMask(adapter.MaskCauseNoWindow)
+		}
+		masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
+		first, ok := g.rewritableHold()
+		if g.native {
+			// The limits rewritableHold keeps come from re-encoding an event out of
+			// its text, which a native frame never is: it is patched in place and
+			// then read again, and the read-again is what stands behind it.
+			first, ok = 0, true
+		}
+		if !ok || !strings.HasPrefix(masked, g.releasedText()) {
+			return g.cannotMask(adapter.MaskCauseReleasedText)
+		}
+		if !g.remask(masked, first) {
+			return false
+		}
 	}
-	masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
-	// A verdict that left the buffer byte-identical masked something the buffer
-	// cannot see. It reads the same as a verdict re-flagging a mask the guard
-	// itself already applied and handing it back unchanged, and the verdict
-	// names no offsets to tell them apart, so both end the stream: releasing on
-	// the wrong reading releases exactly the content the policy asked to mask.
-	// Finding offsets on SegmentOutcome are what would separate them (§11).
-	if masked == produced {
-		return g.cannotMask(adapter.MaskCauseNotAReplacement)
+	if outcome.TransformedToolCalls != nil {
+		return g.remaskChatToolCalls(outcome.TransformedToolCalls)
 	}
-	first, ok := g.rewritableHold()
-	if g.native {
-		// The limits rewritableHold keeps come from re-encoding an event out of
-		// its text, which a native frame never is: it is patched in place and
-		// then read again, and the read-again is what stands behind it.
-		first, ok = 0, true
-	}
-	if !ok || !strings.HasPrefix(masked, g.releasedText()) {
-		return g.cannotMask(adapter.MaskCauseReleasedText)
-	}
-	return g.remask(masked, first)
+	return true
 }
 
 // rewritableHold reports whether the held events can carry a mask at all, and
