@@ -126,7 +126,7 @@ func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installa
 	return nil
 }
 
-func (f *fakeInstalls) Find(_ context.Context, _ ids.GatewayID, _, _ string) (*installationdomain.Installation, error) {
+func (f *fakeInstalls) Find(_ context.Context, _ ids.GatewayID, _, _ string, _ ...ids.RegistryID) (*installationdomain.Installation, error) {
 	if f.findValue != nil {
 		return f.findValue, nil
 	}

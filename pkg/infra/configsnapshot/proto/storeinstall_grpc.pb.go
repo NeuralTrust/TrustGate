@@ -56,8 +56,9 @@ const (
 type StoreInstallationsClient interface {
 	// Upsert persists (creates or updates) one installation record.
 	Upsert(ctx context.Context, in *UpsertInstallationRequest, opts ...grpc.CallOption) (*UpsertInstallationResponse, error)
-	// Find returns the installation for (gateway, principal, code); found=false
-	// when there is no such row (the wire form of installation.ErrNotFound).
+	// Find returns the installation for (gateway, principal, code). registry_id,
+	// when set, scopes that lookup to one configured instance. found=false when
+	// there is no such row (the wire form of installation.ErrNotFound).
 	Find(ctx context.Context, in *FindInstallationRequest, opts ...grpc.CallOption) (*FindInstallationResponse, error)
 	// ListByPrincipal returns everything a principal has installed on a gateway —
 	// the CatalogScoper's read side.
@@ -147,8 +148,9 @@ func (c *storeInstallationsClient) EnsureRegistry(ctx context.Context, in *Ensur
 type StoreInstallationsServer interface {
 	// Upsert persists (creates or updates) one installation record.
 	Upsert(context.Context, *UpsertInstallationRequest) (*UpsertInstallationResponse, error)
-	// Find returns the installation for (gateway, principal, code); found=false
-	// when there is no such row (the wire form of installation.ErrNotFound).
+	// Find returns the installation for (gateway, principal, code). registry_id,
+	// when set, scopes that lookup to one configured instance. found=false when
+	// there is no such row (the wire form of installation.ErrNotFound).
 	Find(context.Context, *FindInstallationRequest) (*FindInstallationResponse, error)
 	// ListByPrincipal returns everything a principal has installed on a gateway —
 	// the CatalogScoper's read side.
