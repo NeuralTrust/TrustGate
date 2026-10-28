@@ -53,6 +53,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	usageinfra "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -61,11 +62,11 @@ import (
 )
 
 const (
-	serverAdmin  = "admin"
-	serverProxy  = "proxy"
-	serverMCP    = "mcp"
-	serverRun    = "run"
-	serverWorker = "worker"
+	serverAdmin  = modules.PlaneAdmin
+	serverProxy  = modules.PlaneProxy
+	serverMCP    = modules.PlaneMCP
+	serverRun    = modules.PlaneRun
+	serverWorker = modules.PlaneWorker
 )
 
 // serverConfigSyncGRPC names the control-plane config-sync gRPC listener in the shared serve loop.
@@ -186,6 +187,7 @@ type adminParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	Usage          *modules.UsageLoops
 	Revocations    appconfigsyncrevocation.Refresher
 	OpsSDK         *o11y.SDK
 }
@@ -206,6 +208,7 @@ type proxyParam struct {
 	dig.In
 	Srv           server.Server `name:"proxy"`
 	Worker        appmetrics.Worker
+	UsageRecords  *usageinfra.Emitter
 	TrafficLabels modules.TrafficLabelsParams
 	Conn          *database.Connection
 	BedrockModels appcatalog.BedrockModelResolver
@@ -220,6 +223,7 @@ type mcpParam struct {
 	dig.In
 	Srv          server.Server `name:"mcp"`
 	Worker       appmetrics.Worker
+	UsageRecords *usageinfra.Emitter
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
@@ -232,6 +236,7 @@ type allParam struct {
 	Admin          server.Server `name:"admin"`
 	Proxy          server.Server `name:"proxy"`
 	Worker         appmetrics.Worker
+	UsageRecords   *usageinfra.Emitter
 	TrafficLabels  modules.TrafficLabelsParams
 	Conn           *database.Connection
 	BedrockModels  appcatalog.BedrockModelResolver
@@ -240,6 +245,7 @@ type allParam struct {
 	ConfigSyncGRPC *configsyncgrpc.Server
 	Revocations    appconfigsyncrevocation.Refresher
 	RateLimit      rateLimitParams
+	Usage          *modules.UsageLoops
 	OpsSDK         *o11y.SDK
 }
 
@@ -258,6 +264,8 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
 	defer stopDispatcher()
+	p.Usage.Start()
+	defer p.Usage.Stop()
 	defer stopRevocations()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
@@ -269,6 +277,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
@@ -280,6 +289,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
@@ -291,6 +301,7 @@ type labelWorkerParam struct {
 	dig.In
 	TrafficLabels modules.TrafficLabelsParams
 	Worker        appmetrics.Worker
+	UsageRecords  *usageinfra.Emitter
 	Conn          *database.Connection
 	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
@@ -302,6 +313,7 @@ func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopConfig()
+	defer p.UsageRecords.Close()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, false)()
 
@@ -318,10 +330,13 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer stopBackfill()
 	defer closeBedrockModels(p.BedrockModels, p.Config, logger)
 	defer stopDispatcher()
+	defer p.UsageRecords.Close()
 	defer stopRevocations()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
+	p.Usage.Start()
+	defer p.Usage.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
 		namedServer{name: serverProxy, srv: p.Proxy},

@@ -49,15 +49,30 @@ type Service struct {
 	revocations  RevocationChecker
 	logger       *slog.Logger
 	helloTimeout time.Duration
+
+	usage         UsageSource
+	usageGateways GatewayResolver
+	usageRetry    time.Duration
 }
 
 // NewService builds the ConfigSync server implementation. revocations may be
 // nil, in which case open streams are never ended for a revoked token.
-func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, revocations RevocationChecker) *Service {
+func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, revocations RevocationChecker, opts ...ServiceOption) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{hub: hub, source: source, revocations: revocations, logger: logger, helloTimeout: defaultHelloTimeout}
+	s := &Service{
+		hub:          hub,
+		source:       source,
+		revocations:  revocations,
+		logger:       logger,
+		helloTimeout: defaultHelloTimeout,
+		usageRetry:   usageRetryInterval,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) revoked(id configsyncrevocation.Identity) bool {
@@ -122,6 +137,22 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		conn.enqueue(version)
 	}
 
+	var usageChanges <-chan struct{}
+	var usageRetry <-chan time.Time
+	var usage *usageStream
+	if s.usage != nil && hello.GetAcceptsUsage() {
+		changes, release := s.usage.Subscribe()
+		defer release()
+		usageChanges = changes
+		retry := time.NewTicker(s.usageRetry)
+		defer retry.Stop()
+		usageRetry = retry.C
+		usage = newUsageStream(s.usage, s.usageGateways, s.logger, scope, hello.GetAcceptsUsageChanges())
+		if err := sendUsage(stream, usage.next(ctx)); err != nil {
+			return err
+		}
+	}
+
 	recvErr := make(chan error, 1)
 	go func() {
 		for {
@@ -152,8 +183,32 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
+			if usage != nil && usage.owed {
+				if err := sendUsage(stream, usage.next(ctx)); err != nil {
+					return err
+				}
+			}
+		case <-usageChanges:
+			if err := sendUsage(stream, usage.next(ctx)); err != nil {
+				return err
+			}
+		case <-usageRetry:
+			if usage.owed {
+				if err := sendUsage(stream, usage.next(ctx)); err != nil {
+					return err
+				}
+			}
 		}
 	}
+}
+
+func sendUsage(stream snapshotpb.ConfigSync_SyncServer, msgs []*snapshotpb.ServerMessage) error {
+	for _, msg := range msgs {
+		if err := stream.Send(msg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,

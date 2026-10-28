@@ -63,7 +63,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
 
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -112,7 +112,7 @@ func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -160,7 +160,7 @@ func TestMetricsMiddleware_IgnoresInboundTraceIDHeader(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -213,7 +213,7 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	// streamReq stands in for the request context the proxy handler retains and
 	// passes to the finalizer; its Metadata carries the observed usage.
@@ -263,7 +263,7 @@ func TestMetricsMiddleware_DisabledSkipsWorker(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = false
 
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	app := fiber.New()
 	app.Use(mw.Middleware())
@@ -296,7 +296,7 @@ func TestMetricsMiddleware_PassesGatewayExporters(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	gw := &gatewaydomain.Gateway{

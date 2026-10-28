@@ -89,6 +89,33 @@
       }
     },
     {
+      "name": "io.aircall/mcp",
+      "vendor": "Aircall",
+      "category": "Communication",
+      "description": "Cloud phone system: search calls and read their transcripts, AI summaries, sentiment, topics, action items, and CSAT in Aircall (read-only).",
+      "capabilities": [
+        "Search calls and read their transcripts",
+        "Get call summaries, topics, and action items",
+        "Review call sentiment and CSAT evaluations"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://mcp.aircall.io/mcp",
+      "requires_auth": true,
+      "self_service": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://id.aircall.io/auth/v2/authorization-server/mcp/oauth/authorize",
+        "token_url": "https://id.aircall.io/auth/v2/authorization-server/mcp/oauth/token",
+        "resource": "https://mcp.aircall.io/mcp"
+      },
+      "relevance": 60,
+      "tools": []
+    },
+    {
       "name": "com.airtable/mcp",
       "vendor": "Airtable",
       "category": "Productivity & Docs",

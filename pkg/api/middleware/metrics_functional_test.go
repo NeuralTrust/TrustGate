@@ -147,7 +147,7 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = true
-	mw := middleware.NewMetricsMiddleware(worker, cfg)
+	mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {

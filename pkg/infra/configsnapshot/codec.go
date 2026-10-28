@@ -128,6 +128,8 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	msg.UsageEnforcement = data.UsageEnforcement
+
 	msg.TenantCaps = make([]*snapshotpb.TenantCaps, 0, len(data.TenantCaps))
 	for i := range data.TenantCaps {
 		c := &data.TenantCaps[i]
@@ -232,6 +234,8 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 			PEM: m.GetPem(),
 		})
 	}
+
+	data.UsageEnforcement = msg.GetUsageEnforcement()
 
 	data.TenantCaps = make([]ratelimitdomain.TenantCaps, 0, len(msg.GetTenantCaps()))
 	for _, c := range msg.GetTenantCaps() {

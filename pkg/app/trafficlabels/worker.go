@@ -100,6 +100,7 @@ type worker struct {
 	cache      Cache
 	sink       Sink
 	recorder   Recorder
+	usage      UsageRecorder
 	cfg        WorkerConfig
 	breaker    *breaker
 	now        func() time.Time
@@ -121,11 +122,31 @@ type worker struct {
 	held   map[string]struct{}
 }
 
-func NewWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, recorder Recorder, cfg WorkerConfig) Worker {
-	return newWorker(logger, stream, classifier, cache, sink, recorder, cfg)
+// NewWorker builds the labeling worker. usage may be nil when usage records
+// are not wanted.
+func NewWorker(
+	logger *slog.Logger,
+	stream Stream,
+	classifier Classifier,
+	cache Cache,
+	sink Sink,
+	recorder Recorder,
+	usage UsageRecorder,
+	cfg WorkerConfig,
+) Worker {
+	return newWorker(logger, stream, classifier, cache, sink, recorder, usage, cfg)
 }
 
-func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, recorder Recorder, cfg WorkerConfig) *worker {
+func newWorker(
+	logger *slog.Logger,
+	stream Stream,
+	classifier Classifier,
+	cache Cache,
+	sink Sink,
+	recorder Recorder,
+	usage UsageRecorder,
+	cfg WorkerConfig,
+) *worker {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -137,6 +158,7 @@ func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache 
 		cache:      cache,
 		sink:       sink,
 		recorder:   recorder,
+		usage:      usage,
 		cfg:        cfg,
 		breaker:    newBreaker(cfg.BreakerFailures, cfg.BreakerCooldown),
 		now:        time.Now,
@@ -426,6 +448,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 			})
 		}
 		if err == nil {
+			w.recordUsage(ctx, p)
 			classified[p.key] = cls
 			w.recorder.Result(OutcomeClassified, len(p.deliveries))
 			done = append(done, w.publishAll(ctx, p.deliveries, cls)...)
@@ -449,6 +472,17 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 	}
 	w.store(ctx, classified)
 	w.ack(ctx, done)
+}
+
+// recordUsage records a classifier call once, for the first delivery that
+// shared it. It runs before the classification is cached, so a crash in between
+// records the same event again on redelivery instead of turning it into a
+// cache hit.
+func (w *worker) recordUsage(ctx context.Context, p *pendingText) {
+	if w.usage == nil || len(p.deliveries) == 0 {
+		return
+	}
+	w.usage.Classified(ctx, p.deliveries[0].Request, p.text)
 }
 
 func cacheKeyOf(req trafficlabel.Request) string {
