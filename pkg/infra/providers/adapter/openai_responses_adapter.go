@@ -89,6 +89,7 @@ type openaiResponsesInputItem struct {
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
 	Output    json.RawMessage `json:"output,omitempty"`
 	Status    string          `json:"status,omitempty"`
 
@@ -359,9 +360,9 @@ func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest, system *c
 
 // appendResponsesInputItem returns whether cr ends with an assistant message
 // that later assistant items join, so a Chat Completions upstream gets one
-// assistant message per turn. Only a user message, an input_text or a
-// function_call_output ends a turn; developer and system text goes to the
-// system prompt wherever it appears.
+// assistant message per turn. Only a user message, an input_text, a
+// function_call_output or a custom_tool_call_output ends a turn; developer
+// and system text goes to the system prompt wherever it appears.
 func appendResponsesInputItem(cr *CanonicalRequest, system *cacheTextJoin, item openaiResponsesInputItem, turn bool) bool {
 	switch {
 	case item.Type == "function_call":
@@ -370,7 +371,18 @@ func appendResponsesInputItem(cr *CanonicalRequest, system *cacheTextJoin, item 
 			callID = item.ID
 		}
 		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: responsesCallArguments(item.Arguments)})
-	case item.Type == "function_call_output":
+	case item.Type == "custom_tool_call":
+		callID := item.CallID
+		if callID == "" {
+			callID = item.ID
+		}
+		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{
+			ID:        callID,
+			Kind:      ToolKindCustom,
+			Name:      item.Name,
+			Arguments: responsesCustomInput(item.Input),
+		})
+	case item.Type == "function_call_output", item.Type == "custom_tool_call_output":
 		output, cache := responsesToolOutput(item.Output)
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "tool", Content: output, ToolCallID: item.CallID, Cache: cache})
 		return false
@@ -415,12 +427,29 @@ func responsesCallArguments(raw json.RawMessage) string {
 	return arguments
 }
 
-// responsesToolOutput returns the text of a function_call_output and the
-// breakpoint of its text parts; parts that are not text (images, files) are
-// left out with their breakpoints, and a value that is neither a string nor a
-// list of parts is passed on as its JSON text. An output with no text gets a
-// placeholder, since upstreams reject an empty tool result, and a breakpoint
-// on its blank text then marks the end of the placeholder.
+// responsesCustomInput returns the freeform text of a custom_tool_call. The
+// API sends a string; a missing or null input stays empty, and a value that
+// is not a string is kept as its JSON text. Unlike function arguments, empty
+// input is not rewritten to an object: the text is the tool's input.
+func responsesCustomInput(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(trimmed, &text) == nil {
+		return text
+	}
+	return string(trimmed)
+}
+
+// responsesToolOutput returns the text of a function_call_output or
+// custom_tool_call_output and the breakpoint of its text parts. Parts that
+// are not text (images, files) are left out with their breakpoints, and a
+// value that is neither a string nor a list of parts is passed on as its JSON
+// text. An output with no text gets a placeholder, since upstreams reject an
+// empty tool result, and a breakpoint on its blank text then marks the end of
+// the placeholder.
 func responsesToolOutput(output json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	trimmed := bytes.TrimSpace(output)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
@@ -745,32 +774,22 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 					output = parts
 				}
 				raw, _ := json.Marshal(map[string]any{
-					"type":    "function_call_output",
+					"type":    responsesToolResultType(req.Messages, m.ToolCallID),
 					"call_id": m.ToolCallID,
 					"output":  output,
 				})
 				inputItems = append(inputItems, raw)
 
 			case m.Role == "assistant" && len(m.ToolCalls) > 0:
-				for _, tc := range m.ToolCalls {
-					name := tc.Name
-					if name == "" {
-						name = tc.ID
-					}
-					fcID := tc.ID
-					if !strings.HasPrefix(fcID, "fc_") {
-						fcID = "fc_" + fcID
-					}
-					item := map[string]string{
-						"type":      "function_call",
-						"id":        fcID,
-						"call_id":   tc.ID,
-						"name":      name,
-						"arguments": tc.Arguments,
-						"status":    "completed",
-					}
-					raw, _ := json.Marshal(item)
+				if m.Content != "" {
+					raw, _ := json.Marshal(map[string]any{
+						"role":    "assistant",
+						"content": m.Content,
+					})
 					inputItems = append(inputItems, raw)
+				}
+				for _, tc := range m.ToolCalls {
+					inputItems = append(inputItems, encodeResponsesToolCallItem(tc))
 				}
 
 			case m.Role == "system" || m.Role == "developer":
@@ -812,6 +831,45 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 
 	return json.Marshal(out)
+}
+
+func encodeResponsesToolCallItem(tc CanonicalToolCall) json.RawMessage {
+	name := tc.Name
+	if name == "" {
+		name = tc.ID
+	}
+	item := map[string]string{
+		"id":      tc.ID,
+		"call_id": tc.ID,
+		"name":    name,
+		"status":  "completed",
+	}
+	if tc.Kind == ToolKindCustom {
+		item["type"] = "custom_tool_call"
+		item["input"] = tc.Arguments
+		if !strings.HasPrefix(item["id"], "ctc_") {
+			item["id"] = "ctc_" + tc.ID
+		}
+	} else {
+		item["type"] = "function_call"
+		item["arguments"] = tc.Arguments
+		if !strings.HasPrefix(item["id"], "fc_") {
+			item["id"] = "fc_" + tc.ID
+		}
+	}
+	raw, _ := json.Marshal(item)
+	return raw
+}
+
+func responsesToolResultType(messages []CanonicalMessage, callID string) string {
+	for _, m := range messages {
+		for _, tc := range m.ToolCalls {
+			if tc.ID == callID && tc.Kind == ToolKindCustom {
+				return "custom_tool_call_output"
+			}
+		}
+	}
+	return "function_call_output"
 }
 
 // responsesInputParts writes text as input_text parts with the breakpoint on
