@@ -26,8 +26,8 @@
 # It needs read access to event-schemas, so it is not part of the public build.
 #
 #   EVENT_SCHEMAS_DIR  a local event-schemas checkout (skips the clone)
-#   EVENT_SCHEMAS_REF  branch or tag to clone (default: main; usage.v1 is on
-#                      feat/run-1915-usage-system-contracts until it merges)
+#   EVENT_SCHEMAS_REF  branch or tag to clone (default: main; usage.v1 is released
+#                      since v1.2.0)
 
 set -euo pipefail
 
