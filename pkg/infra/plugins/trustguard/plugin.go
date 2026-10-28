@@ -560,7 +560,9 @@ func (p *Plugin) mcpInspectionPayload(
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
 	respBody := in.Response.Body
-	tgt.applyPayload = mcpTransformedResult
+	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+		return mcpTransformedResult(payload, respBody)
+	}
 	tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPResponse(respBody, masked) }
 	tgt.textBytes = mcpOutputTextBytes(respBody)
 	payload, err := mcpToolsResultPayload(respBody)
