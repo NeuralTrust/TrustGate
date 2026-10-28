@@ -222,6 +222,32 @@ func TestStreamGuard_ChatToolReleasedVerbatimOnceAllowed(t *testing.T) {
 	assert.Zero(t, run.argsAtFinish, "nothing of the call is released before it closes")
 }
 
+func TestRewriteChatToolCallArgumentsPreservesUnmodelledFields(t *testing.T) {
+	t.Parallel()
+	line := []byte(`data: {"id":"c1","top_extra":{"trace":"keep"},"choices":[{"index":0,"choice_extra":true,"delta":{"tool_calls":[{"index":0,"call_extra":{"keep":1},"function":{"arguments":"secret","name":"run_shell","function_extra":"keep"}}]}}]}`)
+
+	lines, changed, ok := rewriteChatToolCallArguments(
+		[][]byte{line},
+		[]adapter.StreamToolCallDelta{{Index: 0, ArgumentsDelta: "[MASK]"}},
+		map[int]string{0: "[MASK]"},
+	)
+
+	require.True(t, ok)
+	require.True(t, changed)
+	require.Len(t, lines, 1)
+	var chunk map[string]any
+	require.NoError(t, json.Unmarshal(lines[0][len("data: "):], &chunk))
+	assert.Equal(t, map[string]any{"trace": "keep"}, chunk["top_extra"])
+	choices := chunk["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.Equal(t, true, choice["choice_extra"])
+	call := choice["delta"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+	assert.Equal(t, map[string]any{"keep": float64(1)}, call["call_extra"])
+	function := call["function"].(map[string]any)
+	assert.Equal(t, "[MASK]", function["arguments"])
+	assert.Equal(t, "keep", function["function_extra"])
+}
+
 // Two calls whose deltas interleave are held together until both are whole.
 func TestStreamGuard_ChatToolInterleavedIndexes(t *testing.T) {
 	first := `{"city":"Paris","unit":"celsius","days":3}`

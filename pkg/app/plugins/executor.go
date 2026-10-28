@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"golang.org/x/sync/errgroup"
 )
@@ -294,7 +295,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		// changes what the entries behind it see. An observe transform is
 		// never applied, and the entries behind must judge what is released.
 		if !stop && verdict.HasTransform && Blocks(entry.mode) {
-			current = segmentAfterTransform(current, verdict.Transformed)
+			current = segmentAfterTransform(current, verdict.Transformed, verdict.TransformedToolCalls)
 		}
 		switch {
 		case stop:
@@ -367,9 +368,11 @@ func segmentWithin(seg StreamSegment, window int) (StreamSegment, string) {
 // the new Accumulated. Text is the delta of the block: the tail of the masked
 // text from where the block began, or from where the mask first diverged from
 // the raw text when that is earlier, so masked text is never left out of it.
-// Reasoning and ToolCalls are unchanged: the guard refuses a transform over a
-// block that carries either.
-func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment {
+func segmentAfterTransform(
+	seg StreamSegment,
+	transformed string,
+	transformedToolCalls ...[]adapter.CanonicalToolCall,
+) StreamSegment {
 	start := len(seg.Accumulated) - len(seg.Text)
 	if start < 0 {
 		start = 0
@@ -384,6 +387,9 @@ func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment 
 	}
 	seg.Accumulated = transformed
 	seg.Text = transformed[from:]
+	if len(transformedToolCalls) > 0 && transformedToolCalls[0] != nil {
+		seg.ToolCalls = transformedToolCalls[0]
+	}
 	return seg
 }
 
@@ -417,6 +423,7 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		outcome.Headers = verdict.Headers
 		outcome.HasTransform = false
 		outcome.Transformed = ""
+		outcome.TransformedToolCalls = nil
 		return true
 	}
 	if verdict.HasTransform {
@@ -425,6 +432,9 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		// carries every earlier mask.
 		outcome.HasTransform = true
 		outcome.Transformed = verdict.Transformed
+		if verdict.TransformedToolCalls != nil {
+			outcome.TransformedToolCalls = verdict.TransformedToolCalls
+		}
 		// Type and Message describe the entry whose transform is kept.
 		if verdict.Type != "" {
 			outcome.Type = verdict.Type
