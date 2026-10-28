@@ -19,6 +19,7 @@ import (
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -31,15 +32,17 @@ import (
 type MCPMetricsMiddleware struct {
 	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
+	usage               appusage.RequestRecorder
 	telemetryEnabled    bool
 	enableRequestTraces bool
 	enablePluginTraces  bool
 }
 
-func NewMCPMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MCPMetricsMiddleware {
+func NewMCPMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRecorder, cfg *config.Config) *MCPMetricsMiddleware {
 	return &MCPMetricsMiddleware{
 		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
+		usage:               usage,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
 		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
@@ -48,11 +51,10 @@ func NewMCPMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MCPM
 
 func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if !m.telemetryEnabled {
+		if !m.telemetryEnabled && !usageEnabled(m.usage) {
 			return c.Next()
 		}
 
-		startTime := time.Now()
 		gatewayID := gatewayIDFromContext(c)
 		gw := gatewayFromContext(c)
 		exporters := gatewayExporters(gw)
@@ -60,23 +62,38 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		traceID := newTraceID()
 		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
+		startTime := requestTrace.StartedAt()
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 
+		returned := false
+		var err error
 		defer func() {
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
-			req := m.buildRequestContext(c, gatewayID)
-			resp := m.buildResponseContext(c, gatewayID)
+			statusCode := finalStatus(c, returned, err)
+			var (
+				req  *infracontext.RequestContext
+				resp *infracontext.ResponseContext
+			)
+			if m.telemetryEnabled {
+				req = m.buildRequestContext(c, gatewayID)
+				resp = m.buildResponseContext(c, gatewayID)
+			}
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
-				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+				recordUsage(m.usage, requestTrace, statusCode, startTime)
+				if m.telemetryEnabled {
+					m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+				}
 			})
 			requestTrace.Done()
 		}()
 
-		return c.Next()
+		err = c.Next()
+		returned = true
+		return err
 	}
 }
 

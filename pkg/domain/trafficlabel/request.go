@@ -24,6 +24,7 @@ import (
 // queue, so it carries everything the worker needs without reading the config.
 type Request struct {
 	GatewayID   string     `json:"gateway_id"`
+	TenantID    string     `json:"tenant_id,omitempty"`
 	ConsumerID  string     `json:"consumer_id"`
 	TraceID     string     `json:"trace_id"`
 	Text        string     `json:"text"`
@@ -37,6 +38,7 @@ type Request struct {
 
 type RequestParams struct {
 	GatewayID  string
+	TenantID   string
 	ConsumerID string
 	TraceID    string
 	Text       string
@@ -49,6 +51,7 @@ func NewRequest(p RequestParams) Request {
 	sets := cloneLabelSets(p.LabelSets)
 	req := Request{
 		GatewayID:   p.GatewayID,
+		TenantID:    p.TenantID,
 		ConsumerID:  p.ConsumerID,
 		TraceID:     p.TraceID,
 		Text:        p.Text,

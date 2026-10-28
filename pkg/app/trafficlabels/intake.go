@@ -43,6 +43,7 @@ const (
 // complete: it is never classified.
 type Candidate struct {
 	GatewayID    string
+	TenantID     string
 	ConsumerID   string
 	TraceID      string
 	SessionID    string
@@ -286,6 +287,7 @@ func (i *intake) build(ctx context.Context, c Candidate) (trafficlabel.Request, 
 	}
 	return trafficlabel.NewRequest(trafficlabel.RequestParams{
 		GatewayID:  c.GatewayID,
+		TenantID:   c.TenantID,
 		ConsumerID: c.ConsumerID,
 		TraceID:    c.TraceID,
 		Text:       text,

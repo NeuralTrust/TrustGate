@@ -17,6 +17,7 @@ package modules
 import (
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -38,6 +39,17 @@ type rateLimitDeps struct {
 	Logger     *slog.Logger
 	Cache      *ratelimitapp.TenantCapsCache `optional:"true"`
 	Snapshot   *adapters.TenantCapsSource    `optional:"true"`
+	Usage      *middleware.UsageGuardMiddleware
+}
+
+func (p rateLimitDeps) meterOptions() ratelimitapp.Options {
+	return ratelimitapp.Options{
+		SyncInterval:    p.Cfg.RateLimit.SyncInterval,
+		SyncTimeout:     p.Cfg.RateLimit.SyncTimeout,
+		ColdReadTimeout: p.Cfg.RateLimit.ColdReadTimeout,
+		FailedRetention: p.Cfg.RateLimit.FailedRetention,
+		UsageRefusing:   p.Usage.Refusing,
+	}
 }
 
 // tierLoader reads the tenant's caps from whichever source this plane has. The
@@ -80,12 +92,7 @@ func RateLimit(c *container.Container) error {
 			p.tierLoader(),
 			inforatelimit.NewStore(p.SyncClient.UniversalClient, p.Logger,
 				inforatelimit.WithFailedRetention(p.Cfg.RateLimit.FailedRetention)),
-			ratelimitapp.Options{
-				SyncInterval:    p.Cfg.RateLimit.SyncInterval,
-				SyncTimeout:     p.Cfg.RateLimit.SyncTimeout,
-				ColdReadTimeout: p.Cfg.RateLimit.ColdReadTimeout,
-				FailedRetention: p.Cfg.RateLimit.FailedRetention,
-			},
+			p.meterOptions(),
 			p.Logger,
 		)
 	}); err != nil {

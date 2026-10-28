@@ -17,12 +17,12 @@ package middleware
 import (
 	"bytes"
 	"math/rand"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -38,6 +38,7 @@ type TrafficLabelsMiddleware struct {
 	intake       trafficlabels.Intake
 	recorder     trafficlabels.Recorder
 	maxBodyBytes int
+	enabled      bool
 }
 
 func NewTrafficLabelsMiddleware(
@@ -49,36 +50,58 @@ func NewTrafficLabelsMiddleware(
 	if cfg != nil && cfg.TrafficLabels.IntakeMaxBodyBytes > 0 {
 		maxBody = cfg.TrafficLabels.IntakeMaxBodyBytes
 	}
-	return &TrafficLabelsMiddleware{intake: intake, recorder: recorder, maxBodyBytes: maxBody}
-}
-
-func (m *TrafficLabelsMiddleware) Middleware() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		m.offer(c)
-		return c.Next()
+	return &TrafficLabelsMiddleware{
+		intake:       intake,
+		recorder:     recorder,
+		maxBodyBytes: maxBody,
+		enabled:      cfg != nil && cfg.Telemetry.Enabled,
 	}
 }
 
-func (m *TrafficLabelsMiddleware) offer(c *fiber.Ctx) {
-	if m.intake == nil {
+// Middleware reads the candidate before the request runs, since plugins may
+// rewrite the body, and offers it only once the request was served: a request
+// refused for usage, rate limit or a server error is not labeled.
+func (m *TrafficLabelsMiddleware) Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		candidate, ok := m.candidate(c)
+		err := c.Next()
+		if ok {
+			m.offer(candidate, err == nil && appusage.BillableStatus(c.Response().StatusCode()))
+		}
+		return err
+	}
+}
+
+func (m *TrafficLabelsMiddleware) offer(candidate trafficlabels.Candidate, served bool) {
+	if !served {
+		if !candidate.BufferOnly {
+			m.recorder.Intake(trafficlabels.OutcomeNotServed)
+		}
 		return
+	}
+	m.intake.Submit(candidate)
+}
+
+func (m *TrafficLabelsMiddleware) candidate(c *fiber.Ctx) (trafficlabels.Candidate, bool) {
+	if m.intake == nil || !m.enabled {
+		return trafficlabels.Candidate{}, false
 	}
 	ctx := c.UserContext()
 	gw, ok := appgateway.FromContext(ctx)
 	if !ok || !gw.TrafficLabeling.IsEnabled() {
-		return
+		return trafficlabels.Candidate{}, false
 	}
 	rc, ok := appconsumer.ConsumerFromContext(ctx)
 	if !ok || rc.Consumer == nil || len(rc.Consumer.LabelSets) == 0 {
-		return
+		return trafficlabels.Candidate{}, false
 	}
 	rt := trace.FromContext(ctx)
 	if rt == nil {
-		return
+		return trafficlabels.Candidate{}, false
 	}
 	route, ok := proxyRouteFor(c)
 	if !ok || route.Capability != resolver.CapabilityChat {
-		return
+		return trafficlabels.Candidate{}, false
 	}
 	sessionID := EffectiveSessionID(c)
 	bufferOnly := false
@@ -88,16 +111,17 @@ func (m *TrafficLabelsMiddleware) offer(c *fiber.Ctx) {
 		// out of sampling still feeds the conversation buffer; otherwise the
 		// next sampled turn would be labeled without it.
 		if route.SourceFormat != adapter.FormatOpenAIResponses || sessionID == "" {
-			return
+			return trafficlabels.Candidate{}, false
 		}
 		bufferOnly = true
 	}
 	body, ok := m.body(c, bufferOnly)
 	if !ok {
-		return
+		return trafficlabels.Candidate{}, false
 	}
-	m.intake.Submit(trafficlabels.Candidate{
+	return trafficlabels.Candidate{
 		GatewayID:    gw.ID.String(),
+		TenantID:     gw.TenantID(),
 		ConsumerID:   rc.Consumer.ID.String(),
 		TraceID:      rt.TraceID(),
 		SessionID:    sessionID,
@@ -105,9 +129,9 @@ func (m *TrafficLabelsMiddleware) offer(c *fiber.Ctx) {
 		Body:         bytes.Clone(body),
 		Config:       gw.TrafficLabeling,
 		LabelSets:    rc.Consumer.LabelSets,
-		ReceivedAt:   time.Now().UTC(),
+		ReceivedAt:   rt.StartedAt().UTC(),
 		BufferOnly:   bufferOnly,
-	})
+	}, true
 }
 
 func (m *TrafficLabelsMiddleware) body(c *fiber.Ctx, bufferOnly bool) ([]byte, bool) {

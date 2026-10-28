@@ -192,7 +192,7 @@ func TestMetricsMiddleware_StampsRequestedModelOnRejectedRequests(t *testing.T) 
 
 			cfg := &config.Config{}
 			cfg.Telemetry.Enabled = true
-			mw := middleware.NewMetricsMiddleware(worker, cfg)
+			mw := middleware.NewMetricsMiddleware(worker, nil, cfg)
 
 			gatewayID := ids.New[ids.GatewayKind]()
 			app := fiber.New()

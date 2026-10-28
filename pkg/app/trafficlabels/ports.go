@@ -92,3 +92,9 @@ type ConversationBuffer interface {
 	Load(ctx context.Context, key ConversationKey) ([]string, error)
 	Save(ctx context.Context, key ConversationKey, messages []string) error
 }
+
+// UsageRecorder records the usage of one successful classifier call: text is
+// what was sent to the classifier on behalf of req.
+type UsageRecorder interface {
+	Classified(ctx context.Context, req trafficlabel.Request, text string)
+}

@@ -26,7 +26,7 @@ import (
 // startDBLessMCPPlane runs the MCP plane the way production does: no
 // database, its config pulled over config sync and its Store writes made by the
 // control plane.
-func startDBLessMCPPlane(t *testing.T, port int, instanceID string) (string, *syncBuffer) {
+func startDBLessMCPPlane(t *testing.T, port int, instanceID string, extra ...string) (string, *syncBuffer) {
 	t.Helper()
 	requireFreePorts([]int{port})
 	overrides := []string{
@@ -41,6 +41,7 @@ func startDBLessMCPPlane(t *testing.T, port int, instanceID string) (string, *sy
 		"SERVER_MCP_PORT=" + strconv.Itoa(port),
 		"OUTBOUND_ALLOW_PRIVATE_NETWORKS=true",
 	}
+	overrides = append(overrides, extra...)
 	logs := &syncBuffer{}
 	cmd := exec.Command(gatewayBinaryPath, "mcp") //nolint:gosec // controlled binary path
 	cmd.Env = append(os.Environ(), overrides...)
