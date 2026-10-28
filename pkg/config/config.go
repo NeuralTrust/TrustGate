@@ -181,7 +181,7 @@ const (
 
 	defaultAdminM2MAudience           = "trustgate-admin"
 	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
-	defaultAdminPlatformClaimRequired = false
+	defaultAdminPlatformClaimRequired = true
 	maxAdminTokenMaxTTL               = 24 * time.Hour
 )
 
@@ -339,7 +339,9 @@ type AdminM2MConfig struct {
 	MaxTokenTTL time.Duration
 	// PlatformClaimRequired turns a missing tenant claim from an implicit
 	// platform-admin grant into a rejection unless `platform_admin` is set.
-	// Off by default so TrustGate can ship before the issuer stamps the claim.
+	// On by default: a console token needs tenant_id or an explicit
+	// platform_admin claim. Set ADMIN_PLATFORM_CLAIM_REQUIRED=false only for
+	// an issuer that still treats a missing tenant_id as platform admin.
 	PlatformClaimRequired bool
 }
 

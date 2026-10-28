@@ -268,18 +268,24 @@ func (subjectSessionsMustNotRun) RevokeSubjectSessions(context.Context, string, 
 	return 0, errors.New("handler must not run")
 }
 
-// signConsoleToken mints an HS256 console JWT, the kind issued by the app to a
-// signed-in person. An empty tenantID yields a platform token, same as
-// resolveConsoleIdentity treats any other caller with no tenant_id claim.
+// signConsoleToken mints an HS256 console JWT for a tenant caller. An empty
+// tenantID leaves both tenant_id and platform_admin unset, which the admin
+// API rejects while the platform-claim requirement is on.
 func signConsoleToken(t *testing.T, secret, tenantID string) string {
 	t.Helper()
-	claims := &jwt.Claims{
-		TenantID: tenantID,
-		UserID:   "user-1",
-		RegisteredClaims: golangjwt.RegisteredClaims{
-			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-		},
-	}
+	return signConsoleClaims(t, secret, &jwt.Claims{TenantID: tenantID, UserID: "user-1"})
+}
+
+// signPlatformToken mints a console JWT with the explicit platform_admin grant
+// and no tenant_id, the only form a cross-tenant caller may present.
+func signPlatformToken(t *testing.T, secret string) string {
+	t.Helper()
+	return signConsoleClaims(t, secret, &jwt.Claims{UserID: "user-1", PlatformAdmin: true})
+}
+
+func signConsoleClaims(t *testing.T, secret string, claims *jwt.Claims) string {
+	t.Helper()
+	claims.ExpiresAt = golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute))
 	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	require.NoError(t, err)
 	return token
@@ -317,7 +323,7 @@ func TestAdminRouterScopesConfigSyncConnectionsToCallerTenant(t *testing.T) {
 	app := fiber.New()
 	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
 		MiddlewareTransport:       middleware.NewTransport(),
-		AdminAuth:                 middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, false),
+		AdminAuth:                 middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, true),
 		AdminAuthz:                middleware.NewAdminAuthzMiddleware(nil, gateways),
 		ListConfigSyncConnections: configsynchttp.NewListConnectionsHandler(lister),
 	}).BuildRoutes(app))
@@ -334,7 +340,6 @@ func TestAdminRouterScopesConfigSyncConnectionsToCallerTenant(t *testing.T) {
 	}
 
 	tenantToken := signConsoleToken(t, secret, "acme")
-	platformToken := signConsoleToken(t, secret, "")
 
 	status, body := get(tenantToken, "/v1/config-sync/connections?scope="+ownGateway.String())
 	require.Equal(t, http.StatusOK, status, body)
@@ -347,7 +352,11 @@ func TestAdminRouterScopesConfigSyncConnectionsToCallerTenant(t *testing.T) {
 	status, body = get(tenantToken, "/v1/config-sync/connections")
 	require.Equal(t, http.StatusBadRequest, status, body)
 
-	status, body = get(platformToken, "/v1/config-sync/connections")
+	status, body = get(signConsoleToken(t, secret, ""), "/v1/config-sync/connections")
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "dp-acme")
+
+	status, body = get(signPlatformToken(t, secret), "/v1/config-sync/connections")
 	require.Equal(t, http.StatusOK, status, body)
 }
 
@@ -371,7 +380,7 @@ func TestAdminRouterScopesPlaygroundTracesToCallerTenant(t *testing.T) {
 	app := fiber.New()
 	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
 		MiddlewareTransport: middleware.NewTransport(),
-		AdminAuth:           middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, false),
+		AdminAuth:           middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, true),
 		AdminAuthz:          middleware.NewAdminAuthzMiddleware(nil, nil),
 		GetTrace:            playgroundhttp.NewGetTraceHandler(finder),
 	}).BuildRoutes(app))
@@ -395,5 +404,10 @@ func TestAdminRouterScopesPlaygroundTracesToCallerTenant(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status, body)
 
 	status, body = get(signConsoleToken(t, secret, ""))
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "trace-1")
+
+	status, body = get(signPlatformToken(t, secret))
 	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, "trace-1")
 }
