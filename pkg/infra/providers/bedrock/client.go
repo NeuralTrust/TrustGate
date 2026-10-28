@@ -85,6 +85,7 @@ func (c *client) Completions(
 	if err != nil {
 		return nil, err
 	}
+	params.withAnthropicBetas(cfg.AnthropicBeta)
 	params.applyCacheCapability(cacheCapabilityFor(model))
 
 	out, err := converseWithFallbacks(c, model, params,
@@ -260,6 +261,7 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, err
 	}
+	params.withAnthropicBetas(cfg.AnthropicBeta)
 	params.applyCacheCapability(cacheCapabilityFor(model))
 
 	stream := c.converseStream

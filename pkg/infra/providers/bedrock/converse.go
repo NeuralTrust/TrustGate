@@ -41,7 +41,7 @@ type converseParams struct {
 	inference  *bedrockTypes.InferenceConfiguration
 	tools      *bedrockTypes.ToolConfiguration
 	output     *bedrockTypes.OutputConfig
-	additional document.Interface
+	additional map[string]any
 }
 
 // decodeConverseBody reads the adapter's Converse wire JSON. Keys the body
@@ -87,10 +87,10 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 	return p, nil
 }
 
-// sdkAdditionalFields decodes the fields into plain Go values first: the SDK
+// sdkAdditionalFields decodes the fields into plain Go values: the SDK
 // document encoder writes a json.RawMessage as an array of bytes and a
 // json.Number as a string.
-func sdkAdditionalFields(fields map[string]json.RawMessage) (document.Interface, error) {
+func sdkAdditionalFields(fields map[string]json.RawMessage) (map[string]any, error) {
 	if len(fields) == 0 {
 		return nil, nil
 	}
@@ -102,7 +102,31 @@ func sdkAdditionalFields(fields map[string]json.RawMessage) (document.Interface,
 		}
 		values[k] = v
 	}
-	return document.NewLazyDocument(values), nil
+	return values, nil
+}
+
+// withAnthropicBetas adds the caller's anthropic-beta flags, comma-joined, to
+// the model fields.
+func (p *converseParams) withAnthropicBetas(joined string) {
+	if joined == "" {
+		return
+	}
+	if p.additional == nil {
+		p.additional = map[string]any{}
+	}
+	flags := strings.Split(joined, ",")
+	betas := make([]any, 0, len(flags))
+	for _, flag := range flags {
+		betas = append(betas, flag)
+	}
+	p.additional["anthropic_beta"] = betas
+}
+
+func (p *converseParams) additionalDocument() document.Interface {
+	if len(p.additional) == 0 {
+		return nil
+	}
+	return document.NewLazyDocument(p.additional)
 }
 
 func sdkOutputConfig(oc *adapter.ConverseOutputConfig) *bedrockTypes.OutputConfig {
@@ -405,7 +429,7 @@ func (p *converseParams) input(model string) *bedrockruntime.ConverseInput {
 		InferenceConfig:              p.inference,
 		ToolConfig:                   p.tools,
 		OutputConfig:                 p.output,
-		AdditionalModelRequestFields: p.additional,
+		AdditionalModelRequestFields: p.additionalDocument(),
 	}
 }
 
@@ -417,7 +441,7 @@ func (p *converseParams) streamInput(model string) *bedrockruntime.ConverseStrea
 		InferenceConfig:              p.inference,
 		ToolConfig:                   p.tools,
 		OutputConfig:                 p.output,
-		AdditionalModelRequestFields: p.additional,
+		AdditionalModelRequestFields: p.additionalDocument(),
 	}
 }
 

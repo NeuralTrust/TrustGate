@@ -38,15 +38,20 @@ type anthropicWireEvent struct {
 		ID string `json:"id"`
 	} `json:"message"`
 	ContentBlock *struct {
-		Type  string          `json:"type"`
-		Text  *string         `json:"text"`
-		ID    string          `json:"id"`
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
+		Type      string          `json:"type"`
+		Text      *string         `json:"text"`
+		Thinking  *string         `json:"thinking"`
+		Signature *string         `json:"signature"`
+		Data      *string         `json:"data"`
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Input     json.RawMessage `json:"input"`
 	} `json:"content_block"`
 	Delta *struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
+		Thinking    string `json:"thinking"`
+		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
 		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
@@ -118,6 +123,13 @@ func requireAnthropicBlocks(t *testing.T, events []anthropicWireEvent) {
 			case "text":
 				require.NotNil(t, ev.ContentBlock.Text)
 				assert.Empty(t, *ev.ContentBlock.Text)
+			case "thinking":
+				require.NotNil(t, ev.ContentBlock.Thinking)
+				assert.Empty(t, *ev.ContentBlock.Thinking)
+				require.NotNil(t, ev.ContentBlock.Signature)
+			case "redacted_thinking":
+				require.NotNil(t, ev.ContentBlock.Data)
+				assert.NotEmpty(t, *ev.ContentBlock.Data)
 			case "tool_use":
 				assert.NotEmpty(t, ev.ContentBlock.ID)
 				assert.NotEmpty(t, ev.ContentBlock.Name)
@@ -132,7 +144,11 @@ func requireAnthropicBlocks(t *testing.T, events []anthropicWireEvent) {
 			require.NotNil(t, ev.Index)
 			require.Equal(t, open, *ev.Index, "event %d: delta for the open block", i)
 			require.NotNil(t, ev.Delta)
-			require.Equal(t, anthropicDeltaForBlock[openType], ev.Delta.Type, "event %d", i)
+			if openType == "thinking" {
+				require.Contains(t, []string{"thinking_delta", "signature_delta"}, ev.Delta.Type, "event %d", i)
+			} else {
+				require.Equal(t, anthropicDeltaForBlock[openType], ev.Delta.Type, "event %d", i)
+			}
 		case "content_block_stop":
 			require.NotNil(t, ev.Index)
 			require.Equal(t, open, *ev.Index, "event %d: stop closes the open block", i)
@@ -158,7 +174,7 @@ func anthropicGolden(events []anthropicWireEvent) []string {
 			out = append(out, fmt.Sprintf("start %d %s", *ev.Index, cb.Type))
 		case "content_block_delta":
 			d := ev.Delta
-			out = append(out, fmt.Sprintf("delta %d %s %s", *ev.Index, d.Type, d.Text+d.PartialJSON))
+			out = append(out, fmt.Sprintf("delta %d %s %s", *ev.Index, d.Type, d.Text+d.Thinking+d.Signature+d.PartialJSON))
 		case "content_block_stop":
 			out = append(out, fmt.Sprintf("stop %d", *ev.Index))
 		case "message_delta":
@@ -195,10 +211,23 @@ func openAIParallelToolsUpstream() iter.Seq2[[]byte, error] {
 }
 
 func TestAdaptStream_AnthropicClientEventSequence(t *testing.T) {
+	bedrockReasoning := func() iter.Seq2[[]byte, error] {
+		return linesSeq(
+			`data: {"messageStart":{"role":"assistant"}}`,
+			`data: {"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":"Pondering"}}}}`,
+			`data: {"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig"}}}}`,
+			`data: {"contentBlockStop":{"contentBlockIndex":0}}`,
+			`data: {"contentBlockDelta":{"contentBlockIndex":1,"delta":{"text":"hi"}}}`,
+			`data: {"contentBlockStop":{"contentBlockIndex":1}}`,
+			`data: {"messageStop":{"stopReason":"end_turn"}}`,
+			`data: {"metadata":{"usage":{"inputTokens":10,"outputTokens":7,"totalTokens":17}}}`,
+		)
+	}
 	tests := []struct {
 		name     string
 		target   adapter.Format
 		upstream iter.Seq2[[]byte, error]
+		opts     []streamOption
 		want     []string
 	}{
 		{
@@ -224,21 +253,24 @@ func TestAdaptStream_AnthropicClientEventSequence(t *testing.T) {
 			},
 		},
 		{
-			name:   "bedrock reasoning is not emitted",
-			target: adapter.FormatBedrock,
-			upstream: linesSeq(
-				`data: {"messageStart":{"role":"assistant"}}`,
-				`data: {"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":"Pondering"}}}}`,
-				`data: {"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig"}}}}`,
-				`data: {"contentBlockStop":{"contentBlockIndex":0}}`,
-				`data: {"contentBlockDelta":{"contentBlockIndex":1,"delta":{"text":"hi"}}}`,
-				`data: {"contentBlockStop":{"contentBlockIndex":1}}`,
-				`data: {"messageStop":{"stopReason":"end_turn"}}`,
-				`data: {"metadata":{"usage":{"inputTokens":10,"outputTokens":7,"totalTokens":17}}}`,
-			),
+			name:     "bedrock reasoning stays hidden unless the registry forwards it",
+			target:   adapter.FormatBedrock,
+			upstream: bedrockReasoning(),
 			want: []string{
 				"message_start",
 				"start 0 text", "delta 0 text_delta hi", "stop 0",
+				"message_delta end_turn", "message_stop",
+			},
+		},
+		{
+			name:     "forwarded bedrock reasoning streams as a signed thinking block",
+			target:   adapter.FormatBedrock,
+			upstream: bedrockReasoning(),
+			opts:     []streamOption{withStreamSignedReasoning(true)},
+			want: []string{
+				"message_start",
+				"start 0 thinking", "delta 0 thinking_delta Pondering", "delta 0 signature_delta sig", "stop 0",
+				"start 1 text", "delta 1 text_delta hi", "stop 1",
 				"message_delta end_turn", "message_stop",
 			},
 		},
@@ -540,7 +572,7 @@ func TestAdaptStream_AnthropicClientEventSequence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lines := collectLines(t, adaptStream(tt.upstream, adapter.NewRegistry(), adapter.FormatAnthropic, tt.target, slog.Default(), nil))
+			lines := collectLines(t, adaptStream(tt.upstream, adapter.NewRegistry(), adapter.FormatAnthropic, tt.target, slog.Default(), nil, tt.opts...))
 
 			events := anthropicWireEvents(t, lines)
 			requireAnthropicContract(t, events)

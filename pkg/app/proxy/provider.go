@@ -189,9 +189,12 @@ type preparedInvocation struct {
 	capability   string
 	clampedTo    int
 	clampSource  string
-	files        providers.FilesRequest
-	images       providers.ImagesRequest
-	audio        providers.AudioRequest
+	// signedReasoning streams the answer's reasoning as signed thinking
+	// blocks; see prepareAnthropicConverse.
+	signedReasoning bool
+	files           providers.FilesRequest
+	images          providers.ImagesRequest
+	audio           providers.AudioRequest
 }
 
 func (p *providerInvoker) Invoke(
@@ -330,7 +333,7 @@ func (p *providerInvoker) InvokeStream(
 
 	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req),
 		withStreamContext(ctx), withStreamCancel(cancel), withStreamIncludeUsage(adapter.OpenAIChatIncludesUsage(req.Body)),
-		withStreamModel(prep.sentModel))
+		withStreamModel(prep.sentModel), withStreamSignedReasoning(prep.signedReasoning))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -462,11 +465,13 @@ func (p *providerInvoker) prepare(
 
 	sentModel := resolveSentModel(body, req)
 	body = adapter.OmitUnsupportedReasoningEffort(body, sentModel)
+	var converse anthropicConverse
 	if crossFormat && adapter.IsSameWireFormat(sourceFormat, adapter.FormatAnthropic) && targetFormat == adapter.FormatBedrock {
-		body, err = p.prepareAnthropicConverse(ctx, req, body, sentModel)
+		converse, err = p.prepareAnthropicConverse(ctx, req, bk.ProviderOptions(), body, sentModel)
 		if err != nil {
 			return nil, err
 		}
+		body = converse.body
 	}
 
 	prep := &preparedInvocation{
@@ -490,6 +495,10 @@ func (p *providerInvoker) prepare(
 	if !crossFormat && bk.Provider() == providers.ProviderAnthropic && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
 		prep.cfg.AnthropicBeta = anthropicBetas(req)
 	}
+	if converse.betas != "" {
+		prep.cfg.AnthropicBeta = converse.betas
+	}
+	prep.signedReasoning = converse.signedReasoning
 	p.applyOutputLimit(ctx, prep)
 	prep.cfg.Model = prep.sentModel
 	return prep, nil
