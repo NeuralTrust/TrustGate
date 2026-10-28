@@ -174,6 +174,10 @@ type fakeGuard struct {
 	// messages[] it received with each string leaf passed through echoMask,
 	// under transformed_payload, with status transform.
 	echoMask func(string) string
+	// mcpEchoMask, when set, answers like TrustGuard's protocol=mcp masker: it
+	// echoes the JSON-RPC envelope with every string value (never an object
+	// key) passed through mcpEchoMask, with status transform.
+	mcpEchoMask func(string) string
 	// tokenStatuses answers the token leg's calls in order; a call past the
 	// end, or a zero entry, gets a token.
 	tokenStatuses []int
@@ -253,6 +257,9 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		}
 		if f.echoMask != nil {
 			resp = echoTransform(body.Payload, f.echoMask)
+		}
+		if f.mcpEchoMask != nil {
+			resp = mcpEchoTransform(body.Payload, f.mcpEchoMask)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		for k, v := range f.headers {

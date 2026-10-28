@@ -50,17 +50,152 @@ func mcpTransformedRequest(payload map[string]any, name string) ([]byte, bool) {
 }
 
 // mcpTransformedResult lifts the masked CallToolResult out of the JSON-RPC
-// result envelope mcpToolsResultPayload sent.
-func mcpTransformedResult(payload map[string]any) ([]byte, bool) {
-	result, ok := payload["result"]
+// result envelope mcpToolsResultPayload built from original.
+//
+// structuredContent is rebuilt from the original tree with only its string
+// values taken from the mask, so keys and scalars stay exactly as the tool sent
+// them; a mask that changed either, or whose probe shows a flagged key or
+// scalar, is refused and the caller blocks instead.
+func mcpTransformedResult(payload map[string]any, original []byte) ([]byte, bool) {
+	result, ok := payload["result"].(map[string]any)
 	if !ok {
 		return nil, false
+	}
+	var decoded any
+	if err := decodeJSON(string(original), &decoded); err != nil {
+		return nil, false
+	}
+	orig, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if !stripStructuredProbe(result, orig) {
+		return nil, false
+	}
+	origStructured, hadStructured := orig["structuredContent"]
+	maskedStructured, hasStructured := result["structuredContent"]
+	if hadStructured != hasStructured {
+		return nil, false
+	}
+	if hadStructured {
+		merged, ok := mergeStructuredStrings(origStructured, maskedStructured)
+		if !ok {
+			return nil, false
+		}
+		result["structuredContent"] = merged
 	}
 	out, err := json.Marshal(result)
 	if err != nil {
 		return nil, false
 	}
 	return out, true
+}
+
+// stripStructuredProbe removes the probe block mcpToolsResultPayload appended
+// and reports whether every key and scalar it listed came back unmasked.
+func stripStructuredProbe(result, orig map[string]any) bool {
+	_, parts, ok := structuredProbe(orig)
+	if !ok {
+		return true
+	}
+	origBlocks, _ := orig["content"].([]any)
+	blocks, ok := result["content"].([]any)
+	if !ok || len(blocks) != len(origBlocks)+1 {
+		return false
+	}
+	probe, ok := blocks[len(blocks)-1].(map[string]any)
+	if !ok {
+		return false
+	}
+	text, ok := probe["text"].(string)
+	if !ok {
+		return false
+	}
+	texts := make([]string, len(parts))
+	for i, part := range parts {
+		texts[i] = part.text
+	}
+	masked, ok := redistribute(text, texts)
+	if !ok {
+		return false
+	}
+	for i, part := range parts {
+		if !part.rewritable && masked[i] != part.text {
+			return false
+		}
+	}
+	if content, had := orig["content"]; !had {
+		delete(result, "content")
+	} else if _, isArray := content.([]any); !isArray {
+		result["content"] = content
+	} else {
+		result["content"] = blocks[:len(blocks)-1]
+	}
+	return true
+}
+
+// mergeStructuredStrings returns orig with its string values replaced by their
+// masked counterparts. masked must have the same shape, keys and scalar values
+// as orig. Numbers are compared by value because TrustGuard's response is not
+// decoded with UseNumber; the original json.Number is what is written back, so
+// integers past 2^53 keep their digits.
+func mergeStructuredStrings(orig, masked any) (any, bool) {
+	switch o := orig.(type) {
+	case map[string]any:
+		m, ok := masked.(map[string]any)
+		if !ok || len(m) != len(o) {
+			return nil, false
+		}
+		for k, ov := range o {
+			mv, ok := m[k]
+			if !ok {
+				return nil, false
+			}
+			merged, ok := mergeStructuredStrings(ov, mv)
+			if !ok {
+				return nil, false
+			}
+			o[k] = merged
+		}
+		return o, true
+	case []any:
+		m, ok := masked.([]any)
+		if !ok || len(m) != len(o) {
+			return nil, false
+		}
+		for i := range o {
+			merged, ok := mergeStructuredStrings(o[i], m[i])
+			if !ok {
+				return nil, false
+			}
+			o[i] = merged
+		}
+		return o, true
+	case string:
+		m, ok := masked.(string)
+		return m, ok
+	case json.Number:
+		return o, sameNumber(o, masked)
+	case bool:
+		m, ok := masked.(bool)
+		return o, ok && m == o
+	case nil:
+		return nil, masked == nil
+	default:
+		return nil, false
+	}
+}
+
+func sameNumber(orig json.Number, masked any) bool {
+	switch m := masked.(type) {
+	case json.Number:
+		return m.String() == orig.String()
+	case float64:
+		f, err := orig.Float64()
+		return err == nil && f == m
+	default:
+		return false
+	}
 }
 
 // rewriteMCPRequest writes TrustGuard's masked text back into the tools/call
@@ -168,8 +303,8 @@ func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 		return value, consumeUnrewritablePart("null", masked, idx)
 	case bool:
 		return value, consumeUnrewritablePart(strconv.FormatBool(v), masked, idx)
-	case float64:
-		return value, consumeUnrewritablePart(strconv.FormatFloat(v, 'g', -1, 64), masked, idx)
+	case json.Number:
+		return value, consumeUnrewritablePart(v.String(), masked, idx)
 	default:
 		return value, true
 	}
@@ -235,8 +370,12 @@ func consumeUnrewritablePart(original string, masked []string, idx *int) bool {
 // still has to cover structuredContent so a result whose only inspectable data
 // lives there is masked here rather than degrading to a block.
 func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
-	var generic map[string]any
-	if err := json.Unmarshal(body, &generic); err != nil {
+	var decoded any
+	if err := decodeJSON(string(body), &decoded); err != nil {
+		return nil, false
+	}
+	generic, ok := decoded.(map[string]any)
+	if !ok {
 		return nil, false
 	}
 
@@ -260,8 +399,8 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 	}
 
 	// Then structuredContent map keys, string leaves, and scalar leaves in
-	// sorted-key order, matching flattenArgumentStrings/collectStrings so the
-	// masked halves line up.
+	// sorted-key order, matching flattenStructuredContent so the masked halves
+	// line up. A top-level null contributes nothing and is left untouched.
 	structured, hasStructured := generic["structuredContent"]
 	var structuredLeaves int
 	if hasStructured {
