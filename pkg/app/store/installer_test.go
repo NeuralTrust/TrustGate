@@ -735,6 +735,42 @@ func TestInstallReportsAlreadyInstalled(t *testing.T) {
 	}
 }
 
+// A selected-mode install of a server the principal already holds follows the
+// grant, not the row. Removing the grant leaves the row in place and hides the
+// tools; the install must file a request instead of reporting already installed.
+func TestInstallRevokedGrantDoesNotReportAlreadyInstalled(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := shelfRegistry("github")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelf}}
+	// Unbound: a sole instance is stored without a registry id, and the scoper
+	// serves it from that instance. The grant check has to use the same id.
+	existing := &installationdomain.Installation{
+		ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, CatalogCode: "github",
+	}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{existing}}
+
+	granted := grantsOf(instanceGrant(gw, "github", shelf.ID, nil, []string{"ana"}))
+	res, err := newInstallerWithGrants(t, regs, installs, granted).Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.AlreadyInstalled || res.Pending {
+		t.Fatalf("a grant that still covers the install must report already installed, got %+v", res)
+	}
+
+	revoked := grantsOf()
+	res, err = newInstallerWithGrants(t, regs, installs, revoked).Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.AlreadyInstalled {
+		t.Fatal("a revoked grant must not report the existing row as already installed")
+	}
+	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("without a grant the install is a request, got %+v", res)
+	}
+}
+
 // A request for a code with one instance is bound to it, and approving it keeps
 // the binding. Installing the code afterwards — how the user gets its connect
 // link — binds implicitly, and must land on the approved row rather than record

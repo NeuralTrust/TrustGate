@@ -862,7 +862,16 @@ func (t *storeTool) search(
 
 	// Installed is a fact about this principal, read once. A lookup failure
 	// leaves the availability states as they are: search still answers.
-	installed := t.installedCodes(ctx, rc, subject)
+	// Under Selected the shelves are read too, so a row whose grant no longer
+	// covers the caller is not labelled installed — the scoper already hides
+	// its tools.
+	var installed map[string]struct{}
+	var shelves map[string][]ids.RegistryID
+	if mode == gatewaydomain.StoreModeCurated {
+		shelves = t.installedShelves(ctx, rc, subject)
+	} else {
+		installed = t.installedCodes(ctx, rc, subject)
+	}
 
 	// The catalog is served in relevance order; a query narrows it, an empty
 	// query browses the top of the whole catalog.
@@ -880,9 +889,15 @@ func (t *storeTool) search(
 		// The whole catalog is browsable in All and Selected; the state tells the
 		// caller whether install is instant for them or files a request.
 		// A code this principal already installed is reported as installed,
-		// ahead of whether they could install it again.
+		// ahead of whether they could install it again. Under Selected that
+		// label also requires the grant the scoper uses, so a removed grant
+		// reads as a request rather than as installed.
 		state := storeAvailability(access, entry.Code, mode, groups, grantee)
-		if _, ok := installed[entry.Code]; ok {
+		if mode == gatewaydomain.StoreModeCurated {
+			if installedShelfAllowed(access, entry.Code, shelves[entry.Code], groups, grantee) {
+				state = storeStateInstalled
+			}
+		} else if _, ok := installed[entry.Code]; ok {
 			state = storeStateInstalled
 		}
 		total++
@@ -971,6 +986,35 @@ func (t *storeTool) installedCodes(ctx context.Context, rc *appconsumer.Routable
 		return nil
 	}
 	return codes
+}
+
+// installedShelves is the registry each active install is served by, or nil
+// when they cannot be read. Nil means curated search does not relabel anything.
+func (t *storeTool) installedShelves(ctx context.Context, rc *appconsumer.RoutableConsumer, subject string) map[string][]ids.RegistryID {
+	if t == nil || t.installer == nil || rc == nil || rc.Consumer == nil || strings.TrimSpace(subject) == "" {
+		return nil
+	}
+	shelves, err := t.installer.InstalledShelves(ctx, rc.Consumer.GatewayID, subject)
+	if err != nil {
+		return nil
+	}
+	return shelves
+}
+
+// installedShelfAllowed reports whether Selected access still exposes one of
+// the registries an active install is served by. It is the scoper's
+// InstanceAllows check: a code-level grant covers every instance, and an
+// instance grant covers that registry only.
+func installedShelfAllowed(access *storeAccessIndex, code string, shelfIDs []ids.RegistryID, groups []string, subject string) bool {
+	if access == nil || access.grants == nil || len(shelfIDs) == 0 {
+		return false
+	}
+	for _, id := range shelfIDs {
+		if access.grants.InstanceAllows(code, id, groups, subject) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *storeTool) loadStoreAccess(ctx context.Context, rc *appconsumer.RoutableConsumer) (*storeAccessIndex, error) {
