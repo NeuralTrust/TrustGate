@@ -127,13 +127,18 @@ func (f *e2eInstalls) Upsert(_ context.Context, in *installationdomain.Installat
 	return nil
 }
 
-func (f *e2eInstalls) Find(_ context.Context, gw ids.GatewayID, sub, code string) (*installationdomain.Installation, error) {
+func (f *e2eInstalls) Find(_ context.Context, gw ids.GatewayID, sub, code string, registryID ...ids.RegistryID) (*installationdomain.Installation, error) {
+	var rows []*installationdomain.Installation
 	for _, r := range f.rows {
 		if r.GatewayID == gw && r.PrincipalSub == sub && r.CatalogCode == code {
-			return r, nil
+			rows = append(rows, r)
 		}
 	}
-	return nil, installationdomain.ErrNotFound
+	picked := installationdomain.SelectInstallation(rows, installationdomain.FindRegistryID(registryID...))
+	if picked == nil {
+		return nil, installationdomain.ErrNotFound
+	}
+	return picked, nil
 }
 
 func (f *e2eInstalls) FindByID(_ context.Context, gw ids.GatewayID, sub string, id ids.InstallationID) (*installationdomain.Installation, error) {

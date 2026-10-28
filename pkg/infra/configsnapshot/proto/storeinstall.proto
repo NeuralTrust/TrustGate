@@ -30,8 +30,9 @@ option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/p
 service StoreInstallations {
   // Upsert persists (creates or updates) one installation record.
   rpc Upsert(UpsertInstallationRequest) returns (UpsertInstallationResponse);
-  // Find returns the installation for (gateway, principal, code); found=false
-  // when there is no such row (the wire form of installation.ErrNotFound).
+  // Find returns the installation for (gateway, principal, code). registry_id,
+  // when set, scopes that lookup to one configured instance. found=false when
+  // there is no such row (the wire form of installation.ErrNotFound).
   rpc Find(FindInstallationRequest) returns (FindInstallationResponse);
   // ListByPrincipal returns everything a principal has installed on a gateway —
   // the CatalogScoper's read side.
@@ -89,6 +90,9 @@ message FindInstallationRequest {
   string gateway_id = 1;
   string principal_sub = 2;
   string catalog_code = 3;
+  // registry_id scopes the lookup to that configured instance (a registry id,
+  // or an installation id used as a per-instance id). Empty leaves it unscoped.
+  string registry_id = 4;
 }
 
 message FindInstallationResponse {

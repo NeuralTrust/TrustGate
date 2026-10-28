@@ -318,15 +318,82 @@ type PendingDenier interface {
 	DenyPending(ctx context.Context, gatewayID ids.GatewayID, catalogCode, deniedBy string, at time.Time) (int64, error)
 }
 
+// FindRegistryID is the instance a Find call named. A nil id, and a call that
+// names none, leave the lookup unscoped.
+func FindRegistryID(registryIDs ...ids.RegistryID) ids.RegistryID {
+	for _, id := range registryIDs {
+		if !id.IsNil() {
+			return id
+		}
+	}
+	return ids.RegistryID{}
+}
+
+// SelectInstallation chooses one row for a principal and catalog code.
+//
+// A nil registryID leaves every row eligible. Callers that omit it therefore
+// still receive a row when one exists. A non-nil id scopes the read: a row
+// bound to a different registry is ignored, a row whose own id is that
+// instance (or whose registry_id is that registry) is preferred, and an
+// unbound row stays eligible so a canonical install is still found.
+//
+// Among the eligible rows an installed row wins over a pending or revoked
+// one, then the newest created_at, then the greatest id. The row just written
+// beats an older installed row with a stale config.
+func SelectInstallation(rows []*Installation, registryID ids.RegistryID) *Installation {
+	var best *Installation
+	for _, row := range rows {
+		if row == nil || !installationEligible(row, registryID) {
+			continue
+		}
+		if preferredInstallation(row, best, registryID) {
+			best = row
+		}
+	}
+	return best
+}
+
+func installationEligible(row *Installation, registryID ids.RegistryID) bool {
+	if registryID.IsNil() || row.RegistryID.IsNil() {
+		return true
+	}
+	return installationInstanceMatch(row, registryID) || row.RegistryID == registryID
+}
+
+func installationInstanceMatch(row *Installation, registryID ids.RegistryID) bool {
+	return !registryID.IsNil() && row.ID.UUID() == registryID.UUID()
+}
+
+func preferredInstallation(row, best *Installation, registryID ids.RegistryID) bool {
+	if best == nil {
+		return true
+	}
+	if row.IsActive() != best.IsActive() {
+		return row.IsActive()
+	}
+	if installationInstanceMatch(row, registryID) != installationInstanceMatch(best, registryID) {
+		return installationInstanceMatch(row, registryID)
+	}
+	rowRegistry := !registryID.IsNil() && row.RegistryID == registryID
+	bestRegistry := !registryID.IsNil() && best.RegistryID == registryID
+	if rowRegistry != bestRegistry {
+		return rowRegistry
+	}
+	if !row.CreatedAt.Equal(best.CreatedAt) {
+		return row.CreatedAt.After(best.CreatedAt)
+	}
+	return row.ID.String() > best.ID.String()
+}
+
 // Reader provides principal-scoped installation lookups.
 type Reader interface {
 	// Find returns an installation for (gateway, principal, code), or ErrNotFound.
-	// A principal may hold several instances of one code; Find prefers an ACTIVE
-	// (installed) row, then the earliest, so single-instance callers (the
-	// dial-time config resolver, admin reads) never pick a revoked or pending row
-	// over a live one. Callers that must target one specific instance use
-	// FindByID.
-	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) (*Installation, error)
+	// A principal may hold several instances of one code. registryID, when
+	// non-nil, scopes the read to that registry or instance; when it is omitted
+	// every row for the code stays eligible. See SelectInstallation for the
+	// order (installed, then the matching instance, then newest). Callers that
+	// must target one row by its primary key use FindByID.
+	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string, registryID ...ids.RegistryID) (*Installation, error)
 	// FindByID returns one instance by its id, scoped to the owning principal, or
 	// ErrNotFound. It is how a specific instance is targeted (e.g. uninstall).
 	FindByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) (*Installation, error)
