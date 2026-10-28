@@ -369,6 +369,56 @@ func marshalRawString(s string) []byte {
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 }
 
+// unescapeHTML rewrites the \u003c, \u003e and \u0026 escapes that
+// encoding/json writes for <, > and & back to the characters themselves, so a
+// body re-encoded through json.Marshal is not six bytes longer for each one.
+// Only escapes inside strings change, so the decoded value is identical; b
+// must be valid JSON.
+func unescapeHTML(b []byte) []byte {
+	if !bytes.Contains(b, []byte(`\u00`)) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	inString := false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+		case c == '"':
+			inString = false
+		case c == '\\' && i+1 < len(b):
+			if r, ok := htmlEscape(b[i+1:]); ok {
+				out = append(out, r)
+				i += 5
+				continue
+			}
+			out = append(out, c, b[i+1])
+			i++
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// htmlEscape reports the character b (which follows a backslash) encodes when
+// it is one of the escapes encoding/json uses for HTML safety.
+func htmlEscape(b []byte) (byte, bool) {
+	if len(b) < 5 || b[0] != 'u' || b[1] != '0' || b[2] != '0' {
+		return 0, false
+	}
+	switch {
+	case b[3] == '3' && (b[4] == 'c' || b[4] == 'C'):
+		return '<', true
+	case b[3] == '3' && (b[4] == 'e' || b[4] == 'E'):
+		return '>', true
+	case b[3] == '2' && b[4] == '6':
+		return '&', true
+	}
+	return 0, false
+}
+
 func plainJSONString(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; c < 0x20 || c == '"' || c == '\\' || c >= utf8.RuneSelf {

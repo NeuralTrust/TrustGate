@@ -110,6 +110,9 @@ func GraftChangedFieldsWith(ad RequestAdapter, original []byte, baseline, mutate
 	if err != nil {
 		return nil, err
 	}
+	// The graft writes text without HTML escaping; the full re-encode should
+	// not grow the body where the graft would not.
+	encoded = unescapeHTML(encoded)
 	if g == nil {
 		return encoded, nil
 	}
