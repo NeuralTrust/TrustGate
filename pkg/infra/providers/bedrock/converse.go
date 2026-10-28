@@ -36,10 +36,12 @@ import (
 // converseParams is a Converse request body translated into the SDK's typed
 // unions, ready to be sent buffered or streamed.
 type converseParams struct {
-	messages  []bedrockTypes.Message
-	system    []bedrockTypes.SystemContentBlock
-	inference *bedrockTypes.InferenceConfiguration
-	tools     *bedrockTypes.ToolConfiguration
+	messages   []bedrockTypes.Message
+	system     []bedrockTypes.SystemContentBlock
+	inference  *bedrockTypes.InferenceConfiguration
+	tools      *bedrockTypes.ToolConfiguration
+	output     *bedrockTypes.OutputConfig
+	additional document.Interface
 }
 
 // decodeConverseBody reads the adapter's Converse wire JSON. Keys the body
@@ -76,7 +78,49 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 		}
 	}
 	p.tools = sdkToolConfig(req.ToolConfig)
+	p.output = sdkOutputConfig(req.OutputConfig)
+	additional, err := sdkAdditionalFields(req.AdditionalModelRequestFields)
+	if err != nil {
+		return nil, err
+	}
+	p.additional = additional
 	return p, nil
+}
+
+// sdkAdditionalFields decodes the fields into plain Go values first: the SDK
+// document encoder writes a json.RawMessage as an array of bytes and a
+// json.Number as a string.
+func sdkAdditionalFields(fields map[string]json.RawMessage) (document.Interface, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	values := make(map[string]any, len(fields))
+	for k, raw := range fields {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, &adapter.RequestDecodeError{Format: adapter.FormatBedrock, Cause: err}
+		}
+		values[k] = v
+	}
+	return document.NewLazyDocument(values), nil
+}
+
+func sdkOutputConfig(oc *adapter.ConverseOutputConfig) *bedrockTypes.OutputConfig {
+	if oc == nil || oc.TextFormat == nil || oc.TextFormat.Structure.JSONSchema == nil {
+		return nil
+	}
+	js := oc.TextFormat.Structure.JSONSchema
+	def := bedrockTypes.JsonSchemaDefinition{Schema: aws.String(js.Schema)}
+	if js.Name != "" {
+		def.Name = aws.String(js.Name)
+	}
+	if js.Description != "" {
+		def.Description = aws.String(js.Description)
+	}
+	return &bedrockTypes.OutputConfig{TextFormat: &bedrockTypes.OutputFormat{
+		Type:      bedrockTypes.OutputFormatType(oc.TextFormat.Type),
+		Structure: &bedrockTypes.OutputFormatStructureMemberJsonSchema{Value: def},
+	}}
 }
 
 // foldSystemIntoFirstTurn moves the system instructions into the first user
@@ -355,21 +399,25 @@ func defaultCachePoint() bedrockTypes.CachePointBlock {
 
 func (p *converseParams) input(model string) *bedrockruntime.ConverseInput {
 	return &bedrockruntime.ConverseInput{
-		ModelId:         aws.String(model),
-		Messages:        p.messages,
-		System:          p.system,
-		InferenceConfig: p.inference,
-		ToolConfig:      p.tools,
+		ModelId:                      aws.String(model),
+		Messages:                     p.messages,
+		System:                       p.system,
+		InferenceConfig:              p.inference,
+		ToolConfig:                   p.tools,
+		OutputConfig:                 p.output,
+		AdditionalModelRequestFields: p.additional,
 	}
 }
 
 func (p *converseParams) streamInput(model string) *bedrockruntime.ConverseStreamInput {
 	return &bedrockruntime.ConverseStreamInput{
-		ModelId:         aws.String(model),
-		Messages:        p.messages,
-		System:          p.system,
-		InferenceConfig: p.inference,
-		ToolConfig:      p.tools,
+		ModelId:                      aws.String(model),
+		Messages:                     p.messages,
+		System:                       p.system,
+		InferenceConfig:              p.inference,
+		ToolConfig:                   p.tools,
+		OutputConfig:                 p.output,
+		AdditionalModelRequestFields: p.additional,
 	}
 }
 
@@ -589,6 +637,7 @@ func sdkToolConfig(tc *adapter.ConverseToolConfig) *bedrockTypes.ToolConfigurati
 		if t.ToolSpec.Description != "" {
 			spec.Description = aws.String(t.ToolSpec.Description)
 		}
+		spec.Strict = t.ToolSpec.Strict
 		out.Tools = append(out.Tools, &bedrockTypes.ToolMemberToolSpec{Value: spec})
 	}
 	out.ToolChoice = sdkToolChoice(tc.ToolChoice)

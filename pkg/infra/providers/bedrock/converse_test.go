@@ -827,3 +827,46 @@ func TestFoldSystemIntoFirstTurn_LeavesEarlierInputsAlone(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeConverseBody_OutputConfigAdditionalFieldsAndStrict(t *testing.T) {
+	params, err := decodeConverseBody([]byte(`{
+		"messages":[{"role":"user","content":[{"text":"hi"}]}],
+		"toolConfig":{"tools":[{"toolSpec":{"name":"lookup","inputSchema":{"json":{"type":"object"}},"strict":true}}]},
+		"outputConfig":{"textFormat":{"type":"json_schema","structure":{"jsonSchema":{"schema":"{\"type\":\"object\"}","name":"out"}}}},
+		"additionalModelRequestFields":{"top_k":40,"anthropic_beta":["context-1m-2025-08-07"]}
+	}`))
+	require.NoError(t, err)
+
+	for _, in := range []struct {
+		output     *bedrockTypes.OutputConfig
+		additional document.Interface
+		tools      *bedrockTypes.ToolConfiguration
+	}{
+		{params.input("m").OutputConfig, params.input("m").AdditionalModelRequestFields, params.input("m").ToolConfig},
+		{params.streamInput("m").OutputConfig, params.streamInput("m").AdditionalModelRequestFields, params.streamInput("m").ToolConfig},
+	} {
+		require.NotNil(t, in.output)
+		require.NotNil(t, in.output.TextFormat)
+		assert.Equal(t, bedrockTypes.OutputFormatTypeJsonSchema, in.output.TextFormat.Type)
+		js, ok := in.output.TextFormat.Structure.(*bedrockTypes.OutputFormatStructureMemberJsonSchema)
+		require.True(t, ok)
+		assert.Equal(t, `{"type":"object"}`, aws.ToString(js.Value.Schema))
+		assert.Equal(t, "out", aws.ToString(js.Value.Name))
+
+		require.NotNil(t, in.additional)
+		raw, err := in.additional.MarshalSmithyDocument()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"top_k":40,"anthropic_beta":["context-1m-2025-08-07"]}`, string(raw), "numbers stay numbers")
+
+		spec, ok := in.tools.Tools[0].(*bedrockTypes.ToolMemberToolSpec)
+		require.True(t, ok)
+		assert.True(t, aws.ToBool(spec.Value.Strict))
+	}
+}
+
+func TestDecodeConverseBody_WithoutOutputOptions(t *testing.T) {
+	params, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+	require.NoError(t, err)
+	assert.Nil(t, params.input("m").OutputConfig)
+	assert.Nil(t, params.input("m").AdditionalModelRequestFields)
+}

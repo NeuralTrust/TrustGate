@@ -42,6 +42,11 @@ type anthropicRequest struct {
 	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 type anthropicCacheControl struct {
@@ -76,6 +81,7 @@ type anthropicTool struct {
 	Description  string                 `json:"description,omitempty"`
 	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	Strict       *bool                  `json:"strict,omitempty"`
 }
 
 // anthropicToolCustom is the nested shape required by the API for custom tools (encode).
@@ -666,10 +672,14 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		TopK:        req.TopK,
 		Stop:        req.StopSeqs,
 		Metadata:    req.Metadata,
+		Anthropic:   &CanonicalAnthropicOptions{},
 	}
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
+	}
+	if req.OutputConfig != nil && !isEmptyOrNull(req.OutputConfig.Format) {
+		cr.Anthropic.OutputFormat = req.OutputConfig.Format
 	}
 	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
 		cr.CacheOptions = &CanonicalCacheOptions{Auto: auto}
@@ -697,6 +707,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 			Description: desc,
 			Schema:      schema,
 			Cache:       anthropicCacheBreakpoint(t.CacheControl),
+			Strict:      t.Strict,
 		})
 	}
 

@@ -244,6 +244,7 @@ var anthropicShape = func() *keyShape {
 			with("cache_control", cache)).
 		with("tool_choice", shapeOf(anthropicToolChoice{})).
 		with("mcp_servers", shapeOf().key("type", "name", "url")).
+		with("output_config", shapeOf(anthropicOutputConfig{}).with("format", shapeOf().key("type", "schema"))).
 		with("cache_control", cache)
 }()
 
@@ -281,6 +282,10 @@ var bedrockShape = func() *keyShape {
 		with("messages", shapeOf(ConverseMessage{}).with("content", block)).
 		with("system", shapeOf(ConverseSystemBlock{}).with("guardContent", guard).with("cachePoint", cachePoint)).
 		with("inferenceConfig", shapeOf(ConverseInferenceConfig{})).
+		with("outputConfig", shapeOf(ConverseOutputConfig{}).
+			with("textFormat", shapeOf(ConverseTextFormat{}).
+				with("structure", shapeOf(ConverseFormatStructure{}).
+					with("jsonSchema", shapeOf(ConverseJSONSchema{}))))).
 		with("toolConfig", shapeOf(ConverseToolConfig{}).
 			with("tools", shapeOf(ConverseTool{}).
 				with("toolSpec", shapeOf(ConverseToolSpec{}).with("inputSchema", shapeOf(ConverseToolInputSchema{}))).

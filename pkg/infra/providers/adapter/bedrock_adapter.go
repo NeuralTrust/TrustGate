@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,33 @@ type ConverseRequest struct {
 	System          []ConverseSystemBlock    `json:"system,omitempty"`
 	InferenceConfig *ConverseInferenceConfig `json:"inferenceConfig,omitempty"`
 	ToolConfig      *ConverseToolConfig      `json:"toolConfig,omitempty"`
+	OutputConfig    *ConverseOutputConfig    `json:"outputConfig,omitempty"`
+	// AdditionalModelRequestFields is passed to the model in its own native
+	// spelling; Bedrock checks it against the model, not against Converse.
+	AdditionalModelRequestFields map[string]json.RawMessage `json:"additionalModelRequestFields,omitempty"`
+}
+
+// ConverseOutputConfig shapes the model's text answer.
+type ConverseOutputConfig struct {
+	TextFormat *ConverseTextFormat `json:"textFormat,omitempty"`
+}
+
+// ConverseTextFormat holds the answer to a JSON schema. Type is "json_schema".
+type ConverseTextFormat struct {
+	Type      string                  `json:"type"`
+	Structure ConverseFormatStructure `json:"structure"`
+}
+
+// ConverseFormatStructure is a tagged union with JSONSchema as its one member.
+type ConverseFormatStructure struct {
+	JSONSchema *ConverseJSONSchema `json:"jsonSchema,omitempty"`
+}
+
+// ConverseJSONSchema is a JSON schema carried as a string, as Converse takes it.
+type ConverseJSONSchema struct {
+	Schema      string `json:"schema"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // ConverseMessage is one conversation turn. Roles are user and assistant only;
@@ -168,6 +196,7 @@ type ConverseToolSpec struct {
 	Name        string                  `json:"name"`
 	Description string                  `json:"description,omitempty"`
 	InputSchema ConverseToolInputSchema `json:"inputSchema"`
+	Strict      *bool                   `json:"strict,omitempty"`
 }
 
 // ConverseToolInputSchema wraps the JSON Schema of a tool's arguments.
@@ -554,7 +583,49 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 	out.InferenceConfig = converseInferenceConfigFrom(req)
 	out.ToolConfig = converseToolConfigFrom(req)
+	if req.Anthropic != nil {
+		out.AdditionalModelRequestFields = converseAnthropicModelFields(req)
+		out.OutputConfig = converseOutputConfigFrom(req.Anthropic.OutputFormat)
+	}
 	return json.Marshal(out)
+}
+
+// converseAnthropicModelFields writes the Anthropic sampling options Converse
+// has no field for under the names Claude takes them by. Other sources leave
+// them out: their top_k is not an Anthropic option, and a model of another
+// family would refuse it.
+func converseAnthropicModelFields(req *CanonicalRequest) map[string]json.RawMessage {
+	if req.TopK == nil {
+		return nil
+	}
+	topK, err := json.Marshal(*req.TopK)
+	if err != nil {
+		return nil
+	}
+	return map[string]json.RawMessage{"top_k": topK}
+}
+
+// converseOutputConfigFrom maps an Anthropic output_config.format onto the
+// Converse textFormat. Only json_schema has a Converse spelling.
+func converseOutputConfigFrom(format json.RawMessage) *ConverseOutputConfig {
+	if isEmptyOrNull(format) {
+		return nil
+	}
+	var f struct {
+		Type   string          `json:"type"`
+		Schema json.RawMessage `json:"schema"`
+	}
+	if json.Unmarshal(format, &f) != nil || f.Type != responseFormatJSONSchema || isEmptyJSON(f.Schema) {
+		return nil
+	}
+	var schema bytes.Buffer
+	if json.Compact(&schema, f.Schema) != nil {
+		return nil
+	}
+	return &ConverseOutputConfig{TextFormat: &ConverseTextFormat{
+		Type:      responseFormatJSONSchema,
+		Structure: ConverseFormatStructure{JSONSchema: &ConverseJSONSchema{Schema: schema.String()}},
+	}}
 }
 
 // addConverseAutoCachePoint maps automatic caching onto a cachePoint after the
@@ -749,9 +820,9 @@ func converseToolInput(arguments string) json.RawMessage {
 }
 
 // converseInferenceConfigFrom maps the sampling knobs Converse understands.
-// TopK is deliberately absent: Converse only accepts it under the model's own
-// name in additionalModelRequestFields, which would tie the encoder back to the
-// family this adapter exists to stop caring about.
+// TopK is absent: Converse only accepts it under the model's own name in
+// additionalModelRequestFields, which converseAnthropicModelFields writes for
+// an Anthropic client alone.
 func converseInferenceConfigFrom(req *CanonicalRequest) *ConverseInferenceConfig {
 	if req.MaxTokens <= 0 && req.Temperature == nil && req.TopP == nil && len(req.Stop) == 0 {
 		return nil
@@ -802,6 +873,7 @@ func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 			Name:        name,
 			Description: t.Description,
 			InputSchema: ConverseToolInputSchema{JSON: schema},
+			Strict:      t.Strict,
 		}})
 		if t.Cache != nil {
 			cfg.Tools = append(cfg.Tools, ConverseTool{CachePoint: converseCachePointFrom(t.Cache)})

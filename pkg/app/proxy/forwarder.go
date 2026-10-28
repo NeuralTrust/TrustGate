@@ -373,6 +373,7 @@ func (f *forwarder) invokeWithFailover(
 			budget.recordAttempt()
 
 			dto.request.NativeMask.Reset(policydomain.StagePreResponse)
+			dto.request.FallbackLeg = fromFallback
 			startedAt := time.Now()
 			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
 			elapsed := time.Since(startedAt)
