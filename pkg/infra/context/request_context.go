@@ -184,6 +184,9 @@ type RequestContext struct {
 	DefaultModel    string
 	RequestedModel  string
 	RoutingDecision *RoutingDecision
+	// FallbackLeg is true while the gateway calls a registry it reached
+	// through the consumer's fallback rather than through routing.
+	FallbackLeg bool
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool

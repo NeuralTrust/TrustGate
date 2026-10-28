@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -42,6 +43,13 @@ type anthropicRequest struct {
 	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	Thinking     json.RawMessage        `json:"thinking,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Format json.RawMessage `json:"format,omitempty"`
+	Effort string          `json:"effort,omitempty"`
 }
 
 type anthropicCacheControl struct {
@@ -76,6 +84,7 @@ type anthropicTool struct {
 	Description  string                 `json:"description,omitempty"`
 	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	Strict       *bool                  `json:"strict,omitempty"`
 }
 
 // anthropicToolCustom is the nested shape required by the API for custom tools (encode).
@@ -107,6 +116,7 @@ type anthropicContentBlock struct {
 	Text         string                 `json:"text,omitempty"`
 	Thinking     string                 `json:"thinking,omitempty"`  // extended thinking block content
 	Signature    string                 `json:"signature,omitempty"` // thinking block signature
+	Data         string                 `json:"data,omitempty"`      // redacted_thinking block payload
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name,omitempty"`
 	Input        json.RawMessage        `json:"input,omitempty"`
@@ -116,6 +126,20 @@ type anthropicContentBlock struct {
 	Source       json.RawMessage        `json:"source,omitempty"`
 	Title        string                 `json:"title,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+// MarshalJSON writes the thinking field of a thinking block even when it is
+// empty, as the API does when the reasoning is omitted and only its
+// signature is returned.
+func (b anthropicContentBlock) MarshalJSON() ([]byte, error) {
+	type plain anthropicContentBlock
+	if b.Type != "thinking" {
+		return json.Marshal(plain(b))
+	}
+	return json.Marshal(struct {
+		plain
+		Thinking string `json:"thinking"`
+	}{plain(b), b.Thinking})
 }
 
 type anthropicImageSource struct {
@@ -217,6 +241,7 @@ type anthropicDelta struct {
 	Text        string `json:"text,omitempty"`
 	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"` // for input_json_delta (tool_use streaming)
+	Signature   string `json:"signature,omitempty"`    // for signature_delta
 	StopReason  string `json:"stop_reason,omitempty"`
 }
 
@@ -355,9 +380,14 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		}
 	case "assistant":
 		var toolCalls []CanonicalToolCall
+		var thinking []CanonicalThinkingBlock
 		for i, b := range blocks {
 			last := i == len(blocks)-1
 			switch b.Type {
+			case "thinking":
+				thinking = append(thinking, CanonicalThinkingBlock{Text: b.Thinking, Signature: b.Signature})
+			case "redacted_thinking":
+				thinking = append(thinking, CanonicalThinkingBlock{Redacted: anthropicRedactedBytes(b.Data)})
 			case "text":
 				text.add(b.Text)
 				text.markText(anthropicCacheBreakpoint(b.CacheControl), last)
@@ -375,6 +405,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			Content:   text.String(),
 			ToolCalls: toolCalls,
 			Cache:     text.breakpoint(),
+			Thinking:  thinking,
 		})
 	default:
 		out = append(out, CanonicalMessage{
@@ -666,10 +697,20 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		TopK:        req.TopK,
 		Stop:        req.StopSeqs,
 		Metadata:    req.Metadata,
+		Anthropic:   &CanonicalAnthropicOptions{},
 	}
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
+	}
+	if req.OutputConfig != nil {
+		if !isEmptyOrNull(req.OutputConfig.Format) {
+			cr.Anthropic.OutputFormat = req.OutputConfig.Format
+		}
+		cr.Anthropic.Effort = req.OutputConfig.Effort
+	}
+	if !isEmptyOrNull(req.Thinking) {
+		cr.Anthropic.Thinking = req.Thinking
 	}
 	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
 		cr.CacheOptions = &CanonicalCacheOptions{Auto: auto}
@@ -697,6 +738,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 			Description: desc,
 			Schema:      schema,
 			Cache:       anthropicCacheBreakpoint(t.CacheControl),
+			Strict:      t.Strict,
 		})
 	}
 
@@ -794,6 +836,7 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 
 	// Content blocks (including extended thinking)
 	var thinkingBlocks []string
+	var signed []CanonicalThinkingBlock
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
@@ -802,6 +845,9 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 			if block.Thinking != "" {
 				thinkingBlocks = append(thinkingBlocks, block.Thinking)
 			}
+			signed = append(signed, CanonicalThinkingBlock{Text: block.Thinking, Signature: block.Signature})
+		case "redacted_thinking":
+			signed = append(signed, CanonicalThinkingBlock{Redacted: anthropicRedactedBytes(block.Data)})
 		case "tool_use":
 			cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
 				ID:        block.ID,
@@ -810,9 +856,10 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 			})
 		}
 	}
-	if len(thinkingBlocks) > 0 {
+	if len(thinkingBlocks) > 0 || len(signed) > 0 {
 		cr.Reasoning = &CanonicalReasoning{
 			ThinkingText: strings.Join(thinkingBlocks, "\n\n"),
+			Blocks:       signed,
 		}
 	}
 
@@ -841,15 +888,46 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 // discriminant of the stop_details the API pairs with it.
 const anthropicStopRefusal = "refusal"
 
-func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
-	var content []anthropicContentBlock
-	// Prepend thinking blocks if present (Anthropic extended thinking)
-	if resp.Reasoning != nil && resp.Reasoning.ThinkingText != "" {
-		content = append(content, anthropicContentBlock{
-			Type:     "thinking",
-			Thinking: resp.Reasoning.ThinkingText,
-		})
+// anthropicRedactedData writes a redacted block's payload, raw bytes on
+// Converse, as the string the API carries; anthropicRedactedBytes reads it
+// back. A payload that is not base64 is taken as it is.
+func anthropicRedactedData(b []byte) string {
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func anthropicRedactedBytes(data string) []byte {
+	if b, err := base64.StdEncoding.DecodeString(data); err == nil {
+		return b
 	}
+	return []byte(data)
+}
+
+// anthropicThinkingBlocks writes reasoning ahead of the answer: one block per
+// signed block, so the client can send each back unmodified, or else the
+// joined text of an upstream that does not sign it.
+func anthropicThinkingBlocks(r *CanonicalReasoning) []anthropicContentBlock {
+	if r == nil {
+		return nil
+	}
+	if len(r.Blocks) == 0 {
+		if r.ThinkingText == "" {
+			return nil
+		}
+		return []anthropicContentBlock{{Type: "thinking", Thinking: r.ThinkingText}}
+	}
+	blocks := make([]anthropicContentBlock, 0, len(r.Blocks))
+	for _, b := range r.Blocks {
+		if len(b.Redacted) > 0 {
+			blocks = append(blocks, anthropicContentBlock{Type: "redacted_thinking", Data: anthropicRedactedData(b.Redacted)})
+			continue
+		}
+		blocks = append(blocks, anthropicContentBlock{Type: "thinking", Thinking: b.Text, Signature: b.Signature})
+	}
+	return blocks
+}
+
+func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
+	content := anthropicThinkingBlocks(resp.Reasoning)
 	if resp.Content != "" {
 		content = append(content, anthropicContentBlock{
 			Type: "text",

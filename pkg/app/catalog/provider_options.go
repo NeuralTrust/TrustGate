@@ -86,6 +86,19 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Description: "Extra HTTP headers sent with every upstream request.",
 		},
 	},
+	providers.ProviderBedrock: {
+		{
+			Key:         "reasoning",
+			Label:       "Reasoning",
+			Type:        OptionFieldTypeEnum,
+			Description: "Whether thinking, effort and anthropic-beta from Anthropic Messages requests reach Claude models. Thinking adds latency and output tokens.",
+			Default:     providers.BedrockReasoningDrop,
+			Enum: []appplugins.EnumOption{
+				{Value: providers.BedrockReasoningDrop, Label: "Drop (as before)"},
+				{Value: providers.BedrockReasoningForward, Label: "Forward to Claude"},
+			},
+		},
+	},
 	providers.ProviderVertex: {
 		{
 			Key:         "project",
