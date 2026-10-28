@@ -28,6 +28,9 @@ func ValidateProviderOptions(provider string, options map[string]any) error {
 	case ProviderVertex:
 		_, err := DecodeVertexOptions(options)
 		return err
+	case ProviderBedrock:
+		_, err := DecodeBedrockOptions(options)
+		return err
 	default:
 		return nil
 	}

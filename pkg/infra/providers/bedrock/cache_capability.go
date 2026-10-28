@@ -14,7 +14,11 @@
 
 package bedrock
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+)
 
 // cacheCapability is what a model accepts of Converse explicit caching:
 // cachePoint at all, a 1h ttl, and a cachePoint in toolConfig.tools. Every
@@ -53,7 +57,7 @@ var bedrockCacheFamilies = map[string]cacheCapability{
 	"anthropic.claude-opus-4-5":               claudeCache1h,
 	"anthropic.claude-sonnet-4-6":             claudeCache1h,
 	"anthropic.claude-sonnet-4-5":             claudeCache1h,
-	"anthropic.small-chat-model-4-5":              claudeCache1h,
+	"anthropic.small-chat-model-4-5":          claudeCache1h,
 	"anthropic.claude-3-7-sonnet":             claudeCache5m,
 	"anthropic.claude-3-5-sonnet-20241022-v2": claudeCache5m,
 	"amazon.nova-micro":                       novaCache,
@@ -63,28 +67,15 @@ var bedrockCacheFamilies = map[string]cacheCapability{
 	"amazon.nova-2-lite":                      novaCache,
 }
 
-var inferenceProfilePrefixes = []string{
-	"us-gov.", "us.", "eu.", "apac.", "jp.", "au.", "ca.", "global.",
-}
-
 // cacheCapabilityFor resolves a model ID to the longest listed family prefix
 // that ends on an ID boundary, after one inference-profile prefix is
 // stripped. A foundation-model or system inference-profile ARN resolves
 // through the ID it ends with; any other ARN hides the model and, like an
 // unlisted ID, gets no cachePoint.
 func cacheCapabilityFor(model string) cacheCapability {
-	id := strings.ToLower(strings.TrimSpace(model))
-	if strings.HasPrefix(id, "arn:") {
-		id = arnModelID(id)
-	}
+	id := adapter.BedrockModelID(model)
 	if id == "" {
 		return cacheCapability{}
-	}
-	for _, prefix := range inferenceProfilePrefixes {
-		if rest, ok := strings.CutPrefix(id, prefix); ok {
-			id = rest
-			break
-		}
 	}
 	var (
 		best    cacheCapability
@@ -96,21 +87,6 @@ func cacheCapabilityFor(model string) cacheCapability {
 		}
 	}
 	return best
-}
-
-// arnModelID returns the model or system inference-profile ID a Bedrock ARN
-// names, and "" for application inference profiles, provisioned throughput
-// and custom models, whose ARN does not say which model they run.
-func arnModelID(arn string) string {
-	parts := strings.SplitN(arn, ":", 6)
-	if len(parts) < 6 {
-		return ""
-	}
-	kind, _, ok := strings.Cut(parts[5], "/")
-	if !ok || (kind != "foundation-model" && kind != "inference-profile") {
-		return ""
-	}
-	return parts[5][strings.LastIndex(parts[5], "/")+1:]
 }
 
 func familyMatches(id, family string) bool {

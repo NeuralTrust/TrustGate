@@ -26,11 +26,13 @@ const anthropicTruncatedToolCallMessage = "upstream tool call arguments could no
 // AnthropicStreamEncoder encodes one canonical stream as an Anthropic Messages
 // event sequence: one message_start, content blocks started, filled and
 // stopped one at a time in index order, then either message_delta and
-// message_stop or an error event. Reasoning deltas are not emitted, since a
-// thinking block cannot carry the signature Anthropic requires on replay.
+// message_stop or an error event. Reasoning deltas are not emitted unless
+// EmitSignedReasoning is called: a thinking block needs the signature
+// Anthropic requires on replay, which only some upstreams send.
 // An AnthropicStreamEncoder is not safe for concurrent use.
 type AnthropicStreamEncoder struct {
 	completeToolCalls bool
+	signedReasoning   bool
 	nonce             string
 	id                string
 	model             string
@@ -87,6 +89,13 @@ func NewAnthropicStreamEncoder(target Format) *AnthropicStreamEncoder {
 	}
 }
 
+// EmitSignedReasoning streams reasoning as thinking blocks closed by their
+// signature, for an upstream that signs its reasoning (Converse).
+func (e *AnthropicStreamEncoder) EmitSignedReasoning() *AnthropicStreamEncoder {
+	e.signedReasoning = true
+	return e
+}
+
 // Content encodes the role, text and tool call deltas of chunk; its finish
 // reason is ignored. The first chunk with a role or content starts the message.
 func (e *AnthropicStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
@@ -94,10 +103,15 @@ func (e *AnthropicStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 		return nil
 	}
 	e.remember(chunk)
-	if chunk.Role == "" && chunk.Delta == "" && len(chunk.ToolCallDeltas) == 0 {
+	reasoning := e.signedReasoning &&
+		(chunk.ReasoningDelta != "" || chunk.ReasoningSignature != "" || len(chunk.RedactedReasoning) > 0)
+	if chunk.Role == "" && chunk.Delta == "" && len(chunk.ToolCallDeltas) == 0 && !reasoning {
 		return nil
 	}
 	lines := e.start(chunk.Usage)
+	if reasoning {
+		lines = append(lines, e.reasoningDelta(chunk)...)
+	}
 	if chunk.Delta != "" {
 		lines = append(lines, e.textDelta(chunk.Delta)...)
 	}
@@ -219,6 +233,31 @@ func (e *AnthropicStreamEncoder) emitText(text string) [][]byte {
 		lines = append(lines, anthropicTextBlockStartEvent(e.open)...)
 	}
 	return append(lines, anthropicContentBlockDeltaEvent(e.open, anthropicBlockText, text)...)
+}
+
+// reasoningDelta streams a thinking block: its text, then the signature that
+// closes it. A redacted block arrives whole and is started and stopped at once.
+func (e *AnthropicStreamEncoder) reasoningDelta(chunk *CanonicalStreamChunk) [][]byte {
+	var lines [][]byte
+	if len(chunk.RedactedReasoning) > 0 {
+		lines = append(lines, e.openBlock(anthropicBlockRedacted)...)
+		lines = append(lines, anthropicRedactedBlockStartEvent(e.open, anthropicRedactedData(chunk.RedactedReasoning))...)
+		lines = append(lines, e.closeOpen()...)
+	}
+	if chunk.ReasoningDelta == "" && chunk.ReasoningSignature == "" {
+		return lines
+	}
+	if e.openType != anthropicBlockThinking {
+		lines = append(lines, e.openBlock(anthropicBlockThinking)...)
+		lines = append(lines, anthropicThinkingBlockStartEvent(e.open)...)
+	}
+	if chunk.ReasoningDelta != "" {
+		lines = append(lines, anthropicThinkingDeltaEvent(e.open, chunk.ReasoningDelta)...)
+	}
+	if chunk.ReasoningSignature != "" {
+		lines = append(lines, anthropicSignatureDeltaEvent(e.open, chunk.ReasoningSignature)...)
+	}
+	return lines
 }
 
 func (e *AnthropicStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
