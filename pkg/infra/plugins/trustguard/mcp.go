@@ -17,6 +17,7 @@ package trustguard
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -70,9 +71,10 @@ func mcpInputText(body []byte) string {
 
 // mcpOutputText concatenates the inspectable text of a CallToolResult: the text
 // of every text content block and of every embedded resource (image and audio
-// blocks carry no text), followed by every string leaf of structuredContent, in
-// the order rewriteMCPResponse writes them back. The isError flag does not
-// change extraction. It returns "" when there is nothing to inspect.
+// blocks carry no text), followed by every inspectable part of
+// structuredContent, in the order rewriteMCPResponse writes them back. The
+// isError flag does not change extraction. It returns "" when there is nothing
+// to inspect.
 //
 // structuredContent is included because a tool may return its payload there
 // instead of, or in addition to, text blocks — it reaches the agent all the
@@ -92,7 +94,7 @@ func mcpOutputText(body []byte) string {
 		}
 		parts = append(parts, text)
 	}
-	parts = append(parts, flattenArgumentStrings(result.StructuredContent)...)
+	parts = append(parts, flattenStructuredContent(result.StructuredContent)...)
 	return strings.Join(parts, "\n")
 }
 
@@ -112,10 +114,9 @@ func mcpOutputInspectable(body []byte) bool {
 }
 
 // flattenArgumentStrings walks the decoded arguments value and collects string
-// leaves (recursing maps and arrays); numbers, bools and nulls are skipped. Map
-// keys are visited in sorted order for deterministic output. When arguments are
-// not valid JSON it returns the raw trimmed arguments so free-form input stays
-// inspectable.
+// leaves. Map keys are visited in sorted order for deterministic output. When
+// arguments are not valid JSON it returns the raw trimmed arguments so
+// free-form input stays inspectable.
 func flattenArgumentStrings(raw json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
@@ -127,10 +128,28 @@ func flattenArgumentStrings(raw json.RawMessage) []string {
 		}
 		return nil
 	}
+	return collectStringValues(decoded, nil)
+}
+
+func flattenStructuredContent(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil
+	}
 	return collectStrings(decoded, nil)
 }
 
 func collectStrings(value any, acc []string) []string {
+	for _, part := range collectInspectableParts(value, nil) {
+		acc = append(acc, part.text)
+	}
+	return acc
+}
+
+func collectStringValues(value any, acc []string) []string {
 	switch v := value.(type) {
 	case string:
 		if strings.TrimSpace(v) != "" {
@@ -143,12 +162,48 @@ func collectStrings(value any, acc []string) []string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			acc = collectStrings(v[k], acc)
+			acc = collectStringValues(v[k], acc)
 		}
 	case []any:
 		for _, item := range v {
-			acc = collectStrings(item, acc)
+			acc = collectStringValues(item, acc)
 		}
+	}
+	return acc
+}
+
+type inspectablePart struct {
+	text string
+}
+
+func collectInspectableParts(value any, acc []inspectablePart) []inspectablePart {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			acc = append(acc, inspectablePart{text: v})
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if strings.TrimSpace(k) != "" {
+				acc = append(acc, inspectablePart{text: k})
+			}
+			acc = collectInspectableParts(v[k], acc)
+		}
+	case []any:
+		for _, item := range v {
+			acc = collectInspectableParts(item, acc)
+		}
+	case nil:
+		acc = append(acc, inspectablePart{text: "null"})
+	case bool:
+		acc = append(acc, inspectablePart{text: strconv.FormatBool(v)})
+	case float64:
+		acc = append(acc, inspectablePart{text: strconv.FormatFloat(v, 'g', -1, 64)})
 	}
 	return acc
 }

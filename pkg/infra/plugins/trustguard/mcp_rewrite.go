@@ -17,6 +17,7 @@ package trustguard
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -65,8 +66,9 @@ func mcpTransformedResult(payload map[string]any) ([]byte, bool) {
 // rewriteMCPRequest writes TrustGuard's masked text back into the tools/call
 // arguments, mirroring how the LLM path writes it back into the message
 // segments. The parts are rebuilt exactly as mcpInputText collected them so the
-// masked text maps onto the values that were inspected; anything ambiguous
-// fails, and the caller then blocks rather than forwarding unmasked data.
+// masked text maps onto the inspected payload; anything ambiguous or
+// unrewritable fails, and the caller then blocks rather than forwarding
+// unmasked data.
 func rewriteMCPRequest(body []byte, masked string) ([]byte, bool) {
 	var call mcpToolCall
 	if err := json.Unmarshal(body, &call); err != nil {
@@ -84,7 +86,7 @@ func rewriteMCPRequest(body []byte, masked string) ([]byte, bool) {
 	if name != "" {
 		parts = append(parts, name)
 	}
-	leaves := collectStrings(decoded, nil)
+	leaves := collectStringValues(decoded, nil)
 	if len(leaves) == 0 {
 		return nil, false
 	}
@@ -101,7 +103,7 @@ func rewriteMCPRequest(body []byte, masked string) ([]byte, bool) {
 	}
 
 	idx := 0
-	patched, ok := replaceArgumentStrings(decoded, maskedParts, &idx)
+	patched, ok := replaceStringValues(decoded, maskedParts, &idx)
 	if !ok || idx != len(maskedParts) {
 		return nil, false
 	}
@@ -118,7 +120,10 @@ func rewriteMCPRequest(body []byte, masked string) ([]byte, bool) {
 
 // replaceArgumentStrings walks the arguments tree in the same order
 // collectStrings did — maps by sorted key, arrays in order, blank strings
-// skipped — replacing each inspected leaf with its masked counterpart.
+// skipped — replacing each inspected string leaf with its masked counterpart.
+// Map keys and non-string scalar leaves are inspected but cannot safely be
+// rewritten. If TrustGuard changes either, the payload is unrewritable and the
+// caller blocks rather than forwarding the unmasked data.
 func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 	switch v := value.(type) {
 	case string:
@@ -138,6 +143,11 @@ func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if strings.TrimSpace(k) != "" {
+				if !consumeUnrewritablePart(k, masked, idx) {
+					return nil, false
+				}
+			}
 			patched, ok := replaceArgumentStrings(v[k], masked, idx)
 			if !ok {
 				return nil, false
@@ -154,15 +164,69 @@ func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 			v[i] = patched
 		}
 		return v, true
+	case nil:
+		return value, consumeUnrewritablePart("null", masked, idx)
+	case bool:
+		return value, consumeUnrewritablePart(strconv.FormatBool(v), masked, idx)
+	case float64:
+		return value, consumeUnrewritablePart(strconv.FormatFloat(v, 'g', -1, 64), masked, idx)
 	default:
 		return value, true
 	}
 }
 
+func replaceStringValues(value any, masked []string, idx *int) (any, bool) {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return v, true
+		}
+		if *idx >= len(masked) {
+			return nil, false
+		}
+		out := masked[*idx]
+		*idx++
+		return out, true
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			patched, ok := replaceStringValues(v[k], masked, idx)
+			if !ok {
+				return nil, false
+			}
+			v[k] = patched
+		}
+		return v, true
+	case []any:
+		for i := range v {
+			patched, ok := replaceStringValues(v[i], masked, idx)
+			if !ok {
+				return nil, false
+			}
+			v[i] = patched
+		}
+		return v, true
+	default:
+		return value, true
+	}
+}
+
+func consumeUnrewritablePart(original string, masked []string, idx *int) bool {
+	if *idx >= len(masked) || masked[*idx] != original {
+		return false
+	}
+	*idx++
+	return true
+}
+
 // rewriteMCPResponse writes the masked text back into a CallToolResult: first the
 // content blocks that carry text — text blocks and embedded resources alike —
-// then the string leaves of structuredContent, in the exact order mcpOutputText
-// collected them. The result is patched in place on a generic
+// then the inspectable parts of structuredContent, in the exact order
+// mcpOutputText collected them. The result is patched in place on a generic
 // decode rather than re-encoded from a typed struct, so fields the gateway does
 // not model (_meta, annotations) survive the rewrite.
 //
@@ -195,8 +259,9 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 		}
 	}
 
-	// Then structuredContent string leaves, sorted-key order, matching
-	// flattenArgumentStrings/collectStrings so the masked halves line up.
+	// Then structuredContent map keys, string leaves, and scalar leaves in
+	// sorted-key order, matching flattenArgumentStrings/collectStrings so the
+	// masked halves line up.
 	structured, hasStructured := generic["structuredContent"]
 	var structuredLeaves int
 	if hasStructured {
