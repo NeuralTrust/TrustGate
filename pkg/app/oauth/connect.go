@@ -969,7 +969,7 @@ func providerRegistry(regs []*registrydomain.Registry, provider string) *registr
 }
 
 func connectCallbackURL(baseURL, provider string) string {
-	return baseURL + "/oauth/callback/" + provider
+	return baseURL + connectCallbackPathPrefix + provider
 }
 
 // ownsSharedAccount reports whether this ticket may write the account behind an

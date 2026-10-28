@@ -146,6 +146,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.JWKSHandler),
 		nil,
 		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
+		router.WithClientMetadataHandler(oauthhttp.NewClientMetadataHandler("", "TrustGate MCP Gateway")),
 	)
 	app := fiber.New()
 	require.NoError(t, mcpRouter.BuildRoutes(app))
@@ -219,6 +220,15 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
+	// An upstream authorization server fetches this without credentials, so it
+	// must not fall through to the catch-all GET's 405.
+	t.Run("client ID metadata document", func(t *testing.T) {
+		res, body := dispatchMCPRequest(t, app, fiber.MethodGet, "/oauth/client-metadata/io.aircall/mcp", "", "")
+		assert.Equal(t, fiber.StatusOK, res.StatusCode)
+		assert.Contains(t, body, `"client_id":"http://tenant.mcp.test/oauth/client-metadata/io.aircall/mcp"`)
+		assert.Contains(t, body, `"redirect_uris":["http://tenant.mcp.test/oauth/callback/io.aircall/mcp"]`)
+	})
+
 	t.Run("generic MCP methods", func(t *testing.T) {
 		getResponse, _ := dispatchMCPRequest(t, app, fiber.MethodGet, "/tools/mcp", "", "")
 		assert.Equal(t, fiber.StatusMethodNotAllowed, getResponse.StatusCode)
@@ -255,8 +265,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 	})
 
 	// Every dispatched request is recorded once: the two connect pages, the
-	// connect start, callback and finish, plus the six MCP method calls above.
-	assert.Equal(t, 11, ops.count)
+	// connect start, callback and finish, the client metadata document, plus
+	// the six MCP method calls above.
+	assert.Equal(t, 12, ops.count)
 }
 
 func dispatchMCPRequest(

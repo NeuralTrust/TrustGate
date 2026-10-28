@@ -71,6 +71,15 @@ func WithClientName(name string) RegistrarOption {
 	}
 }
 
+// RegisteredClientName is the client_name a registrar built WithClientName(name)
+// registers, and publishes in its client metadata documents.
+func RegisteredClientName(name string) string {
+	if safe := portableClientName(name); safe != "" {
+		return safe
+	}
+	return DefaultClientName
+}
+
 // portableClientName keeps the characters every upstream seen so far accepts in
 // client_name and turns any other run into a single space.
 func portableClientName(name string) string {
@@ -247,12 +256,24 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	if cacheErr == nil && cached != nil && r.clientReusable(cached, meta, redirectURI, now) {
 		return cached, nil
 	}
+	replacing := cacheErr == nil && cached != nil
+	if client := r.metadataDocumentClient(meta, redirectURI); client != nil {
+		// Nothing is registered upstream: the client_id is the gateway's own
+		// document URL, the same for every replica. A cached row that names it
+		// is rewritten (a client name change, a dropped client) without
+		// stranding a grant; only a switch away from a registered client does.
+		if replacing && cached.ClientID != client.ClientID {
+			slog.Warn("oauth cimd: replacing a registered upstream client with the gateway's client metadata document; grants held by the previous client can no longer be refreshed",
+				"key", key, "old_client_id", cached.ClientID, "new_client_id", client.ClientID,
+				"issuer", client.Issuer)
+		}
+		return r.storeClient(ctx, key, cached, replacing, client, meta, redirectURI)
+	}
 	// A client is already registered but no longer usable here: the redirect URI
 	// or client name changed, the authorization server differs, or the
 	// registration expired. Replacing it is deliberate, and it invalidates every
 	// refresh token the old client holds, so say so rather than losing those
 	// grants silently.
-	replacing := cacheErr == nil && cached != nil
 	if replacing {
 		newIssuer, newEndpoint := "", ""
 		if meta != nil {
@@ -319,6 +340,43 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		RegistrationEndpoint:  meta.RegistrationEndpoint,
 		ClientSecretExpiresAt: doc.ClientSecretExpiresAt,
 	}
+	return r.storeClient(ctx, key, cached, replacing, client, meta, redirectURI)
+}
+
+// metadataDocumentClient is the client for an authorization server that takes
+// a client ID metadata document instead of a registration: one with no
+// registration_endpoint that advertises client_id_metadata_document_supported.
+// The client_id is the URL the gateway publishes the document at for this
+// redirect URI. nil when the server registers clients, does not take a
+// document, or the redirect URI has no published document (http, or a
+// provider id the URL cannot carry).
+func (r *upstreamRegistrar) metadataDocumentClient(meta *appoauth.UpstreamAuthServer, redirectURI string) *appoauth.RegisteredClient {
+	if meta == nil || meta.RegistrationEndpoint != "" || !meta.ClientIDMetadataDocumentSupported {
+		return nil
+	}
+	clientID, ok := appoauth.ClientMetadataURLForRedirect(redirectURI)
+	if !ok {
+		return nil
+	}
+	return &appoauth.RegisteredClient{
+		ClientID:    clientID,
+		RedirectURI: redirectURI,
+		ClientName:  r.clientName,
+		Issuer:      registeredIssuer(meta),
+	}
+}
+
+// storeClient writes client to the slot under key: over cached when replacing,
+// otherwise as an atomic first claim.
+func (r *upstreamRegistrar) storeClient(
+	ctx context.Context,
+	key string,
+	cached *appoauth.RegisteredClient,
+	replacing bool,
+	client *appoauth.RegisteredClient,
+	meta *appoauth.UpstreamAuthServer,
+	redirectURI string,
+) (*appoauth.RegisteredClient, error) {
 	if replacing {
 		stored, swapped, err := r.clients.ReplaceClientIfMatch(ctx, key, cached.ClientID, *client)
 		if err != nil {
