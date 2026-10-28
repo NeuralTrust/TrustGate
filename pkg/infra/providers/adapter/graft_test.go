@@ -160,6 +160,19 @@ func TestGraftChangedFieldsFallsBackWhenMessagesChange(t *testing.T) {
 	assert.Equal(t, string(encoded), out)
 }
 
+func TestGraftChangedFieldsFallbackDoesNotEscapeHTML(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"<tool_call> a & b </tool_call>"}],"logprobs":true}`
+	out, req := graftEdit(t, FormatOpenAI, body, func(r *CanonicalRequest) {
+		r.Messages = append(r.Messages, CanonicalMessage{Role: "user", Content: "more <x>"})
+	})
+	assert.Contains(t, out, `"<tool_call> a & b </tool_call>"`)
+	assert.NotContains(t, out, `\u003c`)
+	decoded, err := NewRegistry().DecodeRequestFor([]byte(out), FormatOpenAI)
+	require.NoError(t, err)
+	assert.Equal(t, req.Messages[1].Content, decoded.Messages[1].Content)
+}
+
 func TestGraftChangedFieldsFilterTools(t *testing.T) {
 	t.Parallel()
 	anthropic := func(tools string) string {
