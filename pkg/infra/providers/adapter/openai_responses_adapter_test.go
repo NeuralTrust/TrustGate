@@ -165,7 +165,7 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T
 			wantSystem: "Be brief.",
 		},
 		{
-			name: "skipped items between assistant items stay in the turn",
+			name: "a custom call is kept and skipped items stay in the turn",
 			input: `[
 				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
 				{"type": "item_reference", "id": "msg_1"},
@@ -181,6 +181,7 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T
 				{Role: "assistant", Content: "Done.", ToolCalls: []CanonicalToolCall{
 					{ID: "A", Name: "f", Arguments: "{}"},
 					{ID: "B", Name: "g", Arguments: "{}"},
+					{ID: "C", Kind: ToolKindCustom, Name: "apply_patch", Arguments: "*** Begin Patch"},
 				}},
 				{Role: "tool", Content: "a", ToolCallID: "A"},
 				{Role: "tool", Content: "b", ToolCallID: "B"},
