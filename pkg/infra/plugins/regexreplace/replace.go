@@ -24,11 +24,23 @@ import (
 )
 
 func applyRules(rules []compiledRule, input string) (string, bool) {
-	out := input
-	for _, r := range rules {
-		out = r.re.ReplaceAllString(out, r.replacement)
-	}
+	out, _ := applyRulesFired(rules, input)
 	return out, out != input
+}
+
+// applyRulesFired is applyRules that also returns the index of every rule that
+// replaced something.
+func applyRulesFired(rules []compiledRule, input string) (string, []int) {
+	out := input
+	var fired []int
+	for i, r := range rules {
+		next := r.re.ReplaceAllString(out, r.replacement)
+		if next != out {
+			fired = append(fired, i)
+		}
+		out = next
+	}
+	return out, fired
 }
 
 // applyRulesFrom runs the rules over input the way applyRules does, except that
@@ -129,14 +141,24 @@ func rewriteResponse(reg *adapter.Registry, format adapter.Format, cresp *adapte
 }
 
 func applyRulesToToolCalls(rules []compiledRule, calls []adapter.CanonicalToolCall) bool {
+	changed, _ := maskToolCalls(rules, calls)
+	return changed
+}
+
+// maskToolCalls masks the arguments of calls in place and reports whether any
+// changed, with the index of every rule that replaced something.
+func maskToolCalls(rules []compiledRule, calls []adapter.CanonicalToolCall) (bool, []int) {
 	changed := false
+	var fired []int
 	for i := range calls {
-		if out, did := applyRulesToArguments(rules, calls[i].Arguments); did {
+		out, did, ruleIdx := maskArguments(rules, calls[i].Arguments)
+		fired = append(fired, ruleIdx...)
+		if did {
 			calls[i].Arguments = out
 			changed = true
 		}
 	}
-	return changed
+	return changed, fired
 }
 
 // applyRulesToArguments masks a tool call's arguments. A JSON object or array
@@ -149,15 +171,21 @@ func applyRulesToToolCalls(rules []compiledRule, calls []adapter.CanonicalToolCa
 // input that is not one JSON document, such as a custom tool's freeform input)
 // is plain text and takes the rules whole.
 func applyRulesToArguments(rules []compiledRule, args string) (string, bool) {
+	out, did, _ := maskArguments(rules, args)
+	return out, did
+}
+
+func maskArguments(rules []compiledRule, args string) (string, bool, []int) {
 	if strings.TrimSpace(args) == "" {
-		return args, false
+		return args, false, nil
 	}
-	edits, ok := argumentEdits(rules, args)
+	edits, fired, ok := argumentEdits(rules, args)
 	if !ok {
-		return applyRules(rules, args)
+		out, fired := applyRulesFired(rules, args)
+		return out, out != args, fired
 	}
 	if len(edits) == 0 {
-		return args, false
+		return args, false, fired
 	}
 	var b strings.Builder
 	last := 0
@@ -167,7 +195,7 @@ func applyRulesToArguments(rules []compiledRule, args string) (string, bool) {
 		last = e.end
 	}
 	b.WriteString(args[last:])
-	return b.String(), true
+	return b.String(), true, fired
 }
 
 type spanEdit struct {
@@ -182,19 +210,20 @@ type jsonFrame struct {
 
 // argumentEdits returns the replacements, in order, that mask the values of the
 // JSON object or array in args. ok is false when args is not exactly one such
-// document.
-func argumentEdits(rules []compiledRule, args string) ([]spanEdit, bool) {
+// document. fired is the index of every rule that replaced something.
+func argumentEdits(rules []compiledRule, args string) ([]spanEdit, []int, bool) {
 	dec := json.NewDecoder(strings.NewReader(args))
 	dec.UseNumber()
 	var (
 		edits []spanEdit
+		fired []int
 		stack []jsonFrame
 		prev  int
 	)
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return nil, false
+			return nil, nil, false
 		}
 		end := int(dec.InputOffset())
 		start := prev
@@ -204,7 +233,7 @@ func argumentEdits(rules []compiledRule, args string) ([]spanEdit, bool) {
 		prev = end
 		if len(stack) == 0 {
 			if d, isDelim := tok.(json.Delim); !isDelim || (d != '{' && d != '[') {
-				return nil, false
+				return nil, nil, false
 			}
 		}
 		if d, isDelim := tok.(json.Delim); isDelim {
@@ -219,9 +248,9 @@ func argumentEdits(rules []compiledRule, args string) ([]spanEdit, bool) {
 			}
 			if len(stack) == 0 {
 				if _, err := dec.Token(); err != io.EOF {
-					return nil, false
+					return nil, nil, false
 				}
-				return edits, true
+				return edits, fired, true
 			}
 			continue
 		}
@@ -242,15 +271,16 @@ func argumentEdits(rules []compiledRule, args string) ([]spanEdit, bool) {
 		default:
 			continue
 		}
-		out, did := applyRules(rules, text)
-		if !did {
+		out, ruleIdx := applyRulesFired(rules, text)
+		fired = append(fired, ruleIdx...)
+		if out == text {
 			continue
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		if err := enc.Encode(out); err != nil {
-			return nil, false
+			return nil, nil, false
 		}
 		edits = append(edits, spanEdit{start: start, end: end, text: strings.TrimSuffix(buf.String(), "\n")})
 	}

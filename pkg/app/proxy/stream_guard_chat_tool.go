@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"slices"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -172,180 +173,181 @@ func (g *streamGuard) chatToolCapped() bool {
 }
 
 // remaskChatToolCalls writes complete masked arguments into the first held
-// delta for each changed call and clears its later deltas. Tool calls are held
-// from their first delta through finish_reason, so no argument byte selected
-// for replacement has reached the client.
+// delta of each changed call and clears its later deltas. It refuses a call
+// whose arguments were windowed for the inspection, since the verdict covers
+// only their tail, and a call with a delta the client already received. Nothing
+// is changed until every touched event has been re-encoded.
 func (g *streamGuard) remaskChatToolCalls(transformed []adapter.CanonicalToolCall) bool {
 	if !g.chatTools() {
 		return g.cannotMask(adapter.MaskCauseToolInput)
 	}
 	current := g.tools.calls()
-	if len(current) != len(transformed) || len(current) != len(g.tools.order) {
+	inspected := g.inspectedTools
+	if len(transformed) != len(inspected) || len(current) != len(inspected) {
 		return g.cannotMask(adapter.MaskCauseToolInput)
 	}
 	replacements := make(map[int]string)
-	for i := range current {
-		if current[i].Arguments != transformed[i].Arguments {
-			replacements[g.tools.order[i]] = transformed[i].Arguments
+	for i := range inspected {
+		if transformed[i].Arguments == inspected[i].Arguments {
+			continue
 		}
+		if inspected[i].Arguments != current[i].Arguments {
+			return g.cannotMask(adapter.MaskCauseNoWindow)
+		}
+		replacements[g.tools.order[i]] = transformed[i].Arguments
 	}
 	if len(replacements) == 0 {
 		return true
 	}
+	for _, ev := range g.produced[:g.releasedIdx] {
+		for _, tc := range ev.toolCalls {
+			if _, ok := replacements[tc.Index]; ok {
+				return g.cannotMask(adapter.MaskCauseReleasedInput)
+			}
+		}
+	}
 
+	type eventRewrite struct {
+		ev     *streamEvent
+		deltas []adapter.StreamToolCallDelta
+		lines  [][]byte
+	}
+	var rewrites []eventRewrite
 	carried := make(map[int]bool, len(replacements))
-	for i := g.releasedIdx; i < len(g.produced); i++ {
-		ev := g.produced[i]
-		for j := range ev.toolCalls {
-			replacement, ok := replacements[ev.toolCalls[j].Index]
+	for _, ev := range g.produced[g.releasedIdx:] {
+		deltas := slices.Clone(ev.toolCalls)
+		touched := false
+		for j := range deltas {
+			replacement, ok := replacements[deltas[j].Index]
 			if !ok {
 				continue
 			}
-			if !carried[ev.toolCalls[j].Index] {
-				ev.toolCalls[j].ArgumentsDelta = replacement
-				carried[ev.toolCalls[j].Index] = true
-			} else {
-				ev.toolCalls[j].ArgumentsDelta = ""
+			touched = true
+			if carried[deltas[j].Index] {
+				deltas[j].ArgumentsDelta = ""
+				continue
 			}
+			deltas[j].ArgumentsDelta = replacement
+			carried[deltas[j].Index] = true
 		}
+		if !touched {
+			continue
+		}
+		lines, ok := rewriteChatToolCallArguments(ev.lines, deltas, replacements)
+		if !ok {
+			return g.cannotMask(adapter.MaskCauseToolFrames)
+		}
+		rewrites = append(rewrites, eventRewrite{ev: ev, deltas: deltas, lines: lines})
 	}
 	if len(carried) != len(replacements) {
 		return g.cannotMask(adapter.MaskCauseReleasedInput)
 	}
-	for i := g.releasedIdx; i < len(g.produced); i++ {
-		ev := g.produced[i]
-		lines, changed, ok := rewriteChatToolCallArguments(ev.lines, ev.toolCalls, replacements)
-		if !ok {
-			return g.cannotMask(adapter.MaskCauseToolFrames)
-		}
-		if changed {
-			ev.lines = lines
-		}
+	for _, r := range rewrites {
+		r.ev.toolCalls, r.ev.lines = r.deltas, r.lines
 	}
-
 	g.tools = toolCallDigest{}
 	for _, ev := range g.produced {
 		g.tools.merge(ev.toolCalls)
 	}
+	g.inspectedTools = nil
 	return true
 }
 
-// rewriteChatToolCallArguments replaces tool-call argument fragments in one
-// chat-completions SSE event. It rebuilds only JSON containers around the
-// changed fields; all unmodelled values remain json.RawMessage values.
+// rewriteChatToolCallArguments rewrites the argument fragments of one
+// chat-completions SSE event to the values in deltas. Like the segmenter it
+// reads the first data: line and choices[0] only, and every tool call there
+// must line up with deltas, so a fragment the rewrite did not reach is refused
+// rather than released. Unmodelled fields are kept as raw JSON.
 func rewriteChatToolCallArguments(
 	lines [][]byte,
 	deltas []adapter.StreamToolCallDelta,
 	replacements map[int]string,
-) ([][]byte, bool, bool) {
-	var rewritten [][]byte
-	changed := false
-	for _, line := range lines {
-		const prefix = "data: "
-		if !bytes.HasPrefix(line, []byte(prefix)) {
-			rewritten = append(rewritten, line)
-			continue
+) ([][]byte, bool) {
+	at := -1
+	var payload []byte
+	for i, line := range lines {
+		if p, ok := dataPayload(line); ok {
+			at, payload = i, p
+			break
 		}
-		payload := line[len(prefix):]
-		var top map[string]json.RawMessage
-		if json.Unmarshal(payload, &top) != nil {
-			return nil, false, false
-		}
-		var choices []json.RawMessage
-		if raw, ok := top["choices"]; !ok || json.Unmarshal(raw, &choices) != nil {
-			rewritten = append(rewritten, line)
-			continue
-		}
-		deltaAt := 0
-		lineChanged := false
-		for ci, rawChoice := range choices {
-			var choice map[string]json.RawMessage
-			if json.Unmarshal(rawChoice, &choice) != nil {
-				return nil, false, false
-			}
-			var delta map[string]json.RawMessage
-			if raw, ok := choice["delta"]; !ok || json.Unmarshal(raw, &delta) != nil {
-				continue
-			}
-			var calls []json.RawMessage
-			if raw, ok := delta["tool_calls"]; !ok || json.Unmarshal(raw, &calls) != nil {
-				continue
-			}
-			for callAt, rawCall := range calls {
-				if deltaAt >= len(deltas) {
-					return nil, false, false
-				}
-				d := deltas[deltaAt]
-				deltaAt++
-				if _, ok := replacements[d.Index]; !ok {
-					continue
-				}
-				var call map[string]json.RawMessage
-				if json.Unmarshal(rawCall, &call) != nil {
-					return nil, false, false
-				}
-				kind, field := "function", "arguments"
-				if _, ok := call["custom"]; ok {
-					kind, field = "custom", "input"
-				}
-				var function map[string]json.RawMessage
-				if raw, ok := call[kind]; !ok || json.Unmarshal(raw, &function) != nil {
-					return nil, false, false
-				}
-				value, err := json.Marshal(d.ArgumentsDelta)
-				if err != nil {
-					return nil, false, false
-				}
-				function[field] = value
-				value, err = json.Marshal(function)
-				if err != nil {
-					return nil, false, false
-				}
-				call[kind] = value
-				value, err = json.Marshal(call)
-				if err != nil {
-					return nil, false, false
-				}
-				calls[callAt] = value
-				lineChanged = true
-			}
-			if !lineChanged {
-				continue
-			}
-			value, err := json.Marshal(calls)
-			if err != nil {
-				return nil, false, false
-			}
-			delta["tool_calls"] = value
-			value, err = json.Marshal(delta)
-			if err != nil {
-				return nil, false, false
-			}
-			choice["delta"] = value
-			value, err = json.Marshal(choice)
-			if err != nil {
-				return nil, false, false
-			}
-			choices[ci] = value
-		}
-		if deltaAt != len(deltas) {
-			return nil, false, false
-		}
-		if !lineChanged {
-			rewritten = append(rewritten, line)
-			continue
-		}
-		value, err := json.Marshal(choices)
-		if err != nil {
-			return nil, false, false
-		}
-		top["choices"] = value
-		value, err = json.Marshal(top)
-		if err != nil {
-			return nil, false, false
-		}
-		rewritten = append(rewritten, append([]byte(prefix), value...))
-		changed = true
 	}
-	return rewritten, changed, true
+	if at < 0 {
+		return nil, false
+	}
+	var top, choice, delta map[string]json.RawMessage
+	var choices, calls []json.RawMessage
+	if !decodeJSONObject(payload, &top) ||
+		!decodeJSONArray(top["choices"], &choices) || len(choices) == 0 ||
+		!decodeJSONObject(choices[0], &choice) ||
+		!decodeJSONObject(choice["delta"], &delta) ||
+		!decodeJSONArray(delta["tool_calls"], &calls) ||
+		len(calls) != len(deltas) {
+		return nil, false
+	}
+	for j, d := range deltas {
+		if _, ok := replacements[d.Index]; !ok {
+			continue
+		}
+		var call, fn map[string]json.RawMessage
+		var index int
+		if !decodeJSONObject(calls[j], &call) || json.Unmarshal(call["index"], &index) != nil || index != d.Index {
+			return nil, false
+		}
+		kind, field := "function", "arguments"
+		var typ string
+		_ = json.Unmarshal(call["type"], &typ)
+		if raw, ok := call["custom"]; typ == "custom" || (ok && !isJSONNull(raw)) {
+			kind, field = "custom", "input"
+		}
+		if !decodeJSONObject(call[kind], &fn) {
+			return nil, false
+		}
+		var ok bool
+		if fn[field], ok = encodeJSON(d.ArgumentsDelta); !ok {
+			return nil, false
+		}
+		if call[kind], ok = encodeJSON(fn); !ok {
+			return nil, false
+		}
+		if calls[j], ok = encodeJSON(call); !ok {
+			return nil, false
+		}
+	}
+	var ok bool
+	if delta["tool_calls"], ok = encodeJSON(calls); !ok {
+		return nil, false
+	}
+	if choice["delta"], ok = encodeJSON(delta); !ok {
+		return nil, false
+	}
+	if choices[0], ok = encodeJSON(choice); !ok {
+		return nil, false
+	}
+	if top["choices"], ok = encodeJSON(choices); !ok {
+		return nil, false
+	}
+	encoded, ok := encodeJSON(top)
+	if !ok {
+		return nil, false
+	}
+	out := slices.Clone(lines)
+	out[at] = append([]byte("data: "), encoded...)
+	return out, true
+}
+
+func decodeJSONObject(raw json.RawMessage, into *map[string]json.RawMessage) bool {
+	return len(raw) > 0 && json.Unmarshal(raw, into) == nil && *into != nil
+}
+
+func decodeJSONArray(raw json.RawMessage, into *[]json.RawMessage) bool {
+	return len(raw) > 0 && json.Unmarshal(raw, into) == nil && *into != nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+func encodeJSON(v any) (json.RawMessage, bool) {
+	raw, err := json.Marshal(v)
+	return raw, err == nil
 }
