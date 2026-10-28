@@ -42,6 +42,7 @@ type mcpRouter struct {
 	whoAmIHandler              *mcphttp.WhoAmIHandler
 	personalKeyHandler         *oauthhttp.PersonalKeyHandler
 	modelRequestHandler        *oauthhttp.ModelRequestHandler
+	clientMetadataHandler      *oauthhttp.ClientMetadataHandler
 }
 
 // MCPRouterOption adds an optional page to the MCP router.
@@ -55,6 +56,12 @@ func WithPersonalKeyHandler(h *oauthhttp.PersonalKeyHandler) MCPRouterOption {
 // WithModelRequestHandler serves the MCP Store's model request page.
 func WithModelRequestHandler(h *oauthhttp.ModelRequestHandler) MCPRouterOption {
 	return func(r *mcpRouter) { r.modelRequestHandler = h }
+}
+
+// WithClientMetadataHandler serves the client ID metadata document upstream
+// authorization servers fetch for the connect client_id.
+func WithClientMetadataHandler(h *oauthhttp.ClientMetadataHandler) MCPRouterOption {
+	return func(r *mcpRouter) { r.clientMetadataHandler = h }
 }
 
 func NewMCPRouter(
@@ -132,6 +139,11 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.JWKSPath, r.jwksHandler.Handle)
 
 	app.Get(oauthhttp.BrandAssetPath, oauthhttp.ServeBrandAsset)
+	// Fetched by an upstream authorization server, never by a signed-in
+	// caller, so it sits ahead of the catch-all GET below.
+	if r.clientMetadataHandler != nil {
+		app.Get(oauthhttp.ClientMetadataPath, r.clientMetadataHandler.Handle)
+	}
 	// Starting an upstream OAuth flow has side effects (a fresh state + an
 	// authorize request the IdP records against the browser session), so the
 	// connect page submits it as a POST: a GET link is fair game for browser

@@ -35,6 +35,7 @@ var vendorBrandIcons = map[string]string{ // #nosec G101 -- static brand icon as
 	"aha":                           "mcp/aha.png",
 	"ahrefs":                        "mcp/ahrefs.png",
 	"airbyte":                       "mcp/airbyte.svg",
+	"aircall":                       "mcp/aircall.svg",
 	"airtable":                      "mcp/airtable.svg",
 	"algolia":                       "mcp/algolia.svg",
 	"amplitude":                     "mcp/amplitude.png",
