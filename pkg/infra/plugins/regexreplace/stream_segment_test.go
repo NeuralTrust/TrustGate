@@ -158,6 +158,9 @@ func TestInspectSegmentRewritesToolCallArguments(t *testing.T) {
 	if got.TransformedToolCalls[0].Arguments != `{"command":"echo [MASK]","note":"keep"}` {
 		t.Errorf("arguments = %q", got.TransformedToolCalls[0].Arguments)
 	}
+	if len(got.Fingerprints) != 1 {
+		t.Errorf("Fingerprints = %v, want the rule that masked the arguments", got.Fingerprints)
+	}
 	if !p.ReadsStreamToolCalls() {
 		t.Error("regex_replace must request complete streamed tool calls")
 	}

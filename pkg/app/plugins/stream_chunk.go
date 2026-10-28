@@ -351,6 +351,14 @@ func mergeChunkVerdicts(
 				errors.New("plugins: the masks of a chunked stream block cannot be mapped back onto it"))
 		}
 		merged.HasTransform, merged.Transformed = true, text
+		// Every piece carries the block's whole tool calls, so any answered
+		// piece's rewrite of them is the block's.
+		for i, v := range verdicts {
+			if outs[i].Started && outs[i].Err == nil && v != nil && v.HasTransform && v.TransformedToolCalls != nil {
+				merged.TransformedToolCalls = v.TransformedToolCalls
+				break
+			}
+		}
 		if availability != nil && merged.Incomplete == nil {
 			merged.Incomplete = availability
 		}

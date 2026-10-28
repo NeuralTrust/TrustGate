@@ -261,8 +261,11 @@ type streamGuard struct {
 	// tail window, and the bytes in front of that window are text no verdict of
 	// that block speaks for.
 	inspected string
-	sentChars int
-	finalSent bool
+	// inspectedTools is the tool calls the last call carried, after the
+	// accumulation budget windowed their arguments.
+	inspectedTools []adapter.CanonicalToolCall
+	sentChars      int
+	finalSent      bool
 	// finalInspected is set only once the final block's call came back with a
 	// verdict from every entry and every entry was handed the whole accumulated text
 	// (neither the guard's cap nor an entry's own window cut it). finalSent
@@ -840,11 +843,16 @@ func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 // block would move into an earlier one and leave an empty text block behind —
 // which reconstructs the same string but which the Messages API rejects on
 // input, so an agent replaying the turn gets a 400 it did not get before.
+//
+// On a chat stream whose tool calls are held whole, an event that carries tool
+// calls and nothing else is left to remaskChatToolCalls, provided it does not
+// sit between two held text events: the collapse would move the later text in
+// front of it.
 func (g *streamGuard) rewritableHold() (int, bool) {
 	first, last := -1, -1
 	for i := g.releasedIdx; i < len(g.produced); i++ {
 		ev := g.produced[i]
-		if ev.reasoning != "" || len(ev.toolCalls) > 0 {
+		if ev.reasoning != "" || len(ev.toolCalls) > 0 && (ev.text != "" || !g.chatTools()) {
 			return 0, false
 		}
 		if ev.text == "" {
@@ -862,7 +870,7 @@ func (g *streamGuard) rewritableHold() (int, bool) {
 		return 0, false
 	}
 	for _, ev := range g.produced[first+1 : last+1] {
-		if ev.mark.op != markNone {
+		if ev.mark.op != markNone || len(ev.toolCalls) > 0 {
 			return 0, false
 		}
 	}
@@ -963,6 +971,7 @@ func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 		g.degrade(degradeAccumulationCap)
 	}
 	g.inspected = accumulated
+	g.inspectedTools = slices.Clone(calls)
 	final := g.final() && !g.finalSent
 	g.finalSent = g.finalSent || final
 	g.seq++

@@ -17,6 +17,7 @@ package regexreplace
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -101,7 +102,12 @@ func (p *Plugin) InspectSegment(
 		masked, fired = applyRulesFrom(cfg.compiled, seg.Accumulated, from)
 	}
 	calls := append([]adapter.CanonicalToolCall(nil), seg.ToolCalls...)
-	toolCallsChanged := applyRulesToToolCalls(cfg.compiled, calls)
+	toolCallsChanged, toolFired := maskToolCalls(cfg.compiled, calls)
+	if toolCallsChanged {
+		fired = append(fired, toolFired...)
+		slices.Sort(fired)
+		fired = slices.Compact(fired)
+	}
 	if masked == seg.Accumulated && !toolCallsChanged {
 		// A transform whose output equals the produced text ends the stream:
 		// the guard cannot tell "nothing matched" from "a mask the guard
