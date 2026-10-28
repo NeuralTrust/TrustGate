@@ -276,3 +276,41 @@ func validateHTTPBaseURL(raw string) error {
 	}
 	return nil
 }
+
+// Reasoning modes of a Bedrock registry.
+const (
+	BedrockReasoningDrop    = "drop"
+	BedrockReasoningForward = "forward"
+)
+
+// BedrockOptions are the provider_options of a Bedrock registry. Reasoning
+// decides whether the thinking, effort and anthropic-beta options of an
+// Anthropic Messages request reach Claude: turning thinking on changes the
+// latency and cost of every call that asks for it, so it is opt-in.
+type BedrockOptions struct {
+	Reasoning string `mapstructure:"reasoning"`
+}
+
+// ForwardsReasoning reports whether the registry sends reasoning options on.
+func (o BedrockOptions) ForwardsReasoning() bool {
+	return o.Reasoning == BedrockReasoningForward
+}
+
+func DecodeBedrockOptions(options map[string]any) (BedrockOptions, error) {
+	var opts BedrockOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return BedrockOptions{}, fmt.Errorf("bedrock: invalid provider_options: %w", err)
+		}
+	}
+	opts.Reasoning = strings.ToLower(strings.TrimSpace(opts.Reasoning))
+	switch opts.Reasoning {
+	case "":
+		opts.Reasoning = BedrockReasoningDrop
+	case BedrockReasoningDrop, BedrockReasoningForward:
+	default:
+		return BedrockOptions{}, fmt.Errorf("bedrock: provider_options.reasoning must be %q or %q",
+			BedrockReasoningDrop, BedrockReasoningForward)
+	}
+	return opts, nil
+}

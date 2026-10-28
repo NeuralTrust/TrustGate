@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27.3-trixie@sha256:290a54a1f70d617560f843301bcb32b339f1687e8e0bff49ebc043903aeb19d8 AS builder
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS builder
 
 WORKDIR /build
 
@@ -47,7 +47,7 @@ RUN if readelf -d /out/trustgate | grep -q NEEDED; then \
 
 # --- Runtime stage ---------------------------------------------------------
 # distroless "static": CA certificates, tzdata and the nonroot user, no libc.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS runtime
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS runtime
 
 WORKDIR /app
 

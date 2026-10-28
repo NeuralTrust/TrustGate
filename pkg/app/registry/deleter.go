@@ -138,4 +138,15 @@ func (d *deleter) logPrunedRouting(
 			slog.Any("nulled", prune.Nulled),
 		)
 	}
+	// A policy that lost its last destination goes dormant (mcp_scope {}) and
+	// matches nothing until an operator picks a new one, so `emptied` is what
+	// tells an operator why a policy stopped applying.
+	for _, prune := range report.Policies {
+		d.logger.InfoContext(ctx, "registry delete pruned policy scope",
+			slog.String("gateway_id", gatewayID.String()),
+			slog.String("registry_id", id.String()),
+			slog.String("policy_id", prune.PolicyID.String()),
+			slog.Bool("emptied", prune.Emptied),
+		)
+	}
 }
