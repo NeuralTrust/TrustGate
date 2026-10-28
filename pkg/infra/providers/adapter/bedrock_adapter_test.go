@@ -722,9 +722,14 @@ func TestBedrock_DecodeStreamChunk(t *testing.T) {
 			want:  &CanonicalStreamChunk{ReasoningDelta: "hmm"},
 		},
 		{
-			name:  "reasoning signature says nothing",
+			name:  "reasoning signature closes the block",
 			chunk: `{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig"}}}}`,
-			want:  nil,
+			want:  &CanonicalStreamChunk{ReasoningSignature: "sig"},
+		},
+		{
+			name:  "redacted reasoning arrives whole",
+			chunk: `{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"redactedContent":"AQID"}}}}`,
+			want:  &CanonicalStreamChunk{RedactedReasoning: []byte{1, 2, 3}},
 		},
 		{
 			name:  "tool use start names the tool",

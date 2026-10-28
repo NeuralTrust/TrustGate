@@ -245,6 +245,7 @@ var anthropicShape = func() *keyShape {
 		with("tool_choice", shapeOf(anthropicToolChoice{})).
 		with("mcp_servers", shapeOf().key("type", "name", "url")).
 		with("output_config", shapeOf(anthropicOutputConfig{}).with("format", shapeOf().key("type", "schema"))).
+		with("thinking", shapeOf().key("type", "budget_tokens", "display")).
 		with("cache_control", cache)
 }()
 

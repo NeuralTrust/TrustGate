@@ -134,7 +134,7 @@ func TestGateAnthropicConverseFields(t *testing.T) {
 func TestAnthropicKeysUnmappedOnConverse(t *testing.T) {
 	got := AnthropicKeysUnmappedOnConverse([]byte(`{"model":"m","messages":[],"max_tokens":1,"thinking":{"type":"adaptive"},
 		"metadata":{"user_id":"u"},"context_management":{},"output_config":{"format":{},"effort":"high"}}`))
-	assert.Equal(t, []string{"context_management", "metadata", "output_config.effort", "thinking"}, got)
+	assert.Equal(t, []string{"context_management", "metadata"}, got)
 	assert.Nil(t, AnthropicKeysUnmappedOnConverse([]byte(`not json`)))
 }
 
@@ -150,4 +150,101 @@ func mustJSON(t *testing.T, v any) string {
 	b, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(b)
+}
+
+func TestAnthropicToConverse_ThinkingAndEffort(t *testing.T) {
+	req := anthropicToConverse(t, `{"model":"claude","max_tokens":4096,"messages":[{"role":"user","content":"hi"}],
+		"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"high"}}`)
+
+	assert.JSONEq(t, `{"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"high"}}`,
+		mustJSON(t, req.AdditionalModelRequestFields), "thinking travels verbatim")
+	assert.Nil(t, req.OutputConfig, "effort is not a textFormat")
+}
+
+func TestAnthropicToConverse_HistoryKeepsSignedReasoning(t *testing.T) {
+	req := anthropicToConverse(t, `{"model":"claude","max_tokens":4096,"messages":[
+		{"role":"user","content":"weather?"},
+		{"role":"assistant","content":[
+			{"type":"thinking","thinking":"need the tool","signature":"sig-1"},
+			{"type":"redacted_thinking","data":"AQID"},
+			{"type":"text","text":"Checking."},
+			{"type":"tool_use","id":"tu_1","name":"get_weather","input":{"city":"Madrid"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"sunny"}]}],
+		"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`)
+
+	require.Len(t, req.Messages, 3)
+	content := req.Messages[1].Content
+	require.Len(t, content, 4)
+	require.NotNil(t, content[0].ReasoningContent)
+	assert.Equal(t, &ConverseReasoningText{Text: "need the tool", Signature: "sig-1"}, content[0].ReasoningContent.ReasoningText)
+	require.NotNil(t, content[1].ReasoningContent)
+	assert.Equal(t, []byte{1, 2, 3}, content[1].ReasoningContent.RedactedContent, "the payload goes back as the bytes it came as")
+	assert.Equal(t, "Checking.", content[2].Text)
+	require.NotNil(t, content[3].ToolUse)
+}
+
+func TestConverseToAnthropic_ResponseKeepsSignatures(t *testing.T) {
+	out, err := NewRegistry().AdaptResponse([]byte(`{"output":{"message":{"role":"assistant","content":[
+		{"reasoningContent":{"reasoningText":{"text":"17 has no divisors","signature":"sig-a"}}},
+		{"reasoningContent":{"redactedContent":"AQID"}},
+		{"reasoningContent":{"reasoningText":{"text":"","signature":"sig-b"}}},
+		{"text":"Yes."}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":2,"totalTokens":3}}`),
+		FormatAnthropic, FormatBedrock)
+	require.NoError(t, err)
+
+	var resp struct {
+		Content []map[string]any `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(out, &resp))
+	require.Len(t, resp.Content, 4)
+	assert.Equal(t, map[string]any{"type": "thinking", "thinking": "17 has no divisors", "signature": "sig-a"}, resp.Content[0])
+	assert.Equal(t, map[string]any{"type": "redacted_thinking", "data": "AQID"}, resp.Content[1])
+	assert.Equal(t, map[string]any{"type": "thinking", "thinking": "", "signature": "sig-b"}, resp.Content[2],
+		"an omitted reasoning keeps its empty thinking field")
+	assert.Equal(t, "Yes.", resp.Content[3]["text"])
+}
+
+func TestDropConverseAdditionalFields(t *testing.T) {
+	out, dropped, err := DropConverseAdditionalFields([]byte(`{"messages":[],"additionalModelRequestFields":{"top_k":5,"thinking":{"type":"adaptive"}}}`),
+		ConverseReasoningFields...)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"thinking"}, dropped)
+	assert.JSONEq(t, `{"top_k":5}`, string(topLevelKeys(t, out)["additionalModelRequestFields"]))
+
+	body := []byte(`{"messages":[]}`)
+	out, dropped, err = DropConverseAdditionalFields(body, ConverseReasoningFields...)
+	require.NoError(t, err)
+	assert.Empty(t, dropped)
+	assert.Equal(t, body, out)
+}
+
+func TestAnthropicRedactedData_RoundTrip(t *testing.T) {
+	for _, payload := range [][]byte{{0xff, 0x00, 0xfe}, []byte("plain text")} {
+		assert.Equal(t, payload, anthropicRedactedBytes(anthropicRedactedData(payload)))
+	}
+	assert.Equal(t, []byte("not base64!"), anthropicRedactedBytes("not base64!"))
+}
+
+func TestStripConverseReasoningHistory(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[
+		{"role":"user","content":[{"text":"q"}]},
+		{"role":"assistant","content":[{"reasoningContent":{"reasoningText":{"text":"t","signature":"s"}}},{"text":"a"}]},
+		{"role":"user","content":[{"text":"q2"}]},
+		{"role":"assistant","content":[{"reasoningContent":{"redactedContent":"AQID"}}]},
+		{"role":"user","content":[{"text":"q3"}]}]}`)
+
+	out, stripped, err := StripConverseReasoningHistory(body)
+	require.NoError(t, err)
+	assert.True(t, stripped)
+	req := decodeConverse(t, out)
+	require.Len(t, req.Messages, 3, "a turn left empty goes, and the user turns around it merge")
+	assert.Equal(t, []ConverseContentBlock{{Text: "a"}}, req.Messages[1].Content)
+	assert.Equal(t, []ConverseContentBlock{{Text: "q2"}, {Text: "q3"}}, req.Messages[2].Content)
+	assert.JSONEq(t, `"m"`, string(topLevelKeys(t, out)["model"]))
+
+	clean := []byte(`{"messages":[{"role":"user","content":[{"text":"q"}]}]}`)
+	out, stripped, err = StripConverseReasoningHistory(clean)
+	require.NoError(t, err)
+	assert.False(t, stripped)
+	assert.Equal(t, clean, out)
 }
