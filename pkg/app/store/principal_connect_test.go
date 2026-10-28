@@ -21,7 +21,10 @@ import (
 
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type mintedTicket struct {
@@ -37,6 +40,36 @@ type fakeTicketMinter struct {
 	got mintedTicket
 	id  string
 	err error
+}
+
+type connectRegistries struct {
+	items []*registrydomain.Registry
+}
+
+func (r connectRegistries) List(context.Context, registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
+	return r.items, len(r.items), nil
+}
+
+type connectGrants struct {
+	items []*storeaccessdomain.Grant
+}
+
+func (g connectGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
+	return g.items, nil
+}
+
+type connectGateways struct {
+	gateway *gatewaydomain.Gateway
+}
+
+func (g connectGateways) FindByID(context.Context, ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	return g.gateway, nil
+}
+
+func connectGateway(gatewayID ids.GatewayID, mode string) connectGateways {
+	return connectGateways{gateway: &gatewaydomain.Gateway{
+		ID: gatewayID, Metadata: gatewaydomain.WithStoreMode(nil, mode),
+	}}
 }
 
 func (f *fakeTicketMinter) CreateResumableServerTicket(
@@ -57,17 +90,26 @@ func (f *fakeTicketMinter) CreateResumableServerTicket(
 
 func TestPrincipalConnectLinkerMintsAgainstTheStorePath(t *testing.T) {
 	minter := &fakeTicketMinter{id: "tkt-1"}
-	linker, err := appstore.NewPrincipalConnectLinker(minter)
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.ahrefs/mcp"},
+	}
+	linker, err := appstore.NewPrincipalConnectLinker(
+		minter,
+		connectRegistries{items: []*registrydomain.Registry{registry}},
+		connectGrants{},
+		nil,
+		connectGateway(gw, gatewaydomain.StoreModeOpen),
+	)
 	if err != nil {
 		t.Fatalf("NewPrincipalConnectLinker: %v", err)
 	}
-	gw := ids.New[ids.GatewayKind]()
-	reg := ids.New[ids.RegistryKind]()
 	link, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
 		GatewayID:    gw,
 		PrincipalSub: "ana",
 		Code:         "com.ahrefs/mcp",
-		RegistryID:   reg,
+		RegistryID:   registry.ID,
 	})
 	if err != nil {
 		t.Fatalf("LinkFor: %v", err)
@@ -80,7 +122,7 @@ func TestPrincipalConnectLinkerMintsAgainstTheStorePath(t *testing.T) {
 		principalSub: "ana",
 		consumerPath: "/store/mcp",
 		code:         "com.ahrefs/mcp",
-		instanceID:   reg.String(),
+		instanceID:   registry.ID.String(),
 	}
 	if minter.got != want {
 		t.Fatalf("minted %+v, want %+v", minter.got, want)
@@ -91,7 +133,7 @@ func TestPrincipalConnectLinkerMintsAgainstTheStorePath(t *testing.T) {
 // holds once needs no pinning, and the connect page opens on its own card.
 func TestPrincipalConnectLinkerOmitsAnEmptyInstance(t *testing.T) {
 	minter := &fakeTicketMinter{id: "tkt-2"}
-	linker, _ := appstore.NewPrincipalConnectLinker(minter)
+	linker, _ := appstore.NewPrincipalConnectLinker(minter, connectRegistries{}, nil, nil, nil)
 	if _, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
 		GatewayID:    ids.New[ids.GatewayKind](),
 		PrincipalSub: " ana ",
@@ -111,7 +153,7 @@ func TestPrincipalConnectLinkerOmitsAnEmptyInstance(t *testing.T) {
 // it so the connect page can send the user back there.
 func TestPrincipalConnectLinkerCarriesTheResumeURL(t *testing.T) {
 	minter := &fakeTicketMinter{id: "tkt-4"}
-	linker, _ := appstore.NewPrincipalConnectLinker(minter)
+	linker, _ := appstore.NewPrincipalConnectLinker(minter, connectRegistries{}, nil, nil, nil)
 	if _, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
 		GatewayID:    ids.New[ids.GatewayKind](),
 		PrincipalSub: "ana",
@@ -126,7 +168,7 @@ func TestPrincipalConnectLinkerCarriesTheResumeURL(t *testing.T) {
 }
 
 func TestPrincipalConnectLinkerValidatesItsInput(t *testing.T) {
-	linker, _ := appstore.NewPrincipalConnectLinker(&fakeTicketMinter{id: "tkt-3"})
+	linker, _ := appstore.NewPrincipalConnectLinker(&fakeTicketMinter{id: "tkt-3"}, connectRegistries{}, nil, nil, nil)
 	cases := map[string]appstore.PrincipalConnectRequest{
 		"no gateway":   {PrincipalSub: "ana", Code: "com.notion/mcp"},
 		"no principal": {GatewayID: ids.New[ids.GatewayKind](), Code: "com.notion/mcp"},
@@ -140,19 +182,97 @@ func TestPrincipalConnectLinkerValidatesItsInput(t *testing.T) {
 }
 
 func TestPrincipalConnectLinkerNeedsAMinter(t *testing.T) {
-	if _, err := appstore.NewPrincipalConnectLinker(nil); err == nil {
+	if _, err := appstore.NewPrincipalConnectLinker(nil, connectRegistries{}, nil, nil, nil); err == nil {
 		t.Fatal("want an error without a ticket minter")
+	}
+	if _, err := appstore.NewPrincipalConnectLinker(&fakeTicketMinter{}, nil, nil, nil, nil); err == nil {
+		t.Fatal("want an error without a registry lister")
 	}
 }
 
 func TestPrincipalConnectLinkerSurfacesAMintFailure(t *testing.T) {
 	boom := errors.New("no connect service")
-	linker, _ := appstore.NewPrincipalConnectLinker(&fakeTicketMinter{err: boom})
+	linker, _ := appstore.NewPrincipalConnectLinker(&fakeTicketMinter{err: boom}, connectRegistries{}, nil, nil, nil)
 	if _, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
 		GatewayID:    ids.New[ids.GatewayKind](),
 		PrincipalSub: "ana",
 		Code:         "com.notion/mcp",
 	}); !errors.Is(err, boom) {
 		t.Fatalf("want the mint failure, got %v", err)
+	}
+}
+
+func TestPrincipalConnectLinkerRejectsAnUngrantedInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.notion/mcp"},
+	}
+	minter := &fakeTicketMinter{id: "must-not-mint"}
+	linker, _ := appstore.NewPrincipalConnectLinker(
+		minter,
+		connectRegistries{items: []*registrydomain.Registry{registry}},
+		connectGrants{},
+		nil,
+		connectGateway(gw, gatewaydomain.StoreModeCurated),
+	)
+	_, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "com.notion/mcp", RegistryID: registry.ID,
+	})
+	if !errors.Is(err, commonerrors.ErrForbidden) {
+		t.Fatalf("LinkFor error = %v, want forbidden", err)
+	}
+	if minter.got.instanceID != "" {
+		t.Fatalf("minted an ungranted instance: %+v", minter.got)
+	}
+}
+
+func TestPrincipalConnectLinkerRejectsWhenStoreModeIsNone(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.notion/mcp"},
+	}
+	linker, _ := appstore.NewPrincipalConnectLinker(
+		&fakeTicketMinter{},
+		connectRegistries{items: []*registrydomain.Registry{registry}},
+		connectGrants{},
+		nil,
+		connectGateway(gw, gatewaydomain.StoreModeNone),
+	)
+	_, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "com.notion/mcp", RegistryID: registry.ID,
+	})
+	if !errors.Is(err, appstore.ErrStoreClosed) {
+		t.Fatalf("LinkFor error = %v, want ErrStoreClosed", err)
+	}
+}
+
+func TestPrincipalConnectLinkerMintsForAGrantedInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.notion/mcp"},
+	}
+	grant, err := storeaccessdomain.New(gw, "com.notion/mcp", registry.ID, nil, []string{"ana"})
+	if err != nil {
+		t.Fatalf("new grant: %v", err)
+	}
+	minter := &fakeTicketMinter{id: "tkt-granted"}
+	linker, _ := appstore.NewPrincipalConnectLinker(
+		minter,
+		connectRegistries{items: []*registrydomain.Registry{registry}},
+		connectGrants{items: []*storeaccessdomain.Grant{grant}},
+		nil,
+		connectGateway(gw, gatewaydomain.StoreModeCurated),
+	)
+	link, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "com.notion/mcp", RegistryID: registry.ID,
+	})
+	if err != nil {
+		t.Fatalf("LinkFor: %v", err)
+	}
+	if link.Ticket != "tkt-granted" || minter.got.instanceID != registry.ID.String() {
+		t.Fatalf("granted instance was not minted: link=%+v ticket=%+v", link, minter.got)
 	}
 }

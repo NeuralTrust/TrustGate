@@ -25,6 +25,7 @@ import (
 
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -92,6 +93,10 @@ func newPrincipalAppFor(
 	if caller != "" {
 		app.Use(func(c *fiber.Ctx) error {
 			c.Locals(string(infracontext.UserIDContextKey), caller)
+			c.SetUserContext(identity.WithPrincipal(c.UserContext(), &identity.Principal{
+				Subject: caller,
+				Claims:  map[string]any{identity.ClaimGroups: []string{"eng"}},
+			}))
 			return c.Next()
 		})
 	}
@@ -322,7 +327,8 @@ func TestPrincipalHandler_ConnectLink_MintsForTheCaller(t *testing.T) {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
 	if linker.got == nil || linker.got.PrincipalSub != "ana" || linker.got.Code != "com.ahrefs/mcp" ||
-		linker.got.RegistryID != reg || linker.got.GatewayID != gw {
+		linker.got.RegistryID != reg || linker.got.GatewayID != gw || len(linker.got.Groups) != 1 ||
+		linker.got.Groups[0] != "eng" {
 		t.Fatalf("request not forwarded: %+v", linker.got)
 	}
 	var body map[string]any

@@ -21,21 +21,21 @@ func (_m *ConnectAuditor) EXPECT() *ConnectAuditor_Expecter {
 	return &ConnectAuditor_Expecter{mock: &_m.Mock}
 }
 
-func (_m *ConnectAuditor) ProviderLinked(ctx context.Context, identity oauth.ConnectAuditIdentity, providerID string) {
-	_m.Called(ctx, identity, providerID)
+func (_m *ConnectAuditor) ProviderLinked(ctx context.Context, identity oauth.ConnectAuditIdentity, providerID string, instanceID string) {
+	_m.Called(ctx, identity, providerID, instanceID)
 }
 
 type ConnectAuditor_ProviderLinked_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectAuditor_Expecter) ProviderLinked(ctx interface{}, identity interface{}, providerID interface{}) *ConnectAuditor_ProviderLinked_Call {
-	return &ConnectAuditor_ProviderLinked_Call{Call: _e.mock.On("ProviderLinked", ctx, identity, providerID)}
+func (_e *ConnectAuditor_Expecter) ProviderLinked(ctx interface{}, identity interface{}, providerID interface{}, instanceID interface{}) *ConnectAuditor_ProviderLinked_Call {
+	return &ConnectAuditor_ProviderLinked_Call{Call: _e.mock.On("ProviderLinked", ctx, identity, providerID, instanceID)}
 }
 
-func (_c *ConnectAuditor_ProviderLinked_Call) Run(run func(ctx context.Context, identity oauth.ConnectAuditIdentity, providerID string)) *ConnectAuditor_ProviderLinked_Call {
+func (_c *ConnectAuditor_ProviderLinked_Call) Run(run func(ctx context.Context, identity oauth.ConnectAuditIdentity, providerID string, instanceID string)) *ConnectAuditor_ProviderLinked_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(oauth.ConnectAuditIdentity), args[2].(string))
+		run(args[0].(context.Context), args[1].(oauth.ConnectAuditIdentity), args[2].(string), args[3].(string))
 	})
 	return _c
 }
@@ -45,7 +45,7 @@ func (_c *ConnectAuditor_ProviderLinked_Call) Return() *ConnectAuditor_ProviderL
 	return _c
 }
 
-func (_c *ConnectAuditor_ProviderLinked_Call) RunAndReturn(run func(context.Context, oauth.ConnectAuditIdentity, string)) *ConnectAuditor_ProviderLinked_Call {
+func (_c *ConnectAuditor_ProviderLinked_Call) RunAndReturn(run func(context.Context, oauth.ConnectAuditIdentity, string, string)) *ConnectAuditor_ProviderLinked_Call {
 	_c.Run(run)
 	return _c
 }
