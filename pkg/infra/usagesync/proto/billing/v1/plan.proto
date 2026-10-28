@@ -1,0 +1,33 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copy of the contract owned by the private event-schemas repository
+// (proto/usage/v1). TrustGate is public and cannot depend on that module, so it
+// carries the same package and field numbers; `make check-usagesync-contract`
+// checks that the copy has not drifted.
+
+syntax = "proto3";
+
+package billing.v1;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/usagesync/proto/billing/v1;billingv1";
+
+// Plan is the commercial plan of a tenant. Only this enum of billing.v1 is
+// copied: it is the one usage.v1.UsageState refers to.
+enum Plan {
+  PLAN_UNSPECIFIED = 0;
+  PLAN_FREE = 1;
+  PLAN_STANDARD = 2;
+  PLAN_ENTERPRISE = 3;
+}

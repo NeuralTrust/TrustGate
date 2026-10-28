@@ -246,12 +246,40 @@ func (s *fakeSink) all() []published {
 	return slices.Clone(s.out)
 }
 
+type usageCall struct {
+	req           trafficlabel.Request
+	text          string
+	alreadyCached bool
+}
+
+type fakeUsage struct {
+	mu    sync.Mutex
+	cache *fakeCache
+	calls []usageCall
+}
+
+func (u *fakeUsage) Classified(_ context.Context, req trafficlabel.Request, text string) {
+	u.cache.mu.Lock()
+	_, cached := u.cache.entries[cacheKeyOf(req)]
+	u.cache.mu.Unlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.calls = append(u.calls, usageCall{req: req, text: text, alreadyCached: cached})
+}
+
+func (u *fakeUsage) all() []usageCall {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return slices.Clone(u.calls)
+}
+
 type workerHarness struct {
 	stream     *fakeStream
 	classifier *fakeClassifier
 	cache      *fakeCache
 	sink       *fakeSink
 	recorder   *MockRecorder
+	usage      *fakeUsage
 	worker     *worker
 }
 
@@ -282,7 +310,8 @@ func newWorkerHarnessWith(t *testing.T, cfg WorkerConfig, classifier *fakeClassi
 		sink:       &fakeSink{},
 		recorder:   rec,
 	}
-	h.worker = newWorker(quietLogger(), h.stream, h.classifier, h.cache, h.sink, h.recorder, cfg)
+	h.usage = &fakeUsage{cache: h.cache}
+	h.worker = newWorker(quietLogger(), h.stream, h.classifier, h.cache, h.sink, h.recorder, h.usage, cfg)
 	return h
 }
 
@@ -425,6 +454,39 @@ func TestWorker_DeduplicatesTextsWithinABatch(t *testing.T) {
 	assert.Len(t, h.sink.all(), 3, "every request still gets its result")
 }
 
+func TestWorker_RecordsUsageOncePerClassifierCall(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	first := queued("gw", billing, "same")
+	second := queued("gw", billing, "same")
+	second.TraceID = "trace-second"
+	h.stream.push(first, second, queued("gw", billing, "other"))
+	h.start(t)
+
+	h.waitAcked(t, 3)
+	calls := h.usage.all()
+	require.Len(t, calls, 2, "one record per classifier call, none for the delivery that shared it")
+	byText := map[string]usageCall{}
+	for _, c := range calls {
+		byText[c.text] = c
+		assert.False(t, c.alreadyCached, "usage is recorded before the classification is cached")
+	}
+	assert.Equal(t, first.TraceID, byText["same"].req.TraceID, "the shared call is billed to the first delivery")
+	assert.Contains(t, byText, "other")
+}
+
+func TestWorker_RecordsNoUsageWithoutAClassifierCall(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	hit := queued("gw", billing, "refund")
+	h.cache.put(cacheKeyOf(hit), trafficlabel.Classification{Results: []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Legal"}}})
+	h.stream.push(hit)
+	h.start(t)
+
+	h.waitAcked(t, 1)
+	assert.Empty(t, h.usage.all())
+}
+
 func TestWorker_SplitsBatchesAtBatchMaxTexts(t *testing.T) {
 	t.Parallel()
 	cfg := testWorkerConfig()
@@ -479,6 +541,7 @@ func TestWorker_DropsAfterMaxAttempts(t *testing.T) {
 	assert.Len(t, classifier.recorded(), 2)
 	assert.Empty(t, h.sink.all())
 	assert.Equal(t, ids, h.stream.ackedIDs(), "a text that keeps failing is dropped, not left pending forever")
+	assert.Empty(t, h.usage.all(), "a failed classifier call is not billed")
 }
 
 func TestWorker_AFailingTextDoesNotHoldBackItsBatch(t *testing.T) {

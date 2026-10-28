@@ -98,6 +98,8 @@ type Compiler struct {
 	revMu            sync.Mutex
 	lastRevocations  []readmodel.SessionRevocation
 	revocationsKnown bool
+
+	usageEnforcement bool
 }
 
 // StoreGrantReader is the read side the compiler needs for MCP Store grants.
@@ -154,6 +156,12 @@ func WithPlaygroundTokenKeys(keys []readmodel.VerificationKey) CompilerOption {
 	return func(c *Compiler) {
 		c.playgroundTokenKeys = keys
 	}
+}
+
+// WithUsageEnforcement stamps every snapshot flavor with whether the control
+// plane enforces Usage System states.
+func WithUsageEnforcement(enabled bool) CompilerOption {
+	return func(c *Compiler) { c.usageEnforcement = enabled }
 }
 
 // WithTenantCaps stamps each snapshot with the plan caps of the tenants whose
@@ -274,6 +282,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 		return nil, err
 	}
 	stampSessionRevocations(&data, revocations)
+	data.UsageEnforcement = c.usageEnforcement
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -340,9 +349,11 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		return nil, nil, nil, err
 	}
 	stampSessionRevocations(&global, revocations)
+	global.UsageEnforcement = c.usageEnforcement
 	for _, bucket := range buckets {
 		stampTenantCaps(bucket, caps)
 		stampSessionRevocations(bucket, revocations)
+		bucket.UsageEnforcement = c.usageEnforcement
 	}
 
 	cat, err := c.collectCatalogData(ctx)

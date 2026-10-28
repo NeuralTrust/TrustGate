@@ -25,6 +25,7 @@ import (
 	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -102,6 +103,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithTenantCaps(r.TenantCaps),
 			appsnapshot.WithSessionRevocations(r.SessionRevocations, cfg.Server.MCPDefaultIdP.SessionMaxAge),
 			appsnapshot.WithSharedOAuth(shared),
+			appsnapshot.WithUsageEnforcement(cfg.Usage.Enabled),
 		), nil
 	}); err != nil {
 		return err
@@ -137,8 +139,12 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, logger *slog.Logger, revocations configsyncgrpc.RevocationChecker) *configsyncgrpc.Service {
-		return configsyncgrpc.NewService(hub, holder, logger, revocations)
+	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, cfg *config.Config, usage appusage.Reader, gateways gatewaydomain.Repository, logger *slog.Logger, revocations configsyncgrpc.RevocationChecker) *configsyncgrpc.Service {
+		var opts []configsyncgrpc.ServiceOption
+		if cfg.Usage.Enabled {
+			opts = append(opts, configsyncgrpc.WithUsage(usage, gateways))
+		}
+		return configsyncgrpc.NewService(hub, holder, logger, revocations, opts...)
 	}); err != nil {
 		return err
 	}

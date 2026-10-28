@@ -21,8 +21,10 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"google.golang.org/grpc"
@@ -54,10 +56,36 @@ type Client struct {
 	lastApplied         string
 	recvMu              sync.Mutex
 	sendMu              sync.Mutex
+
+	usageSink    UsageSink
+	acceptsUsage atomic.Bool
+}
+
+// UsageSink receives the usage snapshots and changes the control plane
+// pushes on the Sync stream.
+type UsageSink interface {
+	ApplySnapshot(snapshot usagedomain.Snapshot)
+	ApplyChanges(states []usagedomain.TenantState)
+}
+
+// SetUsageSink routes usage messages to sink. Without one they are dropped,
+// which is what a data plane that does not enforce usage wants.
+func (c *Client) SetUsageSink(sink UsageSink) {
+	c.recvMu.Lock()
+	defer c.recvMu.Unlock()
+	c.usageSink = sink
+	c.acceptsUsage.Store(sink != nil)
+}
+
+// recvLimit lifts gRPC's 4 MiB receive default: the control plane sends every
+// exhausted tenant in one usage message when the stream opens, and a message
+// over the limit would break the whole stream, config notices included.
+func recvLimit(maxBytes int) grpc.DialOption {
+	return grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBytes))
 }
 
 // NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
-// credentials, and keepalive tuning.
+// credentials, keepalive tuning and the configured receive limit.
 func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error) {
 	creds, err := clientTransportCredentials(cfg)
 	if err != nil {
@@ -71,6 +99,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 			Timeout:             cfg.GRPCKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		recvLimit(cfg.MaxRecvBytes()),
 	}
 	conn, err := grpc.NewClient(cfg.GRPCEndpoint, opts...)
 	if err != nil {
@@ -198,6 +227,16 @@ func (c *Client) Watch(ctx context.Context) (string, error) {
 			if notice := received.msg.GetNotice(); notice != nil {
 				return notice.GetVersion(), nil
 			}
+			if usage := received.msg.GetUsage(); usage != nil && c.usageSink != nil {
+				c.usageSink.ApplySnapshot(usageSnapshotFromProto(usage))
+			}
+			if changes := received.msg.GetUsageChanges(); changes != nil && c.usageSink != nil {
+				states, dropped := usageChangesFromProto(changes)
+				if dropped > 0 {
+					c.logger.WarnContext(ctx, "configsync: dropped usage changes that cannot be applied", slog.Int("dropped", dropped))
+				}
+				c.usageSink.ApplyChanges(states)
+			}
 		}
 	}
 }
@@ -252,8 +291,10 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		return nil, streamErr("open sync stream", err)
 	}
 	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
-		InstanceId:         c.instanceID,
-		LastAppliedVersion: c.lastApplied,
+		InstanceId:          c.instanceID,
+		LastAppliedVersion:  c.lastApplied,
+		AcceptsUsage:        c.acceptsUsage.Load(),
+		AcceptsUsageChanges: c.acceptsUsage.Load(),
 	}}}
 	helloResult := make(chan error, 1)
 	go func() { helloResult <- stream.Send(hello) }()

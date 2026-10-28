@@ -87,6 +87,9 @@ const (
 	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
+	defaultUsageRecordsEnabled  = false
+	defaultUsageRecordsQueue    = 65536
+	maxUsageRecordsQueue        = 1 << 20
 	defaultMetricsQueueSize     = 1000
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
@@ -158,9 +161,13 @@ const (
 	defaultMCPConnectRateLimitConsumer = 100
 	defaultMCPConnectRateLimitWindow   = time.Minute
 
-	defaultConfigSyncGRPCListenAddr               = ":8083"
-	defaultConfigSyncGRPCKeepaliveTime            = 30 * time.Second
-	defaultConfigSyncGRPCKeepaliveTimeout         = 10 * time.Second
+	defaultConfigSyncGRPCListenAddr       = ":8083"
+	defaultConfigSyncGRPCKeepaliveTime    = 30 * time.Second
+	defaultConfigSyncGRPCKeepaliveTimeout = 10 * time.Second
+	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
+	// message limit and the data plane's default Sync receive limit: the usage
+	// list goes from one to the other in a single message.
+	defaultGRPCMaxMessageBytes                    = 64 << 20
 	defaultConfigSyncGRPCMinBackoff               = 1 * time.Second
 	defaultConfigSyncGRPCMaxBackoff               = 30 * time.Second
 	defaultConfigSyncOutboxRetention              = 24 * time.Hour
@@ -189,6 +196,7 @@ type Config struct {
 	SessionStore        SessionStoreConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
+	UsageRecords        UsageRecordsConfig
 	TrafficLabels       TrafficLabelsConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
@@ -206,6 +214,104 @@ type Config struct {
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
 	AdminM2M            AdminM2MConfig
+	Usage               UsageConfig
+}
+
+// UsageConfig controls Usage System enforcement. It is off by default, and off
+// means today's behaviour: no usage states reach the data planes, nothing is
+// blocked for usage and readiness does not wait for a usage list. Only the
+// admin and run planes read it; DB-less data planes follow the flag in the
+// snapshot.
+type UsageConfig struct {
+	// Enabled is USAGE_SYSTEM_ENABLED.
+	Enabled bool
+	// ReadyTimeout is USAGE_READY_TIMEOUT: how long a plane stays not ready
+	// while it has no usage list before it serves without one and logs.
+	ReadyTimeout time.Duration
+	// GRPCAddr is USAGE_SYSTEM_GRPC_ADDR, the host:port of Usage System's
+	// UsageSync service. Empty means the control plane only serves the states
+	// cached in Redis.
+	GRPCAddr string
+	// GRPCInsecure is USAGE_SYSTEM_GRPC_INSECURE: plaintext for the in-cluster
+	// service instead of TLS.
+	GRPCInsecure bool
+	// GRPCToken is USAGE_SYSTEM_GRPC_TOKEN, sent as a bearer token on the stream.
+	GRPCToken string
+	// GRPCKeepaliveTime is USAGE_SYSTEM_GRPC_KEEPALIVE_TIME, at least
+	// minUsageGRPCKeepaliveTime: gRPC raises anything shorter to that floor,
+	// which is also Usage System's keepalive enforcement MinTime.
+	GRPCKeepaliveTime time.Duration
+	// GRPCKeepaliveTimeout is USAGE_SYSTEM_GRPC_KEEPALIVE_TIMEOUT.
+	GRPCKeepaliveTimeout time.Duration
+	// GRPCMaxMessageBytes is USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES. A snapshot
+	// lists every exhausted tenant in one message, so it must fit.
+	GRPCMaxMessageBytes int
+	// ReconnectMinBackoff and ReconnectMaxBackoff are
+	// USAGE_SYSTEM_RECONNECT_MIN_BACKOFF and USAGE_SYSTEM_RECONNECT_MAX_BACKOFF,
+	// the jittered wait between UsageSync reconnects.
+	ReconnectMinBackoff time.Duration
+	ReconnectMaxBackoff time.Duration
+	// CacheRestoreInterval and CacheRestoreMaxBackoff are
+	// USAGE_CACHE_RESTORE_INTERVAL and USAGE_CACHE_RESTORE_MAX_BACKOFF, the wait
+	// between attempts to load the Redis cache at boot.
+	CacheRestoreInterval   time.Duration
+	CacheRestoreMaxBackoff time.Duration
+	// CacheWriteTimeout is USAGE_CACHE_WRITE_TIMEOUT, the bound on one chunk of
+	// Redis writes.
+	CacheWriteTimeout time.Duration
+	// CacheRetryInterval is USAGE_CACHE_RETRY_INTERVAL, how often states a
+	// failed Redis write left behind are written again.
+	CacheRetryInterval time.Duration
+	// CacheResyncInterval is USAGE_CACHE_RESYNC_INTERVAL, how often every held
+	// state is written again, so a cache flushed while the plane runs refills.
+	CacheResyncInterval time.Duration
+}
+
+// Validate checks the settings the admin and run planes use when Usage System
+// is enabled. It is not part of Config.Validate: the variables may be shared
+// with data planes that never read them, and those must not fail to boot over
+// them.
+func (u UsageConfig) Validate() error {
+	if !u.Enabled {
+		return nil
+	}
+	if u.GRPCAddr != "" {
+		if host, port, err := net.SplitHostPort(u.GRPCAddr); err != nil || host == "" || port == "" {
+			return fmt.Errorf("%w: USAGE_SYSTEM_GRPC_ADDR must be a well-formed host:port", errors.ErrInvalidConfig)
+		}
+	}
+	for _, d := range []struct {
+		key   string
+		value time.Duration
+	}{
+		{"USAGE_READY_TIMEOUT", u.ReadyTimeout},
+		{"USAGE_SYSTEM_GRPC_KEEPALIVE_TIME", u.GRPCKeepaliveTime},
+		{"USAGE_SYSTEM_GRPC_KEEPALIVE_TIMEOUT", u.GRPCKeepaliveTimeout},
+		{"USAGE_SYSTEM_RECONNECT_MIN_BACKOFF", u.ReconnectMinBackoff},
+		{"USAGE_SYSTEM_RECONNECT_MAX_BACKOFF", u.ReconnectMaxBackoff},
+		{"USAGE_CACHE_RESTORE_INTERVAL", u.CacheRestoreInterval},
+		{"USAGE_CACHE_RESTORE_MAX_BACKOFF", u.CacheRestoreMaxBackoff},
+		{"USAGE_CACHE_WRITE_TIMEOUT", u.CacheWriteTimeout},
+		{"USAGE_CACHE_RETRY_INTERVAL", u.CacheRetryInterval},
+		{"USAGE_CACHE_RESYNC_INTERVAL", u.CacheResyncInterval},
+	} {
+		if d.value <= 0 {
+			return fmt.Errorf("%w: %s must be a positive duration", errors.ErrInvalidConfig, d.key)
+		}
+	}
+	if u.GRPCKeepaliveTime < minUsageGRPCKeepaliveTime {
+		return fmt.Errorf("%w: USAGE_SYSTEM_GRPC_KEEPALIVE_TIME must be at least %s", errors.ErrInvalidConfig, minUsageGRPCKeepaliveTime)
+	}
+	if u.ReconnectMinBackoff > u.ReconnectMaxBackoff {
+		return fmt.Errorf("%w: USAGE_SYSTEM_RECONNECT_MIN_BACKOFF must not exceed USAGE_SYSTEM_RECONNECT_MAX_BACKOFF", errors.ErrInvalidConfig)
+	}
+	if u.CacheRestoreInterval > u.CacheRestoreMaxBackoff {
+		return fmt.Errorf("%w: USAGE_CACHE_RESTORE_INTERVAL must not exceed USAGE_CACHE_RESTORE_MAX_BACKOFF", errors.ErrInvalidConfig)
+	}
+	if u.GRPCMaxMessageBytes <= 0 {
+		return fmt.Errorf("%w: USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES must be positive", errors.ErrInvalidConfig)
+	}
+	return nil
 }
 
 // AdminM2MPublicKey is one verification key advertised by the credential
@@ -282,8 +388,14 @@ type ConfigSyncConfig struct {
 	GRPCKeepaliveTimeout time.Duration
 	GRPCMinBackoff       time.Duration
 	GRPCMaxBackoff       time.Duration
-	OutboxRetention      time.Duration
-	OutboxMaxRows        int64
+	// GRPCMaxRecvBytes is CONFIG_SYNC_GRPC_MAX_RECV_BYTES, the largest message a
+	// data plane accepts on the Sync stream. The usage list travels in one
+	// message, so it must be at least the control plane's
+	// USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES, and never below its 64 MiB default.
+	// Read it through MaxRecvBytes, which applies the default to a zero value.
+	GRPCMaxRecvBytes int
+	OutboxRetention  time.Duration
+	OutboxMaxRows    int64
 	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
 	// serve them after a restart while compiling fails.
 	AdminLKGEnabled bool
@@ -380,6 +492,26 @@ type ServerConfig struct {
 // DefaultAdminTokenMaxTTL is the AdminTokenMaxTTL used when the setting is
 // absent or invalid.
 const DefaultAdminTokenMaxTTL = time.Hour
+
+const (
+	// defaultUsageReadyTimeout bounds how long a plane waits for its first
+	// usage list before it reports ready without one.
+	defaultUsageReadyTimeout = 30 * time.Second
+
+	defaultUsageGRPCKeepaliveTime      = 30 * time.Second
+	defaultUsageGRPCKeepaliveTimeout   = 10 * time.Second
+	defaultUsageGRPCMaxMessageBytes    = defaultGRPCMaxMessageBytes
+	defaultUsageReconnectMinBackoff    = time.Second
+	defaultUsageReconnectMaxBackoff    = 30 * time.Second
+	defaultUsageCacheRestoreInterval   = 2 * time.Second
+	defaultUsageCacheRestoreMaxBackoff = time.Minute
+	defaultUsageCacheWriteTimeout      = 3 * time.Second
+	defaultUsageCacheRetryInterval     = 10 * time.Second
+	defaultUsageCacheResyncInterval    = 5 * time.Minute
+
+	// minUsageGRPCKeepaliveTime is gRPC's floor for client keepalive pings.
+	minUsageGRPCKeepaliveTime = 10 * time.Second
+)
 
 type MCPDefaultIdPConfig struct {
 	Issuer       string
@@ -481,6 +613,15 @@ type OTLPConfig struct {
 	Timeout         time.Duration
 	Insecure        bool
 	Compression     string
+}
+
+// UsageRecordsConfig drives the usage metering records. OTLP holds only the
+// USAGE_RECORDS_OTLP_* values; without an endpoint of its own the pipeline uses
+// the operator's OTEL_EXPORTER_OTLP_* collector, headers and transport.
+type UsageRecordsConfig struct {
+	Enabled   bool
+	QueueSize int
+	OTLP      OTLPConfig
 }
 
 type MetricsConfig struct {
@@ -680,6 +821,7 @@ func LoadConfig() (*Config, error) {
 		SessionStore:        getSessionStoreConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
+		UsageRecords:        getUsageRecordsConfig(),
 		TrafficLabels:       getTrafficLabelsConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
@@ -697,6 +839,7 @@ func LoadConfig() (*Config, error) {
 		RateLimit:           rateLimit,
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
+		Usage:               getUsageConfig(),
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.
@@ -944,6 +1087,40 @@ func getTrafficLabelsConfig() TrafficLabelsConfig {
 	}
 }
 
+func getUsageConfig() UsageConfig {
+	return UsageConfig{
+		Enabled:                getEnvBool("USAGE_SYSTEM_ENABLED", false),
+		ReadyTimeout:           getEnvDuration("USAGE_READY_TIMEOUT", defaultUsageReadyTimeout),
+		GRPCAddr:               strings.TrimSpace(getEnv("USAGE_SYSTEM_GRPC_ADDR", "")),
+		GRPCInsecure:           getEnvBool("USAGE_SYSTEM_GRPC_INSECURE", false),
+		GRPCToken:              getEnv("USAGE_SYSTEM_GRPC_TOKEN", ""),
+		GRPCKeepaliveTime:      getEnvDuration("USAGE_SYSTEM_GRPC_KEEPALIVE_TIME", defaultUsageGRPCKeepaliveTime),
+		GRPCKeepaliveTimeout:   getEnvDuration("USAGE_SYSTEM_GRPC_KEEPALIVE_TIMEOUT", defaultUsageGRPCKeepaliveTimeout),
+		GRPCMaxMessageBytes:    getEnvInt("USAGE_SYSTEM_GRPC_MAX_MESSAGE_BYTES", defaultUsageGRPCMaxMessageBytes),
+		ReconnectMinBackoff:    getEnvDuration("USAGE_SYSTEM_RECONNECT_MIN_BACKOFF", defaultUsageReconnectMinBackoff),
+		ReconnectMaxBackoff:    getEnvDuration("USAGE_SYSTEM_RECONNECT_MAX_BACKOFF", defaultUsageReconnectMaxBackoff),
+		CacheRestoreInterval:   getEnvDuration("USAGE_CACHE_RESTORE_INTERVAL", defaultUsageCacheRestoreInterval),
+		CacheRestoreMaxBackoff: getEnvDuration("USAGE_CACHE_RESTORE_MAX_BACKOFF", defaultUsageCacheRestoreMaxBackoff),
+		CacheWriteTimeout:      getEnvDuration("USAGE_CACHE_WRITE_TIMEOUT", defaultUsageCacheWriteTimeout),
+		CacheRetryInterval:     getEnvDuration("USAGE_CACHE_RETRY_INTERVAL", defaultUsageCacheRetryInterval),
+		CacheResyncInterval:    getEnvDuration("USAGE_CACHE_RESYNC_INTERVAL", defaultUsageCacheResyncInterval),
+	}
+}
+
+func getUsageRecordsConfig() UsageRecordsConfig {
+	return UsageRecordsConfig{
+		Enabled:   getEnvBool("USAGE_RECORDS_ENABLED", defaultUsageRecordsEnabled),
+		QueueSize: getEnvInt("USAGE_RECORDS_QUEUE_SIZE", defaultUsageRecordsQueue),
+		OTLP: OTLPConfig{
+			Endpoint: getEnv("USAGE_RECORDS_OTLP_ENDPOINT", ""),
+			Protocol: getEnv("USAGE_RECORDS_OTLP_PROTOCOL", ""),
+			Headers:  parseOTLPHeaders(getEnv("USAGE_RECORDS_OTLP_HEADERS", "")),
+			Timeout:  getEnvDuration("USAGE_RECORDS_OTLP_TIMEOUT", 0),
+			Insecure: getEnvBool("USAGE_RECORDS_OTLP_INSECURE", false),
+		},
+	}
+}
+
 func getMetricsConfig() MetricsConfig {
 	return MetricsConfig{
 		Enabled:       getEnvBool("METRICS_ENABLED", defaultMetricsEnabled),
@@ -1142,6 +1319,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
 		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
+		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
@@ -1345,6 +1523,14 @@ func DBLessDataPlaneEnabled() bool {
 	return getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled)
 }
 
+// MaxRecvBytes is the data plane's Sync receive limit, the default when unset.
+func (cs ConfigSyncConfig) MaxRecvBytes() int {
+	if cs.GRPCMaxRecvBytes == 0 {
+		return defaultGRPCMaxMessageBytes
+	}
+	return cs.GRPCMaxRecvBytes
+}
+
 func (cs ConfigSyncConfig) Validate() error {
 	if !cs.DataPlaneEnabled {
 		return nil
@@ -1367,6 +1553,9 @@ func (cs ConfigSyncConfig) Validate() error {
 	}
 	if cs.PollInterval <= 0 {
 		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if cs.GRPCMaxRecvBytes != 0 && cs.GRPCMaxRecvBytes < defaultGRPCMaxMessageBytes {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_MAX_RECV_BYTES must be at least %d, the control plane's default usage message limit", errors.ErrInvalidConfig, defaultGRPCMaxMessageBytes)
 	}
 	return nil
 }
@@ -1417,6 +1606,9 @@ func (c *Config) Validate() error {
 	if c.Metrics.Enabled && c.Metrics.WorkerCount <= 0 {
 		return fmt.Errorf("%w: METRICS_WORKER_COUNT must be greater than zero", errors.ErrInvalidConfig)
 	}
+	if err := c.validateUsageRecords(); err != nil {
+		return err
+	}
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
@@ -1440,6 +1632,19 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *Config) validateUsageRecords() error {
+	if !c.UsageRecords.Enabled {
+		return nil
+	}
+	if c.UsageRecords.QueueSize <= 0 || c.UsageRecords.QueueSize > maxUsageRecordsQueue {
+		return fmt.Errorf("%w: USAGE_RECORDS_QUEUE_SIZE must be between 1 and %d", errors.ErrInvalidConfig, maxUsageRecordsQueue)
+	}
+	if strings.TrimSpace(c.UsageRecords.OTLP.Endpoint) == "" && strings.TrimSpace(c.Telemetry.OTLP.Endpoint) == "" {
+		return fmt.Errorf("%w: USAGE_RECORDS_ENABLED requires USAGE_RECORDS_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT", errors.ErrInvalidConfig)
 	}
 	return nil
 }
