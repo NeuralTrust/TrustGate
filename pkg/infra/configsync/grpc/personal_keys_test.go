@@ -69,7 +69,7 @@ func (m *memIssuer) Create(_ context.Context, gw ids.GatewayID, owner appauth.Pe
 	m.groups = groups
 	m.email = owner.Email
 	expires := time.Now().Add(time.Hour).Truncate(time.Second)
-	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner.ID, expires, time.Now())
+	a, err := authdomain.NewOwnedAPIKeyAuth(gw, owner.ID, authdomain.KeyGroup{}, ptr(expires), time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -191,3 +191,5 @@ func TestPersonalKeysService_RefusesAGatewayOutsideTheCallersScope(t *testing.T)
 		t.Fatalf("Create on the caller's own gateway: %v", err)
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

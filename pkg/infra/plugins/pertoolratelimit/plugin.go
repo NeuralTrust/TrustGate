@@ -85,7 +85,7 @@ return totals
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
-	redis    *redis.Client
+	redis    redis.UniversalClient
 	registry *adapter.Registry
 	now      func() time.Time
 }
@@ -96,7 +96,7 @@ func WithClock(now func() time.Time) Option {
 	return func(p *Plugin) { p.now = now }
 }
 
-func New(redisClient *redis.Client, adapters *adapter.Registry, opts ...Option) *Plugin {
+func New(redisClient redis.UniversalClient, adapters *adapter.Registry, opts ...Option) *Plugin {
 	p := &Plugin{
 		redis:    redisClient,
 		registry: adapters,
@@ -750,8 +750,8 @@ func (p *Plugin) reject(ctx context.Context, tool string, ws *windowState, dimen
 // rate_limiter has (this plugin only ever runs in enforce), so the decision
 // is always failed_open; base, when non-nil, is prior state worth keeping in
 // the extras anyway (see spentTelemetry) — this only adds
-// FailureReason/FailureDetail on top of it, or of a fresh PerToolRateLimiterData
-// when base is nil.
+// FailureReason/FailureDetail/FailureErrorClass on top of it, or of a fresh
+// PerToolRateLimiterData when base is nil.
 //
 // A ctx the caller itself canceled (or let deadline out) is not a
 // counter-store outage — HandleCounterFailure reports that back as a non-nil
@@ -782,6 +782,7 @@ func (p *Plugin) counterUnavailable(
 	}
 	data.FailureReason = string(appplugins.FailureCounterUnavailable)
 	data.FailureDetail = detail
+	data.FailureErrorClass = appplugins.CounterErrorClass(err)
 	setExtras(in.Event, data)
 	return result, nil
 }
@@ -837,12 +838,16 @@ type windowState struct {
 	total  int
 }
 
+// The scripts touch the dedupe key and every window counter of one subject, and
+// a cluster-mode Redis runs a script only when all its keys share a slot. Both
+// key shapes therefore carry the same {configID:dimension:subject} hash tag:
+// one subject stays on one slot, and distinct subjects spread across slots.
 func counterKey(configID, dimension, subject, tool string, window int) string {
-	return fmt.Sprintf("pertoolrl:%s:%s:%s:%s:w%d", configID, dimension, subject, tool, window)
+	return fmt.Sprintf("pertoolrl:{%s:%s:%s}:%s:w%d", configID, dimension, subject, tool, window)
 }
 
 func dedupeKey(configID, dimension, subject, toolCallID string) string {
-	return fmt.Sprintf("pertoolrl:dedupe:%s:%s:%s:%s", configID, dimension, subject, toolCallID)
+	return fmt.Sprintf("pertoolrl:dedupe:{%s:%s:%s}:%s", configID, dimension, subject, toolCallID)
 }
 
 func largestWindow(rule *ruleConfig) time.Duration {

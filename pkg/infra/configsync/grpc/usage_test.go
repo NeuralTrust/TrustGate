@@ -179,7 +179,7 @@ func exhaustedState(t *testing.T, tenant string, version int64) usagedomain.Tena
 	return s
 }
 
-func openSync(t *testing.T, srv snapshotpb.ConfigSyncServer) snapshotpb.ConfigSync_SyncClient {
+func openUsageSync(t *testing.T, srv snapshotpb.ConfigSyncServer) snapshotpb.ConfigSync_SyncClient {
 	t.Helper()
 	return openSyncWith(t, srv, &snapshotpb.Hello{InstanceId: "dp-1", AcceptsUsage: true})
 }
@@ -246,7 +246,7 @@ func recvUsageMessage(t *testing.T, stream snapshotpb.ConfigSync_SyncClient) *sn
 
 func TestSyncPushesUsageOnConnectAndOnChange(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 4))
-	stream := openSync(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)))
+	stream := openUsageSync(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)))
 
 	first := recvUsage(t, stream)
 	if first.GetAsOfVersion() != 4 || len(first.GetExhausted()) != 1 || first.GetExhausted()[0].GetTenantId() != "tenant-a" ||
@@ -263,7 +263,7 @@ func TestSyncPushesUsageOnConnectAndOnChange(t *testing.T) {
 func TestSyncWithoutUsageSendsNoUsage(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
-	stream := openSync(t, NewService(NewHub(discardLogger(), nil), src, discardLogger()))
+	stream := openUsageSync(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
 	msg, err := stream.Recv()
 	if err != nil {
 		t.Fatalf("recv: %v", err)
@@ -310,7 +310,7 @@ func TestUsageSnapshotForScopes(t *testing.T) {
 			if tt.compiled {
 				src.set([]byte("scoped"), "v1")
 			}
-			svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, tt.gateways))
+			svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil, WithUsage(usage, tt.gateways))
 			msgs := svc.testUsageStream(tt.scope, false).next(context.Background())
 			if sent := len(msgs) > 0; sent != tt.wantSent {
 				t.Fatalf("sent = %v, want %v", sent, tt.wantSent)
@@ -341,7 +341,7 @@ func TestClientWatchIgnoresUsageMessages(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 1))
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil, WithUsage(usage, nil)))
 	client := dialClient(t, lis, "dp-1")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -358,7 +358,7 @@ func TestSyncHoldsUsageUntilTheSourceIsReady(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 2))
 	usage.notReady = true
 	hub := NewHub(discardLogger(), nil)
-	stream := openSync(t, NewService(hub, &fakeSource{}, discardLogger(), WithUsage(usage, nil)))
+	stream := openUsageSync(t, NewService(hub, &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)))
 
 	got := make(chan *snapshotpb.ServerMessage, 1)
 	go func() {
@@ -413,7 +413,7 @@ func TestClientWatchFeedsUsageToTheSink(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 7))
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil, WithUsage(usage, nil)))
 	client := dialClient(t, lis, "dp-1")
 	sink := &recordingSink{}
 	client.SetUsageSink(sink)
@@ -440,13 +440,13 @@ func TestClientWatchReceivesAUsageMessageAboveTheDefaultLimit(t *testing.T) {
 		states = append(states, exhaustedState(t, fmt.Sprintf("00000000-0000-4000-8000-%012d", i), int64(i+1)))
 	}
 	usage := newFakeUsage(states...)
-	msgs := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true).next(context.Background())
+	msgs := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)).testUsageStream("", true).next(context.Background())
 	if size := proto.Size(msgs[0]); size <= 4<<20 {
 		t.Fatalf("usage message is %d bytes; the test needs one above 4 MiB", size)
 	}
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil, WithUsage(usage, nil)))
 	client := dialClient(t, lis, "dp-1")
 	sink := &recordingSink{}
 	client.SetUsageSink(sink)
@@ -492,7 +492,7 @@ func TestSyncSendsOwedUsageOnceTheScopeResolves(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3))
 	src := &fakeSource{}
 	hub := NewHub(discardLogger(), nil)
-	svc := NewService(hub, src, discardLogger(), WithUsage(usage, gateways))
+	svc := NewService(hub, src, discardLogger(), nil, WithUsage(usage, gateways))
 
 	lis := bufconn.Listen(1 << 20)
 	gsrv := grpc.NewServer(grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
@@ -588,7 +588,7 @@ func TestSyncSendsNoUsageToADataPlaneThatDoesNotAcceptIt(t *testing.T) {
 	src := &fakeSource{}
 	src.set([]byte("payload"), "v1")
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 1))
-	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), WithUsage(usage, nil)))
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil, WithUsage(usage, nil)))
 	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -650,7 +650,7 @@ func changedTenants(t *testing.T, msg *snapshotpb.ServerMessage) map[string]snap
 
 func TestSyncSendsADataPlaneThatTakesChangesOnlyWhatChanged(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 4))
-	stream := openSyncWith(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)),
+	stream := openSyncWith(t, NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)),
 		&snapshotpb.Hello{InstanceId: "dp-1", AcceptsUsage: true, AcceptsUsageChanges: true})
 
 	if first := recvUsage(t, stream); first.GetAsOfVersion() != 4 || len(first.GetExhausted()) != 1 {
@@ -673,7 +673,7 @@ func TestSyncSendsADataPlaneThatTakesChangesOnlyWhatChanged(t *testing.T) {
 func TestUsageStreamSendsListsUntilOneIsComplete(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 4))
 	usage.incomplete = true
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)).testUsageStream("", true)
 	ctx := context.Background()
 
 	if msgs := stream.next(ctx); len(msgs) != 1 || msgs[0].GetUsage() == nil || msgs[0].GetUsage().GetAsOfVersion() != 0 {
@@ -717,7 +717,7 @@ func TestUsageStreamScopedToAGatewayGetsOnlyItsTenantsChanges(t *testing.T) {
 	gw := tenantGateway(t, "tenant-a")
 	gateways := &countingGateways{fakeGateways: fakeGateways{byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw}}}
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3), exhaustedState(t, "tenant-b", 5))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, gateways)).testUsageStream(gw.ID.String(), true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, gateways)).testUsageStream(gw.ID.String(), true)
 	ctx := context.Background()
 
 	msgs := stream.next(ctx)
@@ -740,7 +740,7 @@ func TestUsageStreamScopedToAGatewayGetsOnlyItsTenantsChanges(t *testing.T) {
 
 func TestUsageStreamScopedToATenantGetsOnlyItsChanges(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3), exhaustedState(t, "tenant-b", 5))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("tenant-b", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)).testUsageStream("tenant-b", true)
 	ctx := context.Background()
 
 	if msgs := stream.next(ctx); len(msgs) != 1 || len(msgs[0].GetUsage().GetExhausted()) != 1 {
@@ -755,7 +755,7 @@ func TestUsageStreamScopedToATenantGetsOnlyItsChanges(t *testing.T) {
 
 func TestUsageStreamSplitsALargeBurstOfChanges(t *testing.T) {
 	usage := newFakeUsage(exhaustedState(t, "seed", 1))
-	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), WithUsage(usage, nil)).testUsageStream("", true)
+	stream := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil)).testUsageStream("", true)
 	ctx := context.Background()
 	stream.next(ctx)
 
@@ -782,7 +782,7 @@ func TestClientWatchFeedsUsageChangesToTheSink(t *testing.T) {
 	src := &fakeSource{}
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 7))
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), WithUsage(usage, nil)))
+	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), nil, WithUsage(usage, nil)))
 	client := dialClient(t, lis, "dp-1")
 	sink := &recordingSink{}
 	client.SetUsageSink(sink)
@@ -876,7 +876,7 @@ func TestUsageFromTheStoreReachesTheDataPlaneAsChanges(t *testing.T) {
 
 	src := &fakeSource{}
 	hub := NewHub(discardLogger(), nil)
-	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), WithUsage(store, nil)))
+	lis, _ := newBufServer(t, NewService(hub, src, discardLogger(), nil, WithUsage(store, nil)))
 	client := dialClient(t, lis, "dp-1")
 	sink := &countingSink{Enforcement: usageapp.NewEnforcement()}
 	client.SetUsageSink(sink)
@@ -917,7 +917,7 @@ func TestSyncRetriesAnOwedListWithoutAnyChange(t *testing.T) {
 	gateways := &flakyGateways{gw: gw, failing: true}
 	usage := newFakeUsage(exhaustedState(t, "tenant-a", 3))
 	hub := NewHub(discardLogger(), nil)
-	svc := NewService(hub, &fakeSource{}, discardLogger(), WithUsage(usage, gateways))
+	svc := NewService(hub, &fakeSource{}, discardLogger(), nil, WithUsage(usage, gateways))
 	svc.usageRetry = 20 * time.Millisecond
 
 	lis := bufconn.Listen(1 << 20)

@@ -20,6 +20,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
@@ -91,8 +92,15 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.PolicyReader {
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.PolicyReader {
 		return adapters.NewStorePolicyReader(store)
+	}); err != nil {
+		return err
+	}
+	// Group budgets ride the snapshot too, so a group key is held to its
+	// group's budget on a plane with no database.
+	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) keygroupdomain.Reader {
+		return adapters.NewKeyGroupBudgetReader(store)
 	})
 }
 

@@ -52,6 +52,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -590,8 +591,9 @@ func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
 	const geminiFrame = `data: {"error":{"code":500,"message":"upstream stream terminated unexpectedly","status":"INTERNAL"}}`
 	const chunk = `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}`
 	paths := map[string]string{
-		"gemini": "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-		"vertex": "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"gemini":         "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex":         "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex express": "/" + consumerSlug + "/v1beta1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
 	}
 	tests := map[string]func(yield func([]byte, error) bool){
 		"mid-stream error": func(yield func([]byte, error) bool) {
@@ -2026,6 +2028,43 @@ func TestHandleStore_ServesThroughTheSelectedConsumer(t *testing.T) {
 	assert.Equal(t, authID.String(), meta.AuthID)
 	assert.Equal(t, "alice", meta.PrincipalSubject)
 	assert.Equal(t, string(identity.MethodAPIKey), meta.PrincipalMethod)
+}
+
+// A group key's request carries its group's budget, as the gateway's data has
+// it, for the forwarder to hold it to; any other key's carries none.
+func TestHandleStore_GroupKeyCarriesItsGroupsBudget(t *testing.T) {
+	gatewayID, authID := ids.New[ids.GatewayKind](), ids.New[ids.AuthKind]()
+	limit := 10.0
+	budget := &keygroupdomain.Budget{GatewayID: gatewayID, GroupID: "g-eng", MonthlyLimitUSD: &limit, Action: keygroupdomain.ActionBlock}
+	cases := []struct {
+		name  string
+		group string
+		want  *keygroupdomain.Budget
+	}{
+		{name: "group key with a budget", group: "g-eng", want: budget},
+		{name: "group key without one", group: "g-sre"},
+		{name: "personal key"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := storeData(gatewayID, authID, personalSpec{provider: "openai", allowed: []string{"gpt-4o-mini"}})
+			data.SetKeyGroupBudgets([]*keygroupdomain.Budget{budget})
+			authCtx := ownerAuth(gatewayID, authID)
+			authCtx.KeyGroupID = tc.group
+			app, fwd, _ := newStoreApp(t, data, authCtx, nil)
+			var got *infracontext.RequestContext
+			fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+				Run(func(_ context.Context, in appproxy.ForwardInput) { got = in.Request }).
+				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+
+			resp, err := app.Test(storeChat("gpt-4o-mini"))
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			require.NotNil(t, got)
+			assert.Equal(t, tc.group, got.KeyGroupID)
+			assert.Same(t, tc.want, got.KeyGroupBudget)
+		})
+	}
 }
 
 func TestHandleStore_UserLinkKeepsTheSubstitutedProviderOut(t *testing.T) {

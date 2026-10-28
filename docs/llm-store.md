@@ -16,7 +16,8 @@ granted consumers. A key attached to a consumer *is* the authorisation.
 | Concept | What it is |
 |---|---|
 | Personal consumer | An LLM consumer created with `"audience": "personal"`. It is configured like any LLM consumer, but it is never reachable at `/<slug>/v1`, it takes no bulk `auths`, and it needs a concrete (non-glob) default model on at least one primary registry. The audience is set at create and never changes. |
-| Personal key | An `api_key` auth with an `owner_id` (the platform user id). One per user per gateway, valid for at most 90 days. It works on `/store/v1` and on the MCP Store (`/store/mcp`, see The MCP Store), nowhere else. `GET /auths` hides it. |
+| Personal key | An `api_key` auth with an `owner_id` (the platform user id). It never expires, or expires at most 366 days after it is issued or rotated. It works on `/store/v1` and on the MCP Store (`/store/mcp`, see The MCP Store), nowhere else. `GET /auths` hides it. A user holds at most one personal key with no group and one group key per directory group on a gateway. |
+| Group key | A personal key with a `group_id` (the console's directory group id) and a `group_name` (the group's directory name). Its spend is attributed to that group (Telemetry), held to the group's budget (Group budgets) and its MCP Store access is the group's (Group keys). The console decides who may hold a key for which group; TrustGate stores the group and enforces what it implies. |
 | Link | The attachment of a personal key to a personal consumer, with three attributes: `level` (`user`, `group` or `all`), `priority` (an integer, lower first, default 1) and `granted_at` (when the grant was made, the stable tie-break). A key has N ≥ 0 links. |
 
 ## Admin setup
@@ -44,10 +45,11 @@ POST /v1/gateways/{gateway_id}/consumers/{consumer_id}/auths/{auth_id}
 ```
 
 `DELETE` on the same path removes the link. `GET /v1/gateways/{gateway_id}/auths?owner_id=<user id>`
-finds a user's key, and `GET …/auths?owned=true` lists every personal key of
-the gateway with the list's usual pagination (`owned=false` and no parameter
-list application keys only). Each personal key in a response carries
-`owner_id` and, when it has one, `budget`.
+lists every key of a user, the personal key and each group key, and
+`GET …/auths?owned=true` lists every personal key of the gateway with the
+list's usual pagination (`owned=false` and no parameter list application keys
+only). Each personal key in a response carries `owner_id` and, when it has
+them, `budget`, `group_id` and `group_name`.
 
 Give a user a spending limit by setting a budget on their key:
 
@@ -91,7 +93,7 @@ whole membership again whenever it changes; an empty list clears it:
 
 ```json
 PUT /v1/gateways/{gateway_id}/auths/{auth_id}/groups
-{"groups": ["engineering", "sre"], "email": "alice@example.com"}
+{"groups": ["engineering", "sre"], "email": "alice@example.com", "group_name": "engineering"}
 ```
 
 The answer is 200 with the auth, `owner_groups` and `owner_email` included.
@@ -101,9 +103,13 @@ the recorded one, empty clears it, and one that is not an address answers 422
 `validation_failed`. A key created from the Portal records the email its
 sign-in carries, so `email` is for keys made before that, or an owner whose
 address changed. An application key answers 422 `application_key`, an unknown
-key or one of another gateway 404. The secret, the expiry, the budget and the
-links never change, and a rotation keeps the groups and the email. The change
-reaches the proxies as a budget change does.
+key or one of another gateway 404. `group_name` is optional and renames a
+group key's group when the directory renames it (trimmed, at most 256
+characters); sent for a key with no group it answers 422 `personal_key`. A
+group key's `groups` are still every group of its owner. The secret, the
+expiry, the budget, the group id and the links never change, and a rotation
+keeps the groups and the email. The change reaches the proxies as a budget
+change does.
 
 ## Key lifecycle
 
@@ -114,21 +120,31 @@ names another owner.
 | Call | Result |
 |---|---|
 | `GET /v1/gateways/{gateway_id}/store/principal/llm-key` | 200 with `id`, `consumer_ids`, prefix, suffix and expiry, never the secret. 404 without a key. |
-| `POST …/llm-key` `{"expires_at": "<RFC 3339>"}` | 201 with the secret in `api_key` (the field the admin auth responses use), shown once, linked to nothing. 409 if the user already has a key, 422 for an expiry not in (now, now + 90 days] or a hybrid gateway. |
-| `POST …/llm-key/rotate` `{"expires_at"?}` | 200 with a new secret. Same id, same links. Without `expires_at` the current expiry stays, unless it has passed (422). Two rotations racing each other: the first wins and the second answers 409 `conflict` without changing anything, so the secret shown is always the live one. |
+| `POST …/llm-key` `{"expires_at"?: "<RFC 3339>"}` | 201 with the secret in `api_key` (the field the admin auth responses use), shown once, linked to nothing. Without `expires_at` (absent, `null` or empty, or no body) the key never expires. 409 if the user already has a personal key, 422 for an expiry not in (now, now + 366 days] or a hybrid gateway. |
+| `POST …/llm-key/rotate` `{"expires_at"?, "never_expires"?}` | 200 with a new secret. Same id, same links. Without either field the current expiry stays (a key that never expires stays so), unless it has passed (422). `"never_expires": true` renews the key with no expiry; together with `expires_at` it answers 422. Two rotations racing each other: the first wins and the second answers 409 `conflict` without changing anything, so the secret shown is always the live one. |
 | `DELETE …/llm-key` | 204. The key and its links are gone in one transaction; a new create starts with no links. |
+| `GET …/store/principal/llm-keys` | 200 `{"items": [...]}`: every key of the caller on the gateway, the personal key and each group key, newest first, as the GET above describes one (`group_id` and `group_name` on a group key). |
+| `POST …/llm-keys/{auth_id}/rotate` `{"expires_at"?, "never_expires"?}` | The rotate above, for any key of the caller. 404 for a key that is not the caller's on this gateway. |
+| `DELETE …/llm-keys/{auth_id}` | 204, as the revoke above, for any key of the caller. 404 for a key that is not the caller's. |
+
+The `…/llm-key` routes act on the personal key only, the one with no group;
+the `…/llm-keys` routes act on every key of the caller.
 
 An admin can also create the key for a user, from the console, and hand the
 secret over:
 
 ```json
 POST /v1/gateways/{gateway_id}/store/users/{user_id}/llm-key
-{"expires_at": "<RFC 3339>", "owner_email": "alice@example.com"}
+{"expires_at": "<RFC 3339>", "owner_email": "alice@example.com", "group_id": "<directory group id>", "group_name": "engineering"}
 ```
 
-The answer is the create's: 201 with the secret in `api_key`, shown once, 409
-if the user already has a key, 422 for an expiry out of range, an
-`owner_email` that is not an address, or a hybrid gateway. The key is the
+The answer is the create's: 201 with the secret in `api_key`, shown once,
+and `group_id` and `group_name` for a group key. Every field is optional:
+without `expires_at` the key never expires, and without `group_id` it is the
+user's personal key. 409 if the user already holds a key for that group (or a
+personal key, when no group is named), 422 for an expiry out of range, a
+`group_id` without its `group_name` or the reverse, an `owner_email` that is
+not an address, or a hybrid gateway. The key is the
 user's like any other: their calls, their self-only routes to rotate or revoke
 it. `owner_email` is optional; without it the email is recorded when the
 console next reconciles the key. TrustGate only checks that the gateway is the
@@ -142,6 +158,43 @@ snapshot apply. A key lookup that was already reading when the caches were
 cleared does not put the old answer back: the old secret is not served from a
 cache refilled after the clear, and a key created during a lookup that missed
 is not remembered as unknown.
+
+## Group keys
+
+A group key lets a person's spend be attributed to one of their directory
+groups: the console issues one per user and group the user is eligible for,
+and links it only to its group's personal consumer. TrustGate never decides
+eligibility; it stores the group and enforces what it implies.
+
+- **Identity.** `group_id` is the console's directory group id, fixed for the
+  key's life; `group_name` is the group's directory name (the string the
+  console records in `owner_groups` and in Store grants), required with a
+  group and renamed through `PUT …/auths/{auth_id}/groups`. A user holds at
+  most one key per group and one personal key with no group on a gateway
+  (`auths_gateway_owner_group_uniq` on `(gateway_id, owner_id,
+  COALESCE(group_id, ''))`, 409 on a second).
+- **Issue and manage.** Only the admin route issues a group key
+  (`POST …/store/users/{user_id}/llm-key` with `group_id` and `group_name`);
+  the console calls it on the user's behalf after its own checks. The owner
+  lists, rotates and revokes it with the `…/store/principal/llm-keys` routes
+  (Key lifecycle). The MCP Store's personal key page manages the personal key
+  only.
+- **Models.** Unchanged: a group key reaches exactly the personal consumers it
+  is linked to (Request routing).
+- **MCP Store.** A group key opens its owner's Store as its group: the Store
+  mode is the group's access policy (else the gateway default), and only
+  grants to its `group_name` count; the owner's own policy, grants that name
+  the owner and grants to the owner's other groups do not. MCP policies scoped
+  to groups still read every group of the owner, the key's own included, so
+  narrowing the reach never skips a policy. Installs and connected accounts
+  stay the owner's. The group reaches the principal as the `key_group` claim,
+  which only the gateway sets, on a personal key's principal.
+- **Spend.** Usage events of a group key carry `trustgate.auth.kind`
+  `personal` and `trustgate.auth.group_id` (Telemetry), and a group budget
+  holds the group's keys on `/store/v1` (Group budgets).
+- **Expiry.** As every personal key: none, or at most 366 days. A key that
+  never expires stays so across rotations; an expired one needs `expires_at`
+  or `"never_expires": true` to be rotated.
 
 ## Request routing
 
@@ -237,7 +290,8 @@ upstream accounts.
 - The principal is the key's owner (`subject` = `owner_id`), method
   `personal_key`, with the groups recorded by `PUT …/auths/{auth_id}/groups` as
   its `groups` claim and the owner's email as its `email` claim. Unlike an application key's, nothing renames it to an
-  application subject, and MCP policies scoped to groups apply to it.
+  application subject, and MCP policies scoped to groups apply to it. A group
+  key's Store access is its group's alone (Group keys).
 - A personal key on any other MCP path, or an application key on
   `/store/mcp`, answers 401 like an unknown key. A disabled or expired key, a key
   whose owner spells a subject only the gateway mints (`app:…`, `instance:…`),
@@ -273,8 +327,9 @@ A person can get the key from the Store itself, without the console:
 `trustgate_store_personal_key` returns a link to
 `/store/mcp/personal-key?ticket=…`, a page like the connect page where they
 create, rotate or revoke it, with what the Portal's Personal key offers (90 days,
-the secret shown once, the SDK / OpenAI / MCP usage). The key is never shown to
-the model.
+the secret shown once, the SDK / OpenAI / MCP usage). The page manages the
+personal key only, never a group key, and keeps issuing it for 90 days. The
+key is never shown to the model.
 
 - **Who opens it.** The tool's caller is already signed in to the Store, so the
   ticket (15 minutes) names them. The link went through a model, though, and
@@ -340,6 +395,7 @@ exactly as the Portal's; the Store files them there.
 | 400 / 503 | every consumer refused it for the same capability or backend reason (Request routing, step 5) |
 | 400 `invalid_model` | malformed model reference, or a pool alias no consumer defines |
 | 429 / 503 / 403 `model_unpriced` | `partition: key` budgets, below |
+| 429 `budget_exceeded` / 503 `budget_unavailable` / 403 `model_unpriced` | a group key's group budget (Group budgets, below) |
 
 ## Budgets
 
@@ -394,13 +450,120 @@ A request is charged to the calendar period it was admitted in: a stream that
 starts on the last second of a month and ends in the next one counts in the
 month that admitted it.
 
+## Group budgets
+
+A group budget caps what a directory group's keys spend in a UTC calendar
+month, in US dollars of priced cost: the group's total, shared by every
+member, and each member's own share. The console sets it; every proxy plane
+enforces it on `/store/v1`.
+
+```json
+PUT /v1/gateways/{gateway_id}/key-groups/{group_id}/budget
+{
+  "monthly_limit_usd": 500,
+  "member_monthly_limit_usd": 50,
+  "member_overrides": {"<user id>": 120},
+  "action": "block"
+}
+```
+
+| Route | Answer |
+|---|---|
+| `PUT …/key-groups/{group_id}/budget` | 200 with the budget. Creates or replaces it whole (a field left out is cleared) and keeps its `created_at`. 422 `validation_failed` for no limit and no override, a limit that is negative or not a finite number, or an `action` other than `alert` or `block`. |
+| `DELETE …/key-groups/{group_id}/budget` | 204, or 404 when the group has no budget. |
+| `GET …/key-groups/budgets` | 200 `{"items": [...]}`, every budget of the gateway, by group id. |
+
+`group_id` is the console's directory group id, the one the group's keys
+carry. A budget answers as `{"group_id", "monthly_limit_usd",
+"member_monthly_limit_usd", "member_overrides", "action", "created_at",
+"updated_at"}`: a limit not set is `null`, and no overrides is `{}`.
+`monthly_limit_usd` is the group's total; `member_monthly_limit_usd` is what
+each member may spend through their key for the group; `member_overrides`
+(by platform user id) replaces that member limit for the members it names.
+A limit of zero allows no spend. Gateway access is checked on `auths`; a
+service credential may list budgets and never write them (403).
+
+**What it holds.** A `/store/v1` request authenticated with a group key whose
+group has a budget on the gateway. A personal key with no group, an
+application key and the MCP Store are never held to one. The budget runs as a
+stage of its own (`key_group_budget` on the trace) ahead of every policy:
+before the request it checks the counters, and after the answer, streams
+included, it adds the answer's cost. A `partition: key` policy still applies
+alongside it.
+
+**Counting.** Two counters per group and month, in micro-dollars, priced as a
+`partition: key` dollar budget prices (the catalog's price, or the registry's
+pricing override, of the model that will be served):
+`kgb:<gateway_id>:<group_id>:p:<YYYY-MM>` for the group's total and
+`kgb:<gateway_id>:<group_id>:owner:<owner_id>:p:<YYYY-MM>` for each member
+(ids URL-escaped). They expire when their month ends, so a budget resets on
+the 1st at 00:00 UTC. A request is charged to the month that admitted it, and
+a request admitted under a limit is served and charged in full. Changing or
+clearing a budget keeps the month's spend.
+
+**Reaching a limit.** A limit is reached once the spend is at or above it. The
+group's total is checked first, then the member's, and the first reached
+applies:
+
+- `block`: 429 `budget_exceeded`, with the `X-Budget-*` headers of the dollar
+  budgets (`X-Budget-Scope` is `group` or `member`) and
+
+  ```json
+  {"error": {"type": "budget_exceeded", "code": "budget_exceeded", "scope": "member", "group_id": "<group id>",
+    "message": "Your monthly budget in this key's group is spent ($50.10 of $50.00). It resets on 2026-11-01 (UTC).",
+    "window": "calendar_month", "limit_usd": 50, "spent_usd": 50.1, "resets_at": "2026-11-01T00:00:00Z"}}
+  ```
+
+  The group's total says "The monthly budget of this key's group is spent
+  (…)". The request never reaches a provider and is not charged.
+- `alert`: the request goes on, and the stage records the decision
+  (`observe`) on the trace.
+
+**Failures.** As a `partition: key` budget, with the action in place of the
+policy mode. Counters that cannot be read: a `block` budget answers 503
+`budget_unavailable` (`Retry-After: 5`, `"scope": "key_group"`), an `alert`
+budget lets the request through and records `failed_open`. A charge that
+cannot be recorded never refuses the answer; it is logged and recorded as
+`failed_open`. A model with no price: a `block` budget answers 403
+`model_unpriced` (`"scope": "key_group"`) before any provider call; an
+`alert` budget lets it through and charges nothing.
+
+**The console.** The first time a counter reaches its limit in a month,
+whatever the action, the proxy that sees it posts to `CONSOLE_EVENTS_URL`,
+signed as the personal key events are:
+
+```json
+{"event": "key_group_budget_reached", "source": "budget", "team_id": "<tenant>", "gateway_id": "<gateway id>",
+ "group_id": "<group id>", "scope": "group" | "member", "user_id": "<owner id, member scope only>",
+ "limit_usd": 50, "spent_usd": 50.1, "period": "2026-10", "action": "alert" | "block"}
+```
+
+At most one event per gateway, group, scope, member and month across every
+replica: the first to set `kgb:notified:<gateway_id>:<group_id>:<scope>:<owner_id>:<YYYY-MM>`
+in Redis (kept to a day past the month) sends it, in the background, once,
+with a 10 s timeout; a console that does not answer is logged, not retried.
+A limit lowered below what the month has spent is announced by the next
+request that finds it reached. The event names the gateway's team; a gateway
+without one sends nothing. Set `CONSOLE_EVENTS_URL` and `SERVER_SECRET_KEY` on
+every plane that serves `/store/v1` (the admin plane's personal key events use
+the same two); unset, limits are enforced and the console is not told.
+
+**Distribution.** A budget change reaches the full plane on the next
+`InvalidateGatewayDataEvent` for the gateway, which the write publishes, and a
+DB-less proxy with the config snapshot (`key_group_budgets`). The gateway's
+budgets load with its data, so a request reads no database for them; a
+budget that cannot be read fails the gateway's data load as its keys would.
+
 ## Telemetry
 
 A store request's usage event carries `trustgate.auth.id` (the key),
 `trustgate.principal.subject` (the owner), `trustgate.principal.email` (the
 owner's email, when the key records one) and `trustgate.consumer.id` (the
-selected consumer). An MCP Store request made with the key carries the same
-subject and email, as a signed-in session's does. A request refused after authentication (403, 400, 405, 429)
+selected consumer), with `trustgate.auth.kind` `personal` (an application
+key's events carry `application`) and, for a group key,
+`trustgate.auth.group_id`: the group its spend is attributed to. An MCP Store
+request made with the key carries the same subject and email, as a signed-in
+session's does. A request refused after authentication (403, 400, 405, 429)
 carries the key and the owner and no consumer, and so does `/store/v1/models`.
 A 401 carries neither the key nor the owner: nothing authenticated it. The end
 user (`trustgate.end_user.id`) is always the key's owner:
@@ -425,11 +588,20 @@ Set key budgets, and create `key_budgets` policies, only once every plane runs a
 build with key budgets: an older plane ignores `budget` and `key_budgets` and
 refuses a policy with no limit of its own.
 
+Group keys and group budgets need every plane on a build that has them
+before the console issues the first group key: an older plane reads a group
+key as a personal key (it ignores `group_id`), so it gives it its owner's
+whole MCP Store and holds it to no group budget. The admin plane runs the
+migrations that add `auths.group_id` and `auths.group_name` (and swap the
+unique index to one key per owner and group) and `key_group_budgets`. Set
+`CONSOLE_EVENTS_URL` on the proxy planes too, for the budget events.
+
 To roll back: disable the `partition: key` policies (budgets can stay: nothing
 reads them without such a policy), then
 `UPDATE consumers SET active = false WHERE audience = 'personal';` before an
 older binary serves, and optionally delete the owned keys and their links. The
-columns can stay.
+columns can stay. Rolling back the group key migration deletes every group
+key with its links, then restores one key per owner.
 
 ## Out of scope
 
@@ -470,6 +642,12 @@ the first personal consumer exists.
 | q | The MCP Store offers `trustgate_store_models`. The personal key page's "Use it" is one code card (tabs, Copy, numbered and coloured lines), and its MCP config no longer escapes `<your-api-key>`. | The snippets were three `<details>` whose lines each drew their own box. |
 | r | Store session tokens carry `mcp_client` (the OAuth client they were issued to; not `client_id`, which auth bindings read), and a connect link minted from one names that app: the connected page offers "Close and go back to <app>", and says to switch back when the browser keeps the tab. TrustGuard evaluates carry `attributes.consumer {id, name}`. | The page said "go back to your assistant"; TrustGuard got the consumer id only. |
 | s | The MCP Store offers `trustgate_store_request_models` and serves `/store/mcp/request-models`, where a person files a request for a provider's models with their own reason; the console takes it at `CONSOLE_MODEL_REQUESTS_URL` (new, optional) and Access → Approvals decides it. `trustgate_store_models` points at it. Deploy the console first: the Store checks every request with it. | Models could only be requested from the Portal. |
+
+| t | `auths` gains nullable `group_id` and `group_name`, and the one-personal-key-per-owner index becomes one per owner and group. `POST …/store/users/{user_id}/llm-key` takes `group_id` and `group_name`; `GET …/auths?owner_id=` lists every key of the owner; `PUT …/auths/{auth_id}/groups` takes `group_name` (422 `personal_key` for a key with no group); `GET …/store/principal/llm-keys`, `POST …/llm-keys/{auth_id}/rotate` and `DELETE …/llm-keys/{auth_id}` are new. Auth and personal key responses carry `group_id` and `group_name`. | One personal key per owner; `owner_id=` found that one key. |
+| u | A personal key's `expires_at` is optional (no expiry) and may be up to 366 days away; a rotation takes `"never_expires": true`. The Store's personal key page still issues 90-day keys. | Every personal key expired within 90 days. |
+| v | A group key opens the MCP Store as its group (the group's access policy and grants only). | — |
+| w | LLM events carry `auth_kind` (`trustgate.auth.kind`) on requests an API key authenticated, and `auth_group_id` (`trustgate.auth.group_id`) for a group key. Personal key events gain `group_id`. | No key kind or group. |
+| x | `key_group_budgets` and the `…/key-groups` admin routes are new; the config snapshot carries `key_group_budgets`. A group key over its group's budget answers 429 `budget_exceeded` (`block`) on `/store/v1`, and the proxies post `key_group_budget_reached` to `CONSOLE_EVENTS_URL`. Nothing changes for a gateway with no group budget. | — |
 
 Roll back (a) by reverting it; the rest needs no action.
 

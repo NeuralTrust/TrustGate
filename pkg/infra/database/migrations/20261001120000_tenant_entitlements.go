@@ -55,10 +55,10 @@ const maxLoggedTenants = 200
 // stampedGateways selects, one row per gateway, the caps already stamped on it.
 //
 // Only gateways whose three caps are integral JSON numbers within 0..int32, and
-// whose burst is at least 1 (the domain requires burst > 0: a burst of 0 would
-// answer 429 to every request of the tenant), are seeded from. A cast of
-// anything else would either abort the whole migration (a number past int32, a
-// string) or silently round (1.5), and a migration that cannot run takes the
+// whose burst is at least 1 (this seed predates 0 meaning unlimited for
+// burst_per_min and deliberately still skips a burst-0 stamp), are seeded from.
+// A cast of anything else would either abort the whole migration (a number past
+// int32, a string) or silently round (1.5), and a migration that cannot run takes the
 // process down with it. jsonb_typeof is checked in one
 // step and the range in the next, because Postgres does not promise the order
 // in which the conjuncts of a single WHERE are evaluated: a cast sitting beside

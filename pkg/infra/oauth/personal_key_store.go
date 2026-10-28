@@ -32,12 +32,12 @@ const (
 // PersonalKeyPageStore keeps the MCP Store personal key page's tickets and
 // browser sessions in Redis, for as long as a link lives.
 type PersonalKeyPageStore struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
 var _ appoauth.PersonalKeyPageStore = (*PersonalKeyPageStore)(nil)
 
-func NewPersonalKeyPageStore(rdb *redis.Client) *PersonalKeyPageStore {
+func NewPersonalKeyPageStore(rdb redis.UniversalClient) *PersonalKeyPageStore {
 	return &PersonalKeyPageStore{rdb: rdb}
 }
 

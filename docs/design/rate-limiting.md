@@ -75,7 +75,7 @@ A tier change is applied **to the next request** of each pod: the decision compa
 
 The migration `20261001120000_tenant_entitlements` creates the table and seeds one row per tenant from the stamped gateways. When the gateways of a tenant disagree, the tenant gets the **largest** caps any of them carries: `burst_per_min` by maximum, `quota_per_month` and `max_instances` by maximum with `0` (unlimited) counting as the largest, and the tier of the gateway with the largest quota (ties: burst, then most recent `updated_at`, then id). It does not pick the most recently updated gateway, because `updated_at` moves on any edit and not only on a stamp. Among the gateways whose stamp is usable (see below), a stale sibling therefore never lowers a tenant's plan; the price is that an upgraded and then left-behind gateway keeps the higher plan until the next restamp writes the real one. A skipped stamp is not usable: if a sibling carrying larger caps is skipped, the tenant is seeded from the remaining gateways and can sit on their lower caps until the next restamp.
 
-Only stamps whose three caps are **integral JSON numbers within 0..2 147 483 647**, with a `burst_per_min` of **at least 1**, are used. The domain requires burst > 0, and a seeded burst of 0 would answer 429 to every request of the tenant.
+Only stamps whose three caps are **integral JSON numbers within 0..2 147 483 647**, with a `burst_per_min` of **at least 1**, are used. The seed predates `burst_per_min: 0` meaning unlimited, so such a stamp is skipped and the tenant keeps metering on its gateway's own stamp until the next restamp.
 
 - A gateway with **none** of the three caps present was never stamped and is ignored without a message.
 - A gateway with a stamp that cannot be stored is **skipped** instead of aborting the migration, and its tenant is listed in a `WARN` (`tenant_ids`, up to 200): a fractional or negative cap, one above 2 147 483 647 (the columns are `INTEGER`, and the API rejects the same with 422), a string or `null`, a partial stamp, or a `burst_per_min` of 0.
@@ -222,6 +222,7 @@ These are the values the control plane stamps; the data plane has no built-in ca
 Common rules:
 
 - `enterprise`: only the burst is **checked**; the quota is still **counted**, with no cap.
+- `0` means **no cap** for `burst_per_min`, `quota_per_month` and `max_instances` (an unmetered install stamps all three as `0`); the burst is still counted.
 - Redis failures are fail-open (metric and log); requests do not notice.
 - A tier change is a restamp in Postgres (`tenant_entitlements`) followed by a snapshot recompile, applied to each pod's next request.
 - Max instances is unchanged: create and update are checked under a per-tenant advisory lock, and a downgrade is applied even when the tenant is already above the new cap (the response reports `over_cap`).

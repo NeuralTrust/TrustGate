@@ -235,3 +235,76 @@ func TestPersonalKey_StoreLinksThePersonalKeyPage(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, resp.StatusCode, "a browser that has not signed in sees no page: %s", body)
 	assert.NotContains(t, string(body), "ag_", "no key is shown before the browser signs in")
 }
+
+// storeInventoryCodes is the code of every server trustgate_list_tools reports.
+func storeInventoryCodes(t *testing.T, gatewayID, apiKey string) []string {
+	t.Helper()
+	status, called := storeMCPWith(t, gatewayID, apiKey, "tools/call", map[string]any{
+		"name": "trustgate_list_tools", "arguments": map[string]any{},
+	})
+	result := requireRPCSucceeded(t, status, called)
+	structured, _ := result["structuredContent"].(map[string]any)
+	servers, _ := structured["servers"].([]any)
+	codes := make([]string, 0, len(servers))
+	for _, raw := range servers {
+		server, _ := raw.(map[string]any)
+		codes = append(codes, fmt.Sprint(server["code"]))
+	}
+	return codes
+}
+
+// A group key opens its owner's MCP Store as its group: what the group is
+// granted is served, what is granted to the owner by name is not. Her
+// personal key keeps everything granted to her or her groups, and the
+// installs are hers whichever key reads them.
+func TestGroupKey_OpensTheMCPStoreAsItsGroup(t *testing.T) {
+	defer Track(t, "LLMKey")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("group-key-mcp")})
+	alice, admin := uniqueName("alice"), uniqueName("admin")
+	codeOf := func(name string) string {
+		t.Helper()
+		upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
+		parsed, err := ids.Parse[ids.RegistryKind](CreateRegistry(t, gwID, mcpRegistryPayload(uniqueName(name), upstream.URL)))
+		require.NoError(t, err)
+		return registrydomain.CustomStoreCode(parsed)
+	}
+	grant := func(code string, body map[string]any) {
+		t.Helper()
+		body["catalog_code"] = code
+		status, granted := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/v1/gateways/%s/store/grants", AdminURL, gwID), nil, body)
+		require.Equal(t, http.StatusOK, status, "body=%v", granted)
+	}
+	byName, byGroup := codeOf("Linear"), codeOf("Notion")
+	for _, code := range []string{byName, byGroup} {
+		grant(code, map[string]any{"users": []string{alice}})
+		status, installed := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/store/principal/installs", AdminURL, gwID), nil,
+			map[string]any{"principal_sub": alice, "code": code})
+		require.Equal(t, http.StatusOK, status, "body=%v", installed)
+		require.Equal(t, "installed", installed["status"], "body=%v", installed)
+	}
+	grant(byGroup, map[string]any{"groups": []string{"eng"}})
+
+	status, personal := CreateLLMKey(t, gwID, alice, map[string]any{})
+	require.Equal(t, http.StatusCreated, status, "body=%v", personal)
+	issue := func(groupID, groupName string) map[string]any {
+		t.Helper()
+		url := fmt.Sprintf("%s/v1/gateways/%s/store/users/%s/llm-key", AdminURL, gwID, alice)
+		status, issued := sendRequest(t, http.MethodPost, url, map[string]string{"Authorization": "Bearer " + userToken(t, functionalTenantID, admin)},
+			map[string]any{"group_id": groupID, "group_name": groupName})
+		require.Equal(t, http.StatusCreated, status, "body=%v", issued)
+		return issued
+	}
+	eng, data := issue("g-eng", "eng"), issue("g-data", "data")
+	for _, key := range []map[string]any{personal, eng, data} {
+		groupsURL := fmt.Sprintf("%s/v1/gateways/%s/auths/%s/groups", AdminURL, gwID, key["id"])
+		status, set := sendRequest(t, http.MethodPut, groupsURL, nil, map[string]any{"groups": []string{"eng", "data"}})
+		require.Equal(t, http.StatusOK, status, "body=%v", set)
+	}
+
+	assert.ElementsMatch(t, []string{byName, byGroup}, storeInventoryCodes(t, gwID, fmt.Sprint(personal["api_key"])),
+		"the personal key reaches what is granted to its owner and to her groups")
+	assert.Equal(t, []string{byGroup}, storeInventoryCodes(t, gwID, fmt.Sprint(eng["api_key"])),
+		"the eng key reaches what eng is granted, not what its owner is granted by name")
+	assert.Empty(t, storeInventoryCodes(t, gwID, fmt.Sprint(data["api_key"])),
+		"a key for a group granted nothing reaches nothing, whatever its owner's other groups hold")
+}

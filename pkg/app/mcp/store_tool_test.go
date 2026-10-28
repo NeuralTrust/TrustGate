@@ -258,6 +258,49 @@ func TestStoreSearchUsesGrantIndexWithoutRegistryRead(t *testing.T) {
 	}
 }
 
+// A group key browses the Store as its group: what the group is granted is
+// available, what its owner is granted by name, or another of her groups, is
+// a request.
+func TestStoreSearchDecidesAGroupKeyByItsGroup(t *testing.T) {
+	t.Parallel()
+	grants := fakeGrantReader{items: []*storeaccessdomain.Grant{
+		grantFor("github", ids.RegistryID{}, nil, []string{"ana"}),
+		grantFor("gitlab", ids.RegistryID{}, []string{"eng"}, nil),
+		grantFor("salesforce", ids.RegistryID{}, []string{"sre"}, nil),
+	}}
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, panicRegistryLister{}, grants, nil, nil)
+	if err != nil {
+		t.Fatalf("new Store tool: %v", err)
+	}
+	search := func(keyGroup string) map[string]map[string]any {
+		t.Helper()
+		claims := map[string]any{identity.ClaimGroups: []string{"eng", "sre"}}
+		if keyGroup != "" {
+			claims[identity.ClaimKeyGroup] = keyGroup
+		}
+		ctx := appgateway.WithGateway(
+			identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Method: identity.MethodPersonalKey, Claims: claims}),
+			enterpriseGateway(gatewaydomain.StoreModeCurated),
+		)
+		raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		return resultsByCode(t, raw)
+	}
+
+	eng := search("eng")
+	if eng["gitlab"]["store_state"] != storeStateAvailable || eng["github"]["store_state"] != storeStateRequest || eng["salesforce"]["store_state"] != storeStateRequest {
+		t.Fatalf("eng key states: github=%v gitlab=%v salesforce=%v", eng["github"]["store_state"], eng["gitlab"]["store_state"], eng["salesforce"]["store_state"])
+	}
+	personal := search("")
+	for _, code := range []string{"github", "gitlab", "salesforce"} {
+		if personal[code]["store_state"] != storeStateAvailable {
+			t.Fatalf("the personal key must keep its owner's grants: %s = %v", code, personal[code]["store_state"])
+		}
+	}
+}
+
 func TestStoreSearchSurfacesGrantReadError(t *testing.T) {
 	t.Parallel()
 	readErr := errors.New("grants unavailable")
@@ -518,16 +561,18 @@ func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
 }
 
 type fakeInstaller struct {
-	installed    []string
-	lastGroups   []string
-	lastRegistry ids.RegistryID
-	uninstalled  []string
-	lastInstance string
-	instances    []*installationdomain.Installation
-	uninstallErr error
-	lastReason   string
-	installErr   error
-	result       *appstore.InstallResult
+	installed       []string
+	lastGroups      []string
+	lastSubject     string
+	lastGroupScoped bool
+	lastRegistry    ids.RegistryID
+	uninstalled     []string
+	lastInstance    string
+	instances       []*installationdomain.Installation
+	uninstallErr    error
+	lastReason      string
+	installErr      error
+	result          *appstore.InstallResult
 	// held answers Installed: the instance the principal already has.
 	held          *appstore.InstallResult
 	installedCall int
@@ -560,6 +605,8 @@ func (f failingConfigure) CreateTicket(context.Context, appoauth.ConfigureTicket
 func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
 	f.installed = append(f.installed, in.Code)
 	f.lastGroups = in.Groups
+	f.lastSubject = in.PrincipalSub
+	f.lastGroupScoped = in.GroupScoped
 	f.lastRegistry = in.RegistryID
 	f.lastReason = in.Reason
 	if f.installErr != nil {
@@ -673,6 +720,22 @@ func TestStoreInstallCall(t *testing.T) {
 	sc := decodeStructured(t, raw)
 	if sc["code"] != "github" || sc["requires_auth"] != true {
 		t.Fatalf("unexpected install result: %+v", sc)
+	}
+}
+
+// A group key installs as its owner, decided for its group alone.
+func TestStoreInstallWithAGroupKey(t *testing.T) {
+	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub"}}
+	tool := storeToolWithInstaller(t, installer)
+	ctx := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{
+		Subject: "ana", Method: identity.MethodPersonalKey,
+		Claims: map[string]any{identity.ClaimGroups: []string{"eng", "sre"}, identity.ClaimKeyGroup: "eng"},
+	}), enterpriseGateway(gatewaydomain.StoreModeCurated))
+	if _, err := tool.Call(ctx, storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if installer.lastSubject != "ana" || !installer.lastGroupScoped || len(installer.lastGroups) != 1 || installer.lastGroups[0] != "eng" {
+		t.Fatalf("install = subject %q, group scoped %v, groups %v; want ana's install decided for eng", installer.lastSubject, installer.lastGroupScoped, installer.lastGroups)
 	}
 }
 

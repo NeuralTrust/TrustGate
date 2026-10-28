@@ -37,10 +37,10 @@ type SR1StateDecision struct {
 }
 
 // RedisSR1Store shares the cache-lifetime policy across gateway replicas.
-type RedisSR1Store struct{ client *redis.Client }
+type RedisSR1Store struct{ client redis.UniversalClient }
 
 // NewRedisSR1Store creates an atomic Redis-backed SR-1 state store.
-func NewRedisSR1Store(client *redis.Client) *RedisSR1Store {
+func NewRedisSR1Store(client redis.UniversalClient) *RedisSR1Store {
 	return &RedisSR1Store{client: client}
 }
 

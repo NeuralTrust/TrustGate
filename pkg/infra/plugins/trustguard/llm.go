@@ -38,7 +38,7 @@ func llmRequestPayloadWithAttachments(creq *adapter.CanonicalRequest, attachment
 	if len(attachments) > 0 {
 		payload["attachments"] = attachments
 	}
-	return json.Marshal(payload)
+	return marshalNoEscape(payload)
 }
 
 // llmResponsePayload builds a protocol=llm evaluate payload for response-direction
@@ -86,7 +86,7 @@ func llmResponsePayload(cresp *adapter.CanonicalResponse, reqTools []adapter.Can
 	if tools := guardToolsFromCanonical(reqTools); len(tools) > 0 {
 		payload["tools"] = tools
 	}
-	return json.Marshal(payload)
+	return marshalNoEscape(payload)
 }
 
 func guardChatMessages(creq *adapter.CanonicalRequest) []map[string]any {

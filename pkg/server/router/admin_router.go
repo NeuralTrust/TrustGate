@@ -21,6 +21,7 @@ import (
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -120,6 +121,7 @@ type AdminRouterDeps struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+	RevokeConfigSyncTokens    *configsynchttp.RevokeTokensHandler
 
 	// StoreRequests serves the MCP Store install-approval queue. Present only on
 	// the full plane; nil-guarded when absent.
@@ -137,6 +139,9 @@ type AdminRouterDeps struct {
 	// plane; nil-guarded when absent.
 	StoreMaterialize *storehttp.MaterializeHandler
 	StoreLLMKey      *storehttp.LLMKeyHandler
+	// KeyGroupBudgets serves the budgets of directory groups' keys. Present
+	// only on the full plane.
+	KeyGroupBudgets *keygrouphttp.BudgetHandler
 }
 
 type adminRouter struct {
@@ -259,9 +264,24 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/llm-key", interactive, r.deps.StoreLLMKey.Create)
 			store.Post("/principal/llm-key/rotate", interactive, r.deps.StoreLLMKey.Rotate)
 			store.Delete("/principal/llm-key", interactive, r.deps.StoreLLMKey.Revoke)
+			// Every key the caller holds, their personal key and their group
+			// keys, each addressed by id.
+			store.Get("/principal/llm-keys", interactive, r.deps.StoreLLMKey.List)
+			store.Post("/principal/llm-keys/:auth_id/rotate", interactive, r.deps.StoreLLMKey.RotateKey)
+			store.Delete("/principal/llm-keys/:auth_id", interactive, r.deps.StoreLLMKey.RevokeKey)
 			// An admin issuing a user's key for them: a person in the console, never a machine.
 			store.Post("/users/:user_id/llm-key", interactive, r.deps.StoreLLMKey.CreateForUser)
 		}
+	}
+
+	// Group budgets hold group keys, so gateway access is on auths. The console
+	// writes them as a person or with its platform token; a service credential
+	// may read them and never write.
+	if r.deps.KeyGroupBudgets != nil {
+		keyGroups := gw.Group("/:gateway_id/key-groups", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
+		keyGroups.Get("/budgets", r.deps.KeyGroupBudgets.List)
+		keyGroups.Put("/:group_id/budget", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.KeyGroupBudgets.Set)
+		keyGroups.Delete("/:group_id/budget", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.KeyGroupBudgets.Delete)
 	}
 
 	auths := gw.Group("/:gateway_id/auths", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
@@ -289,6 +309,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.DeleteSubjectSessions != nil {
 			subjects.Delete("/:user_id/sessions", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.DeleteSubjectSessions.Handle)
 		}
+	}
+
+	// A service credential is refused on the revocation write, even when it is
+	// bound to this gateway: revoking a gateway's tokens is a console action.
+	if r.deps.RevokeConfigSyncTokens != nil {
+		configSync := gw.Group("/:gateway_id/config-sync", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceGateways))
+		configSync.Post("/revocations", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.RevokeConfigSyncTokens.Handle)
 	}
 
 	// Routes that carry no gateway scope are console-only: a machine credential

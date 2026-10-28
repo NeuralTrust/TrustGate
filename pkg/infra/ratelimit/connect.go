@@ -68,7 +68,7 @@ return {count, ttl}
 `)
 
 type connectAttemptLimiter struct {
-	redis         *redis.Client
+	redis         redis.UniversalClient
 	secret        []byte
 	sourceLimit   int
 	consumerLimit int
@@ -76,7 +76,7 @@ type connectAttemptLimiter struct {
 }
 
 func NewConnectAttemptLimiter(
-	rc *redis.Client,
+	rc redis.UniversalClient,
 	secret string,
 	cfg config.MCPConnectRateLimitConfig,
 ) appoauth.ConnectAttemptLimiter {

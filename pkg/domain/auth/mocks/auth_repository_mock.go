@@ -299,29 +299,29 @@ func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, ids.
 	return _c
 }
 
-// FindByOwner provides a mock function with given fields: ctx, gatewayID, ownerID
-func (_m *Repository) FindByOwner(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string) (*auth.Auth, error) {
-	ret := _m.Called(ctx, gatewayID, ownerID)
+// FindByOwnerAndGroup provides a mock function with given fields: ctx, gatewayID, ownerID, groupID
+func (_m *Repository) FindByOwnerAndGroup(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, groupID string) (*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID, ownerID, groupID)
 
 	if len(ret) == 0 {
-		panic("no return value specified for FindByOwner")
+		panic("no return value specified for FindByOwnerAndGroup")
 	}
 
 	var r0 *auth.Auth
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) (*auth.Auth, error)); ok {
-		return rf(ctx, gatewayID, ownerID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string) (*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID, ownerID, groupID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) *auth.Auth); ok {
-		r0 = rf(ctx, gatewayID, ownerID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string) *auth.Auth); ok {
+		r0 = rf(ctx, gatewayID, ownerID, groupID)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*auth.Auth)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string) error); ok {
-		r1 = rf(ctx, gatewayID, ownerID)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string) error); ok {
+		r1 = rf(ctx, gatewayID, ownerID, groupID)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -329,32 +329,33 @@ func (_m *Repository) FindByOwner(ctx context.Context, gatewayID ids.ID[ids.Gate
 	return r0, r1
 }
 
-// Repository_FindByOwner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByOwner'
-type Repository_FindByOwner_Call struct {
+// Repository_FindByOwnerAndGroup_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByOwnerAndGroup'
+type Repository_FindByOwnerAndGroup_Call struct {
 	*mock.Call
 }
 
-// FindByOwner is a helper method to define mock.On call
+// FindByOwnerAndGroup is a helper method to define mock.On call
 //   - ctx context.Context
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - ownerID string
-func (_e *Repository_Expecter) FindByOwner(ctx interface{}, gatewayID interface{}, ownerID interface{}) *Repository_FindByOwner_Call {
-	return &Repository_FindByOwner_Call{Call: _e.mock.On("FindByOwner", ctx, gatewayID, ownerID)}
+//   - groupID string
+func (_e *Repository_Expecter) FindByOwnerAndGroup(ctx interface{}, gatewayID interface{}, ownerID interface{}, groupID interface{}) *Repository_FindByOwnerAndGroup_Call {
+	return &Repository_FindByOwnerAndGroup_Call{Call: _e.mock.On("FindByOwnerAndGroup", ctx, gatewayID, ownerID, groupID)}
 }
 
-func (_c *Repository_FindByOwner_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string)) *Repository_FindByOwner_Call {
+func (_c *Repository_FindByOwnerAndGroup_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string, groupID string)) *Repository_FindByOwnerAndGroup_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string))
 	})
 	return _c
 }
 
-func (_c *Repository_FindByOwner_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_FindByOwner_Call {
+func (_c *Repository_FindByOwnerAndGroup_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_FindByOwnerAndGroup_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *Repository_FindByOwner_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string) (*auth.Auth, error)) *Repository_FindByOwner_Call {
+func (_c *Repository_FindByOwnerAndGroup_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string) (*auth.Auth, error)) *Repository_FindByOwnerAndGroup_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -480,6 +481,66 @@ func (_c *Repository_List_Call) Return(items []*auth.Auth, total int, err error)
 }
 
 func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, auth.ListFilter) ([]*auth.Auth, int, error)) *Repository_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListByOwner provides a mock function with given fields: ctx, gatewayID, ownerID
+func (_m *Repository) ListByOwner(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID, ownerID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListByOwner")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) ([]*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID, ownerID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string) []*auth.Auth); ok {
+		r0 = rf(ctx, gatewayID, ownerID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string) error); ok {
+		r1 = rf(ctx, gatewayID, ownerID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListByOwner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListByOwner'
+type Repository_ListByOwner_Call struct {
+	*mock.Call
+}
+
+// ListByOwner is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - ownerID string
+func (_e *Repository_Expecter) ListByOwner(ctx interface{}, gatewayID interface{}, ownerID interface{}) *Repository_ListByOwner_Call {
+	return &Repository_ListByOwner_Call{Call: _e.mock.On("ListByOwner", ctx, gatewayID, ownerID)}
+}
+
+func (_c *Repository_ListByOwner_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], ownerID string)) *Repository_ListByOwner_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_ListByOwner_Call) Return(_a0 []*auth.Auth, _a1 error) *Repository_ListByOwner_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListByOwner_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string) ([]*auth.Auth, error)) *Repository_ListByOwner_Call {
 	_c.Call.Return(run)
 	return _c
 }

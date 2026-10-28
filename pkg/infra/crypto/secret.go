@@ -36,7 +36,7 @@ const sharedSecretBytes = 32
 // via Redis. It returns the stored secret when present; otherwise it generates
 // one and stores it with SETNX so concurrent replicas converge on a single
 // value instead of each minting with its own ephemeral secret.
-func ResolveSharedSecretKey(ctx context.Context, rdb *redis.Client, logger *slog.Logger) (string, error) {
+func ResolveSharedSecretKey(ctx context.Context, rdb redis.UniversalClient, logger *slog.Logger) (string, error) {
 	if rdb == nil {
 		return "", errors.New("crypto: redis client is required to auto-provision SERVER_SECRET_KEY")
 	}

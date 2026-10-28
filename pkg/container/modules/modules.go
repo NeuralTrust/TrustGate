@@ -47,6 +47,7 @@ func fullModules() []container.Option {
 		container.WithModule(Telemetry),
 		container.WithModule(UsageRecords),
 		container.WithModule(Auth),
+		container.WithModule(KeyGroups),
 		container.WithModule(Policy),
 		container.WithModule(Plugins),
 		container.WithModule(LoadBalancer),

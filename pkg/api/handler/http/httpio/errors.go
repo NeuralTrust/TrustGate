@@ -80,7 +80,8 @@ const (
 	msgStaleStoreRequest       = "This request is for an MCP server that was deleted. Deny it and ask the requester to request access again."
 	msgOwnedKeyHint            = "This key belongs to a user and only its owner can change it. Delete it to revoke it."
 	msgApplicationKeyHint      = "Budgets and owner groups apply only to personal keys. Cap an application key with a token_rate_limiter policy instead."
-	msgPersonalKeyHint         = "You already hold a key on this gateway. Rotate or revoke it instead."
+	msgPersonalKeyHint         = "The owner already holds a key on this gateway for this group, or a personal key when no group is named. Rotate or revoke it instead."
+	msgGroupKeyOnlyHint        = "Only a group key has a group name to change. This is the owner's personal key, which belongs to no group."
 	msgUpstreamUnavailableHint = "Check the registry's endpoint and credentials, then retry."
 )
 
@@ -124,6 +125,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "owned_key", Message: publicMessage(err, msgOwnedKeyHint)}
 	case errors.Is(err, authdomain.ErrApplicationKey):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "application_key", Message: publicMessage(err, msgApplicationKeyHint)}
+	case errors.Is(err, authdomain.ErrPersonalKey):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "personal_key", Message: publicMessage(err, msgGroupKeyOnlyHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):

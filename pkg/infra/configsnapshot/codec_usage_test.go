@@ -55,7 +55,7 @@ func TestUsageEnforcementOffKeepsBytesUnchanged(t *testing.T) {
 	assert.NotEqual(t, codec.Version(off), codec.Version(on))
 }
 
-const usageEnforcementField = 16
+const usageEnforcementField = 17
 
 func hasTopLevelField(t *testing.T, raw []byte, field protowire.Number) bool {
 	t.Helper()

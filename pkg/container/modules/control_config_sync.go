@@ -17,10 +17,12 @@ package modules
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
@@ -29,9 +31,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	configsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -47,6 +51,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	lkgrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsnapshotlkg"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
+	configsyncrevocationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncrevocation"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -71,6 +76,8 @@ type compilerReaders struct {
 	TenantCaps ratelimitdomain.TenantCapsRepository
 	// SessionRevocations puts default-IdP revocations into each gateway's snapshot.
 	SessionRevocations sessionrevocation.Store
+	// KeyGroupBudgets puts the group budgets into each gateway's snapshot.
+	KeyGroupBudgets keygroupdomain.Repository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -91,6 +98,7 @@ func ControlConfigSync(c *container.Container) error {
 			r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
 			appsnapshot.WithStoreGrants(r.Grants),
 			appsnapshot.WithStorePolicies(r.StorePolicies),
+			appsnapshot.WithKeyGroupBudgets(r.KeyGroupBudgets),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),
 			appsnapshot.WithSessionRevocations(r.SessionRevocations, cfg.Server.MCPDefaultIdP.SessionMaxAge),
@@ -131,12 +139,12 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, cfg *config.Config, usage appusage.Reader, gateways gatewaydomain.Repository, logger *slog.Logger) *configsyncgrpc.Service {
+	if err := c.Provide(func(hub *configsyncgrpc.Hub, holder *appsnapshot.Holder, cfg *config.Config, usage appusage.Reader, gateways gatewaydomain.Repository, logger *slog.Logger, revocations configsyncgrpc.RevocationChecker) *configsyncgrpc.Service {
 		var opts []configsyncgrpc.ServiceOption
 		if cfg.Usage.Enabled {
 			opts = append(opts, configsyncgrpc.WithUsage(usage, gateways))
 		}
-		return configsyncgrpc.NewService(hub, holder, logger, opts...)
+		return configsyncgrpc.NewService(hub, holder, logger, revocations, opts...)
 	}); err != nil {
 		return err
 	}
@@ -166,6 +174,50 @@ func ControlConfigSync(c *container.Container) error {
 		}
 		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger,
 			configsyncgrpc.RegisterPersonalKeys(personalKeys))
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(configsyncrevocationrepo.NewRepository); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r *configsyncrevocationrepo.Repository) configsyncrevocation.Store {
+		return r
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store configsyncrevocation.Store) appconfigsyncrevocation.Revoker {
+		return appconfigsyncrevocation.NewRevoker(store, time.Now)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) appconfigsyncrevocation.Gate {
+		mode := appconfigsyncrevocation.Mode(cfg.ConfigSync.RevocationMode())
+		if mode == appconfigsyncrevocation.ModeEnforce && !cfg.ConfigSync.AcceptsSignedTokens() {
+			logger.Warn("config-sync token revocation is enforced but the control plane only accepts the shared token, which is never revoked",
+				slog.String("component", "configsync-revocation"),
+				slog.String("auth_mode", cfg.ConfigSync.AuthMode))
+		}
+		return appconfigsyncrevocation.NewGate(mode, logger)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(g appconfigsyncrevocation.Gate) configsyncgrpc.TokenAdmitter {
+		return g
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(g appconfigsyncrevocation.Gate) configsyncgrpc.RevocationChecker {
+		return g
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(hub *configsyncgrpc.Hub) appconfigsyncrevocation.StreamCloser {
+		return hub
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store configsyncrevocation.Store, gate appconfigsyncrevocation.Gate, closer appconfigsyncrevocation.StreamCloser, cfg *config.Config, logger *slog.Logger) appconfigsyncrevocation.Refresher {
+		return appconfigsyncrevocation.NewRefresher(store, gate, closer, cfg.ConfigSync.RevocationRefreshInterval(), logger)
 	}); err != nil {
 		return err
 	}

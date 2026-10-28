@@ -144,7 +144,7 @@ func (h *ForwardedHandler) WithStore(selector appproxy.StoreSelector, models app
 
 // HandleBedrockNative godoc
 // @Summary      Proxy a native Amazon Bedrock Runtime call
-// @Description  Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never rewrite it: a mask that cannot be carried onto the original body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.
+// @Description  Relays a native Amazon Bedrock Runtime request to the consumer's Bedrock registry exactly as the client sent it: Converse and ConverseStream, InvokeModel and InvokeModelWithResponseStream, answered in Bedrock's own format. The consumer authenticates with its X-AG-API-Key (or another application credential such as a client certificate); an AWS SigV4 Authorization header is accepted and ignored, it does not authenticate the call. model_id is a model ID, an inference profile ID or a URL-encoded ARN. Policies inspect and mask the call but never otherwise rewrite it; the one exception is a Prompt Template policy with apply_on_native_bedrock, which edits only the system and messages fields. A mask that cannot be carried onto the body refuses the call with a 403 AccessDeniedException, and the policy chain records blocked with the cause. Every error the gateway makes uses the AWS envelope ({"__type": "...", "message": "..."}) with the x-amzn-ErrorType header, and Bedrock's own errors are relayed unchanged.
 // @Tags         proxy
 // @Accept       json
 // @Produce      json
@@ -253,6 +253,9 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 		return writeProxyError(c, errNoModelAccess)
 	}
 	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx)
+	// A group key is held to its group's budget, as the gateway's data has
+	// it; nil for a personal key or a group with none.
+	reqCtx.KeyGroupBudget = data.KeyGroupBudget(authCtx.KeyGroupID)
 	// Selection holds no state, so it runs before the plan limit: a request
 	// no linked consumer can serve is refused without spending a plan token.
 	sel, err := h.storeSelector.Select(c.UserContext(), appproxy.StoreSelectInput{Links: links, Data: data, Request: reqCtx})
@@ -653,9 +656,24 @@ func stampCallerTrace(c *fiber.Ctx, authCtx *appauth.AuthContext) {
 	}
 	if authCtx != nil && !authCtx.AuthID.IsNil() {
 		rt.SetAuthID(authCtx.AuthID.String())
+		rt.SetAuthKey(authKind(authCtx), authCtx.KeyGroupID)
 	}
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
+	}
+}
+
+// authKind is what kind of api key authenticated the request: a user's own,
+// their personal key or a group key, or an application's. Any other
+// credential is not a key and has no kind.
+func authKind(authCtx *appauth.AuthContext) string {
+	switch {
+	case authCtx.Method != appauth.MethodAPIKey:
+		return ""
+	case authCtx.OwnerID != "":
+		return trace.AuthKindPersonal
+	default:
+		return trace.AuthKindApplication
 	}
 }
 
@@ -724,6 +742,7 @@ func stampAuth(req *infracontext.RequestContext, authCtx *appauth.AuthContext) {
 	}
 	req.OwnerID = authCtx.OwnerID
 	req.KeyBudget = authCtx.KeyBudget
+	req.KeyGroupID = authCtx.KeyGroupID
 }
 
 func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {
