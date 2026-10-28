@@ -30,6 +30,9 @@ bin/
 .worktrees/
 var/
 
+# Prompt compression evaluation corpus and raw results (scripts/eval/promptcompression/run.sh)
+.eval/
+
 # env files
 .env
 .env.functional
