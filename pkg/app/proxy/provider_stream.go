@@ -483,7 +483,11 @@ func newFinishDeferral(source, target adapter.Format, options streamOptions) *fi
 	case adapter.FormatBedrock:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
-		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
+		encoder := adapter.NewAnthropicStreamEncoder(target)
+		if options.signedReasoning && adapter.IsSameWireFormat(target, adapter.FormatBedrock) {
+			encoder.EmitSignedReasoning()
+		}
+		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: encoder}
 	case adapter.FormatOpenAIResponses:
 		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(options.now))}
 	case adapter.FormatGemini:

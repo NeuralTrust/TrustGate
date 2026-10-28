@@ -59,6 +59,8 @@ type Config struct {
 	// AnthropicBeta is the caller's anthropic-beta flags, comma-joined, on an
 	// Anthropic-to-Anthropic passthrough: the body carries the beta fields as
 	// the caller wrote them, and Anthropic only accepts them with the opt-in.
+	// On Bedrock it holds the flags Claude on Bedrock takes, which the client
+	// sends as additionalModelRequestFields.anthropic_beta.
 	AnthropicBeta string `json:"-"`
 }
 

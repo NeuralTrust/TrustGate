@@ -30,6 +30,13 @@ func TestValidateProviderOptions(t *testing.T) {
 	}{
 		{name: "unknown provider is not validated", provider: "anthropic", options: map[string]any{"foo": "bar"}},
 
+		{name: "bedrock without options", provider: ProviderBedrock, options: nil},
+		{name: "bedrock keeps unknown keys", provider: ProviderBedrock, options: map[string]any{"foo": "bar"}},
+		{name: "bedrock forwards reasoning", provider: ProviderBedrock, options: map[string]any{"reasoning": "forward"}},
+		{name: "bedrock drops reasoning", provider: ProviderBedrock, options: map[string]any{"reasoning": " Drop "}},
+		{name: "bedrock unknown reasoning mode", provider: ProviderBedrock, options: map[string]any{"reasoning": "yes"}, errContains: "reasoning"},
+		{name: "bedrock non-string reasoning", provider: ProviderBedrock, options: map[string]any{"reasoning": true}, errContains: "bedrock"},
+
 		{name: "openai_compatible with base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "https://host/v1"}},
 		{name: "openai_compatible with http base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "http://localhost:8080/v1"}},
 		{name: "openai_compatible missing base_url", provider: ProviderOpenAICompatible, options: nil, errContains: "base_url"},
@@ -75,4 +82,14 @@ func TestValidateProviderOptions(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestDecodeBedrockOptions_ReasoningDefaultsToDrop(t *testing.T) {
+	opts, err := DecodeBedrockOptions(nil)
+	require.NoError(t, err)
+	assert.False(t, opts.ForwardsReasoning())
+
+	opts, err = DecodeBedrockOptions(map[string]any{"reasoning": "FORWARD"})
+	require.NoError(t, err)
+	assert.True(t, opts.ForwardsReasoning())
 }

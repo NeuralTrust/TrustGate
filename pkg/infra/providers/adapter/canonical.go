@@ -41,6 +41,10 @@ type CanonicalRequest struct {
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
 	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
+	// Anthropic is set by the Anthropic decoder alone. Encoders that map these
+	// options do it only when it is set, so another source keeps the meaning
+	// its own fields of the same name have.
+	Anthropic *CanonicalAnthropicOptions `json:"anthropic,omitempty"`
 	// DroppedInputItems counts the input items a decoder left out because it
 	// could not read them; callers that inspect the request log it.
 	DroppedInputItems int `json:"-"`
@@ -82,6 +86,18 @@ type CanonicalMessage struct {
 	ToolCalls      []CanonicalToolCall       `json:"tool_calls,omitempty"`
 	ToolCallID     string                    `json:"tool_call_id,omitempty"`
 	Cache          *CanonicalCacheBreakpoint `json:"cache,omitempty"`
+	// Thinking is an assistant turn's reasoning, in order, sent back ahead
+	// of its text and tool calls. Only the Anthropic decoder sets it.
+	Thinking []CanonicalThinkingBlock `json:"thinking,omitempty"`
+}
+
+// CanonicalThinkingBlock is one block of a model's reasoning. Signature and
+// Redacted are opaque and must come back unmodified; a redacted block has
+// no Text.
+type CanonicalThinkingBlock struct {
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Redacted  []byte `json:"redacted,omitempty"`
 }
 
 // CanonicalToolKind distinguishes the tool shapes the gateway can represent.
@@ -107,6 +123,9 @@ type CanonicalTool struct {
 	// verbatim. It is nil for function tools.
 	Format json.RawMessage           `json:"format,omitempty"`
 	Cache  *CanonicalCacheBreakpoint `json:"cache,omitempty"`
+	// Strict asks the provider to hold the call's arguments to Schema. Only
+	// the Anthropic decoder sets it.
+	Strict *bool `json:"strict,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.
@@ -125,6 +144,16 @@ type CanonicalToolCall struct {
 	// Arguments holds a raw JSON string for function calls and the freeform
 	// text input for ToolKindCustom calls.
 	Arguments string `json:"arguments"`
+}
+
+// CanonicalAnthropicOptions holds the Anthropic Messages options that have no
+// neutral field. OutputFormat and Thinking are the client's
+// output_config.format and thinking objects, verbatim; Effort is
+// output_config.effort.
+type CanonicalAnthropicOptions struct {
+	OutputFormat json.RawMessage `json:"output_format,omitempty"`
+	Thinking     json.RawMessage `json:"thinking,omitempty"`
+	Effort       string          `json:"effort,omitempty"`
 }
 
 // CanonicalRespFormat controls the response format.
@@ -158,6 +187,9 @@ type CanonicalReasoning struct {
 	Effort       []byte  `json:"effort,omitempty"`        // OpenAI: provider-specific (e.g. JSON)
 	Summary      *string `json:"summary,omitempty"`       // OpenAI: summary
 	ThinkingText string  `json:"thinking_text,omitempty"` // Anthropic/Gemini: raw thinking blocks concatenated
+	// Blocks keeps each reasoning block with its signature, for the decoders
+	// whose upstream signs them (Anthropic, Converse).
+	Blocks []CanonicalThinkingBlock `json:"blocks,omitempty"`
 }
 
 // CanonicalUsage holds token counts in a provider-neutral split: Input / Output / Total.
@@ -285,10 +317,14 @@ type CanonicalStreamChunk struct {
 	Model string `json:"model,omitempty"`
 	// Created is the upstream unix-second timestamp (Chat Completions "created").
 	// Zero means the chunk did not report one.
-	Created            int64                      `json:"created,omitempty"`
-	Role               string                     `json:"role,omitempty"`  // only on first chunk
-	Delta              string                     `json:"delta,omitempty"` // text content delta
-	ReasoningDelta     string                     `json:"reasoning_delta,omitempty"`
+	Created        int64  `json:"created,omitempty"`
+	Role           string `json:"role,omitempty"`  // only on first chunk
+	Delta          string `json:"delta,omitempty"` // text content delta
+	ReasoningDelta string `json:"reasoning_delta,omitempty"`
+	// ReasoningSignature closes the reasoning block in progress.
+	ReasoningSignature string `json:"reasoning_signature,omitempty"`
+	// RedactedReasoning is a whole redacted reasoning block.
+	RedactedReasoning  []byte                     `json:"redacted_reasoning,omitempty"`
 	FinishReason       string                     `json:"finish_reason,omitempty"`
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers

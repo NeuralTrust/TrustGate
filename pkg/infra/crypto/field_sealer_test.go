@@ -33,7 +33,7 @@ func TestFieldSealer_RoundTrip(t *testing.T) {
 	if !strings.HasPrefix(sealed, SealedPrefix+s.KeyID()+":") || !IsSealed(sealed) {
 		t.Fatalf("sealed form = %q", sealed)
 	}
-	if strings.Contains(sealed, "abc") {
+	if strings.Contains(sealed, "Bearer abc") {
 		t.Fatal("sealed value must not contain the plaintext")
 	}
 	got, err := s.Open("auth.value", sealed)

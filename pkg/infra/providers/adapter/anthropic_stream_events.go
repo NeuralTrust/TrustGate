@@ -19,8 +19,10 @@ import "encoding/json"
 type anthropicBlockType string
 
 const (
-	anthropicBlockText    anthropicBlockType = "text"
-	anthropicBlockToolUse anthropicBlockType = "tool_use"
+	anthropicBlockText     anthropicBlockType = "text"
+	anthropicBlockToolUse  anthropicBlockType = "tool_use"
+	anthropicBlockThinking anthropicBlockType = "thinking"
+	anthropicBlockRedacted anthropicBlockType = "redacted_thinking"
 )
 
 type anthropicSSEBlockStart struct {
@@ -30,8 +32,11 @@ type anthropicSSEBlockStart struct {
 }
 
 type anthropicSSEBlockBody struct {
-	Type anthropicBlockType `json:"type"`
-	Text *string            `json:"text,omitempty"`
+	Type      anthropicBlockType `json:"type"`
+	Text      *string            `json:"text,omitempty"`
+	Thinking  *string            `json:"thinking,omitempty"`
+	Signature *string            `json:"signature,omitempty"`
+	Data      *string            `json:"data,omitempty"`
 	*anthropicSSEToolUse
 }
 
@@ -69,6 +74,27 @@ func anthropicMessageStartEvent(id, model string, usage *CanonicalUsage) [][]byt
 func anthropicTextBlockStartEvent(index int) [][]byte {
 	empty := ""
 	return anthropicBlockStartEvent(index, anthropicSSEBlockBody{Type: anthropicBlockText, Text: &empty})
+}
+
+func anthropicThinkingBlockStartEvent(index int) [][]byte {
+	empty := ""
+	return anthropicBlockStartEvent(index, anthropicSSEBlockBody{Type: anthropicBlockThinking, Thinking: &empty, Signature: &empty})
+}
+
+func anthropicRedactedBlockStartEvent(index int, data string) [][]byte {
+	return anthropicBlockStartEvent(index, anthropicSSEBlockBody{Type: anthropicBlockRedacted, Data: &data})
+}
+
+func anthropicThinkingDeltaEvent(index int, thinking string) [][]byte {
+	data, _ := json.Marshal(anthropicSSEContentBlockDelta{Type: "content_block_delta", Index: index,
+		Delta: anthropicDelta{Type: "thinking_delta", Thinking: thinking}})
+	return SSEEvent("content_block_delta", data)
+}
+
+func anthropicSignatureDeltaEvent(index int, signature string) [][]byte {
+	data, _ := json.Marshal(anthropicSSEContentBlockDelta{Type: "content_block_delta", Index: index,
+		Delta: anthropicDelta{Type: "signature_delta", Signature: signature}})
+	return SSEEvent("content_block_delta", data)
 }
 
 func anthropicToolUseBlockStartEvent(index int, id, name string) [][]byte {
