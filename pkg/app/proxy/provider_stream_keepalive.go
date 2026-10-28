@@ -39,12 +39,13 @@ type timeTicker struct{ *time.Ticker }
 func (t timeTicker) Chan() <-chan time.Time { return t.C }
 
 type streamOptions struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	now          func() time.Time
-	newTicker    func(time.Duration) streamTicker
-	includeUsage bool
-	model        string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	now             func() time.Time
+	newTicker       func(time.Duration) streamTicker
+	includeUsage    bool
+	model           string
+	signedReasoning bool
 }
 
 type streamOption func(*streamOptions)
@@ -55,6 +56,10 @@ func withStreamIncludeUsage(include bool) streamOption {
 
 func withStreamModel(model string) streamOption {
 	return func(o *streamOptions) { o.model = model }
+}
+
+func withStreamSignedReasoning(signed bool) streamOption {
+	return func(o *streamOptions) { o.signedReasoning = signed }
 }
 
 // withStreamContext ends a stream that waits on its upstream when ctx is
