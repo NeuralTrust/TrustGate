@@ -93,6 +93,11 @@ type UpstreamAuthServer struct {
 	// RevocationEndpoint is the RFC 7009 endpoint the authorization server
 	// advertised. Empty when the provider does not support token revocation.
 	RevocationEndpoint string `json:"revocation_endpoint,omitempty"`
+	// ClientIDMetadataDocumentSupported reports that the server accepts an
+	// HTTPS URL as client_id and reads the client's metadata from it (see
+	// ClientMetadataPathPrefix). EnsureClient uses it when the server has no
+	// registration_endpoint.
+	ClientIDMetadataDocumentSupported bool `json:"client_id_metadata_document_supported,omitempty"`
 	// ValidatedIssuer is the authorization-server URL the metadata was fetched
 	// from, after that URL matched the document's issuer. It is not copied from
 	// the document. Empty when Discover has not accepted the server. Cache keys

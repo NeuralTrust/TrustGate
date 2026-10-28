@@ -38,6 +38,7 @@ func TestBrandIconURL_ResolvesVendorAndFallsBack(t *testing.T) {
 	}
 	for vendor, want := range map[string]string{
 		"AWS":       "/oauth/brands/mcp/aws.svg",
+		"Aircall":   "/oauth/brands/mcp/aircall.svg",
 		"Enginy":    "/oauth/brands/mcp/enginy.svg",
 		"Holded":    "/oauth/brands/mcp/holded.png",
 		"Jotform":   "/oauth/brands/mcp/jotform.svg",
@@ -80,7 +81,7 @@ func TestReadBrandIcon_ServesMappedAssets(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"mcp/aws.svg", "mcp/enginy.svg", "mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
+	for _, name := range []string{"mcp/aircall.svg", "mcp/aws.svg", "mcp/enginy.svg", "mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
 		data, contentType, err := ReadBrandIcon(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

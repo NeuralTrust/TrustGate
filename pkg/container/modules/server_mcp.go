@@ -86,6 +86,8 @@ type mcpRouterParams struct {
 	PersonalKeyHandler *oauthhttp.PersonalKeyHandler `optional:"true"`
 	// ModelRequestHandler is nil where the console takes no model requests.
 	ModelRequestHandler *oauthhttp.ModelRequestHandler `optional:"true"`
+	// ClientMetadataHandler publishes the connect client_id document.
+	ClientMetadataHandler *oauthhttp.ClientMetadataHandler
 }
 
 type mcpServerParams struct {
@@ -124,6 +126,7 @@ func ServerMCP(c *container.Container) error {
 				ops,
 				router.WithPersonalKeyHandler(p.PersonalKeyHandler),
 				router.WithModelRequestHandler(p.ModelRequestHandler),
+				router.WithClientMetadataHandler(p.ClientMetadataHandler),
 			)
 		},
 		dig.Name("mcp"),

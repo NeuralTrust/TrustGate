@@ -677,6 +677,35 @@ func TestNewMCPServerCatalog_IncludesEnginy(t *testing.T) {
 	require.Empty(t, server.OAuth.Scopes)
 }
 
+// Aircall's authorization server has no registration endpoint; it takes a
+// client ID metadata document URL as client_id, so the entry is self-service
+// with no DCR. It advertises no scopes and the server is read-only.
+func TestNewMCPServerCatalog_IncludesAircall(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	server, ok := cat.GetByCode("io.aircall/mcp")
+	require.True(t, ok)
+	require.Equal(t, "Aircall", server.DisplayName)
+	require.Equal(t, "https://mcp.aircall.io/mcp", server.URL)
+	require.Equal(t, "streamable-http", server.Transport)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.SelfService)
+	require.False(t, server.RequiresConfig)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, registrationAuto, server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.False(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Equal(t, "https://id.aircall.io/auth/v2/authorization-server/mcp/oauth/authorize", server.OAuth.AuthorizeURL)
+	require.Equal(t, "https://id.aircall.io/auth/v2/authorization-server/mcp/oauth/token", server.OAuth.TokenURL)
+	require.Equal(t, "https://mcp.aircall.io/mcp", server.OAuth.Resource)
+	require.Empty(t, server.OAuth.Scopes)
+}
+
 // Replicate publishes only an SSE endpoint. The catalog keeps the row and
 // hides it the same way the probe marks transport the gateway cannot dial.
 func TestNewMCPServerCatalog_HidesSSEUnsupportedReplicate(t *testing.T) {
