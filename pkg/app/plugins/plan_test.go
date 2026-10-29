@@ -545,11 +545,20 @@ func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T)
 		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
 		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
 	)
-	both[0].Settings, both[1].Settings = on, on
+	both[0].Settings = map[string]any{
+		"enabled": true, "max_accumulated_bytes": 1 << 20,
+	}
+	both[1].Settings = map[string]any{
+		"enabled": true, "max_accumulated_bytes": 64 << 10,
+	}
 	ok, opts := NewStagePlan(reg, both, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.True(t, opts.ReadsToolCalls,
 		"a passive participant that reads tool calls still asks the guard to hold them whole")
+	assert.Equal(t, 1<<20, opts.MaxAccumulatedBytes,
+		"the chain-wide accumulation budget remains the largest participant window")
+	assert.Equal(t, 64<<10, opts.ToolCallMaxAccumulatedBytes,
+		"tool input must fit every participant that reads tool calls")
 
 	readerOff := policies(t,
 		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
@@ -559,11 +568,13 @@ func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T)
 	ok, opts = NewStagePlan(reg, readerOff, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.False(t, opts.ReadsToolCalls, "a reader that does not take part in the stream holds nothing")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes)
 
 	ownerOnly := streamPolicies(t, on, polSpec{slug: "guard", enabled: true, priority: 1, stages: pre})
 	ok, opts = NewStagePlan(reg, ownerOnly, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.False(t, opts.ReadsToolCalls, "a chain that reads text alone streams tool deltas as they arrive")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes)
 }
 
 // passiveStreamPlugin is a local rewriter: a participant that must not decide

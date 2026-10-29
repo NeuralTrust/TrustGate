@@ -231,6 +231,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		hasOwner   bool
 		maxBytes   int
 		readsTools bool
+		toolBytes  int
 	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
@@ -242,7 +243,12 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			continue
 		}
 		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
-		readsTools = readsTools || readsStreamToolCalls(entry.plugin)
+		if readsStreamToolCalls(entry.plugin) {
+			readsTools = true
+			if toolBytes == 0 || opts.MaxAccumulatedBytes < toolBytes {
+				toolBytes = opts.MaxAccumulatedBytes
+			}
+		}
 		if !ownsStreamOptions(entry.plugin) {
 			if !hasPassive {
 				passive, hasPassive = opts, true
@@ -259,6 +265,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			owner.MaxAccumulatedBytes = maxBytes
 		}
 		owner.ReadsToolCalls = readsTools
+		owner.ToolCallMaxAccumulatedBytes = toolBytes
 		return true, owner
 	}
 	if hasPassive {
@@ -266,6 +273,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			passive.MaxAccumulatedBytes = maxBytes
 		}
 		passive.ReadsToolCalls = readsTools
+		passive.ToolCallMaxAccumulatedBytes = toolBytes
 		return true, passive
 	}
 	return false, StreamOptions{}

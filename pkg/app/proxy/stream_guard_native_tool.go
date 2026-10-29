@@ -122,12 +122,17 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		view, normalised := adapter.NormalizeToolInput(raw.String())
-		// maxAccumBytes is the largest window the chain will read. toolSegment
-		// sends the view as its own text and does not pass through budget, so a
-		// longer view is refused (trustguard: stream_block_too_large) and an
-		// enforcing chain turns that refusal into a block. Release the call
-		// instead, as a hold that outgrew the ceiling does.
-		if len(view) > g.cfg.maxAccumBytes {
+		// toolCallMaxAccumBytes is the smallest window of any chain entry that
+		// reads tool calls. toolSegment sends the view as its own text and does
+		// not pass through budget, so a longer view is refused (trustguard:
+		// stream_block_too_large) and an enforcing chain turns that refusal into
+		// a block. Release the call instead, as a hold that outgrew the ceiling
+		// does. Chains with no tool reader retain the maxAccumBytes behavior.
+		toolCallMaxAccumBytes := g.cfg.maxAccumBytes
+		if g.cfg.toolCallMaxAccumBytes > 0 {
+			toolCallMaxAccumBytes = g.cfg.toolCallMaxAccumBytes
+		}
+		if len(view) > toolCallMaxAccumBytes {
 			g.degrade(degradeToolInputUninspected)
 			if !g.toolUninspectedLogged && g.logger != nil {
 				g.toolUninspectedLogged = true
