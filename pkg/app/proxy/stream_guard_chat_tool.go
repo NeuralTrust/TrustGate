@@ -125,7 +125,11 @@ func (g *streamGuard) refusedChatTool() (string, bool) {
 // checkToolNames records the name each call opened with. The segments carry
 // the latest name of a call, so a later delta that names the same call
 // differently would let a client run a tool the guard never read; that is
-// refused. A delta carrying a new id is a new call and starts a new record.
+// refused. A delta carrying a new id is a new call and starts a new record —
+// except on native SSE, where a call's index is one slot, not a free id: a
+// different non-empty id claiming an index that already has one is the index
+// being reused to carry a different call's name without tripping the plain
+// rename check below, and is refused the same way.
 func (g *streamGuard) checkToolNames(ev *streamEvent) {
 	for _, tc := range ev.toolCalls {
 		if tc.Name == "" {
@@ -134,6 +138,8 @@ func (g *streamGuard) checkToolNames(ev *streamEvent) {
 		key := chatToolKey{choice: ev.choice, index: tc.Index}
 		prev, ok := g.toolNames[key]
 		switch {
+		case ok && g.nativeSSETools && tc.ID != "" && prev.id != "" && tc.ID != prev.id:
+			g.toolRenamed = true
 		case !ok, tc.ID != "" && tc.ID != prev.id:
 			if g.toolNames == nil {
 				g.toolNames = map[chatToolKey]chatToolName{}
