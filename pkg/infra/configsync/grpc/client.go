@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -59,6 +60,9 @@ type Client struct {
 
 	usageSink    UsageSink
 	acceptsUsage atomic.Bool
+
+	heartbeat         *snapshotpb.Heartbeat
+	heartbeatInterval time.Duration
 }
 
 // UsageSink receives the usage snapshots and changes the control plane
@@ -107,6 +111,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 	}
 	c := newClient(conn, cfg.InstanceID, logger)
 	c.endpoint = cfg.GRPCEndpoint
+	c.heartbeatInterval = cfg.HeartbeatEvery()
 	return c, nil
 }
 
@@ -309,6 +314,22 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		}
 		streamCancel()
 		return nil, streamErr("send hello", err)
+	}
+	if c.heartbeat != nil {
+		heartbeat := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Heartbeat{Heartbeat: c.heartbeat}}
+		heartbeatResult := make(chan error, 1)
+		go func() { heartbeatResult <- stream.Send(heartbeat) }()
+		select {
+		case <-ctx.Done():
+			streamCancel()
+			<-heartbeatResult
+			return nil, ctx.Err()
+		case err := <-heartbeatResult:
+			if err != nil {
+				streamCancel()
+				return nil, streamErr("send heartbeat", err)
+			}
+		}
 	}
 	c.stream = stream
 	c.streamCancelCurrent = streamCancel

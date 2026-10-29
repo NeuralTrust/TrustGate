@@ -319,6 +319,19 @@ Proto: `pkg/infra/configsnapshot/proto/snapshot.proto` — regenerate with
 | `CONFIG_SYNC_POLL_INTERVAL` | backstop re-pull interval | `5m` |
 | `CONFIG_SYNC_RECOMPILE_DEBOUNCE` | CP recompile debounce | `250ms` |
 | `CONFIG_SYNC_INSTANCE_ID` | fleet-visibility id | `HOSTNAME` |
+| `CONFIG_SYNC_HEARTBEAT_INTERVAL` | DP heartbeat on the Sync stream; CP `last_seen` refresh of held streams | `30s` |
+| `INSTANCE_REGION` / `INSTANCE_DEPLOYMENT_TYPE` | reported in the DP heartbeat (`saas` \| `self-hosted`) | `""` / `self-hosted` |
+
+**Heartbeat and presence (ENG-1500).** Right after `Hello`, and then every
+`CONFIG_SYNC_HEARTBEAT_INTERVAL`, the DP sends a `Heartbeat`: build version,
+`INSTANCE_REGION`, `INSTANCE_DEPLOYMENT_TYPE`, and the TrustGuard its guardrail
+policies call (`TRUSTGUARD_BASE_URL` stripped of credentials, query and
+fragment, plus `TRUSTGUARD_CLIENT_ID`; never the secret). The CP stores it on
+`config_sync_connections` and, on the same interval, refreshes `last_seen` of
+every stream it holds, so a DP that predates heartbeats still reads as live
+while its stream is open. `GET /v1/config-sync/connections` returns all of it;
+the console derives Connected / Unreachable from `last_seen` and shows a
+self-hosted gateway's effective TrustGuard from the heartbeat.
 
 DB-less functional tests (`make test-functional`, tag `functional`):
 

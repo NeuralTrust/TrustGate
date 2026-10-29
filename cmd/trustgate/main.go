@@ -187,6 +187,8 @@ type adminParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	ConfigSyncHub  *configsyncgrpc.Hub
+	Config         *config.Config
 	Usage          *modules.UsageLoops
 	Revocations    appconfigsyncrevocation.Refresher
 	OpsSDK         *o11y.SDK
@@ -243,6 +245,7 @@ type allParam struct {
 	Config         *config.Config
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	ConfigSyncHub  *configsyncgrpc.Hub
 	Revocations    appconfigsyncrevocation.Refresher
 	RateLimit      rateLimitParams
 	Usage          *modules.UsageLoops
@@ -260,6 +263,7 @@ func startSecretsBackfill(c *container.Container) (func(), error) {
 func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	stopRevocations := startTokenRevocation(p.Revocations)
+	stopPresence := startConfigSyncPresence(p.ConfigSyncHub, p.Config.ConfigSync.HeartbeatEvery())
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
@@ -267,6 +271,7 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	p.Usage.Start()
 	defer p.Usage.Stop()
 	defer stopRevocations()
+	defer stopPresence()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
 		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
@@ -325,6 +330,7 @@ func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	stopRevocations := startTokenRevocation(p.Revocations)
+	stopPresence := startConfigSyncPresence(p.ConfigSyncHub, p.Config.ConfigSync.HeartbeatEvery())
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopBackfill()
@@ -332,6 +338,7 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer stopDispatcher()
 	defer p.UsageRecords.Close()
 	defer stopRevocations()
+	defer stopPresence()
 	defer p.Worker.Shutdown()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
@@ -442,6 +449,22 @@ func startTokenRevocation(refresher appconfigsyncrevocation.Refresher) func() {
 	}
 }
 
+// startConfigSyncPresence keeps last_seen fresh for the Sync streams this
+// control replica holds. The returned stop cancels the loop and joins it.
+func startConfigSyncPresence(hub *configsyncgrpc.Hub, interval time.Duration) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		hub.RunPresence(ctx, interval)
+	}()
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
 func startConfigSyncWorker(
 	worker *configsync.Worker[*readmodel.Snapshot],
 	client *configsyncgrpc.Client,
@@ -461,6 +484,11 @@ func startConfigSyncWorker(
 	}()
 	startAttrs := []any{}
 	if client != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			client.RunHeartbeat(ctx)
+		}()
 		startAttrs = append(startAttrs, slog.String("endpoint", client.Endpoint()))
 	}
 	logger.Info(bootlog.ConfigSyncWorkerStarted, startAttrs...)

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 )
 
 // storeWriteTimeout bounds a best-effort connection-store write so a stalled
@@ -213,6 +214,59 @@ func (h *Hub) markDisconnected(conn *connection) {
 	defer cancel()
 	if err := h.store.MarkDisconnected(ctx, conn.scope, conn.instanceID); err != nil {
 		h.logStoreErr("mark disconnected", conn, err)
+	}
+}
+
+// markHeartbeat persists what the data plane reported, best-effort.
+func (h *Hub) markHeartbeat(conn *connection, hb dataplane.Heartbeat) {
+	if h.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeWriteTimeout)
+	defer cancel()
+	if err := h.store.MarkHeartbeat(ctx, conn.scope, conn.instanceID, hb); err != nil {
+		h.logStoreErr("mark heartbeat", conn, err)
+	}
+}
+
+// RunPresence refreshes last_seen for every stream this replica holds, each
+// interval, until ctx is done. A data plane that predates heartbeats still
+// shows as live while its stream is open, and the streams of a replica that
+// dies stop being refreshed and age out.
+func (h *Hub) RunPresence(ctx context.Context, interval time.Duration) {
+	if h.store == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.refreshPresence(ctx)
+		}
+	}
+}
+
+func (h *Hub) refreshPresence(ctx context.Context) {
+	h.mu.Lock()
+	keys := make([]dataplane.StreamKey, 0, len(h.conns))
+	for conn := range h.conns {
+		keys = append(keys, dataplane.StreamKey{Scope: conn.scope, InstanceID: conn.instanceID})
+	}
+	h.mu.Unlock()
+	if len(keys) == 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, storeWriteTimeout)
+	defer cancel()
+	if err := h.store.TouchConnected(writeCtx, keys); err != nil && ctx.Err() == nil {
+		h.logger.Warn("config-sync connection store write failed",
+			slog.String("component", "configsync-hub"),
+			slog.String("op", "refresh presence"),
+			slog.Int("streams", len(keys)),
+			slog.String("error", err.Error()))
 	}
 }
 
