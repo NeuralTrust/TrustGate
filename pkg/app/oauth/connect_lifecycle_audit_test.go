@@ -224,7 +224,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	}
 	ticketAudit := auditor.EXPECT().TicketCreated(ctx, identity).Once()
 	linkAudit := auditor.EXPECT().
-		ProviderLinked(ctx, identity, connectAuditProviderID).
+		ProviderLinked(ctx, identity, connectAuditProviderID, "instance-sentinel").
 		Once()
 	linkAudit.NotBefore(ticketAudit)
 	unlinkAudit := auditor.EXPECT().
@@ -244,6 +244,9 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, completeConnectTicket(fixture), fixture.store.tickets[ticketID])
+	ticket := fixture.store.tickets[ticketID]
+	ticket.InstanceID = "instance-sentinel"
+	fixture.store.tickets[ticketID] = ticket
 
 	location, err := startLocation(fixture.service.Start(
 		ctx,
