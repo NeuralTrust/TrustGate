@@ -112,10 +112,13 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		var raw strings.Builder
-		for _, di := range b.deltas {
+		for _, di := range append([]int{b.events[0]}, b.deltas...) {
 			for _, tc := range g.produced[di].toolCalls {
 				raw.WriteString(tc.ArgumentsDelta)
 			}
+		}
+		if raw.Len() == 0 {
+			raw.WriteString(blockSnapshot(g.produced, b))
 		}
 		if raw.Len() == 0 {
 			g.markToolHandled(b)
@@ -204,6 +207,42 @@ func (g *streamGuard) markToolHandled(b nativeToolBlock) {
 	}
 }
 
+// blockSnapshot is the last full input a boundary event of the block stated.
+// A call that carried no deltas is read through it; one whose deltas disagree
+// with it is refused before the block is inspected (reconcileToolSnapshots).
+func blockSnapshot(produced []*streamEvent, b nativeToolBlock) string {
+	snapshot := ""
+	for _, i := range b.events {
+		for _, tc := range produced[i].toolCalls {
+			if tc.HasArgumentsSnapshot {
+				snapshot = tc.ArgumentsSnapshot
+			}
+		}
+	}
+	return snapshot
+}
+
+// reconcileToolSnapshots checks the full input a boundary event states against
+// the deltas already held for the call. A call that carried none adopts it, so
+// the segments carry the input a client will run; one that holds a different
+// input is refused.
+func (g *streamGuard) reconcileToolSnapshots(ev *streamEvent) {
+	for _, tc := range ev.toolCalls {
+		if !tc.HasArgumentsSnapshot {
+			continue
+		}
+		call := g.tools.byIdx[tc.Index]
+		switch {
+		case call.Arguments == tc.ArgumentsSnapshot:
+		case call.Arguments == "":
+			call.Arguments = tc.ArgumentsSnapshot
+			g.unhandledTools.byIdx[tc.Index].Arguments = tc.ArgumentsSnapshot
+		default:
+			g.toolArgsMismatch = true
+		}
+	}
+}
+
 func (g *streamGuard) trackToolEvent(ev *streamEvent) {
 	var last = -1
 	for _, tc := range ev.toolCalls {
@@ -277,6 +316,11 @@ func (g *streamGuard) flagUninspectedTools() {
 func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, normalised bool) adapter.MaskCause {
 	if !normalised {
 		return adapter.MaskCauseToolInput
+	}
+	for _, tc := range g.produced[b.events[0]].toolCalls {
+		if tc.ArgumentsDelta != "" {
+			return adapter.MaskCauseToolFrames
+		}
 	}
 	input, ok := adapter.MaskToolInput(view, masked)
 	if !ok {

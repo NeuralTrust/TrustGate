@@ -101,10 +101,11 @@ func (g *streamGuard) noteChatChoice(ev *streamEvent) {
 	}
 }
 
-// refusedChatTool reports a chat tool stream the guard will not release: a
-// call whose name changed, more than one choice, or a choice index that could
-// not be read. Each is a cut, whichever way on_error is set. The cap is a
-// separate decision (chatToolCapped).
+// refusedChatTool reports a tool stream the guard will not release: a call
+// whose name changed, more than one choice, a choice index that could not be
+// read, a native SSE call whose stated input disagrees with its deltas, or an
+// item whose tool input cannot be read. Each is a cut, whichever way on_error
+// is set. The cap is a separate decision (chatToolCapped).
 func (g *streamGuard) refusedChatTool() (string, bool) {
 	switch {
 	case g.toolRenamed:
@@ -113,6 +114,10 @@ func (g *streamGuard) refusedChatTool() (string, bool) {
 		return streamToolMultiChoiceMessage, true
 	case g.toolChoiceUnread:
 		return streamToolChoiceUnreadMessage, true
+	case g.toolArgsMismatch:
+		return streamToolArgsMessage, true
+	case g.toolUnreadable:
+		return streamToolUnreadableMessage, true
 	default:
 		return "", false
 	}

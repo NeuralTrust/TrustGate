@@ -309,6 +309,11 @@ type StreamToolCallDelta struct {
 	// ArgumentsDelta is an incremental piece of the JSON arguments, or of the
 	// freeform text input when Kind is ToolKindCustom.
 	ArgumentsDelta string `json:"arguments_delta,omitempty"`
+	// ArgumentsSnapshot is the full arguments a boundary event claims. It is
+	// not another incremental piece: a call with no arguments yet adopts it,
+	// and a call that already holds different arguments disagrees with it.
+	ArgumentsSnapshot    string `json:"arguments_snapshot,omitempty"`
+	HasArgumentsSnapshot bool   `json:"has_arguments_snapshot,omitempty"`
 }
 
 // CanonicalStreamChunk is one piece of a streamed response.
