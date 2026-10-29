@@ -1026,7 +1026,8 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 					Index:          event.Index,
 					ID:             cb.ID,
 					Name:           cb.Name,
-					ArgumentsDelta: anthropicStreamToolInput(cb.Input),
+					ArgumentsDelta: streamToolInputStart(string(cb.Input)),
+					ServerSide:     cb.Type == "server_tool_use",
 				}},
 			}, nil
 		}
@@ -1080,18 +1081,6 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 	default:
 		return nil, nil
 	}
-}
-
-// anthropicStreamToolInput is the initial input of a tool_use or
-// server_tool_use block. Anthropic sends "input": {} as a placeholder; passing
-// "{}" as the first delta makes a client that concatenates partial_json produce
-// invalid JSON. Any other input is the start of the call's arguments.
-func anthropicStreamToolInput(raw json.RawMessage) string {
-	input := strings.TrimSpace(string(raw))
-	if input == "" || input == "{}" {
-		return ""
-	}
-	return input
 }
 
 // Stream: Encode (Canonical → Anthropic SSE event)

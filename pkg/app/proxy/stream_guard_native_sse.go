@@ -38,21 +38,18 @@ func (g *streamGuard) trackNativeSSETool(ev *streamEvent) {
 	g.checkToolNames(ev)
 	g.reconcileNativeSSEArgs(ev)
 	if ev.unit == unitTerminal {
+		for idx := range g.sseOpen {
+			g.checkNativeSSEPrefix(idx)
+		}
 		g.sseOpen = nil
 		g.toolOpen = false
 		return
 	}
 	switch ev.tool {
-	case toolNone:
 	case toolStart, toolDelta:
 		g.openNativeSSETool(ev)
 	case toolStop:
 		g.closeNativeSSETool(ev)
-	default:
-		// toolPhase has no other variant. A new one must say here whether it
-		// opens or closes a call before it can change the hold.
-		var unknown = ev.tool
-		_ = unknown
 	}
 }
 
@@ -75,19 +72,24 @@ func (g *streamGuard) openNativeSSETool(ev *streamEvent) {
 // index. A stop whose call id disagrees with the id the call opened with does
 // not close it either.
 func (g *streamGuard) closeNativeSSETool(ev *streamEvent) {
-	idx := ev.toolIndex
-	if idx < 0 {
-		idx = -1
-	}
-	open, ok := g.sseOpen[idx]
+	open, ok := g.sseOpen[ev.toolIndex]
 	if !ok {
 		return
 	}
 	if id := sseEventCallID(ev); id != "" && open.id != "" && id != open.id {
 		return
 	}
-	delete(g.sseOpen, idx)
+	g.checkNativeSSEPrefix(ev.toolIndex)
+	delete(g.sseOpen, ev.toolIndex)
 	g.toolOpen = len(g.sseOpen) > 0
+}
+
+// checkNativeSSEPrefix records an invalid append once the call is whole,
+// rather than re-parsing the growing arguments on every delta.
+func (g *streamGuard) checkNativeSSEPrefix(idx int) {
+	if _, prefix := g.ssePrefix[idx]; prefix && !jsonArgumentPrefix(g.toolArguments(idx)) {
+		g.toolArgsMismatch = true
+	}
 }
 
 func sseEventCallID(ev *streamEvent) string {
@@ -109,9 +111,6 @@ func (g *streamGuard) reconcileNativeSSEArgs(ev *streamEvent) {
 	for _, tc := range ev.toolCalls {
 		if tc.ArgumentsDelta != "" && ev.tool != toolStart {
 			if _, sealed := g.sseSealed[tc.Index]; sealed {
-				g.toolArgsMismatch = true
-			}
-			if _, prefix := g.ssePrefix[tc.Index]; prefix && !jsonArgumentPrefix(g.toolArguments(tc.Index)) {
 				g.toolArgsMismatch = true
 			}
 		}
@@ -187,12 +186,5 @@ func jsonArgumentPrefix(s string) bool {
 		var extra any
 		return errors.Is(dec.Decode(&extra), io.EOF)
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var syntax *json.SyntaxError
-	if errors.As(err, &syntax) && strings.Contains(err.Error(), "unexpected end") {
-		return true
-	}
-	return false
+	return errors.Is(err, io.ErrUnexpectedEOF)
 }
