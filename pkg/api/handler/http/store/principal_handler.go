@@ -324,7 +324,7 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		GatewayID:    gatewayID,
 		PrincipalSub: principalSub,
 		Code:         strings.TrimSpace(req.Code),
-		Groups:       callerGroups(c),
+		Groups:       requestGroups(c, req.Groups),
 		RegistryID:   registryID,
 		ResumeURL:    strings.TrimSpace(req.ResumeURL),
 	})
@@ -339,12 +339,14 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 	})
 }
 
-func callerGroups(c *fiber.Ctx) []string {
-	principal := identity.PrincipalFromContext(c.UserContext())
-	if principal == nil {
-		return nil
+func requestGroups(c *fiber.Ctx, groups []string) []string {
+	if len(groups) > 0 {
+		return groups
 	}
-	return principal.StoreGroups()
+	if principal := identity.PrincipalFromContext(c.UserContext()); principal != nil {
+		return principal.StoreGroups()
+	}
+	return nil
 }
 
 // ConfigureLink godoc
