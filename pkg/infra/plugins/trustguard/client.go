@@ -97,6 +97,14 @@ func (e *rateLimitedError) Error() string {
 	return "trustguard: rate limit exceeded"
 }
 
+// reason is the plan limit TrustGuard reports in X-RateLimit-Reason.
+func (e *rateLimitedError) reason() string {
+	if values := e.headers["X-RateLimit-Reason"]; len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
 // entitlementsUnavailableError is returned when TrustGuard evaluate cannot
 // resolve plan entitlements (HTTP 503). The plugin records the failure and
 // continues: the buffered leg forwards the request, and a streamed block is

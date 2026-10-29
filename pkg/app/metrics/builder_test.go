@@ -614,6 +614,27 @@ func TestBuilder_TrustGuardReportedIsFlagged(t *testing.T) {
 	assert.True(t, evt.IsFlagged)
 }
 
+// TrustGuard refusing the call for the tenant's TrustGuard plan is a 429 with an
+// error on the span, but it is not a detection, so it does not flag the request.
+func TestBuilder_TrustGuardRateLimitedNotFlagged(t *testing.T) {
+	rt := trace.New("trace-tg-rate-limited", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "rate_limited"}, 429, 5*time.Millisecond, "trustguard: rate limit exceeded"))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 429}
+
+	start := time.UnixMilli(7_500_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(10*time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "rate_limited", evt.PolicyChain[0].Decision)
+	assert.Equal(t, 429, evt.PolicyChain[0].StatusCode)
+	assert.False(t, evt.PolicyChain[0].Flagged)
+	assert.False(t, evt.IsFlagged)
+	assert.Empty(t, evt.Security)
+}
+
 func TestBuilder_SkipsNoOpPluginSpan(t *testing.T) {
 	rt := trace.New("trace-tg-noop", trace.Metadata{GatewayID: "gw-1"})
 	_ = rt.AddSpan(pluginSpan("trustguard",

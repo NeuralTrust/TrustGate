@@ -150,9 +150,10 @@ func planRateLimitBody(req *infracontext.RequestContext, exceeded *ratelimitapp.
 
 // RewritePlanRateLimitBody is the body a client reads for a plan burst or quota
 // 429. checkRateLimit already renders that body in the ingress dialect. A
-// policy can answer the same limit first: TrustGuard evaluate returns the flat
-// plan body, and pluginErrorResult copies it onto the response the handler
-// sends. This turns that flat body into the dialect envelope. A body that is
+// policy can answer a plan limit first: TrustGuard evaluate returns the flat
+// body of TrustGuard's own plan, marked with its source, and pluginErrorResult
+// copies it onto the response the handler sends. This turns that flat body
+// into the dialect envelope, naming the plan that was reached. A body that is
 // not the flat plan shape, including one already enveloped and a policy limit
 // whose reason is a dimension such as consumer, is returned unchanged. Native
 // Bedrock stays flat so the handler can wrap the AWS envelope. Retry-After and
@@ -177,8 +178,9 @@ func applyPlanRateLimitDialect(req *infracontext.RequestContext, result *Forward
 }
 
 // flatPlanExceeded reports a body (*Exceeded).Body writes: error is the string
-// "rate limit exceeded" and the reason is the plan's burst or quota. An OpenAI
-// envelope has error as an object, so it does not match and is not wrapped again.
+// "rate limit exceeded" and the reason is the plan's burst or quota. source,
+// when present, says whose plan it is. An OpenAI envelope has error as an
+// object, so it does not match and is not wrapped again.
 func flatPlanExceeded(headers map[string][]string, body []byte) (*ratelimitapp.Exceeded, bool) {
 	if len(body) == 0 {
 		return nil, false
@@ -188,6 +190,7 @@ func flatPlanExceeded(headers map[string][]string, body []byte) (*ratelimitapp.E
 		Reason            string `json:"reason"`
 		Limit             int    `json:"limit"`
 		RetryAfterSeconds int    `json:"retry_after_seconds"`
+		Source            string `json:"source"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || payload.Error != "rate limit exceeded" {
 		return nil, false
@@ -219,6 +222,7 @@ func flatPlanExceeded(headers map[string][]string, body []byte) (*ratelimitapp.E
 		Reason:     reason,
 		Limit:      limit,
 		RetryAfter: retry,
+		Source:     payload.Source,
 	}, true
 }
 
