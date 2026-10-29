@@ -564,3 +564,54 @@ func TestStoreInstall_ConfigureLinkPinnedToInstanceAndGroups(t *testing.T) {
 		t.Fatal("result must carry the configure link")
 	}
 }
+
+// An install stays "installed" in search only while a grant still names the
+// instance that serves it. After that grant is removed the row remains, the
+// scoper hides the tools, and search reports a request. A repeat install does
+// not answer already installed.
+func TestStoreSearch_RevokedGrantOnAnExistingInstall(t *testing.T) {
+	h := newE2EHarness(t, notionLike())
+	ctx := selfServiceDefaultCtx("ana")
+	if _, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`)); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if len(h.regs.items) != 1 || len(h.installs.rows) != 1 {
+		t.Fatalf("expected one registry and one install, regs=%d rows=%d", len(h.regs.items), len(h.installs.rows))
+	}
+	shelf := h.regs.items[0]
+	grant, err := storeaccessdomain.New(h.rc.Consumer.GatewayID, "com.notion/mcp", shelf.ID, nil, []string{"ana"})
+	if err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	h.grants.items = []*storeaccessdomain.Grant{grant}
+	curated := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated),
+	)
+
+	raw, err := h.tool.Call(curated, h.rc, "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got := resultsByCode(t, raw)["com.notion/mcp"]["store_state"]; got != storeStateInstalled {
+		t.Fatalf("store_state = %v, want installed while the instance grant remains", got)
+	}
+
+	h.grants.items = nil
+	raw, err = h.tool.Call(curated, h.rc, "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search after revoke: %v", err)
+	}
+	if got := resultsByCode(t, raw)["com.notion/mcp"]["store_state"]; got != storeStateRequest {
+		t.Fatalf("store_state = %v, want request after the grant is removed", got)
+	}
+
+	raw, err = h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
+	if err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["requires_reason"] != true || sc["already_installed"] == true {
+		t.Fatalf("a revoked install must ask for access, got %+v", sc)
+	}
+}

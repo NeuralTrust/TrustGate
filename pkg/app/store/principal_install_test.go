@@ -48,6 +48,9 @@ func (r *recordingInstaller) Uninstall(context.Context, ids.GatewayID, string, s
 func (r *recordingInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (map[string]struct{}, error) {
 	return nil, nil
 }
+func (r *recordingInstaller) InstalledShelves(context.Context, ids.GatewayID, string) (map[string][]ids.RegistryID, error) {
+	return nil, nil
+}
 func (r *recordingInstaller) PinTarget(context.Context, InstallRequest) (*registrydomain.MCPTarget, error) {
 	return nil, nil
 }

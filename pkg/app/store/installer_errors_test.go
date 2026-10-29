@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func TestInstall_SSETransportIsRefusedBeforeMaterialise(t *testing.T) {
@@ -78,5 +79,34 @@ func TestInstalledCodes_ActiveInstallsOnly(t *testing.T) {
 	}
 	if _, ok := codes["gitlab"]; !ok || len(codes) != 1 {
 		t.Fatalf("codes = %v, want only gitlab", codes)
+	}
+}
+
+func TestInstalledShelves_ResolvesTheInstanceTheScoperExposes(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	canonical := shelfRegistry("github")
+	sandbox := shelfRegistry("github")
+	gitlab := shelfRegistry("gitlab")
+	installs := &fakeInstalls{byPrincipal: []*installationdomain.Installation{
+		// Unbound: the scoper serves this from the code's oldest instance.
+		{CatalogCode: "gitlab", Status: installationdomain.StatusInstalled},
+		// Bound to the newer instance, not the canonical one.
+		{CatalogCode: "github", Status: installationdomain.StatusInstalled, RegistryID: sandbox.ID},
+		{CatalogCode: "salesforce", Status: installationdomain.StatusPendingApproval},
+		{CatalogCode: "github", Status: installationdomain.StatusRevoked, RegistryID: canonical.ID},
+	}}
+	shelves, err := newInstaller(t, &fakeRegistries{items: []*registrydomain.Registry{canonical, sandbox, gitlab}}, installs).
+		InstalledShelves(context.Background(), gw, "ana")
+	if err != nil {
+		t.Fatalf("InstalledShelves: %v", err)
+	}
+	if got := shelves["gitlab"]; len(got) != 1 || got[0] != gitlab.ID {
+		t.Fatalf("gitlab shelves = %v, want the canonical instance %s", got, gitlab.ID)
+	}
+	if got := shelves["github"]; len(got) != 1 || got[0] != sandbox.ID {
+		t.Fatalf("github shelves = %v, want the bound instance %s", got, sandbox.ID)
+	}
+	if _, ok := shelves["salesforce"]; ok || len(shelves) != 2 {
+		t.Fatalf("shelves = %v, want only the active installs", shelves)
 	}
 }

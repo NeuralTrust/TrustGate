@@ -156,6 +156,12 @@ type Installer interface {
 	// install of. A lookup failure is returned to the caller; search treats that
 	// as "unknown" and does not fail the browse.
 	InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error)
+	// InstalledShelves maps each active install's catalog code to the registry
+	// the scoper would expose it as (the bound registry, or the code's canonical
+	// instance when the row is unbound). Search passes those ids to
+	// grants.InstanceAllows, so a row whose grant was removed is not reported
+	// as installed. A lookup failure is returned to the caller.
+	InstalledShelves(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string][]ids.RegistryID, error)
 	// PinTarget is the configured instance Install would bind in to. Nil when
 	// that install would not resolve to exactly one instance, so a caller
 	// leaves every catalog variable per-user.
@@ -415,6 +421,20 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		}
 	}
 	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
+	// Under Selected an active row is not already installed once no grant
+	// covers it. The scoper hides those tools; reporting the row here would
+	// tell the caller the server is installed and skip the request they now
+	// have to file. Open access does not consult grants.
+	if alreadyInstalled && !in.OpenMode {
+		grants, err := i.grantSet(ctx, in.GatewayID)
+		if err != nil {
+			return nil, err
+		}
+		shelfID := grantShelfID(sameInstance, decision.canonical)
+		if !grants.InstanceAllows(code, shelfID, in.Groups, in.grantSubject()) {
+			alreadyInstalled = false
+		}
+	}
 
 	// Materialise the registry only once the install is certain to be recorded.
 	if decision.materialise {
@@ -913,6 +933,16 @@ func (i *installer) Installed(ctx context.Context, in InstallRequest) (*InstallR
 	}, nil
 }
 
+// grantShelfID is the registry the scoper passes to InstanceAllows for an
+// existing install: the row's binding, or the code's canonical instance when
+// the row is unbound.
+func grantShelfID(row *installationdomain.Installation, canonical ids.RegistryID) ids.RegistryID {
+	if row != nil && !row.RegistryID.IsNil() {
+		return row.RegistryID
+	}
+	return canonical
+}
+
 // InstalledCodes returns the catalog codes this principal has an active
 // install of. Pending and revoked rows are not installed.
 func (i *installer) InstalledCodes(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string]struct{}, error) {
@@ -930,6 +960,62 @@ func (i *installer) InstalledCodes(ctx context.Context, gatewayID ids.GatewayID,
 			continue
 		}
 		out[code] = struct{}{}
+	}
+	return out, nil
+}
+
+// InstalledShelves resolves each active install to the registry the scoper
+// would expose, so a caller can apply the same InstanceAllows check. An
+// install whose server is gone is omitted. Pending and revoked rows are not
+// installed.
+func (i *installer) InstalledShelves(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (map[string][]ids.RegistryID, error) {
+	rows, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]*installationdomain.Installation, 0, len(rows))
+	for _, row := range rows {
+		if row == nil || !row.IsActive() || strings.TrimSpace(row.CatalogCode) == "" {
+			continue
+		}
+		active = append(active, row)
+	}
+	out := make(map[string][]ids.RegistryID)
+	if len(active) == 0 {
+		return out, nil
+	}
+	items, err := listRegistriesForInstalls(ctx, i.registries, gatewayID, active)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(items))
+	byCode := make(map[string][]*registrydomain.Registry)
+	for _, reg := range items {
+		if reg == nil || reg.MCPTarget == nil {
+			continue
+		}
+		byID[reg.ID] = reg
+		code := registrydomain.StoreCode(reg)
+		byCode[code] = append(byCode[code], reg)
+	}
+	for _, regs := range byCode {
+		sortRegistries(regs)
+	}
+	seen := make(map[string]map[ids.RegistryID]struct{}, len(active))
+	for _, row := range active {
+		shelf := resolveInstance(row, byID, byCode)
+		if shelf == nil {
+			continue
+		}
+		code := strings.TrimSpace(row.CatalogCode)
+		if seen[code] == nil {
+			seen[code] = map[ids.RegistryID]struct{}{}
+		}
+		if _, ok := seen[code][shelf.ID]; ok {
+			continue
+		}
+		seen[code][shelf.ID] = struct{}{}
+		out[code] = append(out[code], shelf.ID)
 	}
 	return out, nil
 }
