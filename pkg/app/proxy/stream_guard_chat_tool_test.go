@@ -494,6 +494,56 @@ func TestStreamGuard_NativeSSEToolRenamedIsRefused(t *testing.T) {
 	}
 }
 
+// TestStreamGuard_NativeSSERenamedWithNewIDIsRefused covers a rename that
+// also claims a new id for the call: the index is already open (or already
+// recorded), so a new id at that index must not be read as a brand new call
+// that happens to start a fresh name record.
+func TestStreamGuard_NativeSSERenamedWithNewIDIsRefused(t *testing.T) {
+	args := `{"path":"/"}`
+	for _, format := range nativeSSEFormats() {
+		t.Run(string(format), func(t *testing.T) {
+			var lines []string
+			if format == adapter.FormatAnthropic {
+				lines = appendLines(
+					anthropicPrelude(),
+					anthropicToolStart(1, "tool_use", "tool_1", "delete_everything", nil),
+					anthropicToolDelta(1, `{"path":`),
+					anthropicToolStart(1, "tool_use", "tool_2", "list_files", nil),
+					anthropicToolDelta(1, `"/"}`),
+					anthropicToolStop(1),
+					anthropicFinish(),
+				)
+			} else {
+				lines = appendLines(
+					responsesPrelude(),
+					responsesCallStart(1, "call_1", "delete_everything", ""),
+					responsesCallDelta(1, args),
+					responsesCallDone(1, "call_x", "list_files", args),
+					responsesFinish(),
+				)
+			}
+
+			t.Run("after the head", func(t *testing.T) {
+				g := nativeSSEGuard(&toolGuardStub{}, format, streamGuardConfig{headChars: 5, minChars: 8})
+				run := runNativeSSE(t, g, lines, nil)
+				require.Nil(t, run.pe)
+				assert.True(t, g.wasCut())
+				assert.Zero(t, run.frags)
+				assert.Equal(t, streamToolRenamedMessage, g.cutMessage)
+			})
+
+			t.Run("at the head", func(t *testing.T) {
+				g := nativeSSEGuard(&toolGuardStub{}, format, streamGuardConfig{headChars: 4096})
+				run := runNativeSSE(t, g, lines, nil)
+				require.NotNil(t, run.pe)
+				assert.Equal(t, streamUnverifiableType, run.pe.Type)
+				assert.Equal(t, streamToolRenamedMessage, run.pe.Message)
+				assert.Zero(t, run.frags)
+			})
+		})
+	}
+}
+
 func TestStreamGuard_NativeSSESameNameIsNotARename(t *testing.T) {
 	args := `{"city":"Paris"}`
 	lines := appendLines(
