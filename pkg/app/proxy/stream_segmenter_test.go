@@ -182,6 +182,67 @@ func segmenterFixtures() []segmenterFixture {
 	}
 }
 
+func TestNativeSSEToolPhase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		format  adapter.Format
+		payload string
+		want    toolPhase
+		index   int
+	}{
+		{
+			name:    "Anthropic tool use start",
+			format:  adapter.FormatAnthropic,
+			payload: `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use"}}`,
+			want:    toolStart,
+			index:   2,
+		},
+		{
+			name:    "Anthropic input delta",
+			format:  adapter.FormatAnthropic,
+			payload: `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+			want:    toolDelta,
+			index:   2,
+		},
+		{
+			name:    "Anthropic tool use stop",
+			format:  adapter.FormatAnthropic,
+			payload: `{"type":"content_block_stop","index":2}`,
+			want:    toolStop,
+			index:   2,
+		},
+		{
+			name:    "Responses function call start",
+			format:  adapter.FormatOpenAIResponses,
+			payload: `{"type":"response.output_item.added","output_index":3,"item":{"type":"function_call"}}`,
+			want:    toolStart,
+			index:   3,
+		},
+		{
+			name:    "Responses arguments delta",
+			format:  adapter.FormatOpenAIResponses,
+			payload: `{"type":"response.function_call_arguments.delta","output_index":3,"delta":"{}"}`,
+			want:    toolDelta,
+			index:   3,
+		},
+		{
+			name:    "Responses arguments done",
+			format:  adapter.FormatOpenAIResponses,
+			payload: `{"type":"response.function_call_arguments.done","output_index":3,"arguments":"{}"}`,
+			want:    toolStop,
+			index:   3,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, index := nativeSSEToolPhase(tc.format, []byte(tc.payload))
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.index, index)
+		})
+	}
+}
+
 func TestSegmenter_ClassifiesEventsAndPreservesBytes(t *testing.T) {
 	t.Parallel()
 	for _, fixture := range segmenterFixtures() {

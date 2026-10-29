@@ -231,6 +231,52 @@ func nativeToolPhase(payload []byte) (toolPhase, int) {
 	return toolNone, -1
 }
 
+// nativeSSEToolWire reports the native SSE formats with explicit tool-call
+// boundaries. Unlike chat-completions, their argument deltas can be held per
+// call until the corresponding end event.
+func nativeSSEToolWire(format adapter.Format) bool {
+	return adapter.IsSameWireFormat(format, adapter.FormatAnthropic) ||
+		adapter.IsSameWireFormat(format, adapter.FormatOpenAIResponses)
+}
+
+func nativeSSEToolPhase(format adapter.Format, payload []byte) (toolPhase, int) {
+	if adapter.IsSameWireFormat(format, adapter.FormatAnthropic) {
+		return nativeToolPhase(payload)
+	}
+	if !adapter.IsSameWireFormat(format, adapter.FormatOpenAIResponses) {
+		return toolNone, -1
+	}
+	var event struct {
+		Type        string `json:"type"`
+		OutputIndex *int   `json:"output_index"`
+		Item        struct {
+			Type string `json:"type"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return toolNone, -1
+	}
+	index := -1
+	if event.OutputIndex != nil {
+		index = *event.OutputIndex
+	}
+	switch event.Type {
+	case responsesOutputItemAdded:
+		if event.Item.Type == "function_call" {
+			return toolStart, index
+		}
+	case "response.function_call_arguments.delta":
+		return toolDelta, index
+	case "response.function_call_arguments.done":
+		return toolStop, index
+	case responsesOutputItemDone:
+		if event.Item.Type == "function_call" {
+			return toolStop, index
+		}
+	}
+	return toolNone, -1
+}
+
 // streamMark is what one event does to the structure a client can see open: the
 // Anthropic content block it opens or closes, the Responses output item it adds
 // or completes.
@@ -357,6 +403,8 @@ type segmenter struct {
 	// read-only view, while the event keeps the frame's own bytes, which is
 	// what the guard releases.
 	frames bool
+	// toolPhases reads explicit native SSE tool boundaries.
+	toolPhases bool
 	// choices reads the choice index of each chat-completions event.
 	choices bool
 }
@@ -431,6 +479,9 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	}
 	if s.frames {
 		ev.tool, ev.toolIndex = nativeToolPhase(payload)
+	}
+	if s.toolPhases {
+		ev.tool, ev.toolIndex = nativeSSEToolPhase(s.format, payload)
 	}
 	if s.choices {
 		s.readChoice(ev, payload)
