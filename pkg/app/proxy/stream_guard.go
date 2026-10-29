@@ -119,7 +119,15 @@ const (
 // same reason: a stream whose events carry no inspectable text closes no block
 // on chars and none on the clock either once the gate's ceiling is measured
 // against an idle guard, so without it the rest of the response accumulates.
-const maxHeadHeldBytes = 256 << 10
+// An open tool call is held inside that block, so the ceiling is also how many
+// wire bytes of a streamed tool call stay buffered for inspection. Above it
+// the call is released as it came. One provider line can still land past the
+// ceiling. Peak for one held stream is the held wire plus the text
+// accumulators, the joined input and the normalised view. Normalising can
+// about double the wire (U+2028 is three bytes on the wire and six once
+// re-encoded), so the peak is roughly 3-5 MiB, against about 1 MiB at the
+// previous 256 KiB ceiling. A view longer than the chain's window is not sent.
+const maxHeadHeldBytes = 1 << 20
 
 const (
 	defaultMinCharsBetweenEvals = 2048

@@ -37,6 +37,7 @@ type responsesWireEvent struct {
 	SequenceNumber *int                   `json:"sequence_number"`
 	OutputIndex    *int                   `json:"output_index"`
 	ContentIndex   *int                   `json:"content_index"`
+	SummaryIndex   *int                   `json:"summary_index"`
 	ItemID         string                 `json:"item_id"`
 	Code           string                 `json:"code"`
 	Message        string                 `json:"message"`
@@ -57,6 +58,7 @@ type responsesWireItem struct {
 	Name      string              `json:"name,omitempty"`
 	Arguments *string             `json:"arguments,omitempty"`
 	Content   []responsesWirePart `json:"content,omitempty"`
+	Summary   []responsesWirePart `json:"summary,omitempty"`
 }
 
 type responsesWirePart struct {
@@ -198,6 +200,8 @@ func requireResponsesContract(t *testing.T, events []responsesWireEvent) *respon
 			case "message":
 				assert.Equal(t, "assistant", ev.Item.Role)
 				assert.Empty(t, ev.Item.Content)
+			case "reasoning":
+				assert.Empty(t, ev.Item.Summary)
 			case "function_call":
 				require.NotEmpty(t, ev.Item.CallID)
 				require.False(t, callIDs[ev.Item.CallID], "event %d: call_id %s repeats", i, ev.Item.CallID)
@@ -238,6 +242,36 @@ func requireResponsesContract(t *testing.T, events []responsesWireEvent) *respon
 			assert.Equal(t, state.text.String(), *ev.Part.Text)
 			assert.NotNil(t, ev.Part.Annotations)
 			state.partDone = true
+		case "response.reasoning_summary_part.added":
+			state := item(i, ev, "reasoning")
+			require.False(t, state.partAdded, "event %d: one summary part", i)
+			require.NotNil(t, ev.SummaryIndex, "event %d: summary index", i)
+			assert.Equal(t, 0, *ev.SummaryIndex, "event %d: first summary part", i)
+			require.NotNil(t, ev.Part)
+			require.NotNil(t, ev.Part.Text)
+			assert.Equal(t, "summary_text", ev.Part.Type)
+			assert.Empty(t, *ev.Part.Text)
+			state.partAdded = true
+		case "response.reasoning_summary_text.delta":
+			state := item(i, ev, "reasoning")
+			require.True(t, state.partAdded, "event %d: text after its summary part", i)
+			require.False(t, state.contentEnd, "event %d", i)
+			require.NotNil(t, ev.Delta)
+			state.text.WriteString(*ev.Delta)
+		case "response.reasoning_summary_text.done":
+			state := item(i, ev, "reasoning")
+			require.True(t, state.partAdded, "event %d", i)
+			require.False(t, state.contentEnd, "event %d", i)
+			require.NotNil(t, ev.Text)
+			assert.Equal(t, state.text.String(), *ev.Text, "event %d: done text matches the deltas", i)
+			state.contentEnd = true
+		case "response.reasoning_summary_part.done":
+			state := item(i, ev, "reasoning")
+			require.True(t, state.contentEnd, "event %d: part done after text done", i)
+			require.NotNil(t, ev.Part)
+			require.NotNil(t, ev.Part.Text)
+			assert.Equal(t, state.text.String(), *ev.Part.Text)
+			state.partDone = true
 		case "response.function_call_arguments.delta":
 			state := item(i, ev, "function_call")
 			require.False(t, state.contentEnd, "event %d", i)
@@ -256,14 +290,21 @@ func requireResponsesContract(t *testing.T, events []responsesWireEvent) *respon
 			assert.Equal(t, state.added.ID, done.ID)
 			assert.Equal(t, state.added.Type, done.Type)
 			assert.Equal(t, wantStatus, done.Status)
-			if done.Type == "message" {
+			switch done.Type {
+			case "message":
 				require.True(t, state.partDone, "event %d: message done after its part", i)
 				require.Len(t, done.Content, 1)
 				require.NotNil(t, done.Content[0].Text)
 				assert.Equal(t, "output_text", done.Content[0].Type)
 				assert.Equal(t, state.text.String(), *done.Content[0].Text)
 				assert.NotNil(t, done.Content[0].Annotations)
-			} else {
+			case "reasoning":
+				require.True(t, state.partDone, "event %d: reasoning done after its summary part", i)
+				require.Len(t, done.Summary, 1)
+				require.NotNil(t, done.Summary[0].Text)
+				assert.Equal(t, "summary_text", done.Summary[0].Type)
+				assert.Equal(t, state.text.String(), *done.Summary[0].Text)
+			default:
 				require.True(t, state.contentEnd, "event %d: call done after its arguments", i)
 				assert.Equal(t, state.added.CallID, done.CallID)
 				assert.Equal(t, state.added.Name, done.Name)
@@ -294,13 +335,13 @@ func responsesGolden(events []responsesWireEvent) []string {
 				line += " " + ev.Item.CallID + " " + ev.Item.Name
 			}
 			out = append(out, line)
-		case "response.output_text.delta", "response.function_call_arguments.delta":
+		case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta":
 			out = append(out, fmt.Sprintf("%s %d %s", name, *ev.OutputIndex, *ev.Delta))
-		case "response.output_text.done":
+		case "response.output_text.done", "response.reasoning_summary_text.done":
 			out = append(out, fmt.Sprintf("%s %d %s", name, *ev.OutputIndex, *ev.Text))
 		case "response.function_call_arguments.done":
 			out = append(out, fmt.Sprintf("%s %d %s", name, *ev.OutputIndex, *ev.Arguments))
-		case "response.content_part.added", "response.content_part.done":
+		case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 			out = append(out, fmt.Sprintf("%s %d", name, *ev.OutputIndex))
 		default:
 			out = append(out, name)
@@ -323,6 +364,22 @@ func responsesMessageDoneGolden(index int, text string) []string {
 		fmt.Sprintf("content_part.done %d", index),
 		fmt.Sprintf("output_item.done %d message", index),
 	}
+}
+
+func responsesReasoningGolden(index int, deltas ...string) []string {
+	out := []string{
+		fmt.Sprintf("output_item.added %d reasoning", index),
+		fmt.Sprintf("reasoning_summary_part.added %d", index),
+	}
+	for _, d := range deltas {
+		out = append(out, fmt.Sprintf("reasoning_summary_text.delta %d %s", index, d))
+	}
+	text := strings.Join(deltas, "")
+	return append(out,
+		fmt.Sprintf("reasoning_summary_text.done %d %s", index, text),
+		fmt.Sprintf("reasoning_summary_part.done %d", index),
+		fmt.Sprintf("output_item.done %d reasoning", index),
+	)
 }
 
 func responsesCallGolden(index int, callID, name, arguments string) []string {
@@ -1026,15 +1083,16 @@ func TestAdaptStream_ResponsesClientGetsKeepalivesWhileNothingIsSent(t *testing.
 			keepalives = append(keepalives, i)
 		}
 	}
-	assert.Len(t, keepalives, 4, "one per 10s without events: reasoning, two stretches of held call deltas and the held finish")
+	assert.Len(t, keepalives, 3, "one per 10s without events while call deltas and the finish are held")
 
 	events := responsesWireEvents(t, lines)
 	final := requireResponsesContract(t, events)
 	assert.Equal(t, joinGolden(
 		[]string{"created", "in_progress"},
-		responsesMessageGolden(0, "Writing."),
-		responsesMessageDoneGolden(0, "Writing."),
-		responsesCallGolden(1, "call_1", "write_file", `{"body":"long"}`),
+		responsesReasoningGolden(0, "Thinking", " hard."),
+		responsesMessageGolden(1, "Writing."),
+		responsesMessageDoneGolden(1, "Writing."),
+		responsesCallGolden(2, "call_1", "write_file", `{"body":"long"}`),
 		[]string{"completed"},
 	), responsesGolden(events))
 	assert.JSONEq(t, `{"input_tokens":5,"output_tokens":9,"total_tokens":14,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`, string(final.Usage))

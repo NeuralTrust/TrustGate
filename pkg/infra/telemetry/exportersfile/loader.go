@@ -58,18 +58,29 @@ func Load(path string) ([]telemetrydomain.ExporterConfig, error) {
 	return parseDocument(data, fmt.Sprintf("file %q", path))
 }
 
-func LoadDefaults(path, metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, error) {
+// Sources LoadDefaults reports the default exporters were read from.
+const (
+	SourceFile        = "file"
+	SourceEnvironment = "environment"
+)
+
+// LoadDefaults reads the exporters file at path and falls back to the
+// TELEMETRY_EXPORTERS_METADATA / _RAW lists when the file is missing or
+// declares no exporters, so a mounted empty file cannot silently mask them.
+// It also returns the source that won.
+func LoadDefaults(path, metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, string, error) {
 	path = strings.TrimSpace(path)
 	if path != "" {
 		configs, err := Load(path)
 		switch {
-		case err == nil:
-			return configs, nil
-		case !errors.Is(err, ErrFileNotFound):
-			return nil, err
+		case err == nil && len(configs) > 0:
+			return configs, SourceFile, nil
+		case err != nil && !errors.Is(err, ErrFileNotFound):
+			return nil, SourceFile, err
 		}
 	}
-	return ParseGroups(metadataYAML, rawYAML)
+	configs, err := ParseGroups(metadataYAML, rawYAML)
+	return configs, SourceEnvironment, err
 }
 
 func ParseGroups(metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, error) {
