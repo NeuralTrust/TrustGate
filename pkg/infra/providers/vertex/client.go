@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 )
 
 const (
@@ -202,6 +203,9 @@ func (c *client) bearerToken(ctx context.Context, config *providers.Config) (str
 		}
 		token, err := source(ctx, config.Credentials.GCP)
 		if err != nil {
+			if config.Credentials.GCP.FromCaller && gcpauth.KeyRejected(err) {
+				return "", fmt.Errorf("%w: %w", registry.ErrCallerCredentialRejected, err)
+			}
 			return "", fmt.Errorf("%w: failed to get Vertex AI bearer token: %w", registry.ErrCredentialAcquisition, err)
 		}
 		return token, nil

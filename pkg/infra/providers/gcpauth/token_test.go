@@ -267,3 +267,51 @@ func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	clone.URL.Host = r.target
 	return http.DefaultTransport.RoundTrip(clone)
 }
+
+func TestKeyRejected(t *testing.T) {
+	statusEndpoint := func(status int) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"Invalid grant: account not found"}`)
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+
+	badPEM, err := json.Marshal(map[string]string{
+		"type":         "service_account",
+		"private_key":  "-----BEGIN PRIVATE KEY-----\nbm90IGEga2V5\n-----END PRIVATE KEY-----\n",
+		"client_email": "sa@proj.iam.gserviceaccount.com",
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name         string
+		endpoint     *httptest.Server
+		key          string
+		wantRejected bool
+	}{
+		{name: "not json", endpoint: statusEndpoint(http.StatusOK), key: "not-json", wantRejected: true},
+		{name: "private key does not parse", endpoint: statusEndpoint(http.StatusOK), key: string(badPEM), wantRejected: true},
+		{name: "google refuses the key", endpoint: statusEndpoint(http.StatusBadRequest), wantRejected: true},
+		{name: "google is unauthorized", endpoint: statusEndpoint(http.StatusUnauthorized), wantRejected: true},
+		{name: "google fails", endpoint: statusEndpoint(http.StatusInternalServerError)},
+		{name: "google unreachable", endpoint: closed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := tt.key
+			if key == "" {
+				key = serviceAccountJSON(t, "https://oauth2.googleapis.com/token", "sa@proj.iam.gserviceaccount.com")
+			}
+			_, err := NewServiceAccountCache(WithHTTPClient(redirectTo(tt.endpoint))).Token(context.Background(), key, CloudPlatformScope)
+
+			require.Error(t, err)
+			assert.Equal(t, tt.wantRejected, KeyRejected(err), "error: %v", err)
+		})
+	}
+}
