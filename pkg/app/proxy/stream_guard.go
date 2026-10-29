@@ -115,7 +115,11 @@ const (
 // same reason: a stream whose events carry no inspectable text closes no block
 // on chars and none on the clock either once the gate's ceiling is measured
 // against an idle guard, so without it the rest of the response accumulates.
-const maxHeadHeldBytes = 256 << 10
+// An open tool call is held inside that block, so the ceiling is also how many
+// wire bytes of a streamed tool call stay buffered for inspection. Above it
+// the call is released as it came. 1 MiB covers an argument that does not fit
+// in 256 KiB and stays at the size the engine can still read.
+const maxHeadHeldBytes = 1 << 20
 
 const (
 	defaultMinCharsBetweenEvals = 2048
