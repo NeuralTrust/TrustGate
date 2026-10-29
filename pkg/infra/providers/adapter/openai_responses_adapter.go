@@ -443,6 +443,17 @@ func responsesCustomInput(raw json.RawMessage) string {
 	return string(trimmed)
 }
 
+// responsesCustomCallDelta is the tool-call delta of a custom_tool_call event.
+// A boundary event states the call's full input as a snapshot; an omitted or
+// null input states nothing.
+func responsesCustomCallDelta(index int, callID, name string, input json.RawMessage) StreamToolCallDelta {
+	delta := StreamToolCallDelta{Index: index, ID: callID, Kind: ToolKindCustom, Name: name}
+	if trimmed := bytes.TrimSpace(input); len(trimmed) > 0 && string(trimmed) != "null" {
+		delta.ArgumentsSnapshot, delta.HasArgumentsSnapshot = responsesCustomInput(trimmed), true
+	}
+	return delta
+}
+
 // responsesToolOutput returns the text of a function_call_output or
 // custom_tool_call_output and the breakpoint of its text parts. Parts that
 // are not text (images, files) are left out with their breakpoints, and a
@@ -554,7 +565,7 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		return invalidStreamEvent("Responses"), nil
 	}
 	switch kind.Type {
-	case "response.created", "response.in_progress", "response.output_text.delta", "response.function_call_arguments.delta", "response.output_item.added", "response.function_call_arguments.done", "response.completed", "response.incomplete", "error", "response.failed":
+	case "response.created", "response.in_progress", "response.output_text.delta", "response.function_call_arguments.delta", "response.output_item.added", "response.function_call_arguments.done", "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done", "response.output_item.done", "response.completed", "response.incomplete", "error", "response.failed":
 	default:
 		return nil, nil
 	}
@@ -599,14 +610,52 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			}},
 		}, nil
 
+	case "response.custom_tool_call_input.delta":
+		return &CanonicalStreamChunk{
+			ToolCallDeltas: []StreamToolCallDelta{{
+				Index:          event.OutputIndex,
+				Kind:           ToolKindCustom,
+				ArgumentsDelta: event.Delta,
+			}},
+		}, nil
+
+	case "response.custom_tool_call_input.done":
+		var done struct {
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(chunk, &done) != nil {
+			return invalidStreamEvent("Responses"), nil
+		}
+		return &CanonicalStreamChunk{
+			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, "", "", done.Input)},
+		}, nil
+
+	case "response.output_item.done":
+		if len(event.Item) == 0 {
+			return nil, nil
+		}
+		var item struct {
+			Type   string          `json:"type"`
+			CallID string          `json:"call_id"`
+			Name   string          `json:"name"`
+			Input  json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(event.Item, &item) != nil || item.Type != responsesItemCustomToolCall {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{
+			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, item.CallID, item.Name, item.Input)},
+		}, nil
+
 	case "response.output_item.added":
 		if event.Item != nil {
 			var item struct {
-				Type   string `json:"type"`
-				Role   string `json:"role"`
-				ID     string `json:"id"`
-				CallID string `json:"call_id"`
-				Name   string `json:"name"`
+				Type   string          `json:"type"`
+				Role   string          `json:"role"`
+				ID     string          `json:"id"`
+				CallID string          `json:"call_id"`
+				Name   string          `json:"name"`
+				Input  json.RawMessage `json:"input"`
 			}
 			if json.Unmarshal(event.Item, &item) == nil {
 				switch item.Type {
@@ -620,6 +669,16 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 							Index: event.OutputIndex,
 							ID:    item.CallID,
 							Name:  item.Name,
+						}},
+					}, nil
+				case responsesItemCustomToolCall:
+					return &CanonicalStreamChunk{
+						ToolCallDeltas: []StreamToolCallDelta{{
+							Index:          event.OutputIndex,
+							ID:             item.CallID,
+							Kind:           ToolKindCustom,
+							Name:           item.Name,
+							ArgumentsDelta: responsesCustomInput(item.Input),
 						}},
 					}, nil
 				}

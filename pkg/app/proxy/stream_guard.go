@@ -88,6 +88,12 @@ const (
 	// not a JSON integer. The decoder rejects the chunk, so its tool calls
 	// would otherwise leave as raw bytes no guard has read.
 	streamToolChoiceUnreadMessage = "Response blocked: a streamed choice index could not be read."
+	// streamToolArgsMessage refuses a streamed tool call whose boundary event
+	// states a full input that disagrees with the deltas already held.
+	streamToolArgsMessage = "Response blocked: a streamed tool call changed its arguments."
+	// streamToolUnreadableMessage refuses a streamed item that asks the client
+	// to run a tool whose input the guard cannot read.
+	streamToolUnreadableMessage = "Response blocked: a streamed tool call of this type cannot be inspected."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -312,6 +318,11 @@ type streamGuard struct {
 	chatSeen         map[int]struct{}
 	toolMultiChoice  bool
 	toolChoiceUnread bool
+	// toolArgsMismatch is a native SSE call whose stated full input disagrees
+	// with its deltas, and toolUnreadable an item whose tool input the guard
+	// cannot read. Either is refused.
+	toolArgsMismatch bool
+	toolUnreadable   bool
 	degradedReason   string
 	fallbackReason   string
 
@@ -473,6 +484,8 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	switch {
 	case g.native || g.nativeSSETools:
 		g.unhandledTools.merge(ev.toolCalls)
+		g.reconcileToolSnapshots(ev)
+		g.toolUnreadable = g.toolUnreadable || ev.unreadableTool
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
 	case g.chatTools():
