@@ -399,7 +399,8 @@ func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
 	srv := newServer(t, f)
 	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
 	if res != nil {
 		t.Fatalf("expected nil result on rate limit, got %+v", res)
@@ -429,6 +430,20 @@ func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
 	if len(pe.Body) == 0 {
 		t.Fatal("expected non-empty rate limit body")
 	}
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(pe.Body, &body))
+	assert.Equal(t, "trustguard", body["source"], "the proxy names TrustGuard's plan from the body's source")
+
+	// A plan limit is not a verdict on the content: the policy chain must not
+	// show TrustGuard as having blocked the request.
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "a rate limit must leave extras, got %T", attrs.Extras)
+	assert.Equal(t, decisionRateLimited, extras.Decision)
+	assert.Equal(t, "burst", extras.RateLimitReason)
+	assert.Equal(t, "input", extras.Direction)
+	assert.Equal(t, decisionRateLimited, attrs.Decision, "the span decision is what the policy chain shows")
+	assert.Empty(t, attrs.ScoreLabel)
 }
 
 func TestExecutePreResponseRateLimitReturns429(t *testing.T) {

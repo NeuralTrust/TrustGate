@@ -116,6 +116,10 @@ const (
 	decisionAllowed     = "allowed"
 	decisionFailedOpen  = "failed_open"
 	decisionTransformed = "transformed"
+	// decisionRateLimited is TrustGuard refusing the call because the tenant
+	// reached its TrustGuard plan limit. It is not a verdict on the content, so
+	// it is not recorded as blocked.
+	decisionRateLimited = "rate_limited"
 	// Statuses a successful TrustGuard evaluate puts on GuardResponse.Status.
 	// allow, report, transform, ask, block and skip are switched on here.
 	// skip continues the request and is recorded allowed. error is a status
@@ -382,7 +386,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted, AttachmentsNotFetched: tgt.attachmentsNotFetched})
+			recordGuardOutcome(in.Event, guardData{
+				Direction:               direction,
+				Decision:                decisionRateLimited,
+				RateLimitReason:         limited.reason(),
+				AttachmentsNotInspected: tgt.attachmentsOmitted,
+				AttachmentsNotFetched:   tgt.attachmentsNotFetched,
+			})
 			return nil, rateLimitError(limited)
 		}
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, reasonOfError(ctx, err), err)
