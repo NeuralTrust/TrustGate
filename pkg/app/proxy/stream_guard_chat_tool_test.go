@@ -544,6 +544,57 @@ func TestStreamGuard_NativeSSERenamedWithNewIDIsRefused(t *testing.T) {
 	}
 }
 
+// TestStreamGuard_NativeSSERenameAfterEmptyIDIsRefused is the Responses case
+// where the first named event at an index carries no id. A later event must
+// not be read as a new call just because it is the first one with an id.
+func TestStreamGuard_NativeSSERenameAfterEmptyIDIsRefused(t *testing.T) {
+	args := `{"path":"/"}`
+	cases := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "added without a call id",
+			lines: appendLines(
+				responsesPrelude(),
+				responsesCallStart(1, "", "delete_everything", ""),
+				responsesCallDelta(1, args),
+				responsesCallDone(1, "call_x", "list_files", args),
+				responsesFinish(),
+			),
+		},
+		{
+			name: "arguments done without a call id",
+			lines: appendLines(
+				responsesPrelude(),
+				responsesCallArgsDone(1, "delete_everything", nil),
+				responsesCallDone(1, "call_1", "list_files", args),
+				responsesFinish(),
+			),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("after the head", func(t *testing.T) {
+				g := nativeSSEGuard(&toolGuardStub{}, adapter.FormatOpenAIResponses, streamGuardConfig{headChars: 5, minChars: 8})
+				run := runNativeSSE(t, g, tc.lines, nil)
+				require.Nil(t, run.pe)
+				assert.True(t, g.wasCut())
+				assert.Zero(t, run.frags)
+				assert.Equal(t, streamToolRenamedMessage, g.cutMessage)
+			})
+			t.Run("at the head", func(t *testing.T) {
+				g := nativeSSEGuard(&toolGuardStub{}, adapter.FormatOpenAIResponses, streamGuardConfig{headChars: 4096})
+				run := runNativeSSE(t, g, tc.lines, nil)
+				require.NotNil(t, run.pe)
+				assert.Equal(t, streamUnverifiableType, run.pe.Type)
+				assert.Equal(t, streamToolRenamedMessage, run.pe.Message)
+				assert.Zero(t, run.frags)
+			})
+		})
+	}
+}
+
 func TestStreamGuard_NativeSSESameNameIsNotARename(t *testing.T) {
 	args := `{"city":"Paris"}`
 	lines := appendLines(
