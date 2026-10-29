@@ -691,6 +691,39 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_FuncArgsDone(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, sc)
 	assert.Equal(t, "tool_calls", sc.FinishReason)
+	require.Len(t, sc.ToolCallDeltas, 1)
+	assert.Equal(t, 1, sc.ToolCallDeltas[0].Index)
+	assert.Equal(t, "get_weather", sc.ToolCallDeltas[0].Name)
+	assert.True(t, sc.ToolCallDeltas[0].HasArgumentsSnapshot)
+	assert.Equal(t, `{"city":"Paris"}`, sc.ToolCallDeltas[0].ArgumentsSnapshot)
+	assert.Empty(t, sc.ToolCallDeltas[0].ArgumentsDelta)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemDoneFunctionCall(t *testing.T) {
+	chunk := `{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}`
+
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk([]byte(chunk))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.Len(t, sc.ToolCallDeltas, 1)
+	assert.Equal(t, "call_1", sc.ToolCallDeltas[0].ID)
+	assert.Equal(t, "get_weather", sc.ToolCallDeltas[0].Name)
+	assert.True(t, sc.ToolCallDeltas[0].HasArgumentsSnapshot)
+	assert.Equal(t, `{"city":"Paris"}`, sc.ToolCallDeltas[0].ArgumentsSnapshot)
+	assert.Empty(t, sc.ToolCallDeltas[0].ArgumentsDelta)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemAddedCarriesArguments(t *testing.T) {
+	chunk := `{"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","call_id":"call_9","name":"run_shell","arguments":"{\"command\":\"ls\"}"}}`
+
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk([]byte(chunk))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.Len(t, sc.ToolCallDeltas, 1)
+	assert.Equal(t, 2, sc.ToolCallDeltas[0].Index)
+	assert.Equal(t, "call_9", sc.ToolCallDeltas[0].ID)
+	assert.Equal(t, `{"command":"ls"}`, sc.ToolCallDeltas[0].ArgumentsDelta)
+	assert.False(t, sc.ToolCallDeltas[0].HasArgumentsSnapshot)
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_Completed(t *testing.T) {

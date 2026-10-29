@@ -352,6 +352,32 @@ func TestCanonical_Anthropic_SystemArrayAndToolResultBlocks(t *testing.T) {
 	assert.Equal(t, "t1", tool.ToolCallID)
 }
 
+func TestAnthropicDecodeStreamChunk_ToolUseInitialInput(t *testing.T) {
+	t.Parallel()
+	adapter := &AnthropicAdapter{}
+
+	empty, err := adapter.DecodeStreamChunk([]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"run_shell","input":{}}}`))
+	require.NoError(t, err)
+	require.NotNil(t, empty)
+	require.Len(t, empty.ToolCallDeltas, 1)
+	assert.Equal(t, "run_shell", empty.ToolCallDeltas[0].Name)
+	assert.Empty(t, empty.ToolCallDeltas[0].ArgumentsDelta)
+
+	for _, kind := range []string{"tool_use", "server_tool_use"} {
+		t.Run(kind, func(t *testing.T) {
+			body := `{"type":"content_block_start","index":2,"content_block":{"type":"` + kind + `","id":"tool_2","name":"run_shell","input":{"command":"ls"}}}`
+			got, err := adapter.DecodeStreamChunk([]byte(body))
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.Len(t, got.ToolCallDeltas, 1)
+			assert.Equal(t, 2, got.ToolCallDeltas[0].Index)
+			assert.Equal(t, "tool_2", got.ToolCallDeltas[0].ID)
+			assert.Equal(t, "run_shell", got.ToolCallDeltas[0].Name)
+			assert.JSONEq(t, `{"command":"ls"}`, got.ToolCallDeltas[0].ArgumentsDelta)
+		})
+	}
+}
+
 func TestAnthropicDecodeStreamChunk_ThinkingDelta(t *testing.T) {
 	tests := []struct {
 		name          string

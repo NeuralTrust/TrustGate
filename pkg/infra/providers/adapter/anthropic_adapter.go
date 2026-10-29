@@ -1020,19 +1020,13 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
 			return invalidStreamEvent("Anthropic"), nil
 		}
-		if cb.Type == "tool_use" {
-			inputStr := strings.TrimSpace(string(cb.Input))
-			// Anthropic sends "input": {} (empty object) in content_block_start; do not pass
-			// "{}" as first delta or the OpenAI client merges "{}" + partial_json → invalid JSON.
-			if inputStr == "" || inputStr == "{}" {
-				inputStr = ""
-			}
+		if cb.Type == "tool_use" || cb.Type == "server_tool_use" {
 			return &CanonicalStreamChunk{
 				ToolCallDeltas: []StreamToolCallDelta{{
 					Index:          event.Index,
 					ID:             cb.ID,
 					Name:           cb.Name,
-					ArgumentsDelta: inputStr,
+					ArgumentsDelta: anthropicStreamToolInput(cb.Input),
 				}},
 			}, nil
 		}
@@ -1086,6 +1080,18 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 	default:
 		return nil, nil
 	}
+}
+
+// anthropicStreamToolInput is the initial input of a tool_use or
+// server_tool_use block. Anthropic sends "input": {} as a placeholder; passing
+// "{}" as the first delta makes a client that concatenates partial_json produce
+// invalid JSON. Any other input is the start of the call's arguments.
+func anthropicStreamToolInput(raw json.RawMessage) string {
+	input := strings.TrimSpace(string(raw))
+	if input == "" || input == "{}" {
+		return ""
+	}
+	return input
 }
 
 // Stream: Encode (Canonical → Anthropic SSE event)
