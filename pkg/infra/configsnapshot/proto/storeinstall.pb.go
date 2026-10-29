@@ -293,10 +293,13 @@ func (*UpsertInstallationResponse) Descriptor() ([]byte, []int) {
 }
 
 type FindInstallationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	GatewayId     string                 `protobuf:"bytes,1,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	PrincipalSub  string                 `protobuf:"bytes,2,opt,name=principal_sub,json=principalSub,proto3" json:"principal_sub,omitempty"`
-	CatalogCode   string                 `protobuf:"bytes,3,opt,name=catalog_code,json=catalogCode,proto3" json:"catalog_code,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	GatewayId    string                 `protobuf:"bytes,1,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
+	PrincipalSub string                 `protobuf:"bytes,2,opt,name=principal_sub,json=principalSub,proto3" json:"principal_sub,omitempty"`
+	CatalogCode  string                 `protobuf:"bytes,3,opt,name=catalog_code,json=catalogCode,proto3" json:"catalog_code,omitempty"`
+	// registry_id scopes the lookup to that configured instance (a registry id,
+	// or an installation id used as a per-instance id). Empty leaves it unscoped.
+	RegistryId    string `protobuf:"bytes,4,opt,name=registry_id,json=registryId,proto3" json:"registry_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -348,6 +351,13 @@ func (x *FindInstallationRequest) GetPrincipalSub() string {
 func (x *FindInstallationRequest) GetCatalogCode() string {
 	if x != nil {
 		return x.CatalogCode
+	}
+	return ""
+}
+
+func (x *FindInstallationRequest) GetRegistryId() string {
+	if x != nil {
+		return x.RegistryId
 	}
 	return ""
 }
@@ -716,12 +726,14 @@ const file_storeinstall_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
 	"\x19UpsertInstallationRequest\x12<\n" +
 	"\finstallation\x18\x01 \x01(\v2\x18.snapshotpb.InstallationR\finstallation\"\x1c\n" +
-	"\x1aUpsertInstallationResponse\"\x80\x01\n" +
+	"\x1aUpsertInstallationResponse\"\xa1\x01\n" +
 	"\x17FindInstallationRequest\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12#\n" +
 	"\rprincipal_sub\x18\x02 \x01(\tR\fprincipalSub\x12!\n" +
-	"\fcatalog_code\x18\x03 \x01(\tR\vcatalogCode\"n\n" +
+	"\fcatalog_code\x18\x03 \x01(\tR\vcatalogCode\x12\x1f\n" +
+	"\vregistry_id\x18\x04 \x01(\tR\n" +
+	"registryId\"n\n" +
 	"\x18FindInstallationResponse\x12\x14\n" +
 	"\x05found\x18\x01 \x01(\bR\x05found\x12<\n" +
 	"\finstallation\x18\x02 \x01(\v2\x18.snapshotpb.InstallationR\finstallation\"\\\n" +
