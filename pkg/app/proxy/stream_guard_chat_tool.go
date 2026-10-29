@@ -101,14 +101,18 @@ func (g *streamGuard) noteChatChoice(ev *streamEvent) {
 	}
 }
 
-// refusedChatTool reports a chat tool stream the guard will not release: a
-// call whose name changed, more than one choice, or a choice index that could
-// not be read. Each is a cut, whichever way on_error is set. The cap is a
-// separate decision (chatToolCapped).
+// refusedChatTool reports a tool stream the guard will not release: a call
+// whose name changed, arguments a boundary event disagrees with, more than
+// one choice, or a choice index that could not be read. Each is a cut,
+// whichever way on_error is set. The cap is a separate decision
+// (chatToolCapped). Name and argument checks cover native SSE tool calls as
+// well as chat completions.
 func (g *streamGuard) refusedChatTool() (string, bool) {
 	switch {
 	case g.toolRenamed:
 		return streamToolRenamedMessage, true
+	case g.toolArgsMismatch:
+		return streamToolArgsMessage, true
 	case g.toolMultiChoice:
 		return streamToolMultiChoiceMessage, true
 	case g.toolChoiceUnread:
@@ -141,13 +145,14 @@ func (g *streamGuard) checkToolNames(ev *streamEvent) {
 	}
 }
 
-// chatToolCapped resolves a block that has to be inspected while a chat tool
-// call is still open, which only the nativeToolHold cap or the held-bytes
-// ceiling causes: the guard would read part of the arguments and the rest
-// would be released unread. It reports whether the stream must stop, which is
-// what fail_closed does. Anything else releases the call and records it.
+// chatToolCapped resolves a block that has to be inspected while a tool call
+// is still open, which only the nativeToolHold cap or the held-bytes ceiling
+// causes: the guard would read part of the arguments and the rest would be
+// released unread. It covers chat completions and native SSE tool calls. It
+// reports whether the stream must stop, which is what fail_closed does.
+// Anything else releases the call and records it.
 func (g *streamGuard) chatToolCapped() bool {
-	if !g.chatTools() || !g.toolOpen || g.terminal || g.exhausted || g.srcErr != nil {
+	if (!g.chatTools() && !g.nativeSSETools) || !g.toolOpen || g.terminal || g.exhausted || g.srcErr != nil {
 		return false
 	}
 	cause := "size"
