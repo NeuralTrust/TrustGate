@@ -126,6 +126,46 @@ func TestInspectSegmentRewritesAsATransform(t *testing.T) {
 	}
 }
 
+func TestInspectSegmentRewritesToolCallArguments(t *testing.T) {
+	t.Parallel()
+	p := New(nil, nil)
+	seg := appplugins.StreamSegment{
+		StreamID: "s-1",
+		Seq:      1,
+		ToolCalls: []adapter.CanonicalToolCall{{
+			ID:        "call_1",
+			Name:      "run_shell",
+			Arguments: `{"command":"echo secret","note":"keep"}`,
+		}},
+	}
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(targetResponse,
+			map[string]any{"pattern": "secret", "replacement": "[MASK]"}), nil), seg)
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	if !got.HasTransform {
+		t.Fatal("tool-call argument match must return a transform")
+	}
+	if got.Transformed != "" {
+		t.Errorf("Transformed = %q, want unchanged text", got.Transformed)
+	}
+	if len(got.TransformedToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v, want one transformed call", got.TransformedToolCalls)
+	}
+	if got.TransformedToolCalls[0].Arguments != `{"command":"echo [MASK]","note":"keep"}` {
+		t.Errorf("arguments = %q", got.TransformedToolCalls[0].Arguments)
+	}
+	if len(got.Fingerprints) != 1 {
+		t.Errorf("Fingerprints = %v, want the rule that masked the arguments", got.Fingerprints)
+	}
+	if !p.ReadsStreamToolCalls() {
+		t.Error("regex_replace must request complete streamed tool calls")
+	}
+}
+
 // A pattern can straddle a block boundary, so the delta alone matches nothing.
 func TestInspectSegmentMatchesAcrossBlockBoundaries(t *testing.T) {
 	t.Parallel()
