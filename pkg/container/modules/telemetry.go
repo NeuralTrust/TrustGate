@@ -99,6 +99,7 @@ func buildPipeline(
 	if err != nil {
 		return nil, err
 	}
+	appmetrics.RegisterConfiguredExportersGauge(defaults, logger)
 	return appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...), nil
 }
 
@@ -107,13 +108,14 @@ func newDefaultExporters(
 	factory appmetrics.ExporterFactory,
 	path, metadataYAML, rawYAML string,
 ) ([]telemetrydomain.ExporterConfig, error) {
-	configs, err := exportersfile.LoadDefaults(path, metadataYAML, rawYAML)
+	configs, source, err := exportersfile.LoadDefaults(path, metadataYAML, rawYAML)
 	if err != nil {
 		return nil, fmt.Errorf("loading default telemetry exporters: %w", err)
 	}
 	if len(configs) == 0 {
-		logger.Warn("no default telemetry exporters configured; starting with none",
-			slog.String("path", path))
+		logger.Warn("no default telemetry exporters configured; only per-gateway exporters will receive events",
+			slog.String("path", path),
+			slog.String("source", source))
 		return nil, nil
 	}
 	for _, cfg := range configs {
@@ -122,7 +124,8 @@ func newDefaultExporters(
 		}
 		logger.Info("default telemetry exporter registered",
 			slog.String("name", cfg.Name),
-			slog.String("type", cfg.EffectiveType()))
+			slog.String("type", cfg.EffectiveType()),
+			slog.String("source", source))
 	}
 	return configs, nil
 }
