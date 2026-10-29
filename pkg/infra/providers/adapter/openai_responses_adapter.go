@@ -650,11 +650,8 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 						ID:    item.CallID,
 						Name:  item.Name,
 					}
-					// An empty arguments string is the placeholder the stream
-					// sends before the deltas. Anything else is the start of
-					// the call's arguments.
-					if args, ok := responsesArgumentsClaim(item.Arguments); ok && args != "" {
-						delta.ArgumentsDelta = args
+					if args, ok := responsesArgumentsClaim(item.Arguments); ok {
+						delta.ArgumentsDelta = streamToolInputStart(args)
 					}
 					return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{delta}}, nil
 				}
@@ -663,7 +660,7 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		return nil, nil
 
 	case "response.function_call_arguments.done":
-		done := StreamToolCallDelta{Index: responsesOutputIndex(chunk), Name: event.Name}
+		done := StreamToolCallDelta{Index: responsesOutputIndex(chunk), Name: event.Name, Restated: true}
 		if args, ok := responsesArgumentsClaim(event.Arguments); ok {
 			done.HasArgumentsSnapshot = true
 			done.ArgumentsSnapshot = args
@@ -687,9 +684,10 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			return nil, nil
 		}
 		delta := StreamToolCallDelta{
-			Index: responsesOutputIndex(chunk),
-			ID:    item.CallID,
-			Name:  item.Name,
+			Index:    responsesOutputIndex(chunk),
+			ID:       item.CallID,
+			Name:     item.Name,
+			Restated: true,
 		}
 		if args, ok := responsesArgumentsClaim(item.Arguments); ok {
 			delta.HasArgumentsSnapshot = true

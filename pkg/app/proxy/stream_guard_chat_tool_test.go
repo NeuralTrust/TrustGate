@@ -614,6 +614,25 @@ func TestStreamGuard_NativeSSESameNameIsNotARename(t *testing.T) {
 	assert.Equal(t, lines, run.out)
 }
 
+func TestStreamGuard_NativeSSEEmptyObjectPlaceholderIsNotSealed(t *testing.T) {
+	args := `{"city":"Paris"}`
+	lines := appendLines(
+		responsesPrelude(),
+		responsesCallStart(1, "call_1", "get_weather", "{}"),
+		responsesCallDelta(1, args),
+		responsesCallArgsDone(1, "get_weather", strPtr(args)),
+		responsesCallDone(1, "call_1", "get_weather", args),
+		responsesFinish(),
+	)
+	g := nativeSSEGuard(&toolGuardStub{}, adapter.FormatOpenAIResponses, streamGuardConfig{headChars: 5, minChars: 8})
+
+	run := runNativeSSE(t, g, lines, nil)
+
+	require.Nil(t, run.pe)
+	assert.False(t, g.wasCut())
+	assert.Equal(t, lines, run.out)
+}
+
 func TestStreamGuard_NativeSSEArgumentMismatchIsRefused(t *testing.T) {
 	benign := `{"command":"ls"}`
 	evil := `{"command":"rm -rf /"}`

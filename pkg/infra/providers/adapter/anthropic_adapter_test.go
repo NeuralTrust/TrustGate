@@ -374,7 +374,20 @@ func TestAnthropicDecodeStreamChunk_ToolUseInitialInput(t *testing.T) {
 			assert.Equal(t, "tool_2", got.ToolCallDeltas[0].ID)
 			assert.Equal(t, "run_shell", got.ToolCallDeltas[0].Name)
 			assert.JSONEq(t, `{"command":"ls"}`, got.ToolCallDeltas[0].ArgumentsDelta)
+			assert.Equal(t, kind == "server_tool_use", got.ToolCallDeltas[0].ServerSide)
 		})
+	}
+}
+
+func TestAdaptStreamChunk_AnthropicServerToolUseNotSentToOtherFormats(t *testing.T) {
+	t.Parallel()
+	start := `{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`
+	for _, client := range []Format{FormatOpenAI, FormatOpenAIResponses} {
+		lines, err := testRegistry().AdaptStreamChunk([]byte(start), client, FormatAnthropic)
+		require.NoError(t, err)
+		for _, line := range lines {
+			assert.NotContains(t, string(line), "web_search", "client %s", client)
+		}
 	}
 }
 

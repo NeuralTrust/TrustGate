@@ -14,7 +14,10 @@
 
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // MetadataUsageKey is the RequestContext.Metadata key under which the streaming
 // usage observer records the latest *CanonicalUsage. The metrics pipeline reads
@@ -314,6 +317,54 @@ type StreamToolCallDelta struct {
 	// and a call that already holds different arguments disagrees with it.
 	ArgumentsSnapshot    string `json:"arguments_snapshot,omitempty"`
 	HasArgumentsSnapshot bool   `json:"has_arguments_snapshot,omitempty"`
+	// ServerSide marks a call the provider runs itself, such as Anthropic's
+	// server_tool_use. The stream guard reads it; a client never declared the
+	// tool, so cross-format encoders must not emit it.
+	ServerSide bool `json:"server_side,omitempty"`
+	// Restated marks a boundary event that repeats a call already opened,
+	// carrying its name, id and ArgumentsSnapshot for the stream guard. The
+	// call reached the client on its start and argument deltas, so encoders
+	// must not emit it again.
+	Restated bool `json:"restated,omitempty"`
+}
+
+// streamToolInputStart is the initial input a tool call's start event carries.
+// Anthropic and the Responses API send an empty object or an empty string as a
+// placeholder before the argument deltas; passing "{}" on as the first delta
+// makes a client that concatenates the deltas produce invalid JSON, and makes
+// the stream guard treat the call as already complete. Any other input is the
+// start of the call's arguments.
+func streamToolInputStart(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "{}" {
+		return ""
+	}
+	return input
+}
+
+// DropGuardOnlyToolCalls removes the ServerSide and Restated tool-call deltas
+// before c is encoded for a client in another format. It reports whether c
+// held nothing else, in which case there is nothing to encode.
+func (c *CanonicalStreamChunk) DropGuardOnlyToolCalls() bool {
+	if c == nil || len(c.ToolCallDeltas) == 0 {
+		return false
+	}
+	kept := make([]StreamToolCallDelta, 0, len(c.ToolCallDeltas))
+	for _, tc := range c.ToolCallDeltas {
+		if !tc.ServerSide && !tc.Restated {
+			kept = append(kept, tc)
+		}
+	}
+	if len(kept) == len(c.ToolCallDeltas) {
+		return false
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	c.ToolCallDeltas = kept
+	return len(kept) == 0 && c.Role == "" && c.Delta == "" && c.ReasoningDelta == "" &&
+		c.ReasoningSignature == "" && len(c.RedactedReasoning) == 0 && c.FinishReason == "" &&
+		c.Usage == nil && len(c.ProviderExtensions) == 0 && c.UpstreamError == nil && !c.StreamEnd
 }
 
 // CanonicalStreamChunk is one piece of a streamed response.

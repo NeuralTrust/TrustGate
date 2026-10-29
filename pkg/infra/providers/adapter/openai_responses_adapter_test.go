@@ -697,6 +697,34 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_FuncArgsDone(t *testing
 	assert.True(t, sc.ToolCallDeltas[0].HasArgumentsSnapshot)
 	assert.Equal(t, `{"city":"Paris"}`, sc.ToolCallDeltas[0].ArgumentsSnapshot)
 	assert.Empty(t, sc.ToolCallDeltas[0].ArgumentsDelta)
+	assert.True(t, sc.ToolCallDeltas[0].Restated)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemAddedEmptyObjectIsPlaceholder(t *testing.T) {
+	chunk := `{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{}"}}`
+
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk([]byte(chunk))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.Len(t, sc.ToolCallDeltas, 1)
+	assert.Equal(t, "get_weather", sc.ToolCallDeltas[0].Name)
+	assert.Empty(t, sc.ToolCallDeltas[0].ArgumentsDelta)
+}
+
+func TestAdaptStreamChunk_ResponsesBoundaryEventsDoNotRenameChatToolCall(t *testing.T) {
+	argsDone := `{"type":"response.function_call_arguments.done","item_id":"fc_001","output_index":1,"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}`
+	lines, err := testRegistry().AdaptStreamChunk([]byte(argsDone), FormatOpenAI, FormatOpenAIResponses)
+	require.NoError(t, err)
+	require.NotEmpty(t, lines)
+	for _, line := range lines {
+		assert.NotContains(t, string(line), "get_weather")
+		assert.NotContains(t, string(line), "tool_calls\":[")
+	}
+
+	itemDone := `{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}`
+	lines, err = testRegistry().AdaptStreamChunk([]byte(itemDone), FormatOpenAI, FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Empty(t, lines)
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemDoneFunctionCall(t *testing.T) {
@@ -711,6 +739,7 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemDoneFunctionC
 	assert.True(t, sc.ToolCallDeltas[0].HasArgumentsSnapshot)
 	assert.Equal(t, `{"city":"Paris"}`, sc.ToolCallDeltas[0].ArgumentsSnapshot)
 	assert.Empty(t, sc.ToolCallDeltas[0].ArgumentsDelta)
+	assert.True(t, sc.ToolCallDeltas[0].Restated)
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_OutputItemAddedCarriesArguments(t *testing.T) {
