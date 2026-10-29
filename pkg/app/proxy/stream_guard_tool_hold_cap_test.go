@@ -196,13 +196,13 @@ func (r *windowRunner) RunStreamSegment(
 	return &appplugins.SegmentOutcome{}, nil
 }
 
-// A native call the hold can now keep, but whose normalised view is past the
-// chain window, used to be sent whole. An enforcing chain refuses that segment
-// and the refusal cuts the stream. It is released instead.
+// A native call can fit the chain-wide maximum window while exceeding the
+// window of the tool-reading plugin. It is released instead of being sent to
+// an enforcing runner that refuses the view.
 func TestNativeToolCallPastChainWindowFailsOpen(t *testing.T) {
 	t.Parallel()
 	const window = 64 << 10
-	const want = 400 << 10
+	const want = 600 << 10
 	pad := strings.Repeat("a", 16<<10)
 	opening := `{"cmd":"look","pad":"`
 	frags := []string{opening}
@@ -224,7 +224,8 @@ func TestNativeToolCallPastChainWindowFailsOpen(t *testing.T) {
 
 	runner := &windowRunner{limit: window}
 	cfg := toolBlocks
-	cfg.maxAccumBytes = window
+	cfg.maxAccumBytes = 1 << 20
+	cfg.toolCallMaxAccumBytes = window
 	g, logs := loggedGuard(runner, cfg)
 	got, pe := runNativeGuard(t, g, frames)
 
