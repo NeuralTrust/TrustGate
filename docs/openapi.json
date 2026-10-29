@@ -8770,19 +8770,39 @@
                     "applied_version": {
                         "type": "string"
                     },
+                    "deployment_type": {
+                        "type": "string"
+                    },
                     "first_seen": {
                         "type": "string"
                     },
                     "instance_id": {
                         "type": "string"
                     },
+                    "last_heartbeat": {
+                        "description": "LastHeartbeat is null for a data plane that predates heartbeats.",
+                        "type": "string"
+                    },
                     "last_seen": {
+                        "type": "string"
+                    },
+                    "region": {
                         "type": "string"
                     },
                     "scope": {
                         "type": "string"
                     },
                     "state": {
+                        "type": "string"
+                    },
+                    "trustguard_base_url": {
+                        "description": "TrustGuardBaseURL and TrustGuardClientID name the TrustGuard the\ngateway's guardrail policies call, as its data plane reports it.",
+                        "type": "string"
+                    },
+                    "trustguard_client_id": {
+                        "type": "string"
+                    },
+                    "version": {
                         "type": "string"
                     }
                 }

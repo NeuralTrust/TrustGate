@@ -164,6 +164,9 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			if ack := msg.GetAck(); ack != nil {
 				s.hub.markAck(conn, ack.GetAppliedVersion())
 			}
+			if hb := msg.GetHeartbeat(); hb != nil {
+				s.hub.markHeartbeat(conn, heartbeatFromProto(hb))
+			}
 		}
 	}()
 

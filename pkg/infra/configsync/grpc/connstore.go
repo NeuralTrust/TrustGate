@@ -14,7 +14,11 @@
 
 package grpc
 
-import "context"
+import (
+	"context"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
+)
 
 // ConnectionStore persists the observed lifecycle of data-plane Sync streams so
 // the control plane can answer "is this data plane online?". The Hub calls it
@@ -24,4 +28,9 @@ type ConnectionStore interface {
 	MarkConnected(ctx context.Context, scope, instanceID string) error
 	MarkAck(ctx context.Context, scope, instanceID, appliedVersion string) error
 	MarkDisconnected(ctx context.Context, scope, instanceID string) error
+	// MarkHeartbeat records what the data plane reported and refreshes its
+	// last_seen.
+	MarkHeartbeat(ctx context.Context, scope, instanceID string, hb dataplane.Heartbeat) error
+	// TouchConnected refreshes last_seen for the streams still marked connected.
+	TouchConnected(ctx context.Context, keys []dataplane.StreamKey) error
 }

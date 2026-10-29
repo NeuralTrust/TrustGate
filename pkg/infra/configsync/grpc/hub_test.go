@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	"io"
 	"log/slog"
 	"sync"
@@ -34,7 +35,40 @@ type recordingStore struct {
 	connected    []string
 	acked        []string
 	disconnected []string
+	heartbeats   []dataplane.Heartbeat
+	touched      [][]string
 	err          error
+}
+
+func (s *recordingStore) MarkHeartbeat(_ context.Context, scope, instanceID string, hb dataplane.Heartbeat) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hb.Version = scope + "/" + instanceID + "=" + hb.Version
+	s.heartbeats = append(s.heartbeats, hb)
+	return s.err
+}
+
+func (s *recordingStore) TouchConnected(_ context.Context, keys []dataplane.StreamKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	batch := make([]string, 0, len(keys))
+	for _, k := range keys {
+		batch = append(batch, k.Scope+"/"+k.InstanceID)
+	}
+	s.touched = append(s.touched, batch)
+	return s.err
+}
+
+func (s *recordingStore) heartbeatsSnapshot() []dataplane.Heartbeat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]dataplane.Heartbeat(nil), s.heartbeats...)
+}
+
+func (s *recordingStore) touchedSnapshot() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]string(nil), s.touched...)
 }
 
 func (s *recordingStore) MarkConnected(_ context.Context, scope, instanceID string) error {

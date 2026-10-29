@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -38,6 +39,14 @@ type Connection struct {
 	AppliedVersion string
 	FirstSeen      time.Time
 	LastSeen       time.Time
+	// LastHeartbeat is nil until the data plane sends one: data planes that
+	// predate heartbeats never do, and their stream keeps last_seen fresh.
+	LastHeartbeat      *time.Time
+	Version            string
+	Region             string
+	DeploymentType     string
+	TrustGuardBaseURL  string
+	TrustGuardClientID string
 }
 
 // poolQuerier is the subset of pgxpool.Pool this repository uses, kept small to
@@ -95,6 +104,44 @@ func (r *Repository) MarkDisconnected(ctx context.Context, scope, instanceID str
 	return nil
 }
 
+// MarkHeartbeat records what the data plane reported and refreshes last_seen.
+func (r *Repository) MarkHeartbeat(ctx context.Context, scope, instanceID string, hb dataplane.Heartbeat) error {
+	const stmt = `
+		UPDATE config_sync_connections
+		SET last_seen = NOW(), last_heartbeat = NOW(), state = 'connected',
+			version = $3, region = $4, deployment_type = $5,
+			trustguard_base_url = $6, trustguard_client_id = $7
+		WHERE scope = $1 AND instance_id = $2`
+	if _, err := r.pool.Exec(ctx, stmt, scope, instanceID, hb.Version, hb.Region, hb.DeploymentType,
+		hb.TrustGuardBaseURL, hb.TrustGuardClientID); err != nil {
+		return fmt.Errorf("configsyncconn: mark heartbeat: %w", err)
+	}
+	return nil
+}
+
+// TouchConnected refreshes last_seen for the given streams in one statement.
+// A row another replica marked disconnected stays as it is.
+func (r *Repository) TouchConnected(ctx context.Context, keys []dataplane.StreamKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	scopes := make([]string, len(keys))
+	instanceIDs := make([]string, len(keys))
+	for i, k := range keys {
+		scopes[i] = k.Scope
+		instanceIDs[i] = k.InstanceID
+	}
+	const stmt = `
+		UPDATE config_sync_connections AS c
+		SET last_seen = NOW()
+		FROM unnest($1::text[], $2::text[]) AS k(scope, instance_id)
+		WHERE c.scope = k.scope AND c.instance_id = k.instance_id AND c.state = 'connected'`
+	if _, err := r.pool.Exec(ctx, stmt, scopes, instanceIDs); err != nil {
+		return fmt.Errorf("configsyncconn: touch connected: %w", err)
+	}
+	return nil
+}
+
 // List returns the connections for scope, or all connections when scope is
 // empty, ordered by (scope, instance_id). A nil page returns every match.
 func (r *Repository) List(ctx context.Context, scope string, page *listing.Page) ([]Connection, error) {
@@ -104,7 +151,8 @@ func (r *Repository) List(ctx context.Context, scope string, page *listing.Page)
 		limit, offset = p.Size, p.Offset()
 	}
 	const stmt = `
-		SELECT scope, instance_id, state, applied_version, first_seen, last_seen
+		SELECT scope, instance_id, state, applied_version, first_seen, last_seen,
+			last_heartbeat, version, region, deployment_type, trustguard_base_url, trustguard_client_id
 		FROM config_sync_connections
 		WHERE ($1 = '' OR scope = $1)
 		ORDER BY scope, instance_id
@@ -118,7 +166,8 @@ func (r *Repository) List(ctx context.Context, scope string, page *listing.Page)
 	var conns []Connection
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.Scope, &c.InstanceID, &c.State, &c.AppliedVersion, &c.FirstSeen, &c.LastSeen); err != nil {
+		if err := rows.Scan(&c.Scope, &c.InstanceID, &c.State, &c.AppliedVersion, &c.FirstSeen, &c.LastSeen,
+			&c.LastHeartbeat, &c.Version, &c.Region, &c.DeploymentType, &c.TrustGuardBaseURL, &c.TrustGuardClientID); err != nil {
 			return nil, fmt.Errorf("configsyncconn: scan connection: %w", err)
 		}
 		conns = append(conns, c)
