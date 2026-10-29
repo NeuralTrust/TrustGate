@@ -22,7 +22,12 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // ConfigureTicketMinter mints a ticket for the hosted form where a user enters
@@ -70,15 +75,33 @@ type PrincipalConfigureLinker interface {
 	LinkFor(ctx context.Context, in PrincipalConfigureRequest) (*PrincipalConfigureLink, error)
 }
 
-type principalConfigureLinker struct {
-	tickets ConfigureTicketMinter
+type installationByID interface {
+	FindByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) (*installationdomain.Installation, error)
 }
 
-func NewPrincipalConfigureLinker(tickets ConfigureTicketMinter) (PrincipalConfigureLinker, error) {
-	if tickets == nil {
+type principalConfigureLinker struct {
+	tickets    ConfigureTicketMinter
+	registries RegistryLister
+	installs   installationByID
+	grants     storeaccessdomain.Reader
+	modes      ModeResolver
+	gateways   GatewayFinder
+}
+
+func NewPrincipalConfigureLinker(
+	tickets ConfigureTicketMinter,
+	registries RegistryLister,
+	installs installationByID,
+	grants storeaccessdomain.Reader,
+	modes ModeResolver,
+	gateways GatewayFinder,
+) (PrincipalConfigureLinker, error) {
+	if tickets == nil || registries == nil {
 		return nil, ErrUnavailable
 	}
-	return &principalConfigureLinker{tickets: tickets}, nil
+	return &principalConfigureLinker{
+		tickets: tickets, registries: registries, installs: installs, grants: grants, modes: modes, gateways: gateways,
+	}, nil
 }
 
 func (l *principalConfigureLinker) LinkFor(
@@ -93,12 +116,110 @@ func (l *principalConfigureLinker) LinkFor(
 	if principalSub == "" || code == "" {
 		return nil, fmt.Errorf("store: principal and code are required: %w", commonerrors.ErrValidation)
 	}
+	groups := identity.GroupsFromClaim(in.Groups)
+	fallback := gatewaydomain.StoreModeCurated
+	if l.gateways != nil {
+		gateway, err := l.gateways.FindByID(ctx, in.GatewayID)
+		if err != nil {
+			return nil, fmt.Errorf("store: load gateway: %w", err)
+		}
+		if gateway != nil {
+			fallback = gateway.StoreMode()
+		}
+	}
+	mode := ResolveMode(ctx, l.modes, ModeQuery{
+		GatewayID: in.GatewayID,
+		Subject:   principalSub,
+		Groups:    groups,
+		Fallback:  fallback,
+	})
+	if mode == gatewaydomain.StoreModeNone {
+		return nil, ErrStoreClosed
+	}
+	registries, err := findRegistriesByCode(ctx, l.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	var grants *storeaccessdomain.Set
+	if mode != gatewaydomain.StoreModeOpen {
+		grants, err = loadGrantSet(ctx, l.grants, in.GatewayID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	instanceID := strings.TrimSpace(in.InstanceID)
+	if instanceID != "" {
+		registry, err := l.namedRegistry(ctx, in.GatewayID, principalSub, code, instanceID, registries)
+		if err != nil {
+			return nil, err
+		}
+		if !registry.Enabled {
+			return nil, ErrServerDisabled
+		}
+		if mode != gatewaydomain.StoreModeOpen && !grants.InstanceAllows(code, registry.ID, groups, principalSub) {
+			return nil, fmt.Errorf("store: instance is not granted to this principal: %w", commonerrors.ErrForbidden)
+		}
+	} else if !configureCodeAllowed(registries, grants, mode, code, groups, principalSub) {
+		return nil, fmt.Errorf("store: no enabled instance is granted to this principal: %w", commonerrors.ErrForbidden)
+	}
 	consumerPath := appconsumer.MCPPath(consumerdomain.StoreSlug)
 	ticket, err := l.tickets.CreateConfigureTicket(
-		ctx, in.GatewayID, principalSub, consumerPath, code, strings.TrimSpace(in.InstanceID), in.Groups,
+		ctx, in.GatewayID, principalSub, consumerPath, code, instanceID, groups,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return &PrincipalConfigureLink{Ticket: ticket, ConsumerPath: consumerPath}, nil
+}
+
+func (l *principalConfigureLinker) namedRegistry(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, code, instanceID string,
+	registries []*registrydomain.Registry,
+) (*registrydomain.Registry, error) {
+	installID, err := ids.Parse[ids.InstallationKind](instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("store: invalid instance_id: %w", commonerrors.ErrValidation)
+	}
+	if l.installs == nil {
+		return nil, ErrUnavailable
+	}
+	install, err := l.installs.FindByID(ctx, gatewayID, principalSub, installID)
+	if err != nil {
+		return nil, err
+	}
+	if install == nil || install.CatalogCode != code {
+		return nil, ErrUnknownInstance
+	}
+	registryID := install.RegistryID
+	for _, registry := range registries {
+		if registry == nil {
+			continue
+		}
+		if !registryID.IsNil() && registry.ID != registryID {
+			continue
+		}
+		if registryID.IsNil() && len(registries) != 1 {
+			return nil, ErrUnknownInstance
+		}
+		return registry, nil
+	}
+	return nil, ErrUnknownInstance
+}
+
+func configureCodeAllowed(
+	registries []*registrydomain.Registry,
+	grants *storeaccessdomain.Set,
+	mode, code string,
+	groups []string,
+	subject string,
+) bool {
+	for _, registry := range registries {
+		if registry != nil && registry.Enabled &&
+			(mode == gatewaydomain.StoreModeOpen || grants.InstanceAllows(code, registry.ID, groups, subject)) {
+			return true
+		}
+	}
+	return false
 }
