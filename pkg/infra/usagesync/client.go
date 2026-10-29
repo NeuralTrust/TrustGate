@@ -28,9 +28,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -96,6 +98,7 @@ func newClient(conn *grpc.ClientConn, sink StateSink, logger *slog.Logger, minBa
 func (c *Client) Run(ctx context.Context) {
 	wait := c.minBackoff
 	for ctx.Err() == nil {
+		opened := time.Now()
 		received, err := c.session(ctx)
 		if ctx.Err() != nil {
 			return
@@ -103,7 +106,13 @@ func (c *Client) Run(ctx context.Context) {
 		if received {
 			wait = c.minBackoff
 		}
-		c.logger.WarnContext(ctx, "usagesync: stream ended, reconnecting", slog.Any("error", err), slog.Duration("retry_in", wait))
+		openFor := time.Since(opened)
+		level := slog.LevelWarn
+		if routineEnd(received, openFor, err) {
+			level = slog.LevelInfo
+		}
+		c.logger.Log(ctx, level, "usagesync: stream ended, reconnecting",
+			slog.Any("error", err), slog.Duration("open_for", openFor), slog.Duration("retry_in", wait))
 		select {
 		case <-ctx.Done():
 			return
@@ -134,7 +143,7 @@ func (c *Client) session(ctx context.Context) (bool, error) {
 		resp, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return received, errors.New("usagesync: stream closed by Usage System")
+				return received, errStreamClosed
 			}
 			return received, fmt.Errorf("usagesync: receive: %w", err)
 		}
@@ -252,3 +261,19 @@ func (b bearer) GetRequestMetadata(context.Context, ...string) (map[string]strin
 }
 
 func (b bearer) RequireTransportSecurity() bool { return b.secure }
+
+// routineStreamAge is how long a stream must have lived for its end to be
+// routine. Usage System closes every connection after its max connection
+// age and ends every stream when a replica shuts down; both are expected and
+// the client resumes from its watermark. A stream that ends sooner points at
+// a real problem.
+const routineStreamAge = time.Minute
+
+var errStreamClosed = errors.New("usagesync: stream closed by Usage System")
+
+func routineEnd(received bool, openFor time.Duration, err error) bool {
+	if !received || openFor < routineStreamAge {
+		return false
+	}
+	return errors.Is(err, errStreamClosed) || status.Code(err) == codes.Unavailable
+}
