@@ -157,16 +157,27 @@ func TestExporterCache_DedupesIdenticalConfigs(t *testing.T) {
 	assert.Equal(t, 1, factory.buildCount(), "second resolve must reuse the cached exporter")
 }
 
-func TestExporterCache_CachesBuildFailures(t *testing.T) {
+func TestExporterCache_RetriesBuildFailureAfterInterval(t *testing.T) {
 	factory := &fakeFactory{buildErr: errors.New("boom")}
 	cache := NewExporterCache(factory, internalTestLogger())
+	now := time.Unix(1_700_000_000, 0)
+	cache.now = func() time.Time { return now }
 
 	cfg := telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "a"}}
 	out := cache.Resolve([]telemetrydomain.ExporterConfig{cfg})
 	require.Empty(t, out)
 
+	now = now.Add(buildRetryInterval - time.Second)
 	cache.Resolve([]telemetrydomain.ExporterConfig{cfg})
-	assert.Equal(t, 1, factory.buildCount(), "failed builds must be cached, not retried each request")
+	assert.Equal(t, 1, factory.buildCount(), "a failed build must not be retried on every request")
+
+	factory.mu.Lock()
+	factory.buildErr = nil
+	factory.mu.Unlock()
+	now = now.Add(time.Second)
+	require.Len(t, cache.Resolve([]telemetrydomain.ExporterConfig{cfg}), 1, "a failed build is retried after the interval")
+	cache.Resolve([]telemetrydomain.ExporterConfig{cfg})
+	assert.Equal(t, 2, factory.buildCount(), "the rebuilt exporter is cached")
 }
 
 func TestExporterCache_CloseAllClosesInstances(t *testing.T) {
