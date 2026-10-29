@@ -612,8 +612,8 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err := s.vault.Upsert(ctx, cred); err != nil {
 		return st.TicketID, err
 	}
-	if identity, ok := connectAuditIdentity(&st.Ticket); ok {
-		s.auditor.ProviderLinked(ctx, identity, cfg.Provider, st.Ticket.InstanceID)
+	if identity, ok := providerLinkAuditIdentity(&st.Ticket); ok {
+		s.auditor.ProviderLinked(ctx, identity, cfg.Provider, reg.ID.String())
 	}
 	return st.TicketID, nil
 }
@@ -801,7 +801,7 @@ func (s *connectService) storeRegistry(
 		return nil
 	}
 	for _, reg := range items {
-		if reg != nil && reg.MCPTarget != nil && registrydomain.StoreCode(reg) == code {
+		if reg != nil && reg.Enabled && reg.MCPTarget != nil && registrydomain.StoreCode(reg) == code {
 			return s.refreshCatalogInstance(ctx, gatewayID, reg)
 		}
 	}

@@ -21,7 +21,10 @@ import (
 
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type mintedConfigure struct {
@@ -51,11 +54,21 @@ func (f *fakeConfigureMinter) CreateConfigureTicket(
 
 func TestPrincipalConfigureLinkerMintsAgainstTheStorePath(t *testing.T) {
 	minter := &fakeConfigureMinter{id: "cfg-1"}
-	linker, err := appstore.NewPrincipalConfigureLinker(minter)
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.snowflake/mcp"},
+	}
+	linker, err := appstore.NewPrincipalConfigureLinker(
+		minter,
+		connectRegistries{items: []*registrydomain.Registry{registry}},
+		connectGrants{},
+		nil,
+		connectGateway(gw, gatewaydomain.StoreModeOpen),
+	)
 	if err != nil {
 		t.Fatalf("NewPrincipalConfigureLinker: %v", err)
 	}
-	gw := ids.New[ids.GatewayKind]()
 	link, err := linker.LinkFor(context.Background(), appstore.PrincipalConfigureRequest{
 		GatewayID:    gw,
 		PrincipalSub: " ana ",
@@ -77,7 +90,7 @@ func TestPrincipalConfigureLinkerMintsAgainstTheStorePath(t *testing.T) {
 }
 
 func TestPrincipalConfigureLinkerValidatesItsInput(t *testing.T) {
-	linker, _ := appstore.NewPrincipalConfigureLinker(&fakeConfigureMinter{id: "cfg-2"})
+	linker, _ := appstore.NewPrincipalConfigureLinker(&fakeConfigureMinter{id: "cfg-2"}, connectRegistries{}, nil, nil, nil)
 	cases := map[string]appstore.PrincipalConfigureRequest{
 		"no gateway":   {PrincipalSub: "ana", Code: "com.notion/mcp"},
 		"no principal": {GatewayID: ids.New[ids.GatewayKind](), Code: "com.notion/mcp"},
@@ -88,7 +101,50 @@ func TestPrincipalConfigureLinkerValidatesItsInput(t *testing.T) {
 			t.Fatalf("%s: want a validation error, got %v", name, err)
 		}
 	}
-	if _, err := appstore.NewPrincipalConfigureLinker(nil); err == nil {
+	if _, err := appstore.NewPrincipalConfigureLinker(nil, connectRegistries{}, nil, nil, nil); err == nil {
 		t.Fatal("want an error without a ticket minter")
+	}
+}
+
+func TestPrincipalConfigureLinkerEnforcesStoreAccess(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	registry := &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Enabled: true,
+		MCPTarget: &registrydomain.MCPTarget{Code: "com.snowflake/mcp"},
+	}
+	grant, err := storeaccessdomain.New(gw, "com.snowflake/mcp", registry.ID, []string{"eng"}, nil)
+	if err != nil {
+		t.Fatalf("new grant: %v", err)
+	}
+	cases := map[string]struct {
+		mode   string
+		grants []*storeaccessdomain.Grant
+		want   error
+	}{
+		"store closed": {mode: gatewaydomain.StoreModeNone, want: appstore.ErrStoreClosed},
+		"ungranted":    {mode: gatewaydomain.StoreModeCurated, want: commonerrors.ErrForbidden},
+		"group grant":  {mode: gatewaydomain.StoreModeCurated, grants: []*storeaccessdomain.Grant{grant}},
+	}
+	for name, tc := range cases {
+		minter := &fakeConfigureMinter{id: "cfg-" + name}
+		linker, _ := appstore.NewPrincipalConfigureLinker(
+			minter,
+			connectRegistries{items: []*registrydomain.Registry{registry}},
+			connectGrants{items: tc.grants},
+			nil,
+			connectGateway(gw, tc.mode),
+		)
+		_, err := linker.LinkFor(context.Background(), appstore.PrincipalConfigureRequest{
+			GatewayID: gw, PrincipalSub: "ana", Code: "com.snowflake/mcp", Groups: []string{"eng"},
+		})
+		if tc.want == nil {
+			if err != nil || minter.got.code == "" {
+				t.Fatalf("%s: want ticket, got %v", name, err)
+			}
+			continue
+		}
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("%s: want %v, got %v", name, tc.want, err)
+		}
 	}
 }
