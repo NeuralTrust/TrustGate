@@ -235,6 +235,7 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 		configurer, err = appstore.NewPrincipalConfigureLinker(
 			appoauth.StoreConfigureTickets{Service: p.Configure},
 			p.Registries,
+			p.Installs,
 			p.Grants,
 			appstore.NewModeResolver(p.Policies),
 			gateways,
