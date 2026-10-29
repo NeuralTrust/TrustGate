@@ -39,9 +39,10 @@ type URLValueResolver interface {
 
 // installationConfigFinder is the read the resolver needs: the calling
 // principal's installation for a catalog code, whose Config carries their plain
-// URL variable values. installationdomain.Repository satisfies it.
+// URL variable values. installationdomain.Repository satisfies it. registryID,
+// when non-nil, scopes the read to that instance.
 type installationConfigFinder interface {
-	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) (*installationdomain.Installation, error)
+	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string, registryID ...ids.RegistryID) (*installationdomain.Installation, error)
 }
 
 // urlVarSecretFinder reads a secret URL variable's per-user value from the vault.
@@ -101,9 +102,9 @@ func (r *urlValueResolver) Values(
 	// from the vault below and never live in that row.
 	plain := nonSecretURLVariables(reg)
 	// A per-instance clone (the scoper's multi-instance exposure) carries this
-	// instance's own plain values as an overlay, since the by-code lookup below
-	// cannot tell two instances of the same code apart. When present it is
-	// authoritative for plain values; otherwise fall back to the single install.
+	// instance's own plain values as an overlay. When present it is
+	// authoritative for plain values; otherwise read the install for this
+	// registry. A nil registry id keeps that lookup unscoped.
 	if len(reg.MCPTarget.InstanceConfig) > 0 {
 		for k, v := range reg.MCPTarget.InstanceConfig {
 			if _, drop := plain[k]; drop {
@@ -112,7 +113,7 @@ func (r *urlValueResolver) Values(
 			values[k] = v
 		}
 	} else {
-		inst, err := r.installs.Find(ctx, gatewayID, principalSub, code)
+		inst, err := r.installs.Find(ctx, gatewayID, principalSub, code, reg.ID)
 		switch {
 		case err == nil:
 			for k, v := range inst.Config {

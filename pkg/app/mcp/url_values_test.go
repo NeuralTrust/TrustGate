@@ -49,7 +49,7 @@ type fakeInstallFinder struct {
 }
 
 func (f fakeInstallFinder) Find(
-	_ context.Context, gw ids.GatewayID, sub, code string,
+	_ context.Context, gw ids.GatewayID, sub, code string, _ ...ids.RegistryID,
 ) (*installationdomain.Installation, error) {
 	cfg, ok := f.byCode[code]
 	if !ok {
