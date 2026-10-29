@@ -19,8 +19,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +32,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -262,9 +265,86 @@ func newTestTokenCache(server *httptest.Server) *tokenCache {
 		clone.URL.Host = server.Listener.Addr().String()
 		return http.DefaultTransport.RoundTrip(clone)
 	})}
-	return &tokenCache{cache: gcpauth.NewServiceAccountCache(gcpauth.WithHTTPClient(client))}
+	return newTokenCache(gcpauth.WithHTTPClient(client))
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestPassthroughServiceAccountKeyMintsBearer(t *testing.T) {
+	var calls atomic.Int64
+	server := tokenEndpoint(t, &calls)
+	key := serviceAccountJSON(t, gcpkey.TokenURL, "caller@proj.iam.gserviceaccount.com")
+
+	auth := &registry.TargetAuth{Type: registry.AuthTypePassthrough}
+	for _, authorization := range []string{
+		"Bearer " + key,
+		"Bearer " + base64.StdEncoding.EncodeToString([]byte(key)),
+	} {
+		creds := providers.CredentialsFromTargetAuth(auth)
+		providers.ApplyIncomingBearer(&creds, auth, authorization)
+
+		c := &client{tokenSource: newTestTokenCache(server).token}
+		token, err := c.bearerToken(context.Background(), &providers.Config{Credentials: creds})
+
+		require.NoError(t, err)
+		assert.Equal(t, "ya29.minted", token, "the key must never be sent to Vertex as the bearer")
+	}
+	assert.Equal(t, int64(2), calls.Load())
+}
+
+func TestCallerKeysDoNotEvictStoredKeys(t *testing.T) {
+	var calls atomic.Int64
+	cache := newTestTokenCache(tokenEndpoint(t, &calls))
+	ctx := context.Background()
+
+	stored := &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "stored@proj.iam.gserviceaccount.com")}
+	_, err := cache.token(ctx, stored)
+	require.NoError(t, err)
+
+	var keyFile map[string]string
+	require.NoError(t, json.Unmarshal([]byte(serviceAccountJSON(t, gcpkey.TokenURL, "caller@proj.iam.gserviceaccount.com")), &keyFile))
+	for i := range 300 {
+		keyFile["client_email"] = fmt.Sprintf("caller-%d@proj.iam.gserviceaccount.com", i)
+		raw, err := json.Marshal(keyFile)
+		require.NoError(t, err)
+		_, err = cache.token(ctx, &providers.GCP{ServiceAccountJSON: string(raw), FromCaller: true})
+		require.NoError(t, err)
+	}
+
+	before := calls.Load()
+	_, err = cache.token(ctx, stored)
+	require.NoError(t, err)
+	assert.Equal(t, before, calls.Load(), "caller keys flushed the stored key's cached token")
+}
+
+func TestBearerTokenCallerKeyRejection(t *testing.T) {
+	refused := &oauth2.RetrieveError{Response: &http.Response{StatusCode: http.StatusBadRequest}}
+	unreachable := errors.New("dial tcp: connection refused")
+
+	tests := []struct {
+		name         string
+		fromCaller   bool
+		mintErr      error
+		wantRejected bool
+	}{
+		{name: "caller key refused by google", fromCaller: true, mintErr: refused, wantRejected: true},
+		{name: "caller key that does not parse", fromCaller: true, mintErr: gcpauth.ErrInvalidServiceAccountKey, wantRejected: true},
+		{name: "caller key while google is unreachable", fromCaller: true, mintErr: unreachable},
+		{name: "stored key refused by google", mintErr: refused},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &client{tokenSource: func(context.Context, *providers.GCP) (string, error) { return "", tt.mintErr }}
+			_, err := c.bearerToken(context.Background(), &providers.Config{
+				Credentials: providers.Credentials{GCP: &providers.GCP{ServiceAccountJSON: `{"type":"service_account"}`, FromCaller: tt.fromCaller}},
+			})
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, registry.ErrCredentialAcquisition, "every credential failure stays terminal")
+			assert.Equal(t, tt.wantRejected, errors.Is(err, registry.ErrCallerCredentialRejected))
+		})
+	}
+}

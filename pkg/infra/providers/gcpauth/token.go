@@ -35,8 +35,12 @@ package gcpauth
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -125,7 +129,11 @@ func (c *ServiceAccountCache) source(serviceAccountJSON, scope string) (oauth2.T
 	// Rejects external_account configs, which can name a tenant-controlled local executable as their credential source.
 	config, err := google.JWTConfigFromJSON([]byte(serviceAccountJSON), scope)
 	if err != nil {
-		return nil, fmt.Errorf("parsing gcp service account credentials: %w", err)
+		return nil, fmt.Errorf("%w: parsing gcp service account credentials: %w", ErrInvalidServiceAccountKey, err)
+	}
+	// The private key is otherwise only parsed when the first token is signed, and that error carries no type to tell it apart from a network failure.
+	if err := checkPrivateKey(config.PrivateKey); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidServiceAccountKey, err)
 	}
 
 	// Both come from tenant JSON: token_uri would redirect the signed assertion; audience would let it be replayed against another audience.
@@ -147,6 +155,48 @@ func (c *ServiceAccountCache) source(serviceAccountJSON, scope string) (oauth2.T
 	}
 	c.sources[key] = source
 	return source, nil
+}
+
+// ErrInvalidServiceAccountKey reports a service-account key that cannot be
+// used at all: malformed JSON, a credential type other than service_account,
+// or a private key that does not parse.
+var ErrInvalidServiceAccountKey = errors.New("invalid gcp service account key")
+
+// KeyRejected reports whether err means the service-account key itself is
+// unusable, as opposed to Google being unreachable: the key does not parse, or
+// Google's token endpoint refused it (unknown account, deleted or disabled
+// key).
+func KeyRejected(err error) bool {
+	if errors.Is(err, ErrInvalidServiceAccountKey) {
+		return true
+	}
+	var retrieveErr *oauth2.RetrieveError
+	if !errors.As(err, &retrieveErr) || retrieveErr.Response == nil {
+		return false
+	}
+	switch retrieveErr.Response.StatusCode {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	}
+	return false
+}
+
+// checkPrivateKey accepts what golang.org/x/oauth2 signs with: an RSA key in
+// PEM or bare DER, PKCS#8 or PKCS#1.
+func checkPrivateKey(raw []byte) error {
+	if block, _ := pem.Decode(raw); block != nil {
+		raw = block.Bytes
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(raw); err == nil {
+		if _, ok := key.(*rsa.PrivateKey); !ok {
+			return errors.New("private_key is not an RSA key")
+		}
+		return nil
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(raw); err == nil {
+		return nil
+	}
+	return errors.New("private_key is neither a PKCS#8 nor a PKCS#1 key")
 }
 
 func serviceAccountKey(serviceAccountJSON, scope string) string {
