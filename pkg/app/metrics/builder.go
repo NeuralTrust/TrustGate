@@ -290,7 +290,7 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 		if pluginSpanIsNoOp(attrs, statusCode, hasError) {
 			continue
 		}
-		flagged := hasError || pluginDecisionFlagged(attrs.Decision) || (statusCode >= http.StatusBadRequest)
+		flagged := pluginEntryFlagged(attrs.Decision, statusCode, hasError)
 		latencyMs := span.Latency().Milliseconds()
 		pluginsMs += latencyMs
 		if attrs.Stage == string(policy.StagePostResponse) {
@@ -331,6 +331,17 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 		flagged:    anyFlagged,
 		security:   security,
 	}
+}
+
+// pluginEntryFlagged reports whether a policy entry flags the request. A plan
+// rate limit (rate_limited: TrustGuard refused the call because the tenant
+// reached its TrustGuard plan) says nothing about the content, so its 429 and
+// error do not flag the request as a detection would.
+func pluginEntryFlagged(decision string, statusCode int, hasError bool) bool {
+	if decision == "rate_limited" {
+		return false
+	}
+	return hasError || pluginDecisionFlagged(decision) || statusCode >= http.StatusBadRequest
 }
 
 func pluginDecisionFlagged(decision string) bool {
