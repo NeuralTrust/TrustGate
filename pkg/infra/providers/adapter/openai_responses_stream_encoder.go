@@ -23,27 +23,32 @@ import (
 )
 
 const (
-	responsesStatusInProgress = "in_progress"
-	responsesStatusCompleted  = "completed"
-	responsesStatusIncomplete = "incomplete"
-	responsesStatusFailed     = "failed"
-	responsesErrorCode        = "server_error"
-	responsesItemMessage      = "message"
-	responsesItemFunctionCall = "function_call"
-	responsesOutputText       = "output_text"
-	responsesEmptyArguments   = "{}"
+	responsesStatusInProgress   = "in_progress"
+	responsesStatusCompleted    = "completed"
+	responsesStatusIncomplete   = "incomplete"
+	responsesStatusFailed       = "failed"
+	responsesErrorCode          = "server_error"
+	responsesItemMessage        = "message"
+	responsesItemFunctionCall   = "function_call"
+	responsesItemCustomToolCall = "custom_tool_call"
+	responsesItemReasoning      = "reasoning"
+	responsesOutputText         = "output_text"
+	responsesSummaryText        = "summary_text"
+	responsesEmptyArguments     = "{}"
 )
 
 // responsesKeepaliveInterval bounds how long a Responses client goes without
-// bytes while calls are held or reasoning is not forwarded: load balancer and
-// CDN idle timeouts (60s on an ALB, 100s on Cloudflare) cut quieter streams.
+// bytes while calls are held until Finish: load balancer and CDN idle
+// timeouts (60s on an ALB, 100s on Cloudflare) cut quieter streams.
 const responsesKeepaliveInterval = 10 * time.Second
 
 // ResponsesStreamEncoder encodes a canonical stream as Responses API events.
-// Items go out one at a time, each with its own output_index: the text
-// streams live as a single message and the tool calls are held until Finish,
-// where they always follow the message in arrival order, whatever order the
-// upstream interleaved text and calls in. It is not safe for concurrent use.
+// Items go out one at a time, each with its own output_index. Reasoning
+// streams live until the answer text starts, the text streams live as a
+// single message, and the tool calls are held until Finish, where they follow
+// the message in arrival order, whatever order the upstream interleaved them
+// in. A custom tool is a custom_tool_call item whose input is freeform text.
+// It is not safe for concurrent use.
 type ResponsesStreamEncoder struct {
 	now             func() time.Time
 	lastSent        time.Time
@@ -60,6 +65,8 @@ type ResponsesStreamEncoder struct {
 	sequence        int
 	items           []*responsesStreamItem
 	message         *responsesStreamItem
+	reasoning       *responsesStreamItem
+	heldReasoning   strings.Builder
 	calls           map[int]*responsesStreamItem
 	pending         []*responsesStreamItem
 	callIDs         map[string]bool
@@ -72,6 +79,7 @@ type responsesStreamItem struct {
 	callID      string
 	name        string
 	upstreamID  string
+	status      string
 	text        strings.Builder
 }
 
@@ -101,16 +109,19 @@ func NewResponsesStreamEncoder(opts ...ResponsesStreamOption) *ResponsesStreamEn
 	return e
 }
 
-// Content encodes the text and tool-call deltas of chunk.
+// Content encodes the text, reasoning and tool-call deltas of chunk.
 func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
 	}
 	e.remember(chunk)
-	if chunk.Role == "" && chunk.Delta == "" && len(chunk.ToolCallDeltas) == 0 {
+	if chunk.Role == "" && chunk.Delta == "" && chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
 		return nil
 	}
 	lines := e.start()
+	if chunk.ReasoningDelta != "" {
+		lines = append(lines, e.reasoningDelta(chunk.ReasoningDelta)...)
+	}
 	if chunk.Delta != "" {
 		lines = append(lines, e.textDelta(chunk.Delta)...)
 	}
@@ -137,7 +148,9 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	}
 	e.done = true
 	status, reason := canonicalFinishToResponsesStatus(chunk.FinishReason)
+	lines = append(lines, e.finishReasoning(status)...)
 	lines = append(lines, e.finishMessage(status)...)
+	lines = append(lines, e.emitHeldReasoning(status)...)
 	calls := e.namedCalls()
 	if status == responsesStatusIncomplete {
 		e.withheld += len(calls)
@@ -156,10 +169,10 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Abort ends a started stream with an error event carrying message, then
-// response.failed with usage. The message is marked incomplete and the tool
-// calls held back are withheld, so response.failed lists only the items the
-// client saw. Nothing is emitted before response.created or once the stream
-// has ended.
+// response.failed with usage. The message and an open reasoning item are
+// marked incomplete and the tool calls held back are withheld, so
+// response.failed lists only the items the client saw. Nothing is emitted
+// before response.created or once the stream has ended.
 func (e *ResponsesStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
 	if e.done || !e.started {
 		return nil
@@ -194,8 +207,7 @@ func (e *ResponsesStreamEncoder) Withheld() int {
 // interval runs from the encoder's creation until the first event, so an
 // upstream silent before its first content gets a comment ahead of
 // response.created. SSE clients skip comments, so it only keeps idle timeouts
-// from cutting a stream whose calls are held or whose reasoning is not
-// forwarded.
+// from cutting a stream whose calls are held until the response finishes.
 func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 	if e.done {
 		return nil
@@ -216,8 +228,12 @@ func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 // arguments; only non-empty arguments that do not parse mark a cut call. A call
 // cut before its first argument delta looks the same as one to a tool that
 // takes no arguments, so it cannot be told apart and completes with {} too.
+// Custom tool input is freeform text, so it is complete whatever it contains.
 func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 	for _, call := range e.pending {
+		if call.kind == responsesItemCustomToolCall {
+			continue
+		}
 		if call.name != "" && call.text.Len() > 0 && !json.Valid([]byte(call.text.String())) {
 			return false
 		}
@@ -229,7 +245,8 @@ func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][
 	e.done = true
 	e.aborted = true
 	e.withheld += len(e.namedCalls())
-	lines := e.finishMessage(responsesStatusIncomplete)
+	lines := e.finishReasoning(responsesStatusIncomplete)
+	lines = append(lines, e.finishMessage(responsesStatusIncomplete)...)
 	lines = append(lines, e.event("error", map[string]any{
 		"code":    responsesErrorCode,
 		"message": message,
@@ -266,7 +283,11 @@ func (e *ResponsesStreamEncoder) namedCalls() []*responsesStreamItem {
 func (e *ResponsesStreamEncoder) terminalResponse(itemStatus string, usage *CanonicalUsage) map[string]any {
 	output := make([]map[string]any, 0, len(e.items))
 	for _, item := range e.items {
-		output = append(output, item.snapshot(itemStatus))
+		status := item.status
+		if status == "" {
+			status = itemStatus
+		}
+		output = append(output, item.snapshot(status))
 	}
 	response := e.response(itemStatus)
 	response["output"] = output
@@ -321,13 +342,13 @@ func (e *ResponsesStreamEncoder) response(status string) map[string]any {
 }
 
 func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
-	var lines [][]byte
+	lines := e.finishReasoning(responsesStatusCompleted)
 	if e.message == nil {
 		e.message = e.addItem(&responsesStreamItem{kind: responsesItemMessage, id: "msg_" + e.nonce})
-		lines = e.event("response.output_item.added", map[string]any{
+		lines = append(lines, e.event("response.output_item.added", map[string]any{
 			"output_index": e.message.outputIndex,
 			"item":         e.message.snapshot(responsesStatusInProgress),
-		})
+		})...)
 		lines = append(lines, e.event("response.content_part.added", map[string]any{
 			"item_id":       e.message.id,
 			"output_index":  e.message.outputIndex,
@@ -345,6 +366,73 @@ func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 	})...)
 }
 
+// reasoningDelta streams summary text while the answer has not started. A
+// delta that arrives after the message is open is held and emitted once the
+// message closes: items go out one at a time, and the message stays one item.
+func (e *ResponsesStreamEncoder) reasoningDelta(delta string) [][]byte {
+	if e.message != nil {
+		e.heldReasoning.WriteString(delta)
+		return nil
+	}
+	var lines [][]byte
+	if e.reasoning == nil {
+		e.reasoning = e.addItem(&responsesStreamItem{
+			kind: responsesItemReasoning,
+			id:   fmt.Sprintf("rs_%s_%d", e.nonce, len(e.items)),
+		})
+		lines = e.openReasoning(e.reasoning)
+	}
+	e.reasoning.text.WriteString(delta)
+	return append(lines, e.reasoningTextDelta(e.reasoning, delta)...)
+}
+
+func (e *ResponsesStreamEncoder) openReasoning(item *responsesStreamItem) [][]byte {
+	lines := e.event("response.output_item.added", map[string]any{
+		"output_index": item.outputIndex,
+		"item":         item.snapshot(responsesStatusInProgress),
+	})
+	return append(lines, e.event("response.reasoning_summary_part.added", map[string]any{
+		"item_id":       item.id,
+		"output_index":  item.outputIndex,
+		"summary_index": 0,
+		"part":          responsesSummaryPart(""),
+	})...)
+}
+
+func (e *ResponsesStreamEncoder) reasoningTextDelta(item *responsesStreamItem, delta string) [][]byte {
+	return e.event("response.reasoning_summary_text.delta", map[string]any{
+		"item_id":       item.id,
+		"output_index":  item.outputIndex,
+		"summary_index": 0,
+		"delta":         delta,
+	})
+}
+
+func (e *ResponsesStreamEncoder) finishReasoning(status string) [][]byte {
+	if e.reasoning == nil {
+		return nil
+	}
+	item := e.reasoning
+	e.reasoning = nil
+	return e.finishItem(item, status)
+}
+
+func (e *ResponsesStreamEncoder) emitHeldReasoning(status string) [][]byte {
+	if e.heldReasoning.Len() == 0 {
+		return nil
+	}
+	text := e.heldReasoning.String()
+	e.heldReasoning.Reset()
+	item := e.addItem(&responsesStreamItem{
+		kind: responsesItemReasoning,
+		id:   fmt.Sprintf("rs_%s_%d", e.nonce, len(e.items)),
+	})
+	item.text.WriteString(text)
+	lines := e.openReasoning(item)
+	lines = append(lines, e.reasoningTextDelta(item, text)...)
+	return append(lines, e.finishItem(item, status)...)
+}
+
 // toolDelta holds the call back until Finish. LangChain numbers content
 // blocks by output_index changes, so a call left open while text or another
 // call streams comes back as tool calls with no name or id, and an
@@ -353,7 +441,7 @@ func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) {
 	call := e.calls[tc.Index]
 	if call == nil || (tc.ID != "" && call.upstreamID != "" && tc.ID != call.upstreamID) {
-		call = &responsesStreamItem{kind: responsesItemFunctionCall, upstreamID: tc.ID, name: tc.Name}
+		call = &responsesStreamItem{kind: responsesToolItemKind(tc.Kind), upstreamID: tc.ID, name: tc.Name}
 		e.calls[tc.Index] = call
 		e.pending = append(e.pending, call)
 	} else {
@@ -363,26 +451,44 @@ func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) {
 		if call.name == "" {
 			call.name = tc.Name
 		}
+		if tc.Kind == ToolKindCustom {
+			call.kind = responsesItemCustomToolCall
+		}
 	}
 	call.text.WriteString(tc.ArgumentsDelta)
 }
 
+func responsesToolItemKind(kind CanonicalToolKind) string {
+	if kind == ToolKindCustom {
+		return responsesItemCustomToolCall
+	}
+	return responsesItemFunctionCall
+}
+
 func (e *ResponsesStreamEncoder) emitCall(call *responsesStreamItem) [][]byte {
 	call.callID = e.callID(call.upstreamID)
-	call.id = call.callID
-	if !strings.HasPrefix(call.id, "fc_") {
-		call.id = "fc_" + call.id
-	}
+	call.id = responsesCallItemID(call)
 	e.addItem(call)
 	lines := e.event("response.output_item.added", map[string]any{
 		"output_index": call.outputIndex,
-		"item":         call.functionCall("", responsesStatusInProgress),
+		"item":         call.snapshot(responsesStatusInProgress),
 	})
-	if call.text.Len() == 0 {
+	if call.kind != responsesItemCustomToolCall && call.text.Len() == 0 {
 		call.text.WriteString(responsesEmptyArguments)
 	}
 	lines = append(lines, e.argumentsDelta(call, call.text.String())...)
 	return append(lines, e.finishItem(call, responsesStatusCompleted)...)
+}
+
+func responsesCallItemID(call *responsesStreamItem) string {
+	prefix := "fc_"
+	if call.kind == responsesItemCustomToolCall {
+		prefix = "ctc_"
+	}
+	if strings.HasPrefix(call.callID, prefix) {
+		return call.callID
+	}
+	return prefix + call.callID
 }
 
 func (e *ResponsesStreamEncoder) callID(upstream string) string {
@@ -401,7 +507,11 @@ func (e *ResponsesStreamEncoder) addItem(item *responsesStreamItem) *responsesSt
 }
 
 func (e *ResponsesStreamEncoder) argumentsDelta(call *responsesStreamItem, delta string) [][]byte {
-	return e.event("response.function_call_arguments.delta", map[string]any{
+	eventType := "response.function_call_arguments.delta"
+	if call.kind == responsesItemCustomToolCall {
+		eventType = "response.custom_tool_call_input.delta"
+	}
+	return e.event(eventType, map[string]any{
 		"item_id":      call.id,
 		"output_index": call.outputIndex,
 		"delta":        delta,
@@ -409,9 +519,11 @@ func (e *ResponsesStreamEncoder) argumentsDelta(call *responsesStreamItem, delta
 }
 
 func (e *ResponsesStreamEncoder) finishItem(item *responsesStreamItem, status string) [][]byte {
+	item.status = status
 	text := item.text.String()
 	var lines [][]byte
-	if item.kind == responsesItemMessage {
+	switch item.kind {
+	case responsesItemMessage:
 		lines = e.event("response.output_text.done", map[string]any{
 			"item_id":       item.id,
 			"output_index":  item.outputIndex,
@@ -425,12 +537,33 @@ func (e *ResponsesStreamEncoder) finishItem(item *responsesStreamItem, status st
 			"content_index": 0,
 			"part":          responsesOutputTextPart(text),
 		})...)
-	} else {
+	case responsesItemReasoning:
+		lines = e.event("response.reasoning_summary_text.done", map[string]any{
+			"item_id":       item.id,
+			"output_index":  item.outputIndex,
+			"summary_index": 0,
+			"text":          text,
+		})
+		lines = append(lines, e.event("response.reasoning_summary_part.done", map[string]any{
+			"item_id":       item.id,
+			"output_index":  item.outputIndex,
+			"summary_index": 0,
+			"part":          responsesSummaryPart(text),
+		})...)
+	case responsesItemFunctionCall:
 		lines = e.event("response.function_call_arguments.done", map[string]any{
 			"item_id":      item.id,
 			"output_index": item.outputIndex,
 			"arguments":    text,
 		})
+	case responsesItemCustomToolCall:
+		lines = e.event("response.custom_tool_call_input.done", map[string]any{
+			"item_id":      item.id,
+			"output_index": item.outputIndex,
+			"input":        text,
+		})
+	default:
+		panic("unhandled responses stream item kind: " + item.kind)
 	}
 	return append(lines, e.event("response.output_item.done", map[string]any{
 		"output_index": item.outputIndex,
@@ -448,35 +581,64 @@ func (e *ResponsesStreamEncoder) event(eventType string, fields map[string]any) 
 }
 
 func (t *responsesStreamItem) snapshot(status string) map[string]any {
-	if t.kind == responsesItemFunctionCall {
-		arguments := ""
+	switch t.kind {
+	case responsesItemFunctionCall, responsesItemCustomToolCall:
+		payload := ""
 		if status != responsesStatusInProgress {
-			arguments = t.text.String()
+			payload = t.text.String()
 		}
-		return t.functionCall(arguments, status)
-	}
-	content := []any{}
-	if status != responsesStatusInProgress {
-		content = append(content, responsesOutputTextPart(t.text.String()))
-	}
-	return map[string]any{
-		"type":    responsesItemMessage,
-		"id":      t.id,
-		"role":    "assistant",
-		"status":  status,
-		"content": content,
+		return t.callSnapshot(payload, status)
+	case responsesItemReasoning:
+		summary := []any{}
+		if status != responsesStatusInProgress {
+			summary = append(summary, responsesSummaryPart(t.text.String()))
+		}
+		return map[string]any{
+			"type":    responsesItemReasoning,
+			"id":      t.id,
+			"status":  status,
+			"summary": summary,
+		}
+	case responsesItemMessage:
+		content := []any{}
+		if status != responsesStatusInProgress {
+			content = append(content, responsesOutputTextPart(t.text.String()))
+		}
+		return map[string]any{
+			"type":    responsesItemMessage,
+			"id":      t.id,
+			"role":    "assistant",
+			"status":  status,
+			"content": content,
+		}
+	default:
+		panic("unhandled responses stream item kind: " + t.kind)
 	}
 }
 
-func (t *responsesStreamItem) functionCall(arguments, status string) map[string]any {
+func (t *responsesStreamItem) callSnapshot(payload, status string) map[string]any {
+	if t.kind == responsesItemCustomToolCall {
+		return map[string]any{
+			"type":    responsesItemCustomToolCall,
+			"id":      t.id,
+			"call_id": t.callID,
+			"name":    t.name,
+			"input":   payload,
+			"status":  status,
+		}
+	}
 	return map[string]any{
 		"type":      responsesItemFunctionCall,
 		"id":        t.id,
 		"call_id":   t.callID,
 		"name":      t.name,
-		"arguments": arguments,
+		"arguments": payload,
 		"status":    status,
 	}
+}
+
+func responsesSummaryPart(text string) map[string]any {
+	return map[string]any{"type": responsesSummaryText, "text": text}
 }
 
 func responsesOutputTextPart(text string) map[string]any {

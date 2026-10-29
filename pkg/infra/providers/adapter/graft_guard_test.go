@@ -76,6 +76,9 @@ func maskLeakSecret(req *CanonicalRequest) {
 	req.System = strings.ReplaceAll(req.System, leakSecret, "[EMAIL]")
 	for i := range req.Messages {
 		req.Messages[i].Content = strings.ReplaceAll(req.Messages[i].Content, leakSecret, "[EMAIL]")
+		for j := range req.Messages[i].ToolCalls {
+			req.Messages[i].ToolCalls[j].Arguments = strings.ReplaceAll(req.Messages[i].ToolCalls[j].Arguments, leakSecret, "[EMAIL]")
+		}
 	}
 }
 
