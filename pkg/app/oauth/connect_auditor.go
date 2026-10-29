@@ -17,6 +17,9 @@ package oauth
 import (
 	"context"
 	"log/slog"
+
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 const (
@@ -94,6 +97,20 @@ func connectAuditIdentity(ticket *ConnectTicket) (ConnectAuditIdentity, bool) {
 	return ConnectAuditIdentity{
 		GatewayID:  ticket.GatewayID,
 		ConsumerID: ticket.ConsumerID,
+		AuthID:     ticket.AuthID,
+	}, true
+}
+
+func providerLinkAuditIdentity(ticket *ConnectTicket) (ConnectAuditIdentity, bool) {
+	if identity, ok := connectAuditIdentity(ticket); ok {
+		return identity, true
+	}
+	if ticket == nil || !consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(ticket.ConsumerPath)) {
+		return ConnectAuditIdentity{}, false
+	}
+	return ConnectAuditIdentity{
+		GatewayID:  ticket.GatewayID,
+		ConsumerID: consumerdomain.StoreConsumerID().String(),
 		AuthID:     ticket.AuthID,
 	}, true
 }

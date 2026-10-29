@@ -25,7 +25,6 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -131,36 +130,43 @@ func (l *principalConnectLinker) LinkFor(
 	if mode == gatewaydomain.StoreModeNone {
 		return nil, ErrStoreClosed
 	}
-	consumerPath := appconsumer.MCPPath(consumerdomain.StoreSlug)
-	instanceID := ""
-	if !in.RegistryID.IsNil() {
-		registries, err := findRegistriesByCode(ctx, l.registries, in.GatewayID, code)
+	registries, err := findRegistriesByCode(ctx, l.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	var grants *storeaccessdomain.Set
+	if mode != gatewaydomain.StoreModeOpen {
+		grants, err = loadGrantSet(ctx, l.grants, in.GatewayID)
 		if err != nil {
 			return nil, err
 		}
-		var registry *registrydomain.Registry
-		for _, candidate := range registries {
-			if candidate != nil && candidate.ID == in.RegistryID {
-				registry = candidate
-				break
-			}
-		}
-		if registry == nil {
-			return nil, ErrUnknownInstance
+	}
+	consumerPath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	var instanceID string
+	for _, registry := range registries {
+		if registry == nil || (!in.RegistryID.IsNil() && registry.ID != in.RegistryID) {
+			continue
 		}
 		if !registry.Enabled {
-			return nil, ErrServerDisabled
-		}
-		if mode != gatewaydomain.StoreModeOpen {
-			grants, err := loadGrantSet(ctx, l.grants, in.GatewayID)
-			if err != nil {
-				return nil, err
+			if !in.RegistryID.IsNil() {
+				return nil, ErrServerDisabled
 			}
-			if !grants.InstanceAllows(code, in.RegistryID, groups, principalSub) {
+			continue
+		}
+		if mode != gatewaydomain.StoreModeOpen && !grants.InstanceAllows(code, registry.ID, groups, principalSub) {
+			if !in.RegistryID.IsNil() {
 				return nil, fmt.Errorf("store: instance is not granted to this principal: %w", commonerrors.ErrForbidden)
 			}
+			continue
 		}
-		instanceID = in.RegistryID.String()
+		instanceID = registry.ID.String()
+		break
+	}
+	if instanceID == "" {
+		if !in.RegistryID.IsNil() {
+			return nil, ErrUnknownInstance
+		}
+		return nil, fmt.Errorf("store: no enabled instance is granted to this principal: %w", commonerrors.ErrForbidden)
 	}
 	ticket, err := l.tickets.CreateResumableServerTicket(
 		ctx, in.GatewayID, principalSub, consumerPath, code, instanceID, strings.TrimSpace(in.ResumeURL),

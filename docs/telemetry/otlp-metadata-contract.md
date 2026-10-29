@@ -327,13 +327,13 @@ The settings decide how much is held at a time, which is what a verdict can stil
 
 - **Head.** Nothing is written until the head has a verdict. The head closes on
   `head_chars` of inspectable text (400 by default), on the terminal event, or on the
-  held-bytes ceiling (256 KiB), and an open tool call extends it. A refusal at the head is a
+  held-bytes ceiling (1 MiB), and an open tool call extends it. A refusal at the head is a
   real HTTP 403 with no byte sent.
 - **Blocks.** After the head, a block closes on the terminal event; on the first event
   that arrives once `max_hold_ms` has passed since the block opened (800 ms by default;
   500 ms for `openai_moderation` and `regex_replace`); once it carries
   `min_chars_between_evals` (2048 by default; 1024 for `openai_moderation`); or once it
-  holds 256 KiB. There is no timer: the gate is checked as events arrive. An open native
+  holds 1 MiB. There is no timer: the gate is checked as events arrive. An open native
   tool call keeps the block open past `max_hold_ms`.
 - **Payload.** The prefix a call carries is bounded by each plugin's window, which a
   `max_accumulated_bytes` setting can lower but never raise: `trustguard` 64 KiB,
