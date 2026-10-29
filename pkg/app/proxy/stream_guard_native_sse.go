@@ -51,7 +51,7 @@ func (g *streamGuard) trackNativeSSETool(ev *streamEvent) {
 	default:
 		// toolPhase has no other variant. A new one must say here whether it
 		// opens or closes a call before it can change the hold.
-		var unknown toolPhase = ev.tool
+		var unknown = ev.tool
 		_ = unknown
 	}
 }
@@ -128,11 +128,10 @@ func (g *streamGuard) reconcileNativeSSEArgs(ev *streamEvent) {
 		if !tc.HasArgumentsSnapshot {
 			continue
 		}
-		current := g.toolArguments(tc.Index)
-		switch {
-		case current == tc.ArgumentsSnapshot:
+		switch current := g.toolArguments(tc.Index); current {
+		case tc.ArgumentsSnapshot:
 			g.sealNativeSSEArgs(tc.Index)
-		case current == "":
+		case "":
 			g.adoptToolArguments(tc.Index, tc.ArgumentsSnapshot)
 			g.sealNativeSSEArgs(tc.Index)
 		default:
