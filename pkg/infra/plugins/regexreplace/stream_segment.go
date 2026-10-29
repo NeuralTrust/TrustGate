@@ -17,11 +17,13 @@ package regexreplace
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -30,6 +32,11 @@ const streamIDSeparator = ":"
 const streamLegResponse = "response"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
+var _ appplugins.StreamToolCallReader = (*Plugin)(nil)
+
+// ReadsStreamToolCalls declares that streamed tool calls are held until their
+// arguments are complete for this rewriter.
+func (p *Plugin) ReadsStreamToolCalls() bool { return true }
 
 // OwnsStreamOptions is false: this plugin is a local rewriter that rides on
 // whatever head gate, cadence and failure direction the stream's other
@@ -81,16 +88,27 @@ func (p *Plugin) InspectSegment(
 		p.recordStreamOutcome(ctx, in, cfg, seg)
 		return segmentAllow(), nil
 	}
-	if seg.Accumulated == "" {
+	if seg.Accumulated == "" && len(seg.ToolCalls) == 0 {
 		return segmentAllow(), nil
 	}
 
 	// Everything in front of this block's text was rewritten and released on
 	// an earlier block; only matches reaching into the new text are this
 	// block's to replace.
-	from := max(len(seg.Accumulated)-len(seg.Text), 0)
-	masked, fired := applyRulesFrom(cfg.compiled, seg.Accumulated, from)
-	if masked == seg.Accumulated {
+	masked := seg.Accumulated
+	var fired []int
+	if seg.Accumulated != "" {
+		from := max(len(seg.Accumulated)-len(seg.Text), 0)
+		masked, fired = applyRulesFrom(cfg.compiled, seg.Accumulated, from)
+	}
+	calls := append([]adapter.CanonicalToolCall(nil), seg.ToolCalls...)
+	toolCallsChanged, toolFired := maskToolCalls(cfg.compiled, calls)
+	if toolCallsChanged {
+		fired = append(fired, toolFired...)
+		slices.Sort(fired)
+		fired = slices.Compact(fired)
+	}
+	if masked == seg.Accumulated && !toolCallsChanged {
 		// A transform whose output equals the produced text ends the stream:
 		// the guard cannot tell "nothing matched" from "a mask the guard
 		// already applied was handed back unchanged", and releasing on the
@@ -98,11 +116,15 @@ func (p *Plugin) InspectSegment(
 		// matched is what keeps a clean response streaming.
 		return segmentAllow(), nil
 	}
-	return &appplugins.SegmentVerdict{
+	verdict := &appplugins.SegmentVerdict{
 		HasTransform: true,
 		Transformed:  masked,
 		Fingerprints: ruleFingerprints(cfg, fired),
-	}, nil
+	}
+	if toolCallsChanged {
+		verdict.TransformedToolCalls = calls
+	}
+	return verdict, nil
 }
 
 // recordStreamOutcome publishes this entry's account of the stream, once, on
