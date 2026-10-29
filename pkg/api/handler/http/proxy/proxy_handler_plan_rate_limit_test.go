@@ -194,6 +194,42 @@ func TestHandle_PlanBurstRateLimitUsesDialectEnvelope(t *testing.T) {
 		assert.NotContains(t, string(raw), `"reason"`)
 	})
 
+	t.Run("TrustGuard plan is named as TrustGuard's", func(t *testing.T) {
+		gatewayID := ids.New[ids.GatewayKind]()
+		authID := ids.New[ids.AuthKind]()
+		// What the TrustGuard plugin forwards: TrustGuard's flat body, marked
+		// with its source.
+		guardFlat := []byte(`{"error":"rate limit exceeded","reason":"burst","trace_id":"tg-1","request_id":"tg-1","source":"trustguard"}`)
+		plugin := planBurstPlugin{err: &appplugins.PluginError{
+			StatusCode: http.StatusTooManyRequests,
+			Type:       "trustguard_rate_limited",
+			Message:    "rate limit exceeded",
+			Headers:    headers,
+			Body:       guardFlat,
+		}}
+		rc := planBurstConsumer(gatewayID, authID, []*policydomain.Policy{{
+			ID:       ids.New[ids.PolicyKind](),
+			Name:     "guard",
+			Slug:     "trustguard",
+			Enabled:  true,
+			Priority: 1,
+			Stages:   []policydomain.Stage{policydomain.StagePreRequest},
+		}})
+		app := fiber.New()
+		app.Use(authStubRoutable(gatewayID, authID, rc))
+		app.All("/*", proxyhttp.NewForwardedHandler(forwarderWithPolicies(t, plugin, nil)).Handle)
+
+		resp := postChat(t, app)
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "body: %s", raw)
+		assert.Equal(t, retryAfter, resp.Header.Get("Retry-After"))
+		assert.Equal(t, "100", resp.Header.Get("X-RateLimit-Limit"))
+		guardMessage := "TrustGate blocked this request: TrustGuard plan burst rate limit exceeded. Retry in 42s."
+		assert.JSONEq(t, `{"error":{"message":"`+guardMessage+`","type":"rate_limit_error","code":"rate_limit_exceeded"}}`, string(raw))
+	})
+
 	t.Run("precheck limiter reaches the handler", func(t *testing.T) {
 		gatewayID := ids.New[ids.GatewayKind]()
 		authID := ids.New[ids.AuthKind]()
