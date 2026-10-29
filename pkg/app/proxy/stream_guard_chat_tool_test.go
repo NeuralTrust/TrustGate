@@ -46,12 +46,81 @@ func (r *toolGuardStub) RunStreamSegment(
 		return &appplugins.SegmentOutcome{}, nil
 	}
 	r.segments = append(r.segments, seg)
+	if r.pattern != "" && strings.Contains(seg.Text, r.pattern) {
+		return &appplugins.SegmentOutcome{Block: true, Type: "tool_blocked", Message: "tool call blocked"}, nil
+	}
 	for _, tc := range seg.ToolCalls {
 		if r.pattern != "" && strings.Contains(tc.Arguments, r.pattern) {
 			return &appplugins.SegmentOutcome{Block: true, Type: "tool_blocked", Message: "tool call blocked"}, nil
 		}
 	}
 	return &appplugins.SegmentOutcome{}, nil
+}
+
+func sseData(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return "data: " + string(raw)
+}
+
+func nativeSSEToolStream(format adapter.Format, args string) []string {
+	if format == adapter.FormatAnthropic {
+		return []string{
+			"event: content_block_start",
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
+			"event: content_block_delta",
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Ready."}}`, "",
+			"event: content_block_stop",
+			`data: {"type":"content_block_stop","index":0}`, "",
+			"event: content_block_start",
+			`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"run_shell","input":{}}}`, "",
+			"event: content_block_delta",
+			sseData(map[string]any{"type": "content_block_delta", "index": 1, "delta": map[string]any{"type": "input_json_delta", "partial_json": args[:len(args)/2]}}), "",
+			"event: content_block_delta",
+			sseData(map[string]any{"type": "content_block_delta", "index": 1, "delta": map[string]any{"type": "input_json_delta", "partial_json": args[len(args)/2:]}}), "",
+			"event: content_block_stop",
+			`data: {"type":"content_block_stop","index":1}`, "",
+			"event: message_stop",
+			`data: {"type":"message_stop"}`, "",
+		}
+	}
+	return []string{
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Ready."}`, "",
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"run_shell"}}`, "",
+		"event: response.function_call_arguments.delta",
+		sseData(map[string]any{"type": "response.function_call_arguments.delta", "output_index": 1, "delta": args[:len(args)/2]}), "",
+		"event: response.function_call_arguments.delta",
+		sseData(map[string]any{"type": "response.function_call_arguments.delta", "output_index": 1, "delta": args[len(args)/2:]}), "",
+		"event: response.function_call_arguments.done",
+		`data: {"type":"response.function_call_arguments.done","output_index":1,"arguments":"` + strings.ReplaceAll(args, `"`, `\"`) + `","name":"run_shell"}`, "",
+		"event: response.output_item.done",
+		`data: {"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"run_shell","arguments":"` + strings.ReplaceAll(args, `"`, `\"`) + `"}}}`, "",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{}}`, "",
+	}
+}
+
+func TestStreamGuard_NativeSSEToolHeldUntilWhole(t *testing.T) {
+	args := `{"command":"rm -rf / --no-preserve-root"}`
+	for _, format := range []adapter.Format{adapter.FormatAnthropic, adapter.FormatOpenAIResponses} {
+		t.Run(string(format), func(t *testing.T) {
+			lines := nativeSSEToolStream(format, args)
+			runner := &toolGuardStub{pattern: "rm -rf"}
+			g := newStreamGuard(runner, adapter.NewRegistry(), format, stageInputFixture(),
+				streamGuardConfig{headChars: 5, minChars: 5, holdNativeTools: true}, newGuardLogger())
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+			assert.True(t, g.wasCut())
+			assert.NotContains(t, strings.Join(got, "\n"), "rm -rf")
+		})
+	}
 }
 
 func chatToolDelta(t *testing.T, index int, id, name, args string) string {

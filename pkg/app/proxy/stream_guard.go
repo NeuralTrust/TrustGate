@@ -174,6 +174,9 @@ type streamGuardConfig struct {
 	// the same nativeToolHold cap. It is set only when an entry on the chain
 	// reads tool calls; otherwise the argument deltas stream as they arrive.
 	holdChatTools bool
+	// holdNativeTools holds tool calls on native Anthropic and Responses SSE
+	// streams until their explicit end event arrives.
+	holdNativeTools bool
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -219,6 +222,10 @@ type streamGuard struct {
 	source adapter.Format
 	logger *slog.Logger
 	now    func() time.Time
+	// nativeSSETools distinguishes native Anthropic and Responses SSE tool
+	// calls from Bedrock-native frames. Both need whole-call inspection, but
+	// only Bedrock frames support in-place masking.
+	nativeSSETools bool
 	// drain hands the rest of an abandoned upstream to a background reader, so
 	// a cut still accounts the usage the last chunk carries. A nil drain cuts
 	// the same way and charges nothing.
@@ -347,17 +354,19 @@ func newStreamGuard(
 	logger *slog.Logger,
 ) *streamGuard {
 	g := &streamGuard{
-		runner:   runner,
-		seg:      newSegmenter(codec, source),
-		codec:    codec,
-		in:       in,
-		cfg:      cfg.withDefaults(),
-		source:   source,
-		logger:   logger,
-		now:      time.Now,
-		chatHold: cfg.holdChatTools && chatCompletionsWire(source),
+		runner:         runner,
+		seg:            newSegmenter(codec, source),
+		codec:          codec,
+		in:             in,
+		cfg:            cfg.withDefaults(),
+		source:         source,
+		logger:         logger,
+		now:            time.Now,
+		chatHold:       cfg.holdChatTools && chatCompletionsWire(source),
+		nativeSSETools: cfg.holdNativeTools && nativeSSEToolWire(source),
 	}
 	g.seg.choices = g.chatHold
+	g.seg.toolPhases = g.nativeSSETools
 	return g
 }
 
@@ -462,7 +471,7 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	g.reasoning.WriteString(ev.reasoning)
 	g.tools.merge(ev.toolCalls)
 	switch {
-	case g.native:
+	case g.native || g.nativeSSETools:
 		g.unhandledTools.merge(ev.toolCalls)
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
