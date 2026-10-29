@@ -40,12 +40,16 @@ func testSecretKey() string { return strings.Repeat("s", serverSecretKeyMinLen) 
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	minimumEnv(t)
+	t.Setenv("ADMIN_PLATFORM_CLAIM_REQUIRED", "")
 
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
+	if !cfg.AdminM2M.PlatformClaimRequired {
+		t.Error("a console token with neither tenant_id nor platform_admin must be rejected by default")
+	}
 	if cfg.Server.AdminPort != defaultServerAdminPort {
 		t.Errorf("AdminPort default = %d, want %d", cfg.Server.AdminPort, defaultServerAdminPort)
 	}
