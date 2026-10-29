@@ -552,3 +552,69 @@ func jsonItemType(t *testing.T, payload string) string {
 	require.NoError(t, json.Unmarshal([]byte(payload), &event))
 	return event.Item.Type
 }
+
+func TestDecodeResponsesStreamChunk_CustomToolCall(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want StreamToolCallDelta
+	}{
+		{
+			name: "output item added",
+			body: `{"type":"response.output_item.added","output_index":2,"item":{"type":"custom_tool_call","id":"ctc_1","call_id":"call_1","name":"shell","input":""}}`,
+			want: StreamToolCallDelta{Index: 2, ID: "call_1", Kind: ToolKindCustom, Name: "shell"},
+		},
+		{
+			name: "output item added with input",
+			body: `{"type":"response.output_item.added","output_index":2,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"rm -rf /"}}`,
+			want: StreamToolCallDelta{Index: 2, ID: "call_1", Kind: ToolKindCustom, Name: "shell", ArgumentsDelta: "rm -rf /"},
+		},
+		{
+			name: "input delta",
+			body: `{"type":"response.custom_tool_call_input.delta","output_index":2,"item_id":"ctc_1","delta":"rm -rf"}`,
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsDelta: "rm -rf"},
+		},
+		{
+			name: "input done",
+			body: `{"type":"response.custom_tool_call_input.done","output_index":2,"item_id":"ctc_1","input":"rm -rf /"}`,
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
+		},
+		{
+			name: "input done states an empty input",
+			body: `{"type":"response.custom_tool_call_input.done","output_index":2,"input":""}`,
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, HasArgumentsSnapshot: true},
+		},
+		{
+			name: "input done without an input states nothing",
+			body: `{"type":"response.custom_tool_call_input.done","output_index":2}`,
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom},
+		},
+		{
+			name: "output item done",
+			body: `{"type":"response.output_item.done","output_index":2,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"rm -rf /"}}`,
+			want: StreamToolCallDelta{Index: 2, ID: "call_1", Kind: ToolKindCustom, Name: "shell", ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			chunk, err := decodeResponsesStreamChunk([]byte(tc.body))
+			require.NoError(t, err)
+			require.NotNil(t, chunk)
+			require.Len(t, chunk.ToolCallDeltas, 1)
+			assert.Equal(t, tc.want, chunk.ToolCallDeltas[0])
+			assert.Empty(t, chunk.FinishReason)
+		})
+	}
+}
+
+func TestDecodeResponsesStreamChunk_OtherOutputItemDoneDecodesToNothing(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"message","role":"assistant","content":[]}`,
+		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}`,
+		`{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec"}}`,
+	} {
+		chunk, err := decodeResponsesStreamChunk([]byte(`{"type":"response.output_item.done","output_index":0,"item":` + item + `}`))
+		require.NoError(t, err)
+		assert.Nil(t, chunk, item)
+	}
+}
