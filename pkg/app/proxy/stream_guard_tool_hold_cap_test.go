@@ -16,6 +16,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -80,8 +82,13 @@ func TestNativeToolCallBetweenOldAndNewHoldCapIsInspected(t *testing.T) {
 	frames := append([][]byte{deltaFrame(t, "Sending it")}, tool...)
 	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 
+	// The chain window has to be able to read the view. A smaller window
+	// releases the call instead of sending a segment the chain will refuse.
+	cfg := toolBlocks
+	cfg.maxAccumBytes = maxAccumulatedCeiling
+	require.LessOrEqual(t, len(joined), cfg.maxAccumBytes)
 	runner := &countRunner{inner: &blockRunner{needle: marker}}
-	g := nativeGuardFor(runner, toolBlocks)
+	g := nativeGuardFor(runner, cfg)
 	got, pe := runNativeGuard(t, g, frames)
 
 	require.Nil(t, pe)
@@ -164,4 +171,67 @@ func TestChatToolCallAboveHoldCapFailsOpen(t *testing.T) {
 	assert.Equal(t, degradeToolInputUninspected, g.degradedReason)
 	assert.Contains(t, logs.String(), "tool call released without inspecting its input")
 	assert.Contains(t, logs.String(), "cause=size")
+}
+
+// windowRunner is the enforcing chain: a segment longer than its window is a
+// block, which is what trustguard does with stream_block_too_large.
+type windowRunner struct {
+	limit int
+	sizes []int
+}
+
+func (r *windowRunner) RunStreamSegment(
+	_ context.Context,
+	_ appplugins.StageInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentOutcome, error) {
+	if seg.Closing {
+		return &appplugins.SegmentOutcome{}, nil
+	}
+	n := max(len(seg.Accumulated), len(seg.Text))
+	r.sizes = append(r.sizes, n)
+	if n > r.limit {
+		return &appplugins.SegmentOutcome{Block: true, Type: "stream_block_too_large", Message: "too large"}, nil
+	}
+	return &appplugins.SegmentOutcome{}, nil
+}
+
+// A native call the hold can now keep, but whose normalised view is past the
+// chain window, used to be sent whole. An enforcing chain refuses that segment
+// and the refusal cuts the stream. It is released instead.
+func TestNativeToolCallPastChainWindowFailsOpen(t *testing.T) {
+	t.Parallel()
+	const window = 64 << 10
+	const want = 400 << 10
+	pad := strings.Repeat("a", 16<<10)
+	opening := `{"cmd":"look","pad":"`
+	frags := []string{opening}
+	var n int
+	n += len(opening)
+	for n < want {
+		frags = append(frags, pad)
+		n += len(pad)
+	}
+	frags = append(frags, `"}`)
+	n += len(`"}`)
+	require.Greater(t, n, window)
+	require.Less(t, n, maxHeadHeldBytes)
+
+	tool := converseToolFrames(t, 1, frags...)
+	require.Less(t, frameWire(tool), maxHeadHeldBytes, "the hold keeps the call; the window is what refuses it")
+	frames := append([][]byte{deltaFrame(t, "Sending it")}, tool...)
+	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
+
+	runner := &windowRunner{limit: window}
+	cfg := toolBlocks
+	cfg.maxAccumBytes = window
+	g, logs := loggedGuard(runner, cfg)
+	got, pe := runNativeGuard(t, g, frames)
+
+	require.Nil(t, pe)
+	assert.False(t, g.wasCut(), "the oversized view is released, not cut")
+	requireReleasedUninspected(t, g, logs, frames, got, "size")
+	for _, size := range runner.sizes {
+		assert.LessOrEqual(t, size, window, "the unreadable view was not sent")
+	}
 }
