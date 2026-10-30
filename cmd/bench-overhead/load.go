@@ -368,9 +368,10 @@ func openLoop(client *http.Client, t target, rate int, body []byte, start, measu
 		go func(scheduled time.Time) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			t0 := time.Now()
 			status, err := send(ctx, client, t, body)
 			if !scheduled.Before(measureFrom) {
-				rec.add(time.Since(scheduled), status, err)
+				rec.add(time.Since(t0), status, err)
 			}
 		}(scheduled)
 	}
