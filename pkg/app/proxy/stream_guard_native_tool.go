@@ -104,7 +104,7 @@ func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
 // well enough to edit, so a mask on a window that holds one stops the stream as
 // any mask a native stream cannot apply does (see applyTransform).
 func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
-	if !g.native && !g.nativeSSETools {
+	if !g.native {
 		return toolVerdict{}
 	}
 	for _, b := range g.toolBlocks() {
@@ -116,9 +116,6 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			for _, tc := range g.produced[di].toolCalls {
 				raw.WriteString(tc.ArgumentsDelta)
 			}
-		}
-		if raw.Len() == 0 {
-			raw.WriteString(blockSnapshot(g.produced, b))
 		}
 		if raw.Len() == 0 {
 			g.markToolHandled(b)
@@ -169,9 +166,6 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			return toolVerdict{outcome: outcome, stop: true}
 		}
 		if outcome != nil && outcome.HasTransform {
-			if !g.native {
-				return toolVerdict{outcome: outcome, stop: true}
-			}
 			if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
 				// The mask cannot be written into the held frames and read back:
 				// releasing the call as it came would send the input the policy
@@ -219,44 +213,6 @@ func (g *streamGuard) markToolHandled(b nativeToolBlock) {
 		}
 		g.unhandledTools.reset(idx)
 		g.unhandledTools.merge(remaining)
-	}
-}
-
-// blockSnapshot is the last full input a boundary event of the block stated.
-// A call that carried no deltas is read through it; one whose deltas disagree
-// with it is refused before the block is inspected (reconcileToolSnapshots).
-func blockSnapshot(produced []*streamEvent, b nativeToolBlock) string {
-	snapshot := ""
-	for _, i := range b.events {
-		for _, tc := range produced[i].toolCalls {
-			if tc.HasArgumentsSnapshot {
-				snapshot = tc.ArgumentsSnapshot
-			}
-		}
-	}
-	return snapshot
-}
-
-// reconcileToolSnapshots checks the full input a boundary event states against
-// the deltas already held for the call. A call that carried none adopts it, so
-// the segments carry the input a client will run; one that holds a different
-// input is refused.
-func (g *streamGuard) reconcileToolSnapshots(ev *streamEvent) {
-	for _, tc := range ev.toolCalls {
-		if !tc.HasArgumentsSnapshot {
-			continue
-		}
-		call := g.tools.byIdx[tc.Index]
-		switch call.Arguments {
-		case tc.ArgumentsSnapshot:
-		case "":
-			call.Arguments = tc.ArgumentsSnapshot
-			if unhandled := g.unhandledTools.byIdx[tc.Index]; unhandled != nil {
-				unhandled.Arguments = tc.ArgumentsSnapshot
-			}
-		default:
-			g.toolArgsMismatch = true
-		}
 	}
 }
 

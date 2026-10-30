@@ -268,10 +268,11 @@ func nativeSSEToolPhase(format adapter.Format, payload []byte) (toolPhase, int) 
 		if event.Item.Type == "function_call" || event.Item.Type == responsesCustomToolCall {
 			return toolStart, index
 		}
-	case "response.function_call_arguments.delta":
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		// function_call_arguments.done carries the full arguments, but the item
+		// stays open until response.output_item.done. Closing on .done would
+		// release that later event, and any arguments it carries, uninspected.
 		return toolDelta, index
-	case "response.function_call_arguments.done":
-		return toolStop, index
 	case "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
 		// The input .done carries the full input, but the item stays open
 		// until response.output_item.done, which carries it again.
@@ -331,36 +332,6 @@ func responsesUnreadableCall(format adapter.Format, payload []byte) bool {
 	}
 	_, hosted := responsesHostedCalls[kind]
 	return !hosted
-}
-
-// anthropicToolStartInput reads the call a content_block_start opens when the
-// decoder returns none for it: a server_tool_use or mcp_tool_use block, whose
-// input can arrive whole on the start event. The decoder leaves those blocks
-// out because a client of another format must not be handed a call it never
-// declared, but the guard still has to read their input.
-func anthropicToolStartInput(payload []byte) (adapter.StreamToolCallDelta, bool) {
-	var event struct {
-		Type         string `json:"type"`
-		Index        int    `json:"index"`
-		ContentBlock struct {
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		} `json:"content_block"`
-	}
-	if json.Unmarshal(payload, &event) != nil || event.Type != anthropicContentBlockStart {
-		return adapter.StreamToolCallDelta{}, false
-	}
-	input := strings.TrimSpace(string(event.ContentBlock.Input))
-	if input == "{}" || input == "null" {
-		input = ""
-	}
-	return adapter.StreamToolCallDelta{
-		Index:          event.Index,
-		ID:             event.ContentBlock.ID,
-		Name:           event.ContentBlock.Name,
-		ArgumentsDelta: input,
-	}, true
 }
 
 // streamMark is what one event does to the structure a client can see open: the
@@ -584,14 +555,6 @@ func (s *segmenter) classify(ev *streamEvent) error {
 		return fmt.Errorf("segmenting %s stream chunk: %w", s.format, err)
 	}
 	s.anchor.observe(chunk)
-	if ev.tool == toolStart && (chunk == nil || len(chunk.ToolCallDeltas) == 0) {
-		if tc, ok := anthropicToolStartInput(payload); ok {
-			if chunk == nil {
-				chunk = &adapter.CanonicalStreamChunk{}
-			}
-			chunk.ToolCallDeltas = []adapter.StreamToolCallDelta{tc}
-		}
-	}
 	if chunk == nil {
 		return nil
 	}
@@ -607,10 +570,11 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	case chunk.Usage != nil:
 		ev.unit = unitUsage
 	case chunk.FinishReason == finishReasonToolCalls:
-		// response.function_call_arguments.done: the close of one tool call, a
-		// tool-call unit. Its arguments already rode the delta events, so it
-		// adds no chars, but it must not be opaque either — opaque events are
-		// releasable ahead of the block they sit in.
+		// response.function_call_arguments.done carries one tool call's finish
+		// reason and, when the upstream sends them, the call's full arguments.
+		// It is not the end of the response, and it must not be opaque either:
+		// opaque events are releasable ahead of the block they sit in. The item
+		// stays open until response.output_item.done.
 		ev.unit = unitText
 	}
 	return nil

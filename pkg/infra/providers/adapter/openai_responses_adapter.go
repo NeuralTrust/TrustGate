@@ -207,9 +207,38 @@ type openaiResponsesStreamEvent struct {
 	ItemID       string          `json:"item_id,omitempty"`
 	OutputIndex  int             `json:"output_index,omitempty"`
 	ContentIndex int             `json:"content_index,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
 	Item         json.RawMessage `json:"item,omitempty"`
 	Part         json.RawMessage `json:"part,omitempty"`
 	Response     json.RawMessage `json:"response,omitempty"`
+}
+
+// responsesOutputIndex reads the output index of a Responses event. A missing
+// index is -1, not 0: index 0 is a real item, and an event that names no item
+// must not be folded into it.
+func responsesOutputIndex(chunk []byte) int {
+	var probe struct {
+		OutputIndex *int `json:"output_index"`
+	}
+	if json.Unmarshal(chunk, &probe) != nil || probe.OutputIndex == nil {
+		return -1
+	}
+	return *probe.OutputIndex
+}
+
+// responsesArgumentsClaim reports the arguments a boundary event states. An
+// omitted or null field states nothing; an empty string is a stated value.
+func responsesArgumentsClaim(raw json.RawMessage) (string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", false
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text, true
+	}
+	return string(raw), true
 }
 
 // The output item types this encoder names. A message item and a function_call
@@ -444,11 +473,12 @@ func responsesCustomInput(raw json.RawMessage) string {
 }
 
 // responsesCustomCallDelta is the tool-call delta of a custom_tool_call
-// boundary event. It states the call's full input as a snapshot; an omitted or
-// null input states nothing. It leaves out the id and name, which the
-// output_item.added delta already sent.
-func responsesCustomCallDelta(index int, input json.RawMessage) StreamToolCallDelta {
-	delta := StreamToolCallDelta{Index: index, Kind: ToolKindCustom}
+// boundary event. Like a function_call boundary it is Restated: it carries the
+// call's full input as a snapshot for the stream guard, and encoders drop it
+// because the call already reached the client. An omitted or null input states
+// nothing.
+func responsesCustomCallDelta(index int, callID, name string, input json.RawMessage) StreamToolCallDelta {
+	delta := StreamToolCallDelta{Index: index, ID: callID, Kind: ToolKindCustom, Name: name, Restated: true}
 	if trimmed := bytes.TrimSpace(input); len(trimmed) > 0 && string(trimmed) != "null" {
 		delta.ArgumentsSnapshot, delta.HasArgumentsSnapshot = responsesCustomInput(trimmed), true
 	}
@@ -606,7 +636,7 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	case "response.function_call_arguments.delta":
 		return &CanonicalStreamChunk{
 			ToolCallDeltas: []StreamToolCallDelta{{
-				Index:          event.OutputIndex,
+				Index:          responsesOutputIndex(chunk),
 				ArgumentsDelta: event.Delta,
 			}},
 		}, nil
@@ -614,7 +644,7 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	case "response.custom_tool_call_input.delta":
 		return &CanonicalStreamChunk{
 			ToolCallDeltas: []StreamToolCallDelta{{
-				Index:          event.OutputIndex,
+				Index:          responsesOutputIndex(chunk),
 				Kind:           ToolKindCustom,
 				ArgumentsDelta: event.Delta,
 			}},
@@ -628,33 +658,19 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			return invalidStreamEvent("Responses"), nil
 		}
 		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, done.Input)},
-		}, nil
-
-	case "response.output_item.done":
-		if len(event.Item) == 0 {
-			return nil, nil
-		}
-		var item struct {
-			Type  string          `json:"type"`
-			Input json.RawMessage `json:"input"`
-		}
-		if json.Unmarshal(event.Item, &item) != nil || item.Type != responsesItemCustomToolCall {
-			return nil, nil
-		}
-		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, item.Input)},
+			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(responsesOutputIndex(chunk), "", "", done.Input)},
 		}, nil
 
 	case "response.output_item.added":
 		if event.Item != nil {
 			var item struct {
-				Type   string          `json:"type"`
-				Role   string          `json:"role"`
-				ID     string          `json:"id"`
-				CallID string          `json:"call_id"`
-				Name   string          `json:"name"`
-				Input  json.RawMessage `json:"input"`
+				Type      string          `json:"type"`
+				Role      string          `json:"role"`
+				ID        string          `json:"id"`
+				CallID    string          `json:"call_id"`
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+				Input     json.RawMessage `json:"input"`
 			}
 			if json.Unmarshal(event.Item, &item) == nil {
 				switch item.Type {
@@ -663,17 +679,19 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 						Role: item.Role,
 					}, nil
 				case "function_call":
-					return &CanonicalStreamChunk{
-						ToolCallDeltas: []StreamToolCallDelta{{
-							Index: event.OutputIndex,
-							ID:    item.CallID,
-							Name:  item.Name,
-						}},
-					}, nil
+					delta := StreamToolCallDelta{
+						Index: responsesOutputIndex(chunk),
+						ID:    item.CallID,
+						Name:  item.Name,
+					}
+					if args, ok := responsesArgumentsClaim(item.Arguments); ok {
+						delta.ArgumentsDelta = streamToolInputStart(args)
+					}
+					return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{delta}}, nil
 				case responsesItemCustomToolCall:
 					return &CanonicalStreamChunk{
 						ToolCallDeltas: []StreamToolCallDelta{{
-							Index:          event.OutputIndex,
+							Index:          responsesOutputIndex(chunk),
 							ID:             item.CallID,
 							Kind:           ToolKindCustom,
 							Name:           item.Name,
@@ -686,9 +704,49 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		return nil, nil
 
 	case "response.function_call_arguments.done":
+		done := StreamToolCallDelta{Index: responsesOutputIndex(chunk), Name: event.Name, Restated: true}
+		if args, ok := responsesArgumentsClaim(event.Arguments); ok {
+			done.HasArgumentsSnapshot = true
+			done.ArgumentsSnapshot = args
+		}
 		return &CanonicalStreamChunk{
-			FinishReason: "tool_calls",
+			FinishReason:   "tool_calls",
+			ToolCallDeltas: []StreamToolCallDelta{done},
 		}, nil
+
+	case "response.output_item.done":
+		if len(event.Item) == 0 {
+			return nil, nil
+		}
+		var item struct {
+			Type      string          `json:"type"`
+			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+			Input     json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(event.Item, &item) != nil {
+			return nil, nil
+		}
+		if item.Type == responsesItemCustomToolCall {
+			return &CanonicalStreamChunk{
+				ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(responsesOutputIndex(chunk), item.CallID, item.Name, item.Input)},
+			}, nil
+		}
+		if item.Type != responsesItemKindFunctionCall {
+			return nil, nil
+		}
+		delta := StreamToolCallDelta{
+			Index:    responsesOutputIndex(chunk),
+			ID:       item.CallID,
+			Name:     item.Name,
+			Restated: true,
+		}
+		if args, ok := responsesArgumentsClaim(item.Arguments); ok {
+			delta.HasArgumentsSnapshot = true
+			delta.ArgumentsSnapshot = args
+		}
+		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{delta}}, nil
 
 	case "response.completed":
 		if _, valid := streamJSONFields(event.Response); !valid {

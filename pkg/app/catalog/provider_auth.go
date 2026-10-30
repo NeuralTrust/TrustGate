@@ -248,7 +248,7 @@ var (
 	passthroughAuthOption = AuthTypeOption{
 		Type:        "passthrough",
 		Label:       "Passthrough",
-		Description: "No credentials are stored. The caller must send Authorization: Bearer with a GCP access token on each request.",
+		Description: "No credentials are stored. The caller sends Authorization: Bearer on each request with a GCP access token, or with a service-account key (JSON or base64 JSON) from which the gateway mints one.",
 		Fields:      []AuthField{},
 	}
 )

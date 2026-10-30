@@ -227,9 +227,23 @@ func TestNativeSSEToolPhase(t *testing.T) {
 			index:   3,
 		},
 		{
-			name:    "Responses arguments done",
+			name:    "Anthropic server tool use start",
+			format:  adapter.FormatAnthropic,
+			payload: `{"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use"}}`,
+			want:    toolStart,
+			index:   4,
+		},
+		{
+			name:    "Responses arguments done stays inside the call",
 			format:  adapter.FormatOpenAIResponses,
 			payload: `{"type":"response.function_call_arguments.done","output_index":3,"arguments":"{}"}`,
+			want:    toolDelta,
+			index:   3,
+		},
+		{
+			name:    "Responses output item done closes the call",
+			format:  adapter.FormatOpenAIResponses,
+			payload: `{"type":"response.output_item.done","output_index":3,"item":{"type":"function_call"}}`,
 			want:    toolStop,
 			index:   3,
 		},
@@ -267,6 +281,13 @@ func TestNativeSSEToolPhase(t *testing.T) {
 			payload: `{"type":"response.output_item.done","output_index":2,"item":{"type":"custom_tool_call","input":"ls"}}`,
 			want:    toolStop,
 			index:   2,
+		},
+		{
+			name:    "Responses arguments done without an index",
+			format:  adapter.FormatOpenAIResponses,
+			payload: `{"type":"response.function_call_arguments.done","arguments":"{}"}`,
+			want:    toolDelta,
+			index:   -1,
 		},
 	}
 	for _, tc := range tests {
