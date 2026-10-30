@@ -325,11 +325,14 @@ Proto: `pkg/infra/configsnapshot/proto/snapshot.proto` — regenerate with
 **Heartbeat and presence (ENG-1500).** Right after `Hello`, and then every
 `CONFIG_SYNC_HEARTBEAT_INTERVAL`, the DP sends a `Heartbeat`: build version,
 `INSTANCE_REGION`, `INSTANCE_DEPLOYMENT_TYPE`, and the TrustGuard its guardrail
-policies call (`TRUSTGUARD_BASE_URL` stripped of credentials, query and
-fragment, plus `TRUSTGUARD_CLIENT_ID`; never the secret). The CP stores it on
-`config_sync_connections` and, on the same interval, refreshes `last_seen` of
-every stream it holds, so a DP that predates heartbeats still reads as live
-while its stream is open. `GET /v1/config-sync/connections` returns all of it;
+policies call (`TRUSTGUARD_BASE_URL` stripped of userinfo, query and
+fragment, plus `TRUSTGUARD_CLIENT_ID`; never the secret). The path is kept, so
+never put a secret in it. The CP stores it on `config_sync_connections`, caps
+each field, and clears it when the stream reconnects. On the same interval it
+marks every stream it holds connected and refreshes its `last_seen`, so a DP
+that predates heartbeats still reads as live while its stream is open, even
+after a stale teardown on another replica. A stream's teardown is its last
+write: later acks, heartbeats and presence refreshes for it are dropped. `GET /v1/config-sync/connections` returns all of it;
 the console derives Connected / Unreachable from `last_seen` and shows a
 self-hosted gateway's effective TrustGuard from the heartbeat.
 

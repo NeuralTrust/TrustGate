@@ -28,9 +28,10 @@ type ConnectionStore interface {
 	MarkConnected(ctx context.Context, scope, instanceID string) error
 	MarkAck(ctx context.Context, scope, instanceID, appliedVersion string) error
 	MarkDisconnected(ctx context.Context, scope, instanceID string) error
-	// MarkHeartbeat records what the data plane reported and refreshes its
-	// last_seen.
+	// MarkHeartbeat records what the data plane reported, marks the stream
+	// connected and refreshes its last_seen.
 	MarkHeartbeat(ctx context.Context, scope, instanceID string, hb dataplane.Heartbeat) error
-	// TouchConnected refreshes last_seen for the streams still marked connected.
+	// TouchConnected marks the streams this replica holds connected and
+	// refreshes their last_seen.
 	TouchConnected(ctx context.Context, keys []dataplane.StreamKey) error
 }
