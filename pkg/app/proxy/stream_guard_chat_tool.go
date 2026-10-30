@@ -101,14 +101,18 @@ func (g *streamGuard) noteChatChoice(ev *streamEvent) {
 	}
 }
 
-// refusedChatTool reports a chat tool stream the guard will not release: a
-// call whose name changed, more than one choice, or a choice index that could
-// not be read. Each is a cut, whichever way on_error is set. The cap is a
-// separate decision (chatToolCapped).
+// refusedChatTool reports a tool stream the guard will not release: a call
+// whose name changed, arguments a boundary event disagrees with, more than
+// one choice, or a choice index that could not be read. Each is a cut,
+// whichever way on_error is set. The cap is a separate decision
+// (chatToolCapped). Name and argument checks cover native SSE tool calls as
+// well as chat completions.
 func (g *streamGuard) refusedChatTool() (string, bool) {
 	switch {
 	case g.toolRenamed:
 		return streamToolRenamedMessage, true
+	case g.toolArgsMismatch:
+		return streamToolArgsMessage, true
 	case g.toolMultiChoice:
 		return streamToolMultiChoiceMessage, true
 	case g.toolChoiceUnread:
@@ -122,6 +126,10 @@ func (g *streamGuard) refusedChatTool() (string, bool) {
 // the latest name of a call, so a later delta that names the same call
 // differently would let a client run a tool the guard never read; that is
 // refused. A delta carrying a new id is a new call and starts a new record.
+// Native SSE does not: an index is one slot, and an event that arrives after
+// that index was already seen is the same call. A different name, or a
+// different non-empty id, is a rename. An id that shows up only on the later
+// event fills in the record instead of replacing it.
 func (g *streamGuard) checkToolNames(ev *streamEvent) {
 	for _, tc := range ev.toolCalls {
 		if tc.Name == "" {
@@ -130,6 +138,13 @@ func (g *streamGuard) checkToolNames(ev *streamEvent) {
 		key := chatToolKey{choice: ev.choice, index: tc.Index}
 		prev, ok := g.toolNames[key]
 		switch {
+		case ok && g.nativeSSETools:
+			if tc.Name != prev.name || (tc.ID != "" && prev.id != "" && tc.ID != prev.id) {
+				g.toolRenamed = true
+			} else if prev.id == "" && tc.ID != "" {
+				prev.id = tc.ID
+				g.toolNames[key] = prev
+			}
 		case !ok, tc.ID != "" && tc.ID != prev.id:
 			if g.toolNames == nil {
 				g.toolNames = map[chatToolKey]chatToolName{}
@@ -141,13 +156,14 @@ func (g *streamGuard) checkToolNames(ev *streamEvent) {
 	}
 }
 
-// chatToolCapped resolves a block that has to be inspected while a chat tool
-// call is still open, which only the nativeToolHold cap or the held-bytes
-// ceiling causes: the guard would read part of the arguments and the rest
-// would be released unread. It reports whether the stream must stop, which is
-// what fail_closed does. Anything else releases the call and records it.
+// chatToolCapped resolves a block that has to be inspected while a tool call
+// is still open, which only the nativeToolHold cap or the held-bytes ceiling
+// causes: the guard would read part of the arguments and the rest would be
+// released unread. It covers chat completions and native SSE tool calls. It
+// reports whether the stream must stop, which is what fail_closed does.
+// Anything else releases the call and records it.
 func (g *streamGuard) chatToolCapped() bool {
-	if !g.chatTools() || !g.toolOpen || g.terminal || g.exhausted || g.srcErr != nil {
+	if (!g.chatTools() && !g.nativeSSETools) || !g.toolOpen || g.terminal || g.exhausted || g.srcErr != nil {
 		return false
 	}
 	cause := "size"
