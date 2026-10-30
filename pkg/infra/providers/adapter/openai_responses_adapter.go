@@ -443,11 +443,12 @@ func responsesCustomInput(raw json.RawMessage) string {
 	return string(trimmed)
 }
 
-// responsesCustomCallDelta is the tool-call delta of a custom_tool_call event.
-// A boundary event states the call's full input as a snapshot; an omitted or
-// null input states nothing.
-func responsesCustomCallDelta(index int, callID, name string, input json.RawMessage) StreamToolCallDelta {
-	delta := StreamToolCallDelta{Index: index, ID: callID, Kind: ToolKindCustom, Name: name}
+// responsesCustomCallDelta is the tool-call delta of a custom_tool_call
+// boundary event. It states the call's full input as a snapshot; an omitted or
+// null input states nothing. It leaves out the id and name, which the
+// output_item.added delta already sent.
+func responsesCustomCallDelta(index int, input json.RawMessage) StreamToolCallDelta {
+	delta := StreamToolCallDelta{Index: index, Kind: ToolKindCustom}
 	if trimmed := bytes.TrimSpace(input); len(trimmed) > 0 && string(trimmed) != "null" {
 		delta.ArgumentsSnapshot, delta.HasArgumentsSnapshot = responsesCustomInput(trimmed), true
 	}
@@ -627,7 +628,7 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			return invalidStreamEvent("Responses"), nil
 		}
 		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, "", "", done.Input)},
+			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, done.Input)},
 		}, nil
 
 	case "response.output_item.done":
@@ -635,16 +636,14 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			return nil, nil
 		}
 		var item struct {
-			Type   string          `json:"type"`
-			CallID string          `json:"call_id"`
-			Name   string          `json:"name"`
-			Input  json.RawMessage `json:"input"`
+			Type  string          `json:"type"`
+			Input json.RawMessage `json:"input"`
 		}
 		if json.Unmarshal(event.Item, &item) != nil || item.Type != responsesItemCustomToolCall {
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{
-			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, item.CallID, item.Name, item.Input)},
+			ToolCallDeltas: []StreamToolCallDelta{responsesCustomCallDelta(event.OutputIndex, item.Input)},
 		}, nil
 
 	case "response.output_item.added":

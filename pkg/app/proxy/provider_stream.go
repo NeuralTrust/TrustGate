@@ -1006,7 +1006,7 @@ func emitDeferred(
 		}
 		return true, nil
 	}
-	if canonical == nil {
+	if canonical = canonical.WithoutSilentToolDeltas(); canonical == nil {
 		return true, nil
 	}
 	deferred.geminiCalls.Renumber(canonical.ToolCallDeltas)

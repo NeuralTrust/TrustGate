@@ -276,6 +276,9 @@ func (r *Registry) EncodeStreamChunkFor(canonical *CanonicalStreamChunk, source 
 	if err != nil {
 		return nil, fmt.Errorf("adapter stream: %w", err)
 	}
+	if canonical = canonical.WithoutSilentToolDeltas(); canonical == nil {
+		return nil, nil
+	}
 	return ad.EncodeStreamChunk(canonical)
 }
 
@@ -308,6 +311,9 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 		return nil, nil
 	}
 	dropStreamProviderExtensionsForCrossFormat(source, target, canonical)
+	if canonical = canonical.WithoutSilentToolDeltas(); canonical == nil {
+		return nil, nil
+	}
 
 	out, err := sourceAdapter.EncodeStreamChunk(canonical)
 	if err != nil {
