@@ -43,9 +43,11 @@ Scenarios:
 - **closed loop** `-concurrency 1,8,32,64`: N workers sending back to back. `c=1`
   is the cleanest read of added latency; higher levels show the throughput
   ceiling.
-- **open loop** `-rates 250,500,1000`: requests are scheduled at a fixed rate
-  and latency is measured from the scheduled time, so a stalled gateway is
-  charged for the queue it builds (no coordinated omission).
+- **open loop** `-rates 250,500,1000`: requests are fired at a fixed rate, each
+  on its own goroutine, so a slow response never delays the next send (no
+  coordinated omission). Latency is measured from the actual send, not the
+  scheduled tick: on a one-core load generator `time.Sleep` overshoots by up
+  to a millisecond and would otherwise be charged to the target.
 
 `proxy CPU µs/req` is the proxy's `utime+stime` over the measured window divided
 by the requests served in it: the number that sizes a fleet (`cores = rps ×
