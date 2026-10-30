@@ -284,7 +284,12 @@ func nativeSSEToolPhase(format adapter.Format, payload []byte) (toolPhase, int) 
 	return toolNone, -1
 }
 
-const responsesCustomToolCall = "custom_tool_call"
+const (
+	responsesCustomToolCall = "custom_tool_call"
+	// responsesToolSearchCall runs on the provider unless its execution is
+	// "client".
+	responsesToolSearchCall = "tool_search_call"
+)
 
 // responsesHostedCalls are the *_call output items the provider runs itself.
 // The client is never asked to execute them.
@@ -307,7 +312,8 @@ func responsesUnreadableCall(format adapter.Format, payload []byte) bool {
 	var event struct {
 		Type string `json:"type"`
 		Item struct {
-			Type string `json:"type"`
+			Type      string `json:"type"`
+			Execution string `json:"execution"`
 		} `json:"item"`
 	}
 	if json.Unmarshal(payload, &event) != nil {
@@ -319,6 +325,9 @@ func responsesUnreadableCall(format adapter.Format, payload []byte) bool {
 	kind := event.Item.Type
 	if !strings.HasSuffix(kind, "_call") || kind == "function_call" || kind == responsesCustomToolCall {
 		return false
+	}
+	if kind == responsesToolSearchCall {
+		return event.Item.Execution == "client"
 	}
 	_, hosted := responsesHostedCalls[kind]
 	return !hosted
