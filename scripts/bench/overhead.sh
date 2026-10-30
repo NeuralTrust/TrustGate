@@ -14,7 +14,8 @@
 # CPU pinning (taskset) keeps the proxy, the upstream and the load generator
 # from stealing each other's cores. Override with PROXY_CPUS, UPSTREAM_CPUS,
 # LOADGEN_CPUS; anything left over (admin, Postgres, Redis, sink) shares
-# UPSTREAM_CPUS. Extra flags after "--" go to `bench-overhead run`.
+# UPSTREAM_CPUS. UPSTREAM_FLAGS go to the upstream mock (e.g. "-stream-chunks 200"
+# or "-delay 300ms"); extra flags after "--" go to `bench-overhead run`.
 #
 #   scripts/bench/overhead.sh -- -concurrency 1,16,64 -rates 1000,2000 -duration 30s
 set -euo pipefail
@@ -33,6 +34,7 @@ PROXY_PORT="${BENCH_PROXY_PORT:-18081}"
 MCP_PORT="${BENCH_MCP_PORT:-18082}"
 SYNC_PORT="${BENCH_SYNC_PORT:-18083}"
 UPSTREAM_ADDR="${BENCH_UPSTREAM_ADDR:-127.0.0.1:19999}"
+UPSTREAM_FLAGS="${UPSTREAM_FLAGS:-}"
 SINK_ADDR="${BENCH_SINK_ADDR:-127.0.0.1:19998}"
 
 if [[ "${1:-}" == "--" ]]; then shift; fi
@@ -105,7 +107,8 @@ PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d post
 PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -qc "CREATE DATABASE $DB_NAME;" >/dev/null
 redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -n "$REDIS_DB" FLUSHDB >/dev/null
 
-taskset -c "$UPSTREAM_CPUS" bin/bench-overhead mock -addr "$UPSTREAM_ADDR" >"$LOG_DIR/upstream.log" 2>&1 &
+# shellcheck disable=SC2086
+taskset -c "$UPSTREAM_CPUS" bin/bench-overhead mock -addr "$UPSTREAM_ADDR" $UPSTREAM_FLAGS >"$LOG_DIR/upstream.log" 2>&1 &
 pids+=($!)
 taskset -c "$UPSTREAM_CPUS" bin/bench-overhead mock -addr "$SINK_ADDR" >"$LOG_DIR/sink.log" 2>&1 &
 pids+=($!)
