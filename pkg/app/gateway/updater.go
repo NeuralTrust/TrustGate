@@ -48,7 +48,9 @@ type UpdateInput struct {
 	// value keeps it unless ClearTrafficLabeling is true.
 	TrafficLabeling      *trafficlabel.Config
 	ClearTrafficLabeling bool
-	Entitlements         *domain.Entitlements
+	// Entitlements replaces the stored ones, except that an empty DataPlane keeps
+	// the stored value.
+	Entitlements *domain.Entitlements
 	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
 	// a reserved metadata key server-side, so it survives client metadata replacement.
 	StoreMode *string
@@ -167,7 +169,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		if !in.PlatformAdmin {
 			return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
 		}
-		g.Entitlements = *in.Entitlements
+		next := *in.Entitlements
+		// A plan stamp knows the plan, not where the gateway runs: an omitted
+		// data_plane keeps the stored one, so a hybrid gateway never drops back
+		// into the shared snapshot. Send "hosted" to clear it.
+		if next.DataPlane == "" {
+			next.DataPlane = g.Entitlements.DataPlane
+		}
+		g.Entitlements = next
 	}
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
