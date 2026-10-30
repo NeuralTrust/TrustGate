@@ -31,17 +31,29 @@ type tokenSource func(context.Context, *providers.GCP) (string, error)
 // exchange and per-credential caching. The cache is shared machinery (see
 // pkg/infra/providers/gcpauth), kept here so callers that already depend on
 // providers.GCP do not need to know about gcpauth themselves.
+//
+// Keys sent by callers get their own cache: any caller can send any number of
+// distinct keys, and filling a shared cache would evict the sources of every
+// registry that stores its key.
 type tokenCache struct {
-	cache *gcpauth.ServiceAccountCache
+	cache       *gcpauth.ServiceAccountCache
+	callerCache *gcpauth.ServiceAccountCache
 }
 
-func newTokenCache() *tokenCache {
-	return &tokenCache{cache: gcpauth.NewServiceAccountCache()}
+func newTokenCache(opts ...gcpauth.ServiceAccountOption) *tokenCache {
+	return &tokenCache{
+		cache:       gcpauth.NewServiceAccountCache(opts...),
+		callerCache: gcpauth.NewServiceAccountCache(opts...),
+	}
 }
 
 func (c *tokenCache) token(ctx context.Context, gcp *providers.GCP) (string, error) {
 	if gcp == nil || gcp.ServiceAccountJSON == "" {
 		return "", fmt.Errorf("gcp service account credentials are required for Vertex AI")
 	}
-	return c.cache.Token(ctx, gcp.ServiceAccountJSON, gcpauth.CloudPlatformScope)
+	cache := c.cache
+	if gcp.FromCaller {
+		cache = c.callerCache
+	}
+	return cache.Token(ctx, gcp.ServiceAccountJSON, gcpauth.CloudPlatformScope)
 }

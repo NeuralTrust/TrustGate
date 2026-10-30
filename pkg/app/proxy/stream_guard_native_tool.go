@@ -104,7 +104,7 @@ func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
 // well enough to edit, so a mask on a window that holds one stops the stream as
 // any mask a native stream cannot apply does (see applyTransform).
 func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
-	if !g.native && !g.nativeSSETools {
+	if !g.native {
 		return toolVerdict{}
 	}
 	for _, b := range g.toolBlocks() {
@@ -166,9 +166,6 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			return toolVerdict{outcome: outcome, stop: true}
 		}
 		if outcome != nil && outcome.HasTransform {
-			if !g.native {
-				return toolVerdict{outcome: outcome, stop: true}
-			}
 			if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
 				// The mask cannot be written into the held frames and read back:
 				// releasing the call as it came would send the input the policy
