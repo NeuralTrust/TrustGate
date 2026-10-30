@@ -25,12 +25,14 @@ import (
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
 // ConfigSyncData wires the data-plane half of the config sync: the atomic snapshot store the read
@@ -71,6 +73,13 @@ func ConfigSyncData(c *container.Container) error {
 			return nil, err
 		}
 		client.SetUsageSink(enforcement)
+		client.SetHeartbeat(dataplane.Heartbeat{
+			Version:            version.Version,
+			Region:             cfg.ConfigSync.Region,
+			DeploymentType:     cfg.ConfigSync.DeploymentType,
+			TrustGuardBaseURL:  dataplane.ReportableURL(cfg.TrustGuard.BaseURL),
+			TrustGuardClientID: cfg.TrustGuard.ClientID,
+		})
 		return client, nil
 	}); err != nil {
 		return err

@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 
@@ -76,6 +77,34 @@ func TestListConnectionsHandler_ScopeFilterReturnsMatching(t *testing.T) {
 	assert.Equal(t, "tenant-a", out.Items[0].Scope)
 	assert.Equal(t, "dp-1", out.Items[0].InstanceID)
 	assert.Equal(t, "v3", out.Items[0].AppliedVersion)
+}
+
+func TestListConnectionsHandler_ReturnsHeartbeat(t *testing.T) {
+	beat := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	lister := fakeLister{byScope: map[string][]configsyncconn.Connection{
+		"gw-a": {
+			{Scope: "gw-a", InstanceID: "dp-1", State: "connected", LastHeartbeat: &beat,
+				Version: "v0.64.0", Region: "eu-west-1", DeploymentType: "self-hosted",
+				TrustGuardBaseURL: "https://trustguard.eu.example.com", TrustGuardClientID: "tgc_eu"},
+			{Scope: "gw-a", InstanceID: "dp-old", State: "connected"},
+		},
+	}}
+	app := newApp(lister)
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/config-sync/connections?scope=gw-a", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	out := decode(t, resp.Body)
+	require.Len(t, out.Items, 2)
+	require.NotNil(t, out.Items[0].LastHeartbeat)
+	assert.True(t, out.Items[0].LastHeartbeat.Equal(beat))
+	assert.Equal(t, "v0.64.0", out.Items[0].Version)
+	assert.Equal(t, "eu-west-1", out.Items[0].Region)
+	assert.Equal(t, "self-hosted", out.Items[0].DeploymentType)
+	assert.Equal(t, "https://trustguard.eu.example.com", out.Items[0].TrustGuardBaseURL)
+	assert.Equal(t, "tgc_eu", out.Items[0].TrustGuardClientID)
+	assert.Nil(t, out.Items[1].LastHeartbeat, "a data plane that predates heartbeats has none")
 }
 
 func TestListConnectionsHandler_UnknownScopeReturnsEmpty(t *testing.T) {
