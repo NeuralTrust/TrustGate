@@ -72,7 +72,6 @@ type loadConfig struct {
 	warmup   time.Duration
 	duration time.Duration
 	proxyPID int
-	maxIdle  int
 }
 
 func runLoad(args []string) error {
