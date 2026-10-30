@@ -304,7 +304,7 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 	if err != nil {
 		return nil, fmt.Errorf("adapter stream decode (%s): %w", target, err)
 	}
-	if canonical == nil || canonical.UpstreamErrorOnly() || canonical.SignalOnly() {
+	if canonical == nil || canonical.UpstreamErrorOnly() || canonical.SignalOnly() || canonical.DropGuardOnlyToolCalls() {
 		return nil, nil
 	}
 	dropStreamProviderExtensionsForCrossFormat(source, target, canonical)

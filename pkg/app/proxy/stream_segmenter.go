@@ -265,10 +265,11 @@ func nativeSSEToolPhase(format adapter.Format, payload []byte) (toolPhase, int) 
 		if event.Item.Type == "function_call" {
 			return toolStart, index
 		}
-	case "response.function_call_arguments.delta":
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		// function_call_arguments.done carries the full arguments, but the item
+		// stays open until response.output_item.done. Closing on .done would
+		// release that later event, and any arguments it carries, uninspected.
 		return toolDelta, index
-	case "response.function_call_arguments.done":
-		return toolStop, index
 	case responsesOutputItemDone:
 		if event.Item.Type == "function_call" {
 			return toolStop, index
@@ -508,10 +509,11 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	case chunk.Usage != nil:
 		ev.unit = unitUsage
 	case chunk.FinishReason == finishReasonToolCalls:
-		// response.function_call_arguments.done: the close of one tool call, a
-		// tool-call unit. Its arguments already rode the delta events, so it
-		// adds no chars, but it must not be opaque either — opaque events are
-		// releasable ahead of the block they sit in.
+		// response.function_call_arguments.done carries one tool call's finish
+		// reason and, when the upstream sends them, the call's full arguments.
+		// It is not the end of the response, and it must not be opaque either:
+		// opaque events are releasable ahead of the block they sit in. The item
+		// stays open until response.output_item.done.
 		ev.unit = unitText
 	}
 	return nil
