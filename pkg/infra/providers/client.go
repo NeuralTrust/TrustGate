@@ -73,6 +73,9 @@ type Credentials struct {
 
 type GCP struct {
 	ServiceAccountJSON string `json:"service_account_json"` // #nosec G117 -- DTO field for GCP service account configuration
+	// FromCaller marks a key sent by the caller on a passthrough registry
+	// rather than stored on the registry.
+	FromCaller bool `json:"-"`
 }
 
 type AwsBedrock struct {
