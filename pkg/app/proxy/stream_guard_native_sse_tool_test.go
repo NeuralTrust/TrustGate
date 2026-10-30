@@ -256,15 +256,38 @@ func TestStreamGuard_NativeSSEUnreadableToolItemRefused(t *testing.T) {
 		assert.Equal(t, streamToolUnreadableMessage, pe.Message)
 	})
 
-	t.Run("a hosted call is not refused", func(t *testing.T) {
-		lines := joinEvents(responsesTextPrelude(),
-			sseEvent("response.output_item.added", map[string]any{"output_index": 1, "item": map[string]any{"id": "ws_1", "type": "web_search_call", "status": "in_progress"}}),
-			sseEvent("response.output_item.done", map[string]any{"output_index": 1, "item": map[string]any{"id": "ws_1", "type": "web_search_call", "status": "completed"}}),
+	hosted := func(kind, execution, status string) map[string]any {
+		it := map[string]any{"id": "hc_1", "type": kind, "status": status}
+		if execution != "" {
+			it["execution"] = execution
+		}
+		return it
+	}
+	hostedLines := func(kind, execution string) []string {
+		return joinEvents(responsesTextPrelude(),
+			sseEvent("response.output_item.added", map[string]any{"output_index": 1, "item": hosted(kind, execution, "in_progress")}),
+			sseEvent("response.output_item.done", map[string]any{"output_index": 1, "item": hosted(kind, execution, "completed")}),
 			responsesCompleted())
-		g, got := runNativeSSEGuard(t, &toolGuardStub{}, adapter.FormatOpenAIResponses, sliceSource(lines),
-			streamGuardConfig{headChars: 5, minChars: 8})
-		assert.False(t, g.wasCut())
-		assert.Equal(t, lines, got)
+	}
+
+	for name, lines := range map[string][]string{
+		"web_search_call":          hostedLines("web_search_call", ""),
+		"server tool_search_call":  hostedLines("tool_search_call", "server"),
+		"tool_search_call default": hostedLines("tool_search_call", ""),
+	} {
+		t.Run("a hosted call is not refused: "+name, func(t *testing.T) {
+			g, got := runNativeSSEGuard(t, &toolGuardStub{}, adapter.FormatOpenAIResponses, sliceSource(lines),
+				streamGuardConfig{headChars: 5, minChars: 8})
+			assert.False(t, g.wasCut())
+			assert.Equal(t, lines, got)
+		})
+	}
+
+	t.Run("a client tool_search_call is refused", func(t *testing.T) {
+		g, _ := runNativeSSEGuard(t, &toolGuardStub{}, adapter.FormatOpenAIResponses, sliceSource(hostedLines("tool_search_call", "client")),
+			streamGuardConfig{headChars: 5, minChars: 8, onError: streamFailOpen})
+		assert.True(t, g.wasCut())
+		assert.Equal(t, streamToolUnreadableMessage, g.cutMessage)
 	})
 }
 
