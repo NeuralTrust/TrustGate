@@ -212,9 +212,13 @@ func (r *Repository) RestampEntitlementsByTenantID(
 	if err != nil {
 		return nil, fmt.Errorf("gateway repository: marshal entitlements: %w", err)
 	}
+	// A plan stamp is the same for every gateway of the tenant and knows nothing
+	// of where each one runs, so each keeps its stored data_plane: overwriting it
+	// would put hybrid gateways back into the shared snapshot.
 	const query = `
 		UPDATE gateways
-		   SET entitlements = $2,
+		   SET entitlements = ($2::jsonb - 'data_plane')
+		                      || jsonb_strip_nulls(jsonb_build_object('data_plane', entitlements->'data_plane')),
 		       updated_at   = NOW()
 		 WHERE metadata->>'tenant_id' = $1
 		RETURNING id, slug`
