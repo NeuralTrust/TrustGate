@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -55,10 +56,15 @@ type Client struct {
 	streamCancelCurrent context.CancelFunc
 	lastApplied         string
 	recvMu              sync.Mutex
-	sendMu              sync.Mutex
+	// sendSlot serialises sends on the stream; a one-slot channel rather than
+	// a mutex so a caller can stop waiting when its context ends.
+	sendSlot chan struct{}
 
 	usageSink    UsageSink
 	acceptsUsage atomic.Bool
+
+	heartbeat         *snapshotpb.Heartbeat
+	heartbeatInterval time.Duration
 }
 
 // UsageSink receives the usage snapshots and changes the control plane
@@ -107,6 +113,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 	}
 	c := newClient(conn, cfg.InstanceID, logger)
 	c.endpoint = cfg.GRPCEndpoint
+	c.heartbeatInterval = cfg.HeartbeatEvery()
 	return c, nil
 }
 
@@ -134,8 +141,21 @@ func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *C
 		logger:       logger,
 		streamCtx:    streamCtx,
 		streamCancel: streamCancel,
+		sendSlot:     make(chan struct{}, 1),
 	}
 }
+
+// lockSend takes the send slot, or returns ctx's error if ctx ends first.
+func (c *Client) lockSend(ctx context.Context) error {
+	select {
+	case c.sendSlot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) unlockSend() { <-c.sendSlot }
 
 // Close cancels the Sync stream context and tears down the underlying
 // connection, unblocking any in-flight stream receive.
@@ -246,8 +266,10 @@ func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
+	if err := c.lockSend(ctx); err != nil {
+		return err
+	}
+	defer c.unlockSend()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -309,6 +331,22 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		}
 		streamCancel()
 		return nil, streamErr("send hello", err)
+	}
+	if c.heartbeat != nil {
+		heartbeat := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Heartbeat{Heartbeat: c.heartbeat}}
+		heartbeatResult := make(chan error, 1)
+		go func() { heartbeatResult <- stream.Send(heartbeat) }()
+		select {
+		case <-ctx.Done():
+			streamCancel()
+			<-heartbeatResult
+			return nil, ctx.Err()
+		case err := <-heartbeatResult:
+			if err != nil {
+				streamCancel()
+				return nil, streamErr("send heartbeat", err)
+			}
+		}
 	}
 	c.stream = stream
 	c.streamCancelCurrent = streamCancel

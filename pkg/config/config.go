@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
@@ -176,6 +177,9 @@ const (
 	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
 	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
 	minConfigSyncTokenRevocationRefresh           = time.Second
+	defaultConfigSyncHeartbeatInterval            = 30 * time.Second
+	minConfigSyncHeartbeatInterval                = time.Second
+	defaultInstanceDeploymentType                 = InstanceDeploymentSelfHosted
 
 	configSyncKeyBytes = 32
 
@@ -364,6 +368,12 @@ const (
 	ConfigSyncTokenRevocationEnforce = "enforce"
 )
 
+// Instance deployment types a data plane reports in its heartbeat.
+const (
+	InstanceDeploymentSaaS       = dataplane.DeploymentSaaS
+	InstanceDeploymentSelfHosted = dataplane.DeploymentSelfHosted
+)
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled     bool
 	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -409,6 +419,16 @@ type ConfigSyncConfig struct {
 	// TokenRevocationRefreshInterval is how often each control replica reloads
 	// the stored revocations.
 	TokenRevocationRefreshInterval time.Duration
+	// HeartbeatInterval is how often a data plane sends its heartbeat on the
+	// Sync stream, and how often the control plane refreshes last_seen for the
+	// streams it holds.
+	HeartbeatInterval time.Duration
+	// Region is INSTANCE_REGION, the region a data plane reports in its
+	// heartbeat. Informational: nothing routes on it.
+	Region string
+	// DeploymentType is INSTANCE_DEPLOYMENT_TYPE, saas or self-hosted, as a data
+	// plane reports it in its heartbeat.
+	DeploymentType string
 }
 
 type ServerConfig struct {
@@ -1329,6 +1349,10 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
 			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
 		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
+		HeartbeatInterval:              getEnvDuration("CONFIG_SYNC_HEARTBEAT_INTERVAL", defaultConfigSyncHeartbeatInterval),
+		Region:                         strings.TrimSpace(getEnv("INSTANCE_REGION", "")),
+		DeploymentType: strings.ToLower(strings.TrimSpace(
+			getEnv("INSTANCE_DEPLOYMENT_TYPE", defaultInstanceDeploymentType))),
 	}
 }
 
@@ -1632,6 +1656,9 @@ func (c *Config) Validate() error {
 	if err := c.ConfigSync.validateTokenRevocation(); err != nil {
 		return err
 	}
+	if err := c.ConfigSync.validateHeartbeat(); err != nil {
+		return err
+	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
 	}
@@ -1709,6 +1736,26 @@ func (cs ConfigSyncConfig) RevocationRefreshInterval() time.Duration {
 		return defaultConfigSyncTokenRevocationRefresh
 	}
 	return cs.TokenRevocationRefreshInterval
+}
+
+// HeartbeatEvery returns the heartbeat interval, the default when unset.
+func (cs ConfigSyncConfig) HeartbeatEvery() time.Duration {
+	if cs.HeartbeatInterval == 0 {
+		return defaultConfigSyncHeartbeatInterval
+	}
+	return cs.HeartbeatInterval
+}
+
+func (cs ConfigSyncConfig) validateHeartbeat() error {
+	if cs.HeartbeatEvery() < minConfigSyncHeartbeatInterval {
+		return fmt.Errorf("%w: CONFIG_SYNC_HEARTBEAT_INTERVAL must be at least %s", errors.ErrInvalidConfig, minConfigSyncHeartbeatInterval)
+	}
+	switch cs.DeploymentType {
+	case "", InstanceDeploymentSaaS, InstanceDeploymentSelfHosted:
+		return nil
+	default:
+		return fmt.Errorf("%w: INSTANCE_DEPLOYMENT_TYPE must be %q or %q", errors.ErrInvalidConfig, InstanceDeploymentSaaS, InstanceDeploymentSelfHosted)
+	}
 }
 
 func (cs ConfigSyncConfig) validateTokenRevocation() error {

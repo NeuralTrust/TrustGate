@@ -1235,6 +1235,57 @@ func TestValidate_DBLessStillRequiresRedis(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_InstanceHeartbeat(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cs := cfg.ConfigSync
+	if cs.HeartbeatEvery() != 30*time.Second {
+		t.Errorf("ConfigSync.HeartbeatEvery() = %v, want 30s", cs.HeartbeatEvery())
+	}
+	if cs.DeploymentType != InstanceDeploymentSelfHosted {
+		t.Errorf("ConfigSync.DeploymentType = %q, want self-hosted by default", cs.DeploymentType)
+	}
+	if cs.Region != "" {
+		t.Errorf("ConfigSync.Region = %q, want empty by default", cs.Region)
+	}
+
+	t.Setenv("CONFIG_SYNC_HEARTBEAT_INTERVAL", "10s")
+	t.Setenv("INSTANCE_REGION", " eu-west-1 ")
+	t.Setenv("INSTANCE_DEPLOYMENT_TYPE", "SaaS")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cs = cfg.ConfigSync
+	if cs.HeartbeatEvery() != 10*time.Second {
+		t.Errorf("ConfigSync.HeartbeatEvery() = %v, want 10s", cs.HeartbeatEvery())
+	}
+	if cs.Region != "eu-west-1" {
+		t.Errorf("ConfigSync.Region = %q, want eu-west-1", cs.Region)
+	}
+	if cs.DeploymentType != InstanceDeploymentSaaS {
+		t.Errorf("ConfigSync.DeploymentType = %q, want saas", cs.DeploymentType)
+	}
+}
+
+func TestLoadConfig_InstanceHeartbeatRejectsBadValues(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("INSTANCE_DEPLOYMENT_TYPE", "on-prem")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "INSTANCE_DEPLOYMENT_TYPE") {
+		t.Fatalf("LoadConfig with INSTANCE_DEPLOYMENT_TYPE=on-prem: err = %v, want INSTANCE_DEPLOYMENT_TYPE error", err)
+	}
+
+	t.Setenv("INSTANCE_DEPLOYMENT_TYPE", "")
+	t.Setenv("CONFIG_SYNC_HEARTBEAT_INTERVAL", "100ms")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "CONFIG_SYNC_HEARTBEAT_INTERVAL") {
+		t.Fatalf("LoadConfig with a 100ms heartbeat: err = %v, want CONFIG_SYNC_HEARTBEAT_INTERVAL error", err)
+	}
+}
+
 func TestConfigSyncValidate_DisabledIsInert(t *testing.T) {
 	cs := ConfigSyncConfig{DataPlaneEnabled: false}
 	if err := cs.Validate(); err != nil {
