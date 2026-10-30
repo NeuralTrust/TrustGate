@@ -17,11 +17,14 @@ package grpc
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
+	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 )
 
 func TestService_SyncRecordsHeartbeatSentAfterHello(t *testing.T) {
@@ -152,5 +155,32 @@ func TestHub_RunPresenceWithoutStoreReturns(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("RunPresence without a store must return at once")
+	}
+}
+
+func TestHeartbeatFromProtoCapsFields(t *testing.T) {
+	long := strings.Repeat("a", maxHeartbeatField-1) + "é"
+	got := heartbeatFromProto(&snapshotpb.Heartbeat{
+		Version:           long,
+		Region:            "eu-west-1",
+		TrustguardBaseUrl: "https://guard.example.com/" + strings.Repeat("p", maxHeartbeatURL),
+	})
+	if got.Version != strings.Repeat("a", maxHeartbeatField-1) {
+		t.Fatalf("Version = %q (len %d), want the cut before the split rune", got.Version, len(got.Version))
+	}
+	if !utf8.ValidString(got.Version) {
+		t.Fatal("Version is not valid UTF-8 after the cut")
+	}
+	if got.Region != "eu-west-1" {
+		t.Fatalf("Region = %q, want it unchanged", got.Region)
+	}
+	if len(got.TrustGuardBaseURL) != maxHeartbeatURL {
+		t.Fatalf("len(TrustGuardBaseURL) = %d, want %d", len(got.TrustGuardBaseURL), maxHeartbeatURL)
+	}
+}
+
+func TestTruncateUTF8DropsInvalidBytes(t *testing.T) {
+	if got := truncateUTF8("v1\xffx", 10); got != "v1x" {
+		t.Fatalf("truncateUTF8 = %q, want v1x", got)
 	}
 }

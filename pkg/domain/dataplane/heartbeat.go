@@ -40,9 +40,10 @@ type StreamKey struct {
 	InstanceID string
 }
 
-// ReportableURL returns raw without userinfo, query or fragment, so a URL
-// that embeds credentials is never reported. It returns "" for a value that
-// is not an absolute http(s) URL.
+// ReportableURL returns raw without userinfo, query or fragment, where
+// credentials usually go. The path is kept, since a TrustGuard base URL may
+// carry one, so a secret placed in the path is reported as is. It returns ""
+// for a value that is not an absolute http(s) URL.
 func ReportableURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

@@ -241,6 +241,104 @@ func TestHub_MarkDisconnected(t *testing.T) {
 	}
 }
 
+func TestHub_TeardownDropsLaterWrites(t *testing.T) {
+	store := &recordingStore{}
+	h := NewHub(discardLogger(), store)
+
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
+	h.teardown(conn)
+	h.markAck(conn, "v2")
+	h.markHeartbeat(conn, dataplane.Heartbeat{Version: "v0.64.0"})
+	h.refreshPresence(context.Background())
+
+	_, acked, disconnected := store.snapshot()
+	if len(disconnected) != 1 || disconnected[0] != "tenant-a/dp-1" {
+		t.Fatalf("MarkDisconnected = %v, want [tenant-a/dp-1]", disconnected)
+	}
+	if len(acked) != 0 || len(store.heartbeatsSnapshot()) != 0 || len(store.touchedSnapshot()) != 0 {
+		t.Fatalf("writes after teardown: acked=%v heartbeats=%v touched=%v",
+			acked, store.heartbeatsSnapshot(), store.touchedSnapshot())
+	}
+	if h.ConnectionCount() != 0 {
+		t.Fatalf("ConnectionCount = %d after teardown, want 0", h.ConnectionCount())
+	}
+}
+
+func TestHub_TeardownLeavesSupersededRowToNewerStream(t *testing.T) {
+	store := &recordingStore{}
+	h := NewHub(discardLogger(), store)
+
+	old := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
+	newer := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
+	h.teardown(old)
+
+	if _, _, disconnected := store.snapshot(); len(disconnected) != 0 {
+		t.Fatalf("MarkDisconnected = %v, want none while a newer stream is held", disconnected)
+	}
+	h.teardown(newer)
+	if _, _, disconnected := store.snapshot(); len(disconnected) != 1 {
+		t.Fatalf("MarkDisconnected = %v, want one once the last stream closes", disconnected)
+	}
+}
+
+// blockingTouchStore holds TouchConnected until release is closed and records
+// the order in which presence and teardown writes land.
+type blockingTouchStore struct {
+	recordingStore
+	entered chan struct{}
+	release chan struct{}
+	order   []string
+}
+
+func (s *blockingTouchStore) TouchConnected(ctx context.Context, keys []dataplane.StreamKey) error {
+	close(s.entered)
+	<-s.release
+	s.mu.Lock()
+	s.order = append(s.order, "touch")
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *blockingTouchStore) MarkDisconnected(_ context.Context, scope, instanceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.order = append(s.order, "disconnect")
+	return nil
+}
+
+func TestHub_TeardownWaitsForInFlightPresence(t *testing.T) {
+	store := &blockingTouchStore{entered: make(chan struct{}), release: make(chan struct{})}
+	h := NewHub(discardLogger(), store)
+	conn := h.register(configsyncrevocation.Identity{Scope: "tenant-a"}, "dp-1")
+
+	refreshed := make(chan struct{})
+	go func() {
+		h.refreshPresence(context.Background())
+		close(refreshed)
+	}()
+	<-store.entered
+
+	tornDown := make(chan struct{})
+	go func() {
+		h.teardown(conn)
+		close(tornDown)
+	}()
+	select {
+	case <-tornDown:
+		t.Fatal("teardown finished while a presence write for the stream was in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(store.release)
+	<-refreshed
+	<-tornDown
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.order) != 2 || store.order[0] != "touch" || store.order[1] != "disconnect" {
+		t.Fatalf("write order = %v, want [touch disconnect]", store.order)
+	}
+}
+
 func TestHub_StoreErrorsAreSwallowed(t *testing.T) {
 	store := &recordingStore{err: errors.New("db down")}
 	h := NewHub(discardLogger(), store)

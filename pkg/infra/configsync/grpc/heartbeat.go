@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -86,12 +88,32 @@ func (c *Client) RunHeartbeat(ctx context.Context) {
 	}
 }
 
+// Caps on what a data plane reports, so a misbehaving one cannot write
+// arbitrarily large values to the store on every heartbeat.
+const (
+	maxHeartbeatField = 256
+	maxHeartbeatURL   = 2048
+)
+
 func heartbeatFromProto(hb *snapshotpb.Heartbeat) dataplane.Heartbeat {
 	return dataplane.Heartbeat{
-		Version:            hb.GetVersion(),
-		Region:             hb.GetRegion(),
-		DeploymentType:     hb.GetDeploymentType(),
-		TrustGuardBaseURL:  hb.GetTrustguardBaseUrl(),
-		TrustGuardClientID: hb.GetTrustguardClientId(),
+		Version:            truncateUTF8(hb.GetVersion(), maxHeartbeatField),
+		Region:             truncateUTF8(hb.GetRegion(), maxHeartbeatField),
+		DeploymentType:     truncateUTF8(hb.GetDeploymentType(), maxHeartbeatField),
+		TrustGuardBaseURL:  truncateUTF8(hb.GetTrustguardBaseUrl(), maxHeartbeatURL),
+		TrustGuardClientID: truncateUTF8(hb.GetTrustguardClientId(), maxHeartbeatField),
 	}
+}
+
+// truncateUTF8 cuts s to at most limit bytes and drops invalid UTF-8, which
+// Postgres would otherwise reject along with the whole write.
+func truncateUTF8(s string, limit int) string {
+	if len(s) > limit {
+		cut := limit
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut]
+	}
+	return strings.ToValidUTF8(s, "")
 }

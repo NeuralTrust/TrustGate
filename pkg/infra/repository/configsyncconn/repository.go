@@ -67,13 +67,18 @@ func NewRepository(conn *database.Connection) *Repository {
 }
 
 // MarkConnected upserts the stream as connected, preserving first_seen on an
-// existing row.
+// existing row. It clears what an earlier stream reported, so a data plane
+// rolled back to a build without heartbeats does not keep showing the newer
+// build's report; a data plane that sends heartbeats refills it right after
+// its Hello.
 func (r *Repository) MarkConnected(ctx context.Context, scope, instanceID string) error {
 	const stmt = `
 		INSERT INTO config_sync_connections (scope, instance_id, state)
 		VALUES ($1, $2, 'connected')
 		ON CONFLICT (scope, instance_id)
-		DO UPDATE SET state = 'connected', last_seen = NOW()`
+		DO UPDATE SET state = 'connected', last_seen = NOW(), last_heartbeat = NULL,
+			version = '', region = '', deployment_type = '',
+			trustguard_base_url = '', trustguard_client_id = ''`
 	if _, err := r.pool.Exec(ctx, stmt, scope, instanceID); err != nil {
 		return fmt.Errorf("configsyncconn: mark connected: %w", err)
 	}
@@ -105,13 +110,19 @@ func (r *Repository) MarkDisconnected(ctx context.Context, scope, instanceID str
 }
 
 // MarkHeartbeat records what the data plane reported and refreshes last_seen.
+// It inserts the row when MarkConnected never landed, so a failed write at
+// connect time does not hide the stream until it reconnects.
 func (r *Repository) MarkHeartbeat(ctx context.Context, scope, instanceID string, hb dataplane.Heartbeat) error {
 	const stmt = `
-		UPDATE config_sync_connections
-		SET last_seen = NOW(), last_heartbeat = NOW(), state = 'connected',
-			version = $3, region = $4, deployment_type = $5,
-			trustguard_base_url = $6, trustguard_client_id = $7
-		WHERE scope = $1 AND instance_id = $2`
+		INSERT INTO config_sync_connections (scope, instance_id, state, last_heartbeat,
+			version, region, deployment_type, trustguard_base_url, trustguard_client_id)
+		VALUES ($1, $2, 'connected', NOW(), $3, $4, $5, $6, $7)
+		ON CONFLICT (scope, instance_id)
+		DO UPDATE SET last_seen = NOW(), last_heartbeat = NOW(), state = 'connected',
+			version = EXCLUDED.version, region = EXCLUDED.region,
+			deployment_type = EXCLUDED.deployment_type,
+			trustguard_base_url = EXCLUDED.trustguard_base_url,
+			trustguard_client_id = EXCLUDED.trustguard_client_id`
 	if _, err := r.pool.Exec(ctx, stmt, scope, instanceID, hb.Version, hb.Region, hb.DeploymentType,
 		hb.TrustGuardBaseURL, hb.TrustGuardClientID); err != nil {
 		return fmt.Errorf("configsyncconn: mark heartbeat: %w", err)
@@ -119,8 +130,10 @@ func (r *Repository) MarkHeartbeat(ctx context.Context, scope, instanceID string
 	return nil
 }
 
-// TouchConnected refreshes last_seen for the given streams in one statement.
-// A row another replica marked disconnected stays as it is.
+// TouchConnected marks the given streams connected and refreshes their
+// last_seen in one statement. The caller holds these streams open, so it is
+// authoritative: a row that a stale teardown marked disconnected, or that
+// MarkConnected never wrote, is restored.
 func (r *Repository) TouchConnected(ctx context.Context, keys []dataplane.StreamKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -132,10 +145,11 @@ func (r *Repository) TouchConnected(ctx context.Context, keys []dataplane.Stream
 		instanceIDs[i] = k.InstanceID
 	}
 	const stmt = `
-		UPDATE config_sync_connections AS c
-		SET last_seen = NOW()
+		INSERT INTO config_sync_connections (scope, instance_id, state)
+		SELECT DISTINCT k.scope, k.instance_id, 'connected'
 		FROM unnest($1::text[], $2::text[]) AS k(scope, instance_id)
-		WHERE c.scope = k.scope AND c.instance_id = k.instance_id AND c.state = 'connected'`
+		ON CONFLICT (scope, instance_id)
+		DO UPDATE SET state = 'connected', last_seen = NOW()`
 	if _, err := r.pool.Exec(ctx, stmt, scopes, instanceIDs); err != nil {
 		return fmt.Errorf("configsyncconn: touch connected: %w", err)
 	}

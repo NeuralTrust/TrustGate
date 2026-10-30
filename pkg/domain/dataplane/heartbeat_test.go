@@ -27,6 +27,7 @@ func TestReportableURL(t *testing.T) {
 		"https://trustguard.eu.example.com/":                         "https://trustguard.eu.example.com",
 		" http://trustguard-data.trustguard.svc.cluster.local:8081 ": "http://trustguard-data.trustguard.svc.cluster.local:8081",
 		"https://user:secret@guard.example.com/base/?token=abc#frag": "https://guard.example.com/base",
+		"https://guard.example.com/t/not-stripped":                   "https://guard.example.com/t/not-stripped",
 		"":                    "",
 		"guard.example.com":   "",
 		"ftp://guard.example": "",
