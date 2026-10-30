@@ -592,7 +592,7 @@ func TestDecodeResponsesStreamChunk_CustomToolCall(t *testing.T) {
 		{
 			name: "output item done",
 			body: `{"type":"response.output_item.done","output_index":2,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"rm -rf /"}}`,
-			want: StreamToolCallDelta{Index: 2, ID: "call_1", Kind: ToolKindCustom, Name: "shell", ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
 		},
 	}
 	for _, tc := range tests {
@@ -617,4 +617,56 @@ func TestDecodeResponsesStreamChunk_OtherOutputItemDoneDecodesToNothing(t *testi
 		require.NoError(t, err)
 		assert.Nil(t, chunk, item)
 	}
+}
+
+func TestAdaptStreamChunk_ResponsesCustomCallToChatSendsIdentityOnce(t *testing.T) {
+	events := []string{
+		`{"type":"response.output_item.added","output_index":1,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":""}}`,
+		`{"type":"response.custom_tool_call_input.delta","output_index":1,"delta":"ls -la"}`,
+		`{"type":"response.custom_tool_call_input.done","output_index":1,"input":"ls -la"}`,
+		`{"type":"response.output_item.done","output_index":1,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"ls -la"}}`,
+	}
+	var ids, names, entries int
+	input := ""
+	for _, ev := range events {
+		lines, err := NewRegistry().AdaptStreamChunk([]byte(ev), FormatOpenAI, FormatOpenAIResponses)
+		require.NoError(t, err)
+		for _, line := range lines {
+			payload := strings.TrimSpace(strings.TrimPrefix(string(line), "data:"))
+			if payload == "" {
+				continue
+			}
+			var chunk struct {
+				Choices []struct {
+					Delta struct {
+						ToolCalls []struct {
+							ID     string `json:"id"`
+							Custom *struct {
+								Name  string `json:"name"`
+								Input string `json:"input"`
+							} `json:"custom"`
+						} `json:"tool_calls"`
+					} `json:"delta"`
+				} `json:"choices"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(payload), &chunk), payload)
+			for _, choice := range chunk.Choices {
+				for _, tc := range choice.Delta.ToolCalls {
+					entries++
+					if tc.ID != "" {
+						ids++
+					}
+					require.NotNil(t, tc.Custom, payload)
+					if tc.Custom.Name != "" {
+						names++
+					}
+					input += tc.Custom.Input
+				}
+			}
+		}
+	}
+	assert.Equal(t, 1, ids)
+	assert.Equal(t, 1, names)
+	assert.Equal(t, 2, entries, "the boundary events add no call entry")
+	assert.Equal(t, "ls -la", input)
 }

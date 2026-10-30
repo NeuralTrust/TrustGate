@@ -14,7 +14,10 @@
 
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // MetadataUsageKey is the RequestContext.Metadata key under which the streaming
 // usage observer records the latest *CanonicalUsage. The metrics pipeline reads
@@ -382,6 +385,31 @@ func (c *CanonicalStreamChunk) SignalOnly() bool {
 		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
 		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 &&
 		c.UpstreamError == nil && c.OpenItem == nil
+}
+
+// WithoutSilentToolDeltas returns c without the custom tool-call deltas that
+// carry no id, name or input piece: a boundary event that only restates the
+// input, or states none. The stream guard reads their snapshot from the
+// upstream wire, but an encoder would write them as an empty call entry. It
+// returns nil when nothing else is left in c.
+func (c *CanonicalStreamChunk) WithoutSilentToolDeltas() *CanonicalStreamChunk {
+	if c == nil || !slices.ContainsFunc(c.ToolCallDeltas, silentToolDelta) {
+		return c
+	}
+	kept := slices.DeleteFunc(slices.Clone(c.ToolCallDeltas), silentToolDelta)
+	out := *c
+	out.ToolCallDeltas = kept
+	if len(kept) == 0 && out.Role == "" && out.Delta == "" && out.ReasoningDelta == "" &&
+		out.ReasoningSignature == "" && len(out.RedactedReasoning) == 0 && !out.ContentBlockClosed &&
+		out.FinishReason == "" && out.Usage == nil && len(out.ProviderExtensions) == 0 &&
+		out.UpstreamError == nil && out.OpenItem == nil && !out.StreamEnd {
+		return nil
+	}
+	return &out
+}
+
+func silentToolDelta(tc StreamToolCallDelta) bool {
+	return tc.Kind == ToolKindCustom && tc.ID == "" && tc.Name == "" && tc.ArgumentsDelta == ""
 }
 
 // StreamOpenItem is one output item a synthesised terminator has to close. It
