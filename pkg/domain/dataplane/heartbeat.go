@@ -33,6 +33,24 @@ type Heartbeat struct {
 	TrustGuardClientID string
 }
 
+// Deployment types a data plane reports in its heartbeat.
+const (
+	DeploymentSaaS       = "saas"
+	DeploymentSelfHosted = "self-hosted"
+)
+
+// KnownDeploymentType returns t when it is a deployment type this build
+// recognises and "" otherwise, so an unexpected value is never shown as if it
+// were one.
+func KnownDeploymentType(t string) string {
+	switch t {
+	case DeploymentSaaS, DeploymentSelfHosted:
+		return t
+	default:
+		return ""
+	}
+}
+
 // StreamKey names one data-plane Sync stream: the verified scope of its token
 // and the instance id it announced.
 type StreamKey struct {

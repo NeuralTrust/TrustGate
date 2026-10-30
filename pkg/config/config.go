@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
@@ -369,8 +370,8 @@ const (
 
 // Instance deployment types a data plane reports in its heartbeat.
 const (
-	InstanceDeploymentSaaS       = "saas"
-	InstanceDeploymentSelfHosted = "self-hosted"
+	InstanceDeploymentSaaS       = dataplane.DeploymentSaaS
+	InstanceDeploymentSelfHosted = dataplane.DeploymentSelfHosted
 )
 
 type ConfigSyncConfig struct {

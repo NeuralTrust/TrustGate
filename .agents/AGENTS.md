@@ -328,7 +328,8 @@ Proto: `pkg/infra/configsnapshot/proto/snapshot.proto` — regenerate with
 policies call (`TRUSTGUARD_BASE_URL` stripped of userinfo, query and
 fragment, plus `TRUSTGUARD_CLIENT_ID`; never the secret). The path is kept, so
 never put a secret in it. The CP stores it on `config_sync_connections`, caps
-each field, and clears it when the stream reconnects. On the same interval it
+each field, drops a deployment type it does not know, and clears it when the
+stream reconnects. On the same interval it
 marks every stream it holds connected and refreshes its `last_seen`, so a DP
 that predates heartbeats still reads as live while its stream is open, even
 after a stale teardown on another replica. A stream's teardown is its last
