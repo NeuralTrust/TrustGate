@@ -73,7 +73,7 @@ pinned to **2 vCPUs** (`GOMAXPROCS=2`); upstream + admin + Postgres + Redis +
 OTLP sink share one vCPU and the load generator has the last one. Requests are
 OpenAI chat completions with a 668-byte body (512-byte user message) unless
 stated; the upstream answers a 400-byte completion. 20 s measured after 3 s of
-warmup, per target and scenario. Raw tables: `var/bench/` of the run.
+warmup, per target and scenario.
 
 ### Headline
 
@@ -82,7 +82,7 @@ warmup, per target and scenario. Raw tables: `var/bench/` of the run.
 | added latency, 1 client in flight (p50 / p90 / p99) | **+1.02 / +1.68 / +4.0 ms** | +0.64 / +0.98 / +2.1 ms |
 | added latency, open loop 250–1000 req/s (p50 / p90) | +0.84–1.02 / +1.74–1.98 ms | +0.79–0.89 / +1.04–1.22 ms |
 | proxy CPU per request at saturation | **570–630 µs** | 257–284 µs |
-| throughput ceiling on 2 vCPUs | ~3.1–3.3 k req/s | ~5.9–7.1 k req/s |
+| throughput ceiling on 2 vCPUs | ~2.9–3.3 k req/s | ~5.9–7.1 k req/s |
 | ≈ req/s per vCPU | **~1.6 k** | ~3.5 k |
 | RSS | 65–85 MiB | 57–64 MiB |
 
@@ -148,8 +148,8 @@ sizes the fleet (64 KB ≈ 350 req/s per vCPU in `prod`).
 
 ### Where the CPU goes
 
-CPU profiles of the proxy at `c=8` (pprof, 20–25 s, build-tagged
-`net/http/pprof` hook kept out of the tree):
+CPU profiles of the proxy at `c=8`, 20–25 s each, taken with a throwaway build
+that exposes `net/http/pprof` (not part of the tree):
 
 **`minimal`** (~290 µs/req):
 
@@ -175,3 +175,57 @@ body even when it only needs one key.
 
 In other words, with no policy attached, telemetry and logging cost roughly as
 much CPU as forwarding the request.
+
+### Streaming
+
+SSE completions, `c=8`, the mock flushing every chunk as fast as it can:
+
+| chunks per response | `prod` µs/req | `prod` req/s | `minimal` µs/req | `minimal` req/s |
+|---:|---:|---:|---:|---:|
+| non-streamed | 629 | 2 931 | 278 | 5 868 |
+| 20 | 1 362 | 1 318 | 984 | 1 750 |
+| 200 | 3 230 | 568 | 2 794 | 611 |
+
+A streamed response costs **~0.5 ms of fixed CPU more than a buffered one,
+plus ~10 µs per SSE chunk** (each chunk is decoded, adapted, re-encoded and
+flushed). Added latency at `c=1` is +1.2 ms (20 chunks, `prod`) and +2.0 ms
+(200 chunks, `minimal`). With 200 chunks the upstream mock and the load
+generator start to share the bottleneck, so treat that row's req/s as a floor.
+
+### Redis
+
+With the plan rate limit on, the hot path makes **no Redis round trip**: over
+an 8 s window at ~3.3 k req/s Redis saw 60 commands in total (rate-limit
+counter sync, traffic-label stream reads, leases), i.e. background work, not
+per request. Production's Redis network latency therefore does not add to
+request latency.
+
+## Caveats
+
+- Everything is loopback, plain HTTP. Production adds TLS at the load
+  balancer and real network hops on both sides; those are not gateway cost
+  and are not measured here.
+- One 4-vCPU VM. Medians and p90 are stable across runs (±0.2 ms); p99 and
+  above move with VM noise and the one-core load generator. The direct
+  target alone shows tens of ms at p99.9.
+- fasthttp caps connections per client IP at 1024 (`MaxConnsPerIP`,
+  `pkg/server/server.go:60`) and answers **429 before any middleware** (so the
+  access log never sees it) once a single address holds more. A single-IP
+  load generator hits it as soon as the proxy falls behind; behind a load
+  balancer the proxy sees few source addresses, so long-lived streams at scale
+  could reach it too.
+
+## Takeaways
+
+1. Latency overhead with no policies is **~1 ms at p50 and ~2 ms at p90**
+   (prod-like), ~0.6–0.9 ms in the minimal profile, flat until the proxy goes
+   past ~50 % CPU.
+2. Capacity, not latency, is the cost: **~600 µs of CPU per small request**
+   in production configuration, ~1.6 k req/s per vCPU.
+3. About half of that is telemetry and logging (product events with body
+   sanitisation, OTLP export of logs and events, the access log, ops traces).
+4. The rest grows with the payload, ~22 µs/KB, mostly because the request body
+   is JSON-decoded ~10 times by independent probes. Parsing it once and
+   sharing the result, plus dropping the per-request JSON deep clone in
+   `catalogRepository.FindModel`, are the cheapest wins.
+5. Streaming is ~0.5 ms of fixed CPU more per request plus ~10 µs per chunk.
