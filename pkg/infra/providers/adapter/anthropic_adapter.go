@@ -1020,19 +1020,14 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
 			return invalidStreamEvent("Anthropic"), nil
 		}
-		if cb.Type == "tool_use" {
-			inputStr := strings.TrimSpace(string(cb.Input))
-			// Anthropic sends "input": {} (empty object) in content_block_start; do not pass
-			// "{}" as first delta or the OpenAI client merges "{}" + partial_json → invalid JSON.
-			if inputStr == "" || inputStr == "{}" {
-				inputStr = ""
-			}
+		if cb.Type == "tool_use" || cb.Type == "server_tool_use" {
 			return &CanonicalStreamChunk{
 				ToolCallDeltas: []StreamToolCallDelta{{
 					Index:          event.Index,
 					ID:             cb.ID,
 					Name:           cb.Name,
-					ArgumentsDelta: inputStr,
+					ArgumentsDelta: streamToolInputStart(string(cb.Input)),
+					ServerSide:     cb.Type == "server_tool_use",
 				}},
 			}, nil
 		}
