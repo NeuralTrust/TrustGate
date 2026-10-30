@@ -178,6 +178,9 @@ type streamGuardConfig struct {
 	minChars      int
 	maxHold       time.Duration
 	maxAccumBytes int
+	// toolCallMaxAccumBytes is the smallest inspection window among chain
+	// entries that read tool calls. Zero preserves maxAccumBytes.
+	toolCallMaxAccumBytes int
 	// nativeToolHold is how long a native tool call may be held, from its start
 	// frame, before its frames are released as they are. It does not depend on
 	// maxHold: a short block hold must not turn tool inspection off.
