@@ -247,11 +247,13 @@ func (g *streamGuard) reconcileToolSnapshots(ev *streamEvent) {
 			continue
 		}
 		call := g.tools.byIdx[tc.Index]
-		switch {
-		case call.Arguments == tc.ArgumentsSnapshot:
-		case call.Arguments == "":
+		switch call.Arguments {
+		case tc.ArgumentsSnapshot:
+		case "":
 			call.Arguments = tc.ArgumentsSnapshot
-			g.unhandledTools.byIdx[tc.Index].Arguments = tc.ArgumentsSnapshot
+			if unhandled := g.unhandledTools.byIdx[tc.Index]; unhandled != nil {
+				unhandled.Arguments = tc.ArgumentsSnapshot
+			}
 		default:
 			g.toolArgsMismatch = true
 		}
