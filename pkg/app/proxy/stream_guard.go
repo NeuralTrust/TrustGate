@@ -89,7 +89,8 @@ const (
 	// would otherwise leave as raw bytes no guard has read.
 	streamToolChoiceUnreadMessage = "Response blocked: a streamed choice index could not be read."
 	// streamToolArgsMessage refuses a streamed tool call whose boundary event
-	// states a full input that disagrees with the deltas already held.
+	// carries arguments that disagree with the deltas already held, or that
+	// append to a complete input the call already provided.
 	streamToolArgsMessage = "Response blocked: a streamed tool call changed its arguments."
 	// streamToolUnreadableMessage refuses a streamed item that asks the client
 	// to run a tool whose input the guard cannot read.
@@ -326,9 +327,13 @@ type streamGuard struct {
 	chatSeen         map[int]struct{}
 	toolMultiChoice  bool
 	toolChoiceUnread bool
-	// toolArgsMismatch is a native SSE call whose stated full input disagrees
-	// with its deltas, and toolUnreadable an item whose tool input the guard
-	// cannot read. Either is refused.
+	// sseOpen is the native SSE tool calls still streaming, keyed by the index
+	// the wire names. toolArgsMismatch is set when a boundary event disagrees
+	// with the arguments already held for one of them, and toolUnreadable when
+	// an item asks the client to run a tool whose input the guard cannot read.
+	sseOpen          map[int]sseOpenCall
+	sseSealed        map[int]struct{}
+	ssePrefix        map[int]struct{}
 	toolArgsMismatch bool
 	toolUnreadable   bool
 	degradedReason   string
@@ -490,12 +495,13 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	g.reasoning.WriteString(ev.reasoning)
 	g.tools.merge(ev.toolCalls)
 	switch {
-	case g.native || g.nativeSSETools:
+	case g.native:
 		g.unhandledTools.merge(ev.toolCalls)
-		g.reconcileToolSnapshots(ev)
-		g.toolUnreadable = g.toolUnreadable || ev.unreadableTool
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
+	case g.nativeSSETools:
+		g.toolUnreadable = g.toolUnreadable || ev.unreadableTool
+		g.trackNativeSSETool(ev)
 	case g.chatTools():
 		g.trackChatTool(ev)
 	}

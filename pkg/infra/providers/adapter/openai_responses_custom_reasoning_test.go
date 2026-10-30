@@ -577,22 +577,22 @@ func TestDecodeResponsesStreamChunk_CustomToolCall(t *testing.T) {
 		{
 			name: "input done",
 			body: `{"type":"response.custom_tool_call_input.done","output_index":2,"item_id":"ctc_1","input":"rm -rf /"}`,
-			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true, Restated: true},
 		},
 		{
 			name: "input done states an empty input",
 			body: `{"type":"response.custom_tool_call_input.done","output_index":2,"input":""}`,
-			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, HasArgumentsSnapshot: true},
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, HasArgumentsSnapshot: true, Restated: true},
 		},
 		{
 			name: "input done without an input states nothing",
 			body: `{"type":"response.custom_tool_call_input.done","output_index":2}`,
-			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom},
+			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, Restated: true},
 		},
 		{
 			name: "output item done",
 			body: `{"type":"response.output_item.done","output_index":2,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"rm -rf /"}}`,
-			want: StreamToolCallDelta{Index: 2, Kind: ToolKindCustom, ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true},
+			want: StreamToolCallDelta{Index: 2, ID: "call_1", Kind: ToolKindCustom, Name: "shell", ArgumentsSnapshot: "rm -rf /", HasArgumentsSnapshot: true, Restated: true},
 		},
 	}
 	for _, tc := range tests {
@@ -610,7 +610,6 @@ func TestDecodeResponsesStreamChunk_CustomToolCall(t *testing.T) {
 func TestDecodeResponsesStreamChunk_OtherOutputItemDoneDecodesToNothing(t *testing.T) {
 	for _, item := range []string{
 		`{"type":"message","role":"assistant","content":[]}`,
-		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}`,
 		`{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec"}}`,
 	} {
 		chunk, err := decodeResponsesStreamChunk([]byte(`{"type":"response.output_item.done","output_index":0,"item":` + item + `}`))

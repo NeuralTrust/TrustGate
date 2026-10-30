@@ -16,7 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
-	"slices"
+	"strings"
 )
 
 // MetadataUsageKey is the RequestContext.Metadata key under which the streaming
@@ -317,6 +317,54 @@ type StreamToolCallDelta struct {
 	// and a call that already holds different arguments disagrees with it.
 	ArgumentsSnapshot    string `json:"arguments_snapshot,omitempty"`
 	HasArgumentsSnapshot bool   `json:"has_arguments_snapshot,omitempty"`
+	// ServerSide marks a call the provider runs itself, such as Anthropic's
+	// server_tool_use. The stream guard reads it; a client never declared the
+	// tool, so cross-format encoders must not emit it.
+	ServerSide bool `json:"server_side,omitempty"`
+	// Restated marks a boundary event that repeats a call already opened,
+	// carrying its name, id and ArgumentsSnapshot for the stream guard. The
+	// call reached the client on its start and argument deltas, so encoders
+	// must not emit it again.
+	Restated bool `json:"restated,omitempty"`
+}
+
+// streamToolInputStart is the initial input a tool call's start event carries.
+// Anthropic and the Responses API send an empty object or an empty string as a
+// placeholder before the argument deltas; passing "{}" on as the first delta
+// makes a client that concatenates the deltas produce invalid JSON, and makes
+// the stream guard treat the call as already complete. Any other input is the
+// start of the call's arguments.
+func streamToolInputStart(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "{}" {
+		return ""
+	}
+	return input
+}
+
+// DropGuardOnlyToolCalls removes the ServerSide and Restated tool-call deltas
+// before c is encoded for a client in another format. It reports whether c
+// held nothing else, in which case there is nothing to encode.
+func (c *CanonicalStreamChunk) DropGuardOnlyToolCalls() bool {
+	if c == nil || len(c.ToolCallDeltas) == 0 {
+		return false
+	}
+	kept := make([]StreamToolCallDelta, 0, len(c.ToolCallDeltas))
+	for _, tc := range c.ToolCallDeltas {
+		if !tc.ServerSide && !tc.Restated {
+			kept = append(kept, tc)
+		}
+	}
+	if len(kept) == len(c.ToolCallDeltas) {
+		return false
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	c.ToolCallDeltas = kept
+	return len(kept) == 0 && c.Role == "" && c.Delta == "" && c.ReasoningDelta == "" &&
+		c.ReasoningSignature == "" && len(c.RedactedReasoning) == 0 && c.FinishReason == "" &&
+		c.Usage == nil && len(c.ProviderExtensions) == 0 && c.UpstreamError == nil && !c.StreamEnd
 }
 
 // CanonicalStreamChunk is one piece of a streamed response.
@@ -385,31 +433,6 @@ func (c *CanonicalStreamChunk) SignalOnly() bool {
 		c.Delta == "" && c.ReasoningDelta == "" && c.FinishReason == "" &&
 		len(c.ToolCallDeltas) == 0 && c.Usage == nil && len(c.ProviderExtensions) == 0 &&
 		c.UpstreamError == nil && c.OpenItem == nil
-}
-
-// WithoutSilentToolDeltas returns c without the custom tool-call deltas that
-// carry no id, name or input piece: a boundary event that only restates the
-// input, or states none. The stream guard reads their snapshot from the
-// upstream wire, but an encoder would write them as an empty call entry. It
-// returns nil when nothing else is left in c.
-func (c *CanonicalStreamChunk) WithoutSilentToolDeltas() *CanonicalStreamChunk {
-	if c == nil || !slices.ContainsFunc(c.ToolCallDeltas, silentToolDelta) {
-		return c
-	}
-	kept := slices.DeleteFunc(slices.Clone(c.ToolCallDeltas), silentToolDelta)
-	out := *c
-	out.ToolCallDeltas = kept
-	if len(kept) == 0 && out.Role == "" && out.Delta == "" && out.ReasoningDelta == "" &&
-		out.ReasoningSignature == "" && len(out.RedactedReasoning) == 0 && !out.ContentBlockClosed &&
-		out.FinishReason == "" && out.Usage == nil && len(out.ProviderExtensions) == 0 &&
-		out.UpstreamError == nil && out.OpenItem == nil && !out.StreamEnd {
-		return nil
-	}
-	return &out
-}
-
-func silentToolDelta(tc StreamToolCallDelta) bool {
-	return tc.Kind == ToolKindCustom && tc.ID == "" && tc.Name == "" && tc.ArgumentsDelta == ""
 }
 
 // StreamOpenItem is one output item a synthesised terminator has to close. It
