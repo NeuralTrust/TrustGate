@@ -1020,14 +1020,14 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
 			return invalidStreamEvent("Anthropic"), nil
 		}
-		if cb.Type == "tool_use" || cb.Type == "server_tool_use" {
+		if cb.Type == "tool_use" || cb.Type == "server_tool_use" || cb.Type == "mcp_tool_use" {
 			return &CanonicalStreamChunk{
 				ToolCallDeltas: []StreamToolCallDelta{{
 					Index:          event.Index,
 					ID:             cb.ID,
 					Name:           cb.Name,
 					ArgumentsDelta: streamToolInputStart(string(cb.Input)),
-					ServerSide:     cb.Type == "server_tool_use",
+					ServerSide:     cb.Type != "tool_use",
 				}},
 			}, nil
 		}

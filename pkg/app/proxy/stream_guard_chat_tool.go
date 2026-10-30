@@ -103,10 +103,10 @@ func (g *streamGuard) noteChatChoice(ev *streamEvent) {
 
 // refusedChatTool reports a tool stream the guard will not release: a call
 // whose name changed, arguments a boundary event disagrees with, more than
-// one choice, or a choice index that could not be read. Each is a cut,
-// whichever way on_error is set. The cap is a separate decision
-// (chatToolCapped). Name and argument checks cover native SSE tool calls as
-// well as chat completions.
+// one choice, a choice index that could not be read, or a native SSE item
+// whose tool input cannot be read. Each is a cut, whichever way on_error is
+// set. The cap is a separate decision (chatToolCapped). Name and argument
+// checks cover native SSE tool calls as well as chat completions.
 func (g *streamGuard) refusedChatTool() (string, bool) {
 	switch {
 	case g.toolRenamed:
@@ -117,6 +117,8 @@ func (g *streamGuard) refusedChatTool() (string, bool) {
 		return streamToolMultiChoiceMessage, true
 	case g.toolChoiceUnread:
 		return streamToolChoiceUnreadMessage, true
+	case g.toolUnreadable:
+		return streamToolUnreadableMessage, true
 	default:
 		return "", false
 	}
