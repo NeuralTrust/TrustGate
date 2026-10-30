@@ -38,3 +38,15 @@ func TestReportableURL(t *testing.T) {
 		assert.Equal(t, want, dataplane.ReportableURL(raw), "ReportableURL(%q)", raw)
 	}
 }
+
+func TestKnownDeploymentType(t *testing.T) {
+	for in, want := range map[string]string{
+		"saas":        "saas",
+		"self-hosted": "self-hosted",
+		"SaaS":        "",
+		"hybrid":      "",
+		"":            "",
+	} {
+		assert.Equal(t, want, dataplane.KnownDeploymentType(in), "KnownDeploymentType(%q)", in)
+	}
+}

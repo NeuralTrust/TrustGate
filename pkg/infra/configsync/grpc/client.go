@@ -56,7 +56,9 @@ type Client struct {
 	streamCancelCurrent context.CancelFunc
 	lastApplied         string
 	recvMu              sync.Mutex
-	sendMu              sync.Mutex
+	// sendSlot serialises sends on the stream; a one-slot channel rather than
+	// a mutex so a caller can stop waiting when its context ends.
+	sendSlot chan struct{}
 
 	usageSink    UsageSink
 	acceptsUsage atomic.Bool
@@ -139,8 +141,21 @@ func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *C
 		logger:       logger,
 		streamCtx:    streamCtx,
 		streamCancel: streamCancel,
+		sendSlot:     make(chan struct{}, 1),
 	}
 }
+
+// lockSend takes the send slot, or returns ctx's error if ctx ends first.
+func (c *Client) lockSend(ctx context.Context) error {
+	select {
+	case c.sendSlot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) unlockSend() { <-c.sendSlot }
 
 // Close cancels the Sync stream context and tears down the underlying
 // connection, unblocking any in-flight stream receive.
@@ -251,8 +266,10 @@ func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
+	if err := c.lockSend(ctx); err != nil {
+		return err
+	}
+	defer c.unlockSend()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

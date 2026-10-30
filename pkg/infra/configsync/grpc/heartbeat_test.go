@@ -16,6 +16,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -182,5 +183,35 @@ func TestHeartbeatFromProtoCapsFields(t *testing.T) {
 func TestTruncateUTF8DropsInvalidBytes(t *testing.T) {
 	if got := truncateUTF8("v1\xffx", 10); got != "v1x" {
 		t.Fatalf("truncateUTF8 = %q, want v1x", got)
+	}
+}
+
+func TestHeartbeatFromProtoDropsUnknownDeploymentType(t *testing.T) {
+	if got := heartbeatFromProto(&snapshotpb.Heartbeat{DeploymentType: "hybrid"}); got.DeploymentType != "" {
+		t.Fatalf("DeploymentType = %q, want an unknown value dropped", got.DeploymentType)
+	}
+	if got := heartbeatFromProto(&snapshotpb.Heartbeat{DeploymentType: dataplane.DeploymentSaaS}); got.DeploymentType != dataplane.DeploymentSaaS {
+		t.Fatalf("DeploymentType = %q, want saas kept", got.DeploymentType)
+	}
+}
+
+func TestClientAckStopsWaitingForTheSendSlotWhenCtxEnds(t *testing.T) {
+	c := newClient(nil, "dp-1", discardLogger())
+	if err := c.lockSend(context.Background()); err != nil {
+		t.Fatalf("lockSend: %v", err)
+	}
+	defer c.unlockSend()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Ack(ctx, "v1") }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Ack = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ack kept waiting for the send slot after its ctx ended")
 	}
 }

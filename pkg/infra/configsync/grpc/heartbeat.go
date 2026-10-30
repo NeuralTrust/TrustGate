@@ -49,8 +49,10 @@ func (c *Client) SendHeartbeat(ctx context.Context) error {
 	if stream == nil || hb == nil {
 		return nil
 	}
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
+	if err := c.lockSend(ctx); err != nil {
+		return err
+	}
+	defer c.unlockSend()
 	msg := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Heartbeat{Heartbeat: hb}}
 	result := make(chan error, 1)
 	go func() { result <- stream.Send(msg) }()
@@ -99,7 +101,7 @@ func heartbeatFromProto(hb *snapshotpb.Heartbeat) dataplane.Heartbeat {
 	return dataplane.Heartbeat{
 		Version:            truncateUTF8(hb.GetVersion(), maxHeartbeatField),
 		Region:             truncateUTF8(hb.GetRegion(), maxHeartbeatField),
-		DeploymentType:     truncateUTF8(hb.GetDeploymentType(), maxHeartbeatField),
+		DeploymentType:     dataplane.KnownDeploymentType(hb.GetDeploymentType()),
 		TrustGuardBaseURL:  truncateUTF8(hb.GetTrustguardBaseUrl(), maxHeartbeatURL),
 		TrustGuardClientID: truncateUTF8(hb.GetTrustguardClientId(), maxHeartbeatField),
 	}
