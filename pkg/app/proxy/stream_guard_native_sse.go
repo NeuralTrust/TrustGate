@@ -106,7 +106,8 @@ func sseEventCallID(ev *streamEvent) string {
 // A content_block_start or output_item.added that already carries a complete
 // input is sealed: a later delta conflicts with it. An incomplete input is a
 // prefix, and a delta that stops the concatenation being one JSON value is
-// an invalid append.
+// an invalid append. A custom tool's input is freeform text, not JSON, so it
+// is checked only against the snapshots its boundary events state.
 func (g *streamGuard) reconcileNativeSSEArgs(ev *streamEvent) {
 	for _, tc := range ev.toolCalls {
 		if tc.ArgumentsDelta != "" && ev.tool != toolStart {
@@ -114,7 +115,7 @@ func (g *streamGuard) reconcileNativeSSEArgs(ev *streamEvent) {
 				g.toolArgsMismatch = true
 			}
 		}
-		if ev.tool == toolStart && tc.ArgumentsDelta != "" {
+		if ev.tool == toolStart && tc.ArgumentsDelta != "" && tc.Kind != adapter.ToolKindCustom {
 			switch {
 			case json.Valid([]byte(tc.ArgumentsDelta)):
 				g.sealNativeSSEArgs(tc.Index)

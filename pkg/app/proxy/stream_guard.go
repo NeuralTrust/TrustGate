@@ -92,6 +92,9 @@ const (
 	// carries arguments that disagree with the deltas already held, or that
 	// append to a complete input the call already provided.
 	streamToolArgsMessage = "Response blocked: a streamed tool call changed its arguments."
+	// streamToolUnreadableMessage refuses a streamed item that asks the client
+	// to run a tool whose input the guard cannot read.
+	streamToolUnreadableMessage = "Response blocked: a streamed tool call of this type cannot be inspected."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -326,11 +329,13 @@ type streamGuard struct {
 	toolChoiceUnread bool
 	// sseOpen is the native SSE tool calls still streaming, keyed by the index
 	// the wire names. toolArgsMismatch is set when a boundary event disagrees
-	// with the arguments already held for one of them.
+	// with the arguments already held for one of them, and toolUnreadable when
+	// an item asks the client to run a tool whose input the guard cannot read.
 	sseOpen          map[int]sseOpenCall
 	sseSealed        map[int]struct{}
 	ssePrefix        map[int]struct{}
 	toolArgsMismatch bool
+	toolUnreadable   bool
 	degradedReason   string
 	fallbackReason   string
 
@@ -495,6 +500,7 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
 	case g.nativeSSETools:
+		g.toolUnreadable = g.toolUnreadable || ev.unreadableTool
 		g.trackNativeSSETool(ev)
 	case g.chatTools():
 		g.trackChatTool(ev)

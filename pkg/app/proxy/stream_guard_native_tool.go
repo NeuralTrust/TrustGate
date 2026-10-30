@@ -112,7 +112,7 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		var raw strings.Builder
-		for _, di := range b.deltas {
+		for _, di := range append([]int{b.events[0]}, b.deltas...) {
 			for _, tc := range g.produced[di].toolCalls {
 				raw.WriteString(tc.ArgumentsDelta)
 			}
@@ -289,6 +289,11 @@ func (g *streamGuard) flagUninspectedTools() {
 func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, normalised bool) adapter.MaskCause {
 	if !normalised {
 		return adapter.MaskCauseToolInput
+	}
+	for _, tc := range g.produced[b.events[0]].toolCalls {
+		if tc.ArgumentsDelta != "" {
+			return adapter.MaskCauseToolFrames
+		}
 	}
 	input, ok := adapter.MaskToolInput(view, masked)
 	if !ok {
