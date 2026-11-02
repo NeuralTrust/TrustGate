@@ -40,7 +40,7 @@ func NewBudgetHandler(budgets appkeygroup.Budgets) *BudgetHandler {
 
 // List godoc
 // @Summary      List the group budgets
-// @Description  Returns the monthly budget of every directory group that has one on the gateway. A group budget holds the group keys (personal keys with a group_id) of the group on /store/v1: monthly_limit_usd caps the group's total, member_monthly_limit_usd each member's own spend through their key for the group, and member_overrides replaces that per-member limit for the members it names. A null limit is no limit.
+// @Description  Returns the monthly budget of every directory group that has one on the gateway. A group budget holds the group keys (personal keys with a group_id) of the group: monthly_limit_usd caps the group's total, member_monthly_limit_usd each member's own spend through their key for the group, and member_overrides replaces that per-member limit for the members it names. A null limit is no limit.
 // @Tags         key-groups
 // @Produce      json
 // @Security     BearerAuth
