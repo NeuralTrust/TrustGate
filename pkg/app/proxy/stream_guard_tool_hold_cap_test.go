@@ -236,3 +236,15 @@ func TestNativeToolCallPastChainWindowFailsOpen(t *testing.T) {
 		assert.LessOrEqual(t, size, window, "the unreadable view was not sent")
 	}
 }
+
+func TestToolCallWindowDefaultsToTheChainWindow(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, defaultMaxAccumulatedBytes,
+		streamGuardConfig{}.withDefaults().toolCallMaxAccumBytes,
+		"a chain with no reader that bounds its own payload reads tool input up to the chain window")
+	assert.Equal(t, 64<<10,
+		streamGuardConfig{maxAccumBytes: 1 << 20, toolCallMaxAccumBytes: 64 << 10}.withDefaults().toolCallMaxAccumBytes)
+	assert.Equal(t, 128<<10,
+		streamGuardConfig{maxAccumBytes: 128 << 10, toolCallMaxAccumBytes: 1 << 20}.withDefaults().toolCallMaxAccumBytes,
+		"the tool window never exceeds the chain window")
+}
