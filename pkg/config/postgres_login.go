@@ -45,6 +45,14 @@ const DefaultAzureScope = "https://ossrdbms-aad.database.windows.net/.default"
 
 const gcpServiceAccountSuffix = ".gserviceaccount.com"
 
+// maxPostgresIdentifierBytes is NAMEDATALEN-1: PostgreSQL truncates a longer
+// role name, so POSTGRES_ROLE would never match the role it names.
+const maxPostgresIdentifierBytes = 63
+
+// postgresRoleNone is the value PostgreSQL's role setting reads as "reset to
+// the login", so POSTGRES_ROLE=none would silently keep the login's role.
+const postgresRoleNone = "none"
+
 var postgresLogins = []PostgresLogin{PostgresLoginDefault, PostgresLoginAWS, PostgresLoginAzure, PostgresLoginGCP}
 
 // ParsePostgresLogin normalizes raw and rejects any value outside the supported
