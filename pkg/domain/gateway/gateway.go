@@ -131,6 +131,16 @@ func (g *Gateway) ServedByHybridDataPlane() bool {
 	return g.Entitlements.IsHybridDataPlane()
 }
 
+// ServedByOwnDataPlane reports whether only the gateway's own data plane,
+// hybrid or dedicated, serves it, so the shared hosted proxy must not. Nil-safe
+// like ServedByHybridDataPlane.
+func (g *Gateway) ServedByOwnDataPlane() bool {
+	if g == nil {
+		return false
+	}
+	return g.Entitlements.IsOwnDataPlane()
+}
+
 // AllowsPersonal reports whether the gateway can hold personal consumers and
 // personal keys. A hybrid gateway cannot: its data plane predates them and
 // would serve a personal consumer at its slug.

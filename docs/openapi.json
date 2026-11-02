@@ -12341,7 +12341,7 @@
                         "type": "integer"
                     },
                     "data_plane": {
-                        "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the SaaS proxy, hybrid means a customer-run\ndata plane. Proxies that are not hybrid data planes refuse to serve\nhybrid gateways so payloads never cross the customer boundary through a\nhosted proxy (its deployment-level exporters, TrustGuard calls and\nplayground trace store all live outside that boundary).",
+                        "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the shared SaaS proxy, hybrid means a\ncustomer-run data plane, and dedicated means a data plane NeuralTrust runs\nfor this gateway alone. Hybrid and dedicated gateways travel only in their\nown scoped snapshot, so the shared proxy cannot resolve them; for hybrid\nthat keeps payloads inside the customer boundary (the shared proxy's\nexporters, TrustGuard calls and playground trace store all live outside it).",
                         "type": "string"
                     },
                     "max_instances": {

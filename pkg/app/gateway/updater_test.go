@@ -326,9 +326,10 @@ func TestUpdater_Update_PlanStampKeepsTheStoredDataPlane(t *testing.T) {
 	for name, tc := range map[string]struct {
 		stored, sent, want string
 	}{
+		"omitted keeps dedicated":    {stored: domain.DataPlaneDedicated, sent: "", want: domain.DataPlaneDedicated},
 		"omitted keeps hybrid":       {stored: domain.DataPlaneHybrid, sent: "", want: domain.DataPlaneHybrid},
-		"explicit hosted clears it":  {stored: domain.DataPlaneHybrid, sent: domain.DataPlaneHosted, want: domain.DataPlaneHosted},
-		"explicit value replaces it": {stored: "", sent: domain.DataPlaneHybrid, want: domain.DataPlaneHybrid},
+		"explicit hosted clears it":  {stored: domain.DataPlaneDedicated, sent: domain.DataPlaneHosted, want: domain.DataPlaneHosted},
+		"explicit value replaces it": {stored: "", sent: domain.DataPlaneDedicated, want: domain.DataPlaneDedicated},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
