@@ -20,6 +20,7 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -69,8 +70,13 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 				statusCode = mcp.UpstreamStatus
 			}
 		}
-	} else if served, ok := lastLLMAttrs(rt); ok && served.TierApplied {
-		smartRouting = 1
+	} else if served, ok := lastLLMAttrs(rt); ok {
+		if providerFailed(served) {
+			return
+		}
+		if served.TierApplied {
+			smartRouting = 1
+		}
 	}
 	if !BillableStatus(statusCode) {
 		return
@@ -106,6 +112,12 @@ func BillableStatus(code int) bool {
 		return false
 	}
 	return code < http.StatusInternalServerError
+}
+
+// providerFailed reports whether the last provider attempt did not serve the
+// request, so the client got the provider's error rather than an answer.
+func providerFailed(served trace.LLMAttrs) bool {
+	return served.Outcome != "" && served.Outcome != appproxy.OutcomeSuccess.String()
 }
 
 func lastLLMAttrs(rt *trace.RequestTrace) (trace.LLMAttrs, bool) {

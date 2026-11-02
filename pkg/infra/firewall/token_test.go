@@ -14,6 +14,9 @@
 package firewall
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -77,7 +80,7 @@ func TestTokenProvider_Invalidate(t *testing.T) {
 	first, err := provider.Token()
 	require.NoError(t, err)
 	now = now.Add(time.Second)
-	provider.Invalidate()
+	provider.Invalidate(nil)
 	refreshed, err := provider.Token()
 	require.NoError(t, err)
 	assert.NotEqual(t, first, refreshed)
@@ -121,4 +124,22 @@ func TestTokenProvider_NilReceiver(t *testing.T) {
 	assert.False(t, provider.Configured())
 	_, err := provider.Token()
 	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+func TestTokenProvider_AuthorizeSetsTokenHeader(t *testing.T) {
+	t.Parallel()
+	provider := NewTokenProvider("test-secret")
+	req := httptest.NewRequest(http.MethodPost, "http://fw/v1/complexity", nil)
+	require.NoError(t, provider.Authorize(context.Background(), req))
+	token, err := provider.Token()
+	require.NoError(t, err)
+	assert.Equal(t, token, req.Header.Get("token"))
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
+func TestTokenProvider_AuthorizeNotConfigured(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodPost, "http://fw/v1/complexity", nil)
+	assert.ErrorIs(t, NewTokenProvider("").Authorize(context.Background(), req), ErrNotConfigured)
+	assert.Empty(t, req.Header.Get("token"))
 }

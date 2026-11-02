@@ -2071,7 +2071,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/key-groups/budgets": {
             "get": {
-                "description": "Returns the monthly budget of every directory group that has one on the gateway. A group budget holds the group keys (personal keys with a group_id) of the group on /store/v1: monthly_limit_usd caps the group's total, member_monthly_limit_usd each member's own spend through their key for the group, and member_overrides replaces that per-member limit for the members it names. A null limit is no limit.",
+                "description": "Returns the monthly budget of every directory group that has one on the gateway. A group budget holds the group keys (personal keys with a group_id) of the group: monthly_limit_usd caps the group's total, member_monthly_limit_usd each member's own spend through their key for the group, and member_overrides replaces that per-member limit for the members it names. A null limit is no limit.",
                 "produces": [
                     "application/json"
                 ],
@@ -5219,7 +5219,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/subjects/{user_id}/sessions": {
             "delete": {
-                "description": "Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably and in Redis, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A successful call answers 200 with recorded true, including when this process deleted nothing: {\"revoked\": 0, \"recorded\": true}. revoked counts records deleted here. A failure to write the durable record answers 500 and does not delete records. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.",
+                "description": "Deletes the default identity provider's refresh records for this gateway, the caller's tenant and the subject in the path, and removes their owner-index entries. It records the revocation durably, so a refresh record that was not in the index cannot be rotated into a new session, including on a data plane that keeps its own session store. The durable record is what the config snapshot carries; a data plane built before that snapshot field ignores the field and keeps serving until it is upgraded. A successful call answers 200 with recorded true, including when this process deleted nothing: {\"revoked\": 0, \"recorded\": true}. revoked counts records deleted here. A failure to write the durable record answers 500 and does not delete records. Records for another org, gateway, subject or identity provider are left in place, as are personal keys, grants, installs and config. An access token already issued from one of these sessions keeps working until it expires. Authentication is the admin credential. The org matched on each record is the console token's tenant_id. A service credential is refused.",
                 "produces": [
                     "application/json"
                 ],
@@ -7042,19 +7042,39 @@ const docTemplate = `{
                 "applied_version": {
                     "type": "string"
                 },
+                "deployment_type": {
+                    "type": "string"
+                },
                 "first_seen": {
                     "type": "string"
                 },
                 "instance_id": {
                     "type": "string"
                 },
+                "last_heartbeat": {
+                    "description": "LastHeartbeat is null for a data plane that predates heartbeats.",
+                    "type": "string"
+                },
                 "last_seen": {
+                    "type": "string"
+                },
+                "region": {
                     "type": "string"
                 },
                 "scope": {
                     "type": "string"
                 },
                 "state": {
+                    "type": "string"
+                },
+                "trustguard_base_url": {
+                    "description": "TrustGuardBaseURL and TrustGuardClientID name the TrustGuard the\ngateway's guardrail policies call, as its data plane reports it.",
+                    "type": "string"
+                },
+                "trustguard_client_id": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -9434,6 +9454,12 @@ const docTemplate = `{
                 "code": {
                     "type": "string"
                 },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "instance_id": {
                     "description": "InstanceID pins the link to one installed instance of Code, for a server\nthe gateway holds more than once. Empty opens the code's own card.",
                     "type": "string"
@@ -10593,7 +10619,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "data_plane": {
-                    "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the SaaS proxy, hybrid means a customer-run\ndata plane. Proxies that are not hybrid data planes refuse to serve\nhybrid gateways so payloads never cross the customer boundary through a\nhosted proxy (its deployment-level exporters, TrustGuard calls and\nplayground trace store all live outside that boundary).",
+                    "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the shared SaaS proxy, hybrid means a\ncustomer-run data plane, and dedicated means a data plane NeuralTrust runs\nfor this gateway alone. Hybrid and dedicated gateways travel only in their\nown scoped snapshot, so the shared proxy cannot resolve them; for hybrid\nthat keeps payloads inside the customer boundary (the shared proxy's\nexporters, TrustGuard calls and playground trace store all live outside it).",
                     "type": "string"
                 },
                 "max_instances": {

@@ -33,7 +33,6 @@ import (
 
 const (
 	complexityPath   = "/v1/complexity"
-	headerToken      = "token"
 	contentTypeJSON  = "application/json"
 	maxResponseBytes = 1 << 20
 	defaultTimeout   = 15 * time.Second
@@ -50,11 +49,12 @@ var ErrUnauthorized = errors.New("complexity: unauthorized")
 // ErrNotConfigured is returned when Score is called without a base URL and token provider.
 var ErrNotConfigured = errors.New("complexity: client not configured")
 
-// TokenProvider supplies authentication tokens for Firewall requests.
+// TokenProvider authenticates Firewall requests. Invalidate receives the
+// request the Firewall rejected, so a provider can drop only that credential.
 type TokenProvider interface {
 	Configured() bool
-	Invalidate()
-	Token() (string, error)
+	Authorize(ctx context.Context, req *http.Request) error
+	Invalidate(req *http.Request)
 }
 
 // Client calls the Firewall Complexity API.
@@ -95,10 +95,6 @@ func (c *Client) score(ctx context.Context, input, tenantID string) (float64, er
 	if !c.Configured() {
 		return 0, ErrNotConfigured
 	}
-	token, err := c.tokenProvider.Token()
-	if err != nil {
-		return 0, fmt.Errorf("complexity: get token: %w", err)
-	}
 	payload, err := json.Marshal(scoreRequest{
 		Input:    input,
 		TenantID: tenantID,
@@ -111,7 +107,9 @@ func (c *Client) score(ctx context.Context, input, tenantID string) (float64, er
 	if err != nil {
 		return 0, fmt.Errorf("complexity: build request: %w", err)
 	}
-	req.Header.Set(headerToken, token)
+	if err := c.tokenProvider.Authorize(ctx, req); err != nil {
+		return 0, fmt.Errorf("complexity: get token: %w", err)
+	}
 	req.Header.Set("Content-Type", contentTypeJSON)
 
 	res, err := c.http.Do(req)
@@ -127,7 +125,7 @@ func (c *Client) score(ctx context.Context, input, tenantID string) (float64, er
 		return 0, fmt.Errorf("complexity: read response: %w", err)
 	}
 	if res.StatusCode == http.StatusUnauthorized {
-		c.tokenProvider.Invalidate()
+		c.tokenProvider.Invalidate(req)
 		return 0, ErrUnauthorized
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {

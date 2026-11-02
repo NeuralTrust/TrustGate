@@ -131,6 +131,9 @@ type streamEvent struct {
 	// content block it does it to (-1 when the frame does not say).
 	tool      toolPhase
 	toolIndex int
+	// unreadableTool is a native SSE item that asks the client to run a tool
+	// whose input the guard cannot read (see responsesUnreadableCall).
+	unreadableTool bool
 	// choice is the chat-completions choice the event belongs to, and choiceSet
 	// says it was read. choiceMany and choiceBad are set only while the guard
 	// holds chat tool calls: more than one choice in the chunk, or an index
@@ -218,7 +221,7 @@ func nativeToolPhase(payload []byte) (toolPhase, int) {
 	}
 	switch v.Type {
 	case "content_block_start":
-		if v.ContentBlock.Type == "tool_use" || v.ContentBlock.Type == "server_tool_use" {
+		if t := v.ContentBlock.Type; t == "tool_use" || t == "server_tool_use" || t == "mcp_tool_use" {
 			return toolStart, index(v.Index)
 		}
 	case "content_block_delta":
@@ -262,19 +265,73 @@ func nativeSSEToolPhase(format adapter.Format, payload []byte) (toolPhase, int) 
 	}
 	switch event.Type {
 	case responsesOutputItemAdded:
-		if event.Item.Type == "function_call" {
+		if event.Item.Type == "function_call" || event.Item.Type == responsesCustomToolCall {
 			return toolStart, index
 		}
-	case "response.function_call_arguments.delta":
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		// function_call_arguments.done carries the full arguments, but the item
+		// stays open until response.output_item.done. Closing on .done would
+		// release that later event, and any arguments it carries, uninspected.
 		return toolDelta, index
-	case "response.function_call_arguments.done":
-		return toolStop, index
+	case "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+		// The input .done carries the full input, but the item stays open
+		// until response.output_item.done, which carries it again.
+		return toolDelta, index
 	case responsesOutputItemDone:
-		if event.Item.Type == "function_call" {
+		if event.Item.Type == "function_call" || event.Item.Type == responsesCustomToolCall {
 			return toolStop, index
 		}
 	}
 	return toolNone, -1
+}
+
+const (
+	responsesCustomToolCall = "custom_tool_call"
+	// responsesToolSearchCall runs on the provider unless its execution is
+	// "client".
+	responsesToolSearchCall = "tool_search_call"
+)
+
+// responsesHostedCalls are the *_call output items the provider runs itself.
+// The client is never asked to execute them.
+var responsesHostedCalls = map[string]struct{}{
+	"web_search_call":       {},
+	"file_search_call":      {},
+	"code_interpreter_call": {},
+	"image_generation_call": {},
+	"mcp_call":              {},
+}
+
+// responsesUnreadableCall reports an output item that asks the client to run a
+// tool the guard cannot read, such as local_shell_call or computer_call. Only
+// function_call and custom_tool_call input is decoded, so any other *_call the
+// provider does not run itself is refused rather than released uninspected.
+func responsesUnreadableCall(format adapter.Format, payload []byte) bool {
+	if !adapter.IsSameWireFormat(format, adapter.FormatOpenAIResponses) {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+		Item struct {
+			Type      string `json:"type"`
+			Execution string `json:"execution"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	if event.Type != responsesOutputItemAdded && event.Type != responsesOutputItemDone {
+		return false
+	}
+	kind := event.Item.Type
+	if !strings.HasSuffix(kind, "_call") || kind == "function_call" || kind == responsesCustomToolCall {
+		return false
+	}
+	if kind == responsesToolSearchCall {
+		return event.Item.Execution == "client"
+	}
+	_, hosted := responsesHostedCalls[kind]
+	return !hosted
 }
 
 // streamMark is what one event does to the structure a client can see open: the
@@ -482,6 +539,11 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	}
 	if s.toolPhases {
 		ev.tool, ev.toolIndex = nativeSSEToolPhase(s.format, payload)
+		if responsesUnreadableCall(s.format, payload) {
+			// Never opaque: an opaque event at the head of the window is
+			// cleared, and its bytes would leave before the refusal.
+			ev.unreadableTool, ev.unit = true, unitText
+		}
 	}
 	if s.choices {
 		s.readChoice(ev, payload)
@@ -508,10 +570,11 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	case chunk.Usage != nil:
 		ev.unit = unitUsage
 	case chunk.FinishReason == finishReasonToolCalls:
-		// response.function_call_arguments.done: the close of one tool call, a
-		// tool-call unit. Its arguments already rode the delta events, so it
-		// adds no chars, but it must not be opaque either — opaque events are
-		// releasable ahead of the block they sit in.
+		// response.function_call_arguments.done carries one tool call's finish
+		// reason and, when the upstream sends them, the call's full arguments.
+		// It is not the end of the response, and it must not be opaque either:
+		// opaque events are releasable ahead of the block they sit in. The item
+		// stays open until response.output_item.done.
 		ev.unit = unitText
 	}
 	return nil
