@@ -2152,6 +2152,10 @@ definitions:
     properties:
       code:
         type: string
+      groups:
+        items:
+          type: string
+        type: array
       instance_id:
         description: |-
           InstanceID pins the link to one installed instance of Code, for a server

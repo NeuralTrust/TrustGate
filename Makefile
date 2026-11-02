@@ -20,6 +20,7 @@ DOCKER_TAG    ?= $(VERSION)
 # directive, and it must be `go install`ed (not a release binary) so it is
 # compiled with the same Go toolchain the module targets.
 GOLANGCI_LINT_VERSION ?= v2.14.0
+SWAGGER2OPENAPI_VERSION ?= 7.0.8
 
 M := $(shell printf "\033[34;1m▶\033[0m")
 
@@ -160,10 +161,10 @@ swagger: ## Generate the Swagger 2.0 spec (docs/swagger.{json,yaml} + docs.go) f
 
 openapi: swagger ## Convert the Swagger 2.0 spec into an OpenAPI 3 spec (docs/openapi.json)
 	@$(info $(M) Converting Swagger 2.0 -> OpenAPI 3 ...)
-	@command -v swagger2openapi >/dev/null 2>&1 || { \
-	  echo "swagger2openapi not found in PATH; install it with 'npm i -g swagger2openapi'" >&2; exit 1; \
+	@command -v npx >/dev/null 2>&1 || { \
+	  echo "npx not found in PATH; install Node.js to convert the spec" >&2; exit 1; \
 	}
-	swagger2openapi docs/swagger.json -o docs/openapi.json
+	npx --yes swagger2openapi@$(SWAGGER2OPENAPI_VERSION) docs/swagger.json -o docs/openapi.json
 
 docs: openapi ## Regenerate all API docs (Swagger 2.0 + OpenAPI 3)
 
