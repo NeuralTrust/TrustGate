@@ -16,6 +16,8 @@ package labelcache
 
 import (
 	"context"
+	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -116,8 +118,16 @@ func TestCache_CorruptEntryIsAMiss(t *testing.T) {
 
 func TestCache_RedisDownIsAnError(t *testing.T) {
 	t.Parallel()
-	cache, mr := newTestCache(t, time.Minute)
-	mr.Close()
+	// A closed miniredis frees its port, and a parallel test can bind it again.
+	client := redis.NewClient(&redis.Options{
+		Addr:       "redis.invalid:6379",
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("redis is down")
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := New(client, time.Minute, testSecret)
 
 	_, err := cache.GetMany(context.Background(), []string{"k"})
 	require.Error(t, err)
