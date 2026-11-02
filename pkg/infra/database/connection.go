@@ -28,9 +28,6 @@ const healthCheckTimeout = 5 * time.Second
 
 type Connection struct {
 	Pool *pgxpool.Pool
-	// Role is the POSTGRES_ROLE every session of Pool runs as; empty when the
-	// sessions keep the login's own role.
-	Role string
 }
 
 func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
@@ -46,7 +43,7 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 		pool.Close()
 		return nil, fmt.Errorf("%w: ping database: %v", errors.ErrBoot, err)
 	}
-	return &Connection{Pool: pool, Role: cfg.Role}, nil
+	return &Connection{Pool: pool}, nil
 }
 
 // NewPoolConfig builds a pgxpool.Config from discrete DatabaseConfig fields,

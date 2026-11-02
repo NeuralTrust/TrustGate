@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -42,11 +43,36 @@ func logSessionIdentity(ctx context.Context, q sessionQuerier, logger *slog.Logg
 		slog.String("session_user", sessionUser))
 }
 
-// adoptOwnerRole reassigns every object the login owns in this database to
-// role when the login is not role itself, so objects created before
-// POSTGRES_ROLE (or by a login that bypassed it) stop being owner-only. It
-// never fails: a login that cannot reassign (it owns the database without
-// CREATEDB, or its membership lacks INHERIT) is logged and startup continues.
+// Server-side bounds for the reassign. A client-side deadline would make pgx
+// close the connection, and with it the migrations advisory lock it holds.
+const (
+	reassignLockTimeout      = `SET LOCAL lock_timeout = '5s'`
+	reassignStatementTimeout = `SET LOCAL statement_timeout = '15s'`
+)
+
+// sharedObjectsOwnedByLogin lists the databases other than the current one and
+// the tablespaces the login owns. REASSIGN OWNED moves those too, cluster-wide.
+const sharedObjectsOwnedByLogin = `
+	SELECT COALESCE(string_agg(name, ', ' ORDER BY name), '') FROM (
+		SELECT 'database ' || datname AS name FROM pg_database
+		WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = session_user)
+		  AND datname <> current_database()
+		UNION ALL
+		SELECT 'tablespace ' || spcname FROM pg_tablespace
+		WHERE spcowner = (SELECT oid FROM pg_roles WHERE rolname = session_user)
+	) owned`
+
+// errSharedObjectsOwned means the login owns databases or tablespaces outside
+// this database, which REASSIGN OWNED would hand to role as well.
+var errSharedObjectsOwned = errors.New("the postgres login owns shared objects outside this database")
+
+// adoptOwnerRole reassigns every object the login owns in this database, and
+// the database itself when the login owns it, to role when the login is not
+// role itself, so objects created before POSTGRES_ROLE (or by a login that
+// bypassed it) stop being owner-only. It is skipped when the login owns other
+// databases or tablespaces, since REASSIGN OWNED would move them too. It never
+// fails: a login that cannot reassign (its membership lacks INHERIT, or a lock
+// is held past the timeout) is logged and startup continues.
 func adoptOwnerRole(ctx context.Context, q sessionQuerier, role string, logger *slog.Logger) {
 	var isRole bool
 	if err := q.QueryRow(ctx, "SELECT session_user = $1", role).Scan(&isRole); err != nil {
@@ -74,9 +100,21 @@ func reassignOwnedTo(ctx context.Context, q sessionQuerier, role string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // No-op after Commit.
 
+	for _, stmt := range []string{reassignLockTimeout, reassignStatementTimeout} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("set timeout: %w", err)
+		}
+	}
 	// REASSIGN OWNED needs the login's own privileges, not the session role's.
 	if _, err := tx.Exec(ctx, "SET LOCAL ROLE NONE"); err != nil {
 		return fmt.Errorf("reset role: %w", err)
+	}
+	var shared string
+	if err := tx.QueryRow(ctx, sharedObjectsOwnedByLogin).Scan(&shared); err != nil {
+		return fmt.Errorf("list shared objects: %w", err)
+	}
+	if shared != "" {
+		return fmt.Errorf("%w: %s", errSharedObjectsOwned, shared)
 	}
 	if _, err := tx.Exec(ctx, "REASSIGN OWNED BY SESSION_USER TO "+pgx.Identifier{role}.Sanitize()); err != nil {
 		return fmt.Errorf("reassign owned: %w", err)

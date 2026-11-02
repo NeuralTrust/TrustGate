@@ -572,10 +572,10 @@ type DatabaseConfig struct {
 	MaxConnIdleTime   time.Duration
 	HealthCheckPeriod time.Duration
 	ConnectTimeout    time.Duration
-	// Role is the PostgreSQL role every session of the main application pool
-	// runs as (the "role" startup parameter), so the objects migrations create
-	// belong to it rather than to the login principal. Empty keeps the login's
-	// own role.
+	// Role is the PostgreSQL role every session on the service database runs
+	// as (the "role" startup parameter), in the main pool and in the telemetry
+	// fallback pool, so the objects they create belong to it rather than to the
+	// login principal. Empty keeps the login's own role.
 	Role string
 }
 
@@ -1631,6 +1631,9 @@ func (c *Config) Validate() error {
 		c.Database.Role = strings.TrimSpace(c.Database.Role)
 		if len(c.Database.Role) > maxPostgresIdentifierBytes {
 			return fmt.Errorf("%w: POSTGRES_ROLE must be at most %d bytes", errors.ErrInvalidConfig, maxPostgresIdentifierBytes)
+		}
+		if c.Database.Role == postgresRoleNone {
+			return fmt.Errorf("%w: POSTGRES_ROLE must name a role; %q keeps the login's own role, leave it empty instead", errors.ErrInvalidConfig, postgresRoleNone)
 		}
 		if c.Database.Login.UsesTokenAuth() {
 			c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
