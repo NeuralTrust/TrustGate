@@ -23,14 +23,15 @@ import (
 )
 
 // ErrCodeHybridGateway is returned when a hosted proxy refuses a gateway whose
-// entitlements bind it to a customer-run (hybrid) data plane.
+// entitlements bind it to a data plane of its own (hybrid or dedicated).
 const ErrCodeHybridGateway = "gateway_served_by_external_data_plane"
 
 // HybridGatewayGuardMiddleware refuses to serve gateways stamped
-// data_plane=hybrid on deployments that are not that data plane. It must run
-// after the auth middleware resolved the gateway and before anything can act on
-// the request body (plugins, forwarding, metrics), so no payload of a hybrid
-// gateway is ever processed, exported, or stored by a hosted proxy.
+// data_plane=hybrid or dedicated on deployments that do not serve such
+// gateways. It must run after the auth middleware resolved the gateway and
+// before anything can act on the request body (plugins, forwarding, metrics),
+// so no payload of such a gateway is ever processed, exported, or stored by a
+// hosted proxy.
 type HybridGatewayGuardMiddleware struct {
 	serveHybrid bool
 }
@@ -45,7 +46,7 @@ func (m *HybridGatewayGuardMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 		gw, ok := appgateway.FromContext(c.UserContext())
-		if !ok || !gw.ServedByHybridDataPlane() {
+		if !ok || !gw.ServedByOwnDataPlane() {
 			return c.Next()
 		}
 		SetOpsOutcome(c, o11y.OutcomeDeniedForbidden)

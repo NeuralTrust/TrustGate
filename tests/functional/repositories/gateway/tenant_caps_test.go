@@ -119,14 +119,14 @@ func TestRepository_StampedCreate_SeedsOnlyWhenAbsent(t *testing.T) {
 }
 
 // A plan stamp is the same for the whole tenant, so each gateway keeps where it
-// runs: a hybrid gateway must not drop back into the shared snapshot.
+// runs: a hybrid or dedicated gateway must not drop back into the shared snapshot.
 func TestRepository_Restamp_KeepsEachGatewaysDataPlane(t *testing.T) {
 	r, conn := setupRepo(t)
 	ctx := context.Background()
 	t.Cleanup(func() { _, _ = conn.Pool.Exec(context.Background(), "TRUNCATE TABLE tenant_entitlements") })
 
 	saved := map[string]*domain.Gateway{}
-	for slug, dataPlane := range map[string]string{"dp-hosted": "", "dp-hybrid": domain.DataPlaneHybrid} {
+	for slug, dataPlane := range map[string]string{"dp-hosted": "", "dp-hybrid": domain.DataPlaneHybrid, "dp-dedicated": domain.DataPlaneDedicated} {
 		g, _ := domain.New(slug)
 		g.Metadata = domain.WithTenantID(nil, "dp-tenant")
 		g.Entitlements = plan("free", 60, 10000, 5)
@@ -143,7 +143,7 @@ func TestRepository_Restamp_KeepsEachGatewaysDataPlane(t *testing.T) {
 		t.Fatalf("restamp: %v", err)
 	}
 
-	for slug, want := range map[string]string{"dp-hosted": "", "dp-hybrid": domain.DataPlaneHybrid} {
+	for slug, want := range map[string]string{"dp-hosted": "", "dp-hybrid": domain.DataPlaneHybrid, "dp-dedicated": domain.DataPlaneDedicated} {
 		got, err := r.FindByID(ctx, saved[slug].ID)
 		if err != nil {
 			t.Fatalf("find %s: %v", slug, err)

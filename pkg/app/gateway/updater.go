@@ -171,8 +171,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		}
 		next := *in.Entitlements
 		// A plan stamp knows the plan, not where the gateway runs: an omitted
-		// data_plane keeps the stored one, so a hybrid gateway never drops back
-		// into the shared snapshot. Send "hosted" to clear it.
+		// data_plane keeps the stored one, so a hybrid or dedicated gateway never
+		// drops back into the shared snapshot. Send "hosted" to clear it.
 		if next.DataPlane == "" {
 			next.DataPlane = g.Entitlements.DataPlane
 		}
