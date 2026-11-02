@@ -1628,7 +1628,6 @@ func (c *Config) Validate() error {
 		if c.Database.Name == "" {
 			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
 		}
-		c.Database.Role = strings.TrimSpace(c.Database.Role)
 		if len(c.Database.Role) > maxPostgresIdentifierBytes {
 			return fmt.Errorf("%w: POSTGRES_ROLE must be at most %d bytes", errors.ErrInvalidConfig, maxPostgresIdentifierBytes)
 		}

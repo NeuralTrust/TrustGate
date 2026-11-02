@@ -88,8 +88,9 @@ func NewMigrationsManager(pool *pgxpool.Pool) *MigrationsManager {
 }
 
 // WithOwnerRole makes ApplyPending reassign what the login owns to role before
-// migrating (see adoptOwnerRole). It runs under the migrations advisory lock,
-// so replicas starting together do not race. An empty role skips the step.
+// migrating, and fail when that leaves anything owned by the login (see
+// adoptOwnerRole). It runs under the migrations advisory lock, so replicas
+// starting together do not race. An empty role skips the step.
 func (m *MigrationsManager) WithOwnerRole(role string, logger *slog.Logger) *MigrationsManager {
 	if logger == nil {
 		logger = slog.Default()
@@ -148,7 +149,9 @@ func (m *MigrationsManager) ApplyPending(ctx context.Context) error {
 	}()
 
 	if m.role != "" {
-		adoptOwnerRole(ctx, conn, m.role, m.logger)
+		if err := adoptOwnerRole(ctx, conn, m.role, m.logger); err != nil {
+			return fmt.Errorf("adopt objects for POSTGRES_ROLE: %w", err)
+		}
 	}
 	if err := ensureMigrationsTable(ctx, conn); err != nil {
 		return fmt.Errorf("ensure migrations table: %w", err)
