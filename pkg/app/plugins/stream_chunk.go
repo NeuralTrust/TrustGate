@@ -56,6 +56,14 @@ type StreamPayloadBound interface {
 	BoundsStreamPayload() bool
 }
 
+// StreamPayloadLimit is the optional declaration of a StreamPayloadBound
+// inspector of the longest block it accepts in one call, when that differs from
+// its configured window. A tool input is a block of its own, so a reader that
+// refuses past this limit cannot read a longer one.
+type StreamPayloadLimit interface {
+	StreamPayloadLimit() int
+}
+
 // StreamChunkParallelism is the optional declaration of a StreamInspector that
 // cannot take the executor's default number of calls at once, because its
 // provider meters calls it cannot tell apart (a quota on units a second): the
@@ -112,6 +120,13 @@ func throttleIsOtherTraffic(plugin Plugin) bool {
 func boundsOwnPayload(inspector StreamInspector) bool {
 	b, ok := inspector.(StreamPayloadBound)
 	return ok && b.BoundsStreamPayload()
+}
+
+func payloadLimit(inspector StreamInspector, window int) int {
+	if l, ok := inspector.(StreamPayloadLimit); ok && l.StreamPayloadLimit() > 0 {
+		return l.StreamPayloadLimit()
+	}
+	return window
 }
 
 // streamChunkSpec is how a block is cut for a window. A window of 32 KiB or more

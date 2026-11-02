@@ -233,9 +233,9 @@ type StreamOptions struct {
 	MinCharsBetweenEvals int
 	MaxHoldMS            int
 	MaxAccumulatedBytes  int
-	// ToolCallMaxAccumulatedBytes is the smallest window of a participating
-	// entry that reads tool calls and bounds its own payload (StreamPayloadBound):
-	// the executor never splits a tool input for it, so a longer input is refused.
+	// ToolCallMaxAccumulatedBytes is the smallest payload limit of a
+	// participating entry that reads tool calls and whose refusal of a longer
+	// input cuts the stream (it bounds its own payload and its mode blocks).
 	// Zero means no such entry takes part and the chain window applies.
 	ToolCallMaxAccumulatedBytes int
 	// ReadsToolCalls is set by StreamPlan when any participating entry reads the
