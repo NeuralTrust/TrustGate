@@ -192,7 +192,9 @@ jobs:
         run: make docs
       - name: Fail if the committed docs are stale
         run: |
-          if ! git diff --exit-code -- docs/; then
+          if [ -n "$(git status --porcelain -- docs/)" ]; then
+            git status --porcelain -- docs/
+            git diff -- docs/
             echo "::error::docs/ is out of date with the handler annotations. Run 'make docs' and commit the result."
             exit 1
           fi
