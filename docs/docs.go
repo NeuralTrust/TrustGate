@@ -9454,6 +9454,12 @@ const docTemplate = `{
                 "code": {
                     "type": "string"
                 },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "instance_id": {
                     "description": "InstanceID pins the link to one installed instance of Code, for a server\nthe gateway holds more than once. Empty opens the code's own card.",
                     "type": "string"
