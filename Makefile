@@ -20,6 +20,8 @@ DOCKER_TAG    ?= $(VERSION)
 # directive, and it must be `go install`ed (not a release binary) so it is
 # compiled with the same Go toolchain the module targets.
 GOLANGCI_LINT_VERSION ?= v2.14.0
+# Pinned so the CI drift check regenerates docs/ byte for byte; bump it together
+# with a `make docs` commit.
 SWAGGER2OPENAPI_VERSION ?= 7.0.8
 
 M := $(shell printf "\033[34;1m▶\033[0m")
