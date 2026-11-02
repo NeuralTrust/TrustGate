@@ -78,7 +78,7 @@ func maskTestPII(s string) string {
 	return testInjectionPattern.ReplaceAllString(s, "[MASKED_INJECTION]")
 }
 
-func executeMCPResponse(t *testing.T, f *fakeGuard, body string) (*appplugins.Result, error, guardData) {
+func executeMCPResponse(t *testing.T, f *fakeGuard, body string) (*appplugins.Result, guardData, error) {
 	t.Helper()
 	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 	event, span := newEvent()
@@ -86,7 +86,7 @@ func executeMCPResponse(t *testing.T, f *fakeGuard, body string) (*appplugins.Re
 	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp, event)
 	res, err := p.Execute(context.Background(), in)
 	extras, _ := span.PluginAttrsCopy().Extras.(guardData)
-	return res, err, extras
+	return res, extras, err
 }
 
 func requireMCPResponseRefused(t *testing.T, res *appplugins.Result, err error, extras guardData) {
@@ -132,7 +132,7 @@ func TestExecuteMCPStructuredContentKeysRefuseTransform(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{mcpEchoMask: maskTestPII}
-			res, err, extras := executeMCPResponse(t, f, tc.body)
+			res, extras, err := executeMCPResponse(t, f, tc.body)
 			requireMCPResponseRefused(t, res, err, extras)
 
 			result, _ := mcpPayloadMap(t, f.captured().Payload)["result"].(map[string]any)
@@ -154,7 +154,7 @@ func TestExecuteMCPStructuredContentNumericPIIRefusesTransform(t *testing.T) {
 	f := &fakeGuard{mcpEchoMask: func(s string) string {
 		return testBareSSNPattern.ReplaceAllString(s, "[MASKED_SSN]")
 	}}
-	res, err, extras := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"ssn":536225487}}`)
+	res, extras, err := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"ssn":536225487}}`)
 	requireMCPResponseRefused(t, res, err, extras)
 }
 
@@ -181,7 +181,7 @@ func TestExecuteMCPStructuredContentMutationRefusesTransform(t *testing.T) {
 					},
 				},
 			}}
-			res, err, extras := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"email":"jane@acme.io","count":3}}`)
+			res, extras, err := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"email":"jane@acme.io","count":3}}`)
 			requireMCPResponseRefused(t, res, err, extras)
 		})
 	}
@@ -193,7 +193,7 @@ func TestExecuteMCPStructuredContentValueMasked(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{mcpEchoMask: maskTestPII}
-	res, err, extras := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"email":"jane@acme.io","id":9007199254740993,"ok":true,"note":null}}`)
+	res, extras, err := executeMCPResponse(t, f, `{"content":[],"structuredContent":{"email":"jane@acme.io","id":9007199254740993,"ok":true,"note":null}}`)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Body)

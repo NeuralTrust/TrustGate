@@ -23,6 +23,11 @@ import (
 
 var ErrCredentialAcquisition = errors.New("provider credential acquisition failed")
 
+// ErrCallerCredentialRejected reports that a provider credential the caller
+// sent on a passthrough registry is unusable. It wraps
+// ErrCredentialAcquisition, so the proxy still treats it as terminal.
+var ErrCallerCredentialRejected = fmt.Errorf("%w: the provider credential sent by the caller was rejected", ErrCredentialAcquisition)
+
 // BackendError represents a non-2xx response received from a backend target
 // (the upstream LLM provider). It carries the status code and raw body; the
 // proxy relays the error to the client through adapter.ClientErrorBody.

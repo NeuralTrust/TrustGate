@@ -51,7 +51,8 @@ type Repository interface {
 	// UpdateWithTenantCap updates g under the same tenant advisory lock used by SaveWithTenantCap when maxInstances > 0.
 	UpdateWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
 	// RestampEntitlementsByTenantID writes e onto every gateway of the tenant and
-	// returns the ids it touched.
+	// returns the ids it touched. Each gateway keeps its stored data_plane, whatever
+	// e carries: a plan says nothing about where each gateway runs.
 	//
 	// Deliberately uncapped: a plan change is a fact the control plane has already
 	// committed, and refusing to propagate a downgrade would leave every gateway of

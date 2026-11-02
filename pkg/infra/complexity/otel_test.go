@@ -79,7 +79,7 @@ func TestScoreSendsTraceContextAlongsideToken(t *testing.T) {
 	header := scoreHeaders(t, ctx)
 
 	require.Contains(t, header.Get("traceparent"), span.SpanContext().TraceID().String())
-	require.Equal(t, "secret-token", header.Get(headerToken))
+	require.Equal(t, "secret-token", header.Get("token"))
 }
 
 // With operational traces off nothing installs a tracer provider or a propagator,
@@ -91,5 +91,5 @@ func TestScoreSendsNoTraceContextWhenTracesAreDisabled(t *testing.T) {
 	header := scoreHeaders(t, context.Background())
 
 	require.Empty(t, header.Get("traceparent"))
-	require.Equal(t, "secret-token", header.Get(headerToken))
+	require.Equal(t, "secret-token", header.Get("token"))
 }

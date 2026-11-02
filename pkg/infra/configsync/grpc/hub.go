@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 )
 
 // storeWriteTimeout bounds a best-effort connection-store write so a stalled
@@ -37,6 +38,11 @@ type Hub struct {
 	conns  map[*connection]struct{}
 	logger *slog.Logger
 	store  ConnectionStore
+	// presenceMu orders a presence refresh against teardowns: a refresh holds
+	// it exclusively from the snapshot of held streams until its write lands,
+	// and a teardown holds it shared while it marks the stream disconnected,
+	// so a refresh can never re-mark a stream that has just closed.
+	presenceMu sync.RWMutex
 }
 
 // connection is one registered DP Sync stream. notices carries at most the
@@ -54,6 +60,11 @@ type connection struct {
 
 	ackMu     sync.Mutex
 	lastAcked string
+
+	// writeMu serialises this stream's store writes with its teardown; once
+	// closed is set, acks and heartbeats still in flight are not persisted.
+	writeMu sync.Mutex
+	closed  bool
 }
 
 // NewHub builds an empty Hub. store may be nil, in which case connection
@@ -84,6 +95,33 @@ func (h *Hub) unregister(conn *connection) {
 	h.mu.Lock()
 	delete(h.conns, conn)
 	h.mu.Unlock()
+}
+
+// teardown unregisters conn and then records it as disconnected, as the last
+// store write for this stream: acks and heartbeats the receive goroutine still
+// delivers are dropped, and no presence refresh can follow. When this replica
+// already holds a newer stream for the same data plane, the row is left to
+// that stream.
+func (h *Hub) teardown(conn *connection) {
+	h.mu.Lock()
+	delete(h.conns, conn)
+	superseded := false
+	for other := range h.conns {
+		if other.scope == conn.scope && other.instanceID == conn.instanceID {
+			superseded = true
+			break
+		}
+	}
+	h.mu.Unlock()
+	conn.writeMu.Lock()
+	defer conn.writeMu.Unlock()
+	conn.closed = true
+	if superseded {
+		return
+	}
+	h.presenceMu.RLock()
+	defer h.presenceMu.RUnlock()
+	h.markDisconnected(conn)
 }
 
 // Broadcast delivers version to every connected data plane, coalescing to the
@@ -195,6 +233,11 @@ func (h *Hub) markAck(conn *connection, appliedVersion string) {
 	if h.store == nil {
 		return
 	}
+	conn.writeMu.Lock()
+	defer conn.writeMu.Unlock()
+	if conn.closed {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), storeWriteTimeout)
 	defer cancel()
 	if err := h.store.MarkAck(ctx, conn.scope, conn.instanceID, appliedVersion); err != nil {
@@ -213,6 +256,67 @@ func (h *Hub) markDisconnected(conn *connection) {
 	defer cancel()
 	if err := h.store.MarkDisconnected(ctx, conn.scope, conn.instanceID); err != nil {
 		h.logStoreErr("mark disconnected", conn, err)
+	}
+}
+
+// markHeartbeat persists what the data plane reported, best-effort.
+func (h *Hub) markHeartbeat(conn *connection, hb dataplane.Heartbeat) {
+	if h.store == nil {
+		return
+	}
+	conn.writeMu.Lock()
+	defer conn.writeMu.Unlock()
+	if conn.closed {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeWriteTimeout)
+	defer cancel()
+	if err := h.store.MarkHeartbeat(ctx, conn.scope, conn.instanceID, hb); err != nil {
+		h.logStoreErr("mark heartbeat", conn, err)
+	}
+}
+
+// RunPresence marks every stream this replica holds connected and refreshes
+// its last_seen, each interval, until ctx is done. A data plane that predates
+// heartbeats still shows as live while its stream is open, even when a stale
+// teardown on another replica marked it disconnected, and the streams of a
+// replica that dies stop being refreshed and age out.
+func (h *Hub) RunPresence(ctx context.Context, interval time.Duration) {
+	if h.store == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.refreshPresence(ctx)
+		}
+	}
+}
+
+func (h *Hub) refreshPresence(ctx context.Context) {
+	h.presenceMu.Lock()
+	defer h.presenceMu.Unlock()
+	h.mu.Lock()
+	keys := make([]dataplane.StreamKey, 0, len(h.conns))
+	for conn := range h.conns {
+		keys = append(keys, dataplane.StreamKey{Scope: conn.scope, InstanceID: conn.instanceID})
+	}
+	h.mu.Unlock()
+	if len(keys) == 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, storeWriteTimeout)
+	defer cancel()
+	if err := h.store.TouchConnected(writeCtx, keys); err != nil && ctx.Err() == nil {
+		h.logger.Warn("config-sync connection store write failed",
+			slog.String("component", "configsync-hub"),
+			slog.String("op", "refresh presence"),
+			slog.Int("streams", len(keys)),
+			slog.String("error", err.Error()))
 	}
 }
 

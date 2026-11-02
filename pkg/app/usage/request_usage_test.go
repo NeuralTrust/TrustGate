@@ -66,6 +66,14 @@ func llmTrace(tenant string, tierApplied ...bool) *trace.RequestTrace {
 	return rt
 }
 
+func llmTraceWithOutcomes(outcomes ...string) *trace.RequestTrace {
+	rt := trace.New("trace-llm", trace.Metadata{GatewayID: "gw-1", TenantID: "tenant-1", ConsumerID: "cons-1", Kind: events.KindLLM})
+	for _, outcome := range outcomes {
+		rt.StartSpan(trace.SpanLLM, "llm").LLM.Outcome = outcome
+	}
+	return rt
+}
+
 func mcpTrace(httpStatus, rpcCode int) *trace.RequestTrace {
 	rt := trace.New("trace-mcp", trace.Metadata{GatewayID: "gw-1", TenantID: "tenant-1", Kind: events.KindMCP})
 	rt.StartSpan(trace.SpanMCP, "mcp").SetMCPStatus(httpStatus, rpcCode)
@@ -97,6 +105,9 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 		{name: "upstream 429 recovered by a fallback", rt: llmTrace("tenant-1", false, false), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
 		{name: "smart routing on the served attempt", rt: llmTrace("tenant-1", false, true), status: 200, wantRecord: true, wantSmart: 1, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
 		{name: "smart routing only on a failed attempt", rt: llmTrace("tenant-1", true, false), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "provider refused the request", rt: llmTraceWithOutcomes("terminal"), status: 404},
+		{name: "provider failed on every attempt", rt: llmTraceWithOutcomes("retryable", "retryable"), status: 400},
+		{name: "provider failure recovered by a fallback", rt: llmTraceWithOutcomes("retryable", "success"), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
 		{name: "no tenant", rt: llmTrace(""), status: 200, wantSkipped: 1},
 		{name: "mcp served", rt: mcpTrace(200, 0), status: 200, wantRecord: true, wantTraceID: "trace-mcp"},
 		{name: "mcp rate limited on http 200", rt: mcpTrace(200, int(appmcp.CodeRateLimited)), status: 200},

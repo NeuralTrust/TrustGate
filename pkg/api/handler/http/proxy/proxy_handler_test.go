@@ -1361,6 +1361,29 @@ func TestHandle_CredentialAcquisitionReturnsSanitized502(t *testing.T) {
 	}
 }
 
+func TestHandle_CallerCredentialRejectedReturns401(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("provider completions: %w: invalid_grant", registrydomain.ErrCallerCredentialRejected)).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	eb := decodeError(t, resp.Body)
+	if eb.Error != "invalid_provider_credential" {
+		t.Fatalf("error = %q, want invalid_provider_credential", eb.Error)
+	}
+	if strings.Contains(eb.Message, "invalid_grant") {
+		t.Fatal("token endpoint details must never be relayed to the client")
+	}
+}
+
 func TestHandle_RejectionStampsStatusReasonOnTrace(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	fwd.EXPECT().

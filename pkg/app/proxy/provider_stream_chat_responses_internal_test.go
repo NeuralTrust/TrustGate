@@ -15,12 +15,14 @@
 package proxy
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAdaptStream_ChatClientOfResponsesRequiresValidTerminal(t *testing.T) {
@@ -68,4 +70,57 @@ func TestAdaptStream_ChatClientOfResponsesRequiresValidTerminal(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestAdaptStream_ChatClientOfResponsesGetsCustomCallIdentityOnce(t *testing.T) {
+	upstream := []string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"model_1"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":""}}`,
+		`data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"ls -la"}`,
+		`data: {"type":"response.custom_tool_call_input.done","output_index":0,"input":"ls -la"}`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"ls -la"}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"model_1","usage":null}}`,
+	}
+	lines := collectLines(t, adaptStream(linesSeq(upstream...), adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatOpenAIResponses, slog.Default(), nil))
+
+	var ids, names, entries int
+	input := ""
+	for _, line := range lines {
+		payload, ok := strings.CutPrefix(strings.TrimSpace(string(line)), "data:")
+		payload = strings.TrimSpace(payload)
+		if !ok || payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						ID     string `json:"id"`
+						Custom *struct {
+							Name  string `json:"name"`
+							Input string `json:"input"`
+						} `json:"custom"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(payload), &chunk), payload)
+		for _, choice := range chunk.Choices {
+			for _, tc := range choice.Delta.ToolCalls {
+				entries++
+				require.NotNil(t, tc.Custom, payload)
+				if tc.ID != "" {
+					ids++
+				}
+				if tc.Custom.Name != "" {
+					names++
+				}
+				input += tc.Custom.Input
+			}
+		}
+	}
+	assert.Equal(t, 1, ids)
+	assert.Equal(t, 1, names)
+	assert.Equal(t, 2, entries, "the boundary events add no call entry")
+	assert.Equal(t, "ls -la", input)
 }

@@ -104,7 +104,7 @@ func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
 // well enough to edit, so a mask on a window that holds one stops the stream as
 // any mask a native stream cannot apply does (see applyTransform).
 func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
-	if !g.native && !g.nativeSSETools {
+	if !g.native {
 		return toolVerdict{}
 	}
 	for _, b := range g.toolBlocks() {
@@ -112,7 +112,7 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		var raw strings.Builder
-		for _, di := range b.deltas {
+		for _, di := range append([]int{b.events[0]}, b.deltas...) {
 			for _, tc := range g.produced[di].toolCalls {
 				raw.WriteString(tc.ArgumentsDelta)
 			}
@@ -171,9 +171,6 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			return toolVerdict{outcome: outcome, stop: true}
 		}
 		if outcome != nil && outcome.HasTransform {
-			if !g.native {
-				return toolVerdict{outcome: outcome, stop: true}
-			}
 			if cause := g.applyToolMask(b, view, outcome.Transformed, normalised); cause != "" {
 				// The mask cannot be written into the held frames and read back:
 				// releasing the call as it came would send the input the policy
@@ -297,6 +294,11 @@ func (g *streamGuard) flagUninspectedTools() {
 func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, normalised bool) adapter.MaskCause {
 	if !normalised {
 		return adapter.MaskCauseToolInput
+	}
+	for _, tc := range g.produced[b.events[0]].toolCalls {
+		if tc.ArgumentsDelta != "" {
+			return adapter.MaskCauseToolFrames
+		}
 	}
 	input, ok := adapter.MaskToolInput(view, masked)
 	if !ok {

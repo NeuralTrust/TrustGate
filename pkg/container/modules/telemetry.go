@@ -115,7 +115,7 @@ func newDefaultExporters(
 	if len(configs) == 0 {
 		logger.Warn("no default telemetry exporters configured; only per-gateway exporters will receive events",
 			slog.String("path", path),
-			slog.String("source", source))
+			slog.String("exporters_source", source))
 		return nil, nil
 	}
 	for _, cfg := range configs {
@@ -125,7 +125,7 @@ func newDefaultExporters(
 		logger.Info("default telemetry exporter registered",
 			slog.String("name", cfg.Name),
 			slog.String("type", cfg.EffectiveType()),
-			slog.String("source", source))
+			slog.String("exporters_source", source))
 	}
 	return configs, nil
 }
