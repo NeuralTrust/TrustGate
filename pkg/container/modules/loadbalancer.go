@@ -47,17 +47,32 @@ func LoadBalancer(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) strategies.ComplexityScorer {
-		return complexity.NewClient(
-			cfg.FirewallComplexity.BaseURL,
-			firewall.NewTokenProvider(cfg.FirewallComplexity.SecretKey),
-			cfg.FirewallComplexity.Timeout,
-			cfg.FirewallComplexity.ModelRevision,
-		)
+	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) strategies.ComplexityScorer {
+		fc := cfg.FirewallComplexity
+		return complexity.NewClient(fc.BaseURL, firewallTokenProvider(fc, logger), fc.Timeout, fc.ModelRevision)
 	}); err != nil {
 		return err
 	}
 	return c.Provide(func(p loadBalancerParams) loadbalancer.Factory {
 		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, strategies.NewRedisSR1Store(p.Cache.RedisClient()), p.Logger)
 	})
+}
+
+func firewallTokenProvider(fc config.FirewallComplexityConfig, logger *slog.Logger) complexity.TokenProvider {
+	if !fc.JWTSet {
+		return firewall.NewTokenProvider(fc.SecretKey)
+	}
+	if fc.SecretKey != "" {
+		logger.Warn("FIREWALL_SECRET_KEY is ignored because FIREWALL_JWT is set")
+	}
+	if fc.JWTError != nil {
+		logger.Warn("firewall client not loaded: smart-routing scoring will fail until FIREWALL_JWT is fixed",
+			slog.String("error", fc.JWTError.Error()))
+		return firewall.NewUnusableSource(fc.JWTError, logger)
+	}
+	logger.Info("firewall client loaded from FIREWALL_JWT",
+		slog.String("base_url", fc.BaseURL),
+		slog.String("base_url_source", fc.BaseURLSource),
+		slog.String("client_id", fc.ClientID))
+	return firewall.NewOAuthTokenSource(fc.BaseURL, fc.ClientID, fc.ClientSecret, logger)
 }

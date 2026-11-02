@@ -761,9 +761,16 @@ type TrustGuardConfig struct {
 }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
+// When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
+// hold its OAuth client, or JWTError says why it was rejected.
 type FirewallComplexityConfig struct {
 	BaseURL       string
+	BaseURLSource string
 	SecretKey     string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTSet        bool
+	JWTError      error
+	ClientID      string
+	ClientSecret  string // #nosec G117 -- config struct field, not a hardcoded credential
 	Timeout       time.Duration
 	ModelRevision string
 }
@@ -1285,12 +1292,16 @@ func getTrustGuardConfig() TrustGuardConfig {
 }
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
-	return FirewallComplexityConfig{
-		BaseURL:       getEnv("FIREWALL_BASE_URL", ""),
+	cfg := FirewallComplexityConfig{
+		BaseURL:       getEnv(firewallBaseURLEnv, ""),
 		SecretKey:     getEnv("FIREWALL_SECRET_KEY", ""),
 		Timeout:       defaultFirewallComplexityTimeout,
 		ModelRevision: getEnv("FIREWALL_COMPLEXITY_MODEL_REVISION", defaultFirewallComplexityModelRevision),
 	}
+	if raw := unquoteEnv(getEnv(firewallJWTEnv, "")); raw != "" {
+		cfg.applyFirewallJWT(raw)
+	}
+	return cfg
 }
 
 func getOpenAIModerationConfig() OpenAIModerationConfig {
