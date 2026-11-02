@@ -83,6 +83,24 @@ func TestHybridGatewayGuard_RejectsHybridGatewayOnHostedProxy(t *testing.T) {
 	assert.Equal(t, middleware.ErrCodeHybridGateway, body.Error)
 }
 
+func TestHybridGatewayGuard_RejectsDedicatedGatewayOnSharedProxy(t *testing.T) {
+	app := newHybridGuardApp(t, false, gatewayWithDataPlane(gatewaydomain.DataPlaneDedicated))
+
+	resp := hybridGuardGet(t, app)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, fiber.StatusMisdirectedRequest, resp.StatusCode)
+}
+
+func TestHybridGatewayGuard_ServesDedicatedGatewayOnItsOwnDataPlane(t *testing.T) {
+	app := newHybridGuardApp(t, true, gatewayWithDataPlane(gatewaydomain.DataPlaneDedicated))
+
+	resp := hybridGuardGet(t, app)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
 func TestHybridGatewayGuard_ServesHybridGatewayOnHybridDataPlane(t *testing.T) {
 	app := newHybridGuardApp(t, true, gatewayWithDataPlane(gatewaydomain.DataPlaneHybrid))
 

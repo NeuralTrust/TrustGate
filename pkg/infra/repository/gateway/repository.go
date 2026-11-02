@@ -214,7 +214,7 @@ func (r *Repository) RestampEntitlementsByTenantID(
 	}
 	// A plan stamp is the same for every gateway of the tenant and knows nothing
 	// of where each one runs, so each keeps its stored data_plane: overwriting it
-	// would put hybrid gateways back into the shared snapshot.
+	// would put hybrid and dedicated gateways back into the shared snapshot.
 	const query = `
 		UPDATE gateways
 		   SET entitlements = ($2::jsonb - 'data_plane')

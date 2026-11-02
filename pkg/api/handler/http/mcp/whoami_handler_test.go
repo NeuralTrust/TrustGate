@@ -494,6 +494,30 @@ func TestWhoAmI_PointsAHybridKeyAtItsOwnDataPlane(t *testing.T) {
 	require.Equal(t, middleware.ErrCodeHybridGateway, body.Error)
 }
 
+// A dedicated gateway left the shared snapshot like a Hybrid one, so its key is
+// pointed at its own data plane the same way.
+func TestWhoAmI_PointsADedicatedKeyAtItsOwnDataPlane(t *testing.T) {
+	t.Parallel()
+	gw := hybridGateway()
+	gw.Entitlements.DataPlane = gatewaydomain.DataPlaneDedicated
+	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}}
+	handler := mcphttp.NewWhoAmIHandler(noGateway{}, service, "acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIGatewayFromKey(keyStore{"ag_secret": {GatewayID: gw.ID, Type: authdomain.TypeAPIKey, Enabled: true}}, gatewaysByID{gw.ID: gw},
+			"mcp.neuraltrust.ai", &countingLimiter{}, func(string, string) string { return "203.0.113.7" }),
+		mcphttp.WithWhoAmIRefuseHybrid(),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+
+	request := httptest.NewRequest(http.MethodGet, mcphttp.WhoAmIPath, nil)
+	request.Host = "agentgateway-mcp.neuraltrust.ai"
+	request.Header.Set("X-AG-API-Key", "ag_secret")
+	status, body := callWhoAmIRaw(t, app, request)
+
+	require.Equal(t, fiber.StatusMisdirectedRequest, status)
+	require.Equal(t, middleware.ErrCodeHybridGateway, body.Error)
+}
+
 // Only a key that holds is told: a wrong one learns nothing about the gateway.
 func TestWhoAmI_TellsNoOneWithoutAKeyThatAGatewayIsHybrid(t *testing.T) {
 	t.Parallel()

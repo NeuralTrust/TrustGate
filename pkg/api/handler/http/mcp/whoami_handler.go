@@ -50,8 +50,8 @@ type WhoAmIHandler struct {
 	consumers   appconsumer.APIKeyConsumers
 	proxyDomain string
 	byKey       *whoAmIKeyLookup
-	// refuseHybrid is set on a plane that does not serve Hybrid gateways, so
-	// their keys are pointed at their own data plane instead of being handed
+	// refuseHybrid is set on a plane that does not serve Hybrid or dedicated
+	// gateways, so their keys are pointed at their own data plane instead of being handed
 	// this plane's URLs, which would refuse every call made on them.
 	refuseHybrid bool
 	now          func() time.Time
@@ -107,9 +107,10 @@ func WithWhoAmIGatewayFromKey(
 	}
 }
 
-// WithWhoAmIRefuseHybrid makes /whoami answer a Hybrid gateway's key the way
-// the proxy answers its traffic: 421 gateway_served_by_external_data_plane.
-// Set it on a plane that does not serve Hybrid gateways. Only a key that holds
+// WithWhoAmIRefuseHybrid makes /whoami answer a Hybrid or dedicated gateway's
+// key the way the proxy answers its traffic: 421
+// gateway_served_by_external_data_plane. Set it on a plane that does not serve
+// those gateways. Only a key that holds
 // is told, so the answer reveals nothing to a caller without one.
 func WithWhoAmIRefuseHybrid() WhoAmIOption {
 	return func(h *WhoAmIHandler) { h.refuseHybrid = true }
@@ -227,7 +228,7 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 		}
 		return writeWhoAmIError(c, fiber.StatusInternalServerError, "failed to describe this API key")
 	}
-	if h.refuseHybrid && gateway.ServedByHybridDataPlane() {
+	if h.refuseHybrid && gateway.ServedByOwnDataPlane() {
 		return c.Status(fiber.StatusMisdirectedRequest).JSON(httpio.ErrorBody{
 			Error:   middleware.ErrCodeHybridGateway,
 			Message: "this gateway is served by its own data plane; ask that data plane's MCP host instead",
