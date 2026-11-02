@@ -16,8 +16,10 @@
 package firewall
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,8 @@ import (
 )
 
 const (
+	headerToken = "token"
+
 	tokenTTL         = time.Hour
 	tokenRefreshSkew = 5 * time.Minute
 )
@@ -52,8 +56,18 @@ func (p *TokenProvider) Configured() bool {
 	return p != nil && p.secretKey != ""
 }
 
-// Invalidate clears the cached token.
-func (p *TokenProvider) Invalidate() {
+// Authorize sets the token header the legacy firewall check reads.
+func (p *TokenProvider) Authorize(_ context.Context, req *http.Request) error {
+	token, err := p.Token()
+	if err != nil {
+		return err
+	}
+	req.Header.Set(headerToken, token)
+	return nil
+}
+
+// Invalidate clears the cached token after the firewall rejected req.
+func (p *TokenProvider) Invalidate(_ *http.Request) {
 	if p == nil {
 		return
 	}
