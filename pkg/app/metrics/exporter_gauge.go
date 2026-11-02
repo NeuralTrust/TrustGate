@@ -37,6 +37,7 @@ func RegisterConfiguredExportersGauge(defaults []telemetrydomain.ExporterConfig,
 	}
 	_, err := otel.Meter("trustgate/metrics").Int64ObservableGauge(
 		configuredExportersMetric,
+		metric.WithUnit("{exporter}"),
 		metric.WithDescription("default telemetry exporters configured, by data class"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 			for class, n := range counts {
