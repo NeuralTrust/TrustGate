@@ -181,6 +181,10 @@ type streamGuardConfig struct {
 	minChars      int
 	maxHold       time.Duration
 	maxAccumBytes int
+	// toolCallMaxAccumBytes is the longest tool input the chain can read whole:
+	// the smallest window of an entry that reads tool calls and bounds its own
+	// payload, never above maxAccumBytes.
+	toolCallMaxAccumBytes int
 	// nativeToolHold is how long a native tool call may be held, from its start
 	// frame, before its frames are released as they are. It does not depend on
 	// maxHold: a short block hold must not turn tool inspection off.
@@ -215,6 +219,9 @@ func (c streamGuardConfig) withDefaults() streamGuardConfig {
 	}
 	if c.maxAccumBytes > maxAccumulatedCeiling {
 		c.maxAccumBytes = maxAccumulatedCeiling
+	}
+	if c.toolCallMaxAccumBytes <= 0 || c.toolCallMaxAccumBytes > c.maxAccumBytes {
+		c.toolCallMaxAccumBytes = c.maxAccumBytes
 	}
 	return c
 }
