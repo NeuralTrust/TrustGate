@@ -554,6 +554,10 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
 	}
 	if v := g.inspectTools(ctx); v.stop {
+		if v.capped {
+			g.markCut()
+			return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
+		}
 		if v.failed {
 			g.cutOnFailure = g.cutAtEval == 0
 			g.markCut()

@@ -72,6 +72,7 @@ type worker struct {
 func NewWorker(logger *slog.Logger, pipeline *Pipeline) Worker {
 	dropped, err := otel.Meter("trustgate/metrics").Int64Counter(
 		droppedEventsMetric,
+		metric.WithUnit("{event}"),
 		metric.WithDescription("telemetry events dropped after shutdown, when the worker queue is full or on a task panic"),
 	)
 	if err != nil {
