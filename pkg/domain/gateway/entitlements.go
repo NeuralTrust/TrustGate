@@ -110,6 +110,12 @@ func (e Entitlements) IsHybridDataPlane() bool {
 	return strings.EqualFold(strings.TrimSpace(e.DataPlane), DataPlaneHybrid)
 }
 
+// IsDedicatedDataPlane reports whether this gateway is served by a data plane
+// NeuralTrust runs for it alone.
+func (e Entitlements) IsDedicatedDataPlane() bool {
+	return strings.EqualFold(strings.TrimSpace(e.DataPlane), DataPlaneDedicated)
+}
+
 // IsOwnDataPlane reports whether this gateway is served only by a data plane
 // of its own, customer-run (hybrid) or NeuralTrust-run (dedicated), and never
 // by the shared hosted proxy.

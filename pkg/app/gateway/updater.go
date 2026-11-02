@@ -109,6 +109,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	old := *g
 	if in.Slug != nil {
+		// A dedicated plane answers on {slug}.llm and {slug}.mcp: renaming the
+		// gateway would leave its clients on a host the plane no longer serves.
+		if old.Entitlements.IsDedicatedDataPlane() && domain.NormalizeSlug(*in.Slug) != old.Slug {
+			return nil, fmt.Errorf("the slug of a gateway with a dedicated data plane cannot change: %w", commonerrors.ErrValidation)
+		}
 		g.Slug = *in.Slug
 	}
 	if in.Status != nil {
