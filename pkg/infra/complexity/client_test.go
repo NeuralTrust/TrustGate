@@ -36,14 +36,20 @@ type tokenProviderStub struct {
 	configured bool
 	token      string
 	err        error
-	invalidate func()
+	invalidate func(*http.Request)
 }
 
-func (s tokenProviderStub) Configured() bool       { return s.configured }
-func (s tokenProviderStub) Token() (string, error) { return s.token, s.err }
-func (s tokenProviderStub) Invalidate() {
+func (s tokenProviderStub) Configured() bool { return s.configured }
+func (s tokenProviderStub) Authorize(_ context.Context, req *http.Request) error {
+	if s.err != nil {
+		return s.err
+	}
+	req.Header.Set("token", s.token)
+	return nil
+}
+func (s tokenProviderStub) Invalidate(req *http.Request) {
 	if s.invalidate != nil {
-		s.invalidate()
+		s.invalidate(req)
 	}
 }
 
@@ -61,7 +67,7 @@ func TestClient_ScoreSR1_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, complexityPath, r.URL.Path)
-		assert.Equal(t, "secret-token", r.Header.Get(headerToken))
+		assert.Equal(t, "secret-token", r.Header.Get("token"))
 		body, _ := io.ReadAll(r.Body)
 		var got scoreRequest
 		require.NoError(t, json.Unmarshal(body, &got))
@@ -95,7 +101,7 @@ func TestClient_ScoreSR1_TokenError(t *testing.T) {
 
 func TestClient_ScoreSR1_Unauthorized(t *testing.T) {
 	t.Parallel()
-	invalidated := false
+	var invalidated *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -104,11 +110,12 @@ func TestClient_ScoreSR1_Unauthorized(t *testing.T) {
 	c := NewClient(srv.URL, tokenProviderStub{
 		configured: true,
 		token:      "bad",
-		invalidate: func() { invalidated = true },
+		invalidate: func(req *http.Request) { invalidated = req },
 	}, time.Second, testRevision)
 	_, err := c.ScoreSR1(context.Background(), "hello", "")
 	assert.ErrorIs(t, err, ErrUnauthorized)
-	assert.True(t, invalidated)
+	require.NotNil(t, invalidated)
+	assert.Equal(t, "bad", invalidated.Header.Get("token"))
 }
 
 func TestClient_ScoreSR1_ServerError(t *testing.T) {
