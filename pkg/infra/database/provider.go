@@ -16,14 +16,20 @@ package database
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 )
 
-func NewConnectionProvider(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
-	return NewConnection(ctx, cfg)
+func NewConnectionProvider(ctx context.Context, cfg *config.DatabaseConfig, logger *slog.Logger) (*Connection, error) {
+	conn, err := NewConnection(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	logSessionIdentity(ctx, conn.Pool, logger)
+	return conn, nil
 }
 
-func NewMigrationsManagerProvider(conn *Connection) *MigrationsManager {
-	return NewMigrationsManager(conn.Pool)
+func NewMigrationsManagerProvider(conn *Connection, logger *slog.Logger) *MigrationsManager {
+	return NewMigrationsManager(conn.Pool).WithOwnerRole(conn.Role, logger)
 }

@@ -28,6 +28,9 @@ const healthCheckTimeout = 5 * time.Second
 
 type Connection struct {
 	Pool *pgxpool.Pool
+	// Role is the POSTGRES_ROLE every session of Pool runs as; empty when the
+	// sessions keep the login's own role.
+	Role string
 }
 
 func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
@@ -43,7 +46,7 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 		pool.Close()
 		return nil, fmt.Errorf("%w: ping database: %v", errors.ErrBoot, err)
 	}
-	return &Connection{Pool: pool}, nil
+	return &Connection{Pool: pool, Role: cfg.Role}, nil
 }
 
 // NewPoolConfig builds a pgxpool.Config from discrete DatabaseConfig fields,
@@ -52,7 +55,18 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 // the boot-time Ping of NewConnection (for example a telemetry sink) should
 // use this and open the pool themselves.
 func NewPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
-	return buildPoolConfig(ctx, cfg)
+	conf, err := buildPoolConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	// Every pool on the service's own database runs as POSTGRES_ROLE, so what it
+	// creates belongs to that role and not to the login. Pools on other servers
+	// (tenant telemetry DSNs) are not built here. PostgreSQL refuses the
+	// connection when the login is not a member of the role.
+	if cfg.Role != "" {
+		conf.ConnConfig.RuntimeParams["role"] = cfg.Role
+	}
+	return conf, nil
 }
 
 func (c *Connection) Close() {

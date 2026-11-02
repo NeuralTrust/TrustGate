@@ -17,6 +17,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -77,11 +78,22 @@ func RegisterMigration(m Migration) {
 
 // MigrationsManager applies registered migrations against a pgx pool.
 type MigrationsManager struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	role   string
+	logger *slog.Logger
 }
 
 func NewMigrationsManager(pool *pgxpool.Pool) *MigrationsManager {
 	return &MigrationsManager{pool: pool}
+}
+
+// WithOwnerRole makes ApplyPending reassign what the login owns to role before
+// migrating (see adoptOwnerRole). It runs under the migrations advisory lock,
+// so replicas starting together do not race. An empty role skips the step.
+func (m *MigrationsManager) WithOwnerRole(role string, logger *slog.Logger) *MigrationsManager {
+	m.role = role
+	m.logger = logger
+	return m
 }
 
 func ensureMigrationsTable(ctx context.Context, conn *pgxpool.Conn) error {
@@ -132,6 +144,9 @@ func (m *MigrationsManager) ApplyPending(ctx context.Context) error {
 		conn.Release()
 	}()
 
+	if m.role != "" && m.logger != nil {
+		adoptOwnerRole(ctx, conn, m.role, m.logger)
+	}
 	if err := ensureMigrationsTable(ctx, conn); err != nil {
 		return fmt.Errorf("ensure migrations table: %w", err)
 	}
