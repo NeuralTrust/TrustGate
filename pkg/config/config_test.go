@@ -29,6 +29,7 @@ import (
 func minimumEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("POSTGRES_LOGIN", "")
+	t.Setenv("POSTGRES_ROLE", "")
 	t.Setenv("DB_HOST", "db.example")
 	t.Setenv("DB_USER", "u")
 	t.Setenv("DB_NAME", "n")
@@ -1162,6 +1163,54 @@ func TestLoadConfig_AzureScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadConfig_PostgresRole(t *testing.T) {
+	tests := []struct{ name, role, want string }{
+		{name: "unset keeps the login role"},
+		{name: "blank keeps the login role", role: " \t "},
+		{name: "role is trimmed", role: " agentgateway \n", want: "agentgateway"},
+		{name: "case is preserved", role: "AgentGateway", want: "AgentGateway"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("POSTGRES_ROLE", tc.role)
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Database.Role != tc.want {
+				t.Errorf("Role = %q, want %q", cfg.Database.Role, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidate_PostgresRole(t *testing.T) {
+	t.Run("accepts the longest identifier", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Role = strings.Repeat("r", maxPostgresIdentifierBytes)
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+	t.Run("rejects none, which PostgreSQL reads as the login", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Role = "none"
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "POSTGRES_ROLE") {
+			t.Fatalf("error must be ErrInvalidConfig naming POSTGRES_ROLE: %v", err)
+		}
+	})
+	t.Run("rejects a name PostgreSQL would truncate", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Role = strings.Repeat("r", maxPostgresIdentifierBytes+1)
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "POSTGRES_ROLE") {
+			t.Fatalf("error must be ErrInvalidConfig naming POSTGRES_ROLE: %v", err)
+		}
+	})
 }
 
 func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {

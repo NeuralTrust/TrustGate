@@ -52,7 +52,18 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 // the boot-time Ping of NewConnection (for example a telemetry sink) should
 // use this and open the pool themselves.
 func NewPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
-	return buildPoolConfig(ctx, cfg)
+	conf, err := buildPoolConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	// Every pool on the service's own database runs as POSTGRES_ROLE, so what it
+	// creates belongs to that role and not to the login. Pools on other servers
+	// (tenant telemetry DSNs) are not built here. PostgreSQL refuses the
+	// connection when the login is not a member of the role.
+	if cfg.Role != "" {
+		conf.ConnConfig.RuntimeParams["role"] = cfg.Role
+	}
+	return conf, nil
 }
 
 func (c *Connection) Close() {

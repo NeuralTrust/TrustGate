@@ -572,6 +572,11 @@ type DatabaseConfig struct {
 	MaxConnIdleTime   time.Duration
 	HealthCheckPeriod time.Duration
 	ConnectTimeout    time.Duration
+	// Role is the PostgreSQL role every session on the service database runs
+	// as (the "role" startup parameter), in the main pool and in the telemetry
+	// fallback pool, so the objects they create belong to it rather than to the
+	// login principal. Empty keeps the login's own role.
+	Role string
 }
 
 type RedisConfig struct {
@@ -942,6 +947,7 @@ func getDatabaseConfig() DatabaseConfig {
 
 	return DatabaseConfig{
 		Login:             login,
+		Role:              strings.TrimSpace(os.Getenv("POSTGRES_ROLE")),
 		Host:              getEnv("DB_HOST", defaultDBHost),
 		Port:              getEnvInt("DB_PORT", defaultDBPort),
 		User:              getEnv("DB_USER", defaultDBUser),
@@ -1621,6 +1627,12 @@ func (c *Config) Validate() error {
 		}
 		if c.Database.Name == "" {
 			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
+		}
+		if len(c.Database.Role) > maxPostgresIdentifierBytes {
+			return fmt.Errorf("%w: POSTGRES_ROLE must be at most %d bytes", errors.ErrInvalidConfig, maxPostgresIdentifierBytes)
+		}
+		if c.Database.Role == postgresRoleNone {
+			return fmt.Errorf("%w: POSTGRES_ROLE must name a role; %q keeps the login's own role, leave it empty instead", errors.ErrInvalidConfig, postgresRoleNone)
 		}
 		if c.Database.Login.UsesTokenAuth() {
 			c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
