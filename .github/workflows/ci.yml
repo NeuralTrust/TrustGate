@@ -174,6 +174,33 @@ jobs:
           SENSIBLE_PG_TEST_DSN: postgres://postgres:postgres@localhost:5432/sensible_pg_test?sslmode=disable
         run: go test -tags integration -race -count=1 ./pkg/infra/telemetry/postgres/...
 
+  openapi-drift:
+    name: OpenAPI Drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.3"
+          cache: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+      - name: Install pinned swag
+        run: go install github.com/swaggo/swag/cmd/swag
+      - name: Regenerate API docs
+        run: make docs
+      - name: Fail if the committed docs are stale
+        run: |
+          if [ -n "$(git status --porcelain -- docs/)" ]; then
+            git status --porcelain -- docs/
+            git diff -- docs/
+            echo "::error::docs/ is out of date with the handler annotations. Run 'make docs' and commit the result."
+            exit 1
+          fi
+      - name: Test the API docs
+        run: go test ./docs/...
+
   scripts-tests:
     name: CI Scripts Tests
     runs-on: ubuntu-latest
