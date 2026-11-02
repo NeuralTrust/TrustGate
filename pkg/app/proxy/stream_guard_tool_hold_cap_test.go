@@ -237,6 +237,43 @@ func TestNativeToolCallPastChainWindowFailsOpen(t *testing.T) {
 	}
 }
 
+// Under fail_closed the same call is refused instead of released unread, as
+// a chat or SSE tool call that outgrows the hold is.
+func TestNativeToolCallPastChainWindowFailsClosed(t *testing.T) {
+	t.Parallel()
+	const window = 64 << 10
+	const marker = "PAST-WINDOW-MARKER"
+	pad := strings.Repeat("a", 16<<10)
+	frags := []string{`{"cmd":"look","pad":"`}
+	for range 8 {
+		frags = append(frags, pad)
+	}
+	frags = append(frags, marker+`"}`)
+	require.Greater(t, len(strings.Join(frags, "")), window)
+
+	tool := converseToolFrames(t, 1, frags...)
+	require.Less(t, frameWire(tool), maxHeadHeldBytes, "the hold keeps the call; the window is what refuses it")
+	frames := append([][]byte{deltaFrame(t, "Sending it")}, tool...)
+	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
+
+	runner := &windowRunner{limit: window}
+	cfg := toolBlocks
+	cfg.maxAccumBytes = 1 << 20
+	cfg.toolCallMaxAccumBytes = window
+	cfg.onError = streamFailClosed
+	g, logs := loggedGuard(runner, cfg)
+	got, _ := runNativeGuard(t, g, frames)
+
+	assert.True(t, g.wasCut(), "fail_closed refuses the call it cannot read")
+	assert.NotContains(t, releasedText(t, got), marker)
+	assert.Empty(t, g.degradedReason)
+	assert.Contains(t, logs.String(), "tool call outgrew the hold; refusing it")
+	assert.NotContains(t, logs.String(), "tool call released without inspecting its input")
+	for _, size := range runner.sizes {
+		assert.LessOrEqual(t, size, window, "the unreadable view was not sent")
+	}
+}
+
 func TestToolCallWindowDefaultsToTheChainWindow(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, defaultMaxAccumulatedBytes,
