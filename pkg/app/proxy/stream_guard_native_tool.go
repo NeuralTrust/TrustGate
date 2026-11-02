@@ -80,6 +80,9 @@ type toolVerdict struct {
 	outcome *appplugins.SegmentOutcome
 	stop    bool
 	failed  bool
+	// capped says the call was refused unread under fail_closed, so the cut
+	// is resolved as chatToolCapped resolves it.
+	capped bool
 }
 
 func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
@@ -125,9 +128,18 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 		// toolSegment sends the view as its own text and does not pass through
 		// budget. An entry that bounds its own payload is handed it whole, so a
 		// view past its window is refused (trustguard: stream_block_too_large)
-		// and an enforcing chain turns that refusal into a block. Release the
-		// call instead, as a hold that outgrew the ceiling does.
+		// and an enforcing chain turns that refusal into a block. Resolve it
+		// as a hold that outgrew the ceiling does: fail_closed stops the
+		// stream, anything else releases the call.
 		if len(view) > g.cfg.toolCallMaxAccumBytes {
+			if g.cfg.onError == streamFailClosed {
+				if g.logger != nil {
+					g.logger.Warn("tool call outgrew the hold; refusing it",
+						slog.String("cause", "size"),
+						slog.String("format", string(g.source)))
+				}
+				return toolVerdict{stop: true, capped: true}
+			}
 			g.degrade(degradeToolInputUninspected)
 			if !g.toolUninspectedLogged && g.logger != nil {
 				g.toolUninspectedLogged = true
