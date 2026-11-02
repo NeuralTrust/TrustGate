@@ -69,29 +69,48 @@ var errSharedObjectsOwned = errors.New("the postgres login owns shared objects o
 // adoptOwnerRole reassigns every object the login owns in this database, and
 // the database itself when the login owns it, to role when the login is not
 // role itself, so objects created before POSTGRES_ROLE (or by a login that
-// bypassed it) stop being owner-only. It is skipped when the login owns other
-// databases or tablespaces, since REASSIGN OWNED would move them too. It never
-// fails: a login that cannot reassign (its membership lacks INHERIT, or a lock
-// is held past the timeout) is logged and startup continues.
-func adoptOwnerRole(ctx context.Context, q sessionQuerier, role string, logger *slog.Logger) {
+// bypassed it) stop being owner-only. The reassign is skipped when the login
+// owns other databases or tablespaces, since REASSIGN OWNED would move them too.
+//
+// It fails when anything in this database is still owned by the login
+// afterwards: every session runs as role, so those objects would surface later
+// as "permission denied", far from the cause. That covers a skipped reassign, a
+// membership without INHERIT or SET, and a lock held past the timeout. A
+// reassign that fails with nothing left to move is only logged.
+func adoptOwnerRole(ctx context.Context, q sessionQuerier, role string, logger *slog.Logger) error {
 	var isRole bool
 	if err := q.QueryRow(ctx, "SELECT session_user = $1", role).Scan(&isRole); err != nil {
-		logger.Warn("failed to compare the postgres login with POSTGRES_ROLE; skipping reassign",
-			slog.String("role", role),
-			slog.String("error", err.Error()))
-		return
+		return fmt.Errorf("compare the postgres login with POSTGRES_ROLE: %w", err)
 	}
 	if isRole {
-		return
+		return nil
 	}
-	if err := reassignOwnedTo(ctx, q, role); err != nil {
-		logger.Warn("failed to reassign objects owned by the postgres login to POSTGRES_ROLE; continuing",
+	reassignErr := reassignOwnedTo(ctx, q, role)
+	var remaining int64
+	if err := q.QueryRow(ctx, loginOwnedObjectsSQL).Scan(&remaining); err != nil {
+		return fmt.Errorf("count objects still owned by the postgres login: %w", err)
+	}
+	if remaining > 0 {
+		return fmt.Errorf("%d objects in this database are still owned by the postgres login, so sessions running as POSTGRES_ROLE %q cannot use them; "+
+			"reassign them to %q (the login needs INHERIT and SET on it): %v",
+			remaining, role, role, reassignErr)
+	}
+	if reassignErr != nil {
+		logger.Warn("reassign to POSTGRES_ROLE did not run, but the postgres login owns nothing in this database",
 			slog.String("role", role),
-			slog.String("error", err.Error()))
-		return
+			slog.String("error", reassignErr.Error()))
+		return nil
 	}
 	logger.Info("reassigned objects owned by the postgres login to POSTGRES_ROLE", slog.String("role", role))
+	return nil
 }
+
+// loginOwnedObjectsSQL counts objects in the current database owned by the
+// login. Databases and tablespaces are shared objects (dbid 0), not counted.
+const loginOwnedObjectsSQL = `SELECT count(*) FROM pg_shdepend
+	WHERE deptype = 'o'
+	  AND refobjid = (SELECT oid FROM pg_roles WHERE rolname = session_user)
+	  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())`
 
 func reassignOwnedTo(ctx context.Context, q sessionQuerier, role string) error {
 	tx, err := q.Begin(ctx)

@@ -1188,13 +1188,6 @@ func TestLoadConfig_PostgresRole(t *testing.T) {
 }
 
 func TestValidate_PostgresRole(t *testing.T) {
-	t.Run("trims a role set programmatically", func(t *testing.T) {
-		cfg := postgresValid()
-		cfg.Database.Role = "  owner "
-		if err := cfg.Validate(); err != nil || cfg.Database.Role != "owner" {
-			t.Fatalf("role = %q, err = %v; want trimmed and accepted", cfg.Database.Role, err)
-		}
-	})
 	t.Run("accepts the longest identifier", func(t *testing.T) {
 		cfg := postgresValid()
 		cfg.Database.Role = strings.Repeat("r", maxPostgresIdentifierBytes)

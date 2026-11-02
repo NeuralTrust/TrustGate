@@ -70,6 +70,8 @@ func (r fakeRow) Scan(dest ...any) error {
 			*d = v.(string)
 		case *bool:
 			*d = v.(bool)
+		case *int64:
+			*d = v.(int64)
 		}
 	}
 	return nil
@@ -104,6 +106,7 @@ type fakeSessionConn struct {
 	queryErr         error
 	failOn           string
 	shared           string
+	remaining        int64
 	began            bool
 	committed        bool
 	execs            []string
@@ -115,6 +118,9 @@ func (c *fakeSessionConn) QueryRow(_ context.Context, sql string, args ...any) p
 	}
 	if len(args) == 1 {
 		return fakeRow{values: []any{c.session == args[0]}}
+	}
+	if sql == loginOwnedObjectsSQL {
+		return fakeRow{values: []any{c.remaining}}
 	}
 	return fakeRow{values: []any{c.current, c.session}}
 }
@@ -147,43 +153,48 @@ func TestAdoptOwnerRole(t *testing.T) {
 	t.Run("login that is the role is left alone", func(t *testing.T) {
 		logger, _ := bufferLogger()
 		conn := &fakeSessionConn{session: role}
-		adoptOwnerRole(context.Background(), conn, role, logger)
+		require.NoError(t, adoptOwnerRole(context.Background(), conn, role, logger))
 		require.False(t, conn.began)
 	})
 
 	t.Run("login different from the role reassigns with a quoted identifier", func(t *testing.T) {
 		logger, buf := bufferLogger()
 		conn := &fakeSessionConn{session: "login"}
-		adoptOwnerRole(context.Background(), conn, role, logger)
+		require.NoError(t, adoptOwnerRole(context.Background(), conn, role, logger))
 		require.Equal(t, append(setup, reassign), conn.execs)
 		require.True(t, conn.committed)
 		require.Contains(t, buf.String(), "reassigned objects owned by the postgres login")
 	})
 
-	t.Run("login owning other databases skips the reassign", func(t *testing.T) {
-		logger, buf := bufferLogger()
-		conn := &fakeSessionConn{session: "login", shared: "database analytics"}
-		adoptOwnerRole(context.Background(), conn, role, logger)
+	t.Run("login owning other databases skips the reassign and fails if objects remain", func(t *testing.T) {
+		logger, _ := bufferLogger()
+		conn := &fakeSessionConn{session: "login", shared: "database analytics", remaining: 2}
+		err := adoptOwnerRole(context.Background(), conn, role, logger)
 		require.Equal(t, setup, conn.execs)
 		require.False(t, conn.committed)
-		require.Contains(t, buf.String(), "level=WARN")
-		require.Contains(t, buf.String(), "database analytics")
+		require.ErrorContains(t, err, "2 objects in this database are still owned by the postgres login")
+		require.ErrorContains(t, err, "database analytics")
 	})
 
-	t.Run("reassign failure is a warning, not an error", func(t *testing.T) {
+	t.Run("a refused reassign that leaves login-owned objects fails startup", func(t *testing.T) {
+		logger, _ := bufferLogger()
+		conn := &fakeSessionConn{session: "login", failOn: reassign, remaining: 3}
+		err := adoptOwnerRole(context.Background(), conn, role, logger)
+		require.False(t, conn.committed)
+		require.ErrorContains(t, err, "permission denied to reassign objects")
+	})
+
+	t.Run("a refused reassign with nothing left owned is only a warning", func(t *testing.T) {
 		logger, buf := bufferLogger()
 		conn := &fakeSessionConn{session: "login", failOn: reassign}
-		adoptOwnerRole(context.Background(), conn, role, logger)
-		require.False(t, conn.committed)
+		require.NoError(t, adoptOwnerRole(context.Background(), conn, role, logger))
 		require.Contains(t, buf.String(), "level=WARN")
-		require.Contains(t, buf.String(), "permission denied to reassign objects")
 	})
 
-	t.Run("comparison failure is a warning", func(t *testing.T) {
-		logger, buf := bufferLogger()
+	t.Run("comparison failure fails startup", func(t *testing.T) {
+		logger, _ := bufferLogger()
 		conn := &fakeSessionConn{queryErr: errors.New("conn closed")}
-		adoptOwnerRole(context.Background(), conn, role, logger)
+		require.ErrorContains(t, adoptOwnerRole(context.Background(), conn, role, logger), "conn closed")
 		require.False(t, conn.began)
-		require.Contains(t, buf.String(), "level=WARN")
 	})
 }

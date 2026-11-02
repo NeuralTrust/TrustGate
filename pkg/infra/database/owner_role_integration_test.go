@@ -87,18 +87,19 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	require.Equal(t, owner, currentUser)
 	require.Equal(t, login, sessionUser)
 
-	adopt := func() {
+	adopt := func() error {
 		pooled, err := conn.Pool.Acquire(ctx)
 		require.NoError(t, err)
 		defer pooled.Release()
-		adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		return adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}
 
 	// A login that owns another database is left alone: REASSIGN OWNED would
 	// hand that database to the owner role too.
 	_, err = adminConn.Pool.Exec(ctx, "CREATE DATABASE "+siblingID+" OWNER "+loginID)
 	require.NoError(t, err)
-	adopt()
+	require.ErrorContains(t, adopt(), "still owned by the postgres login",
+		"a skipped reassign that leaves the table to the login must fail startup")
 	require.Equal(t, login, tableOwner(ctx, t, adminConn, table))
 	var siblingOwner string
 	require.NoError(t, adminConn.Pool.QueryRow(ctx, "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = $1", sibling).Scan(&siblingOwner))
@@ -115,7 +116,8 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	pooled, err := conn.Pool.Acquire(ctx)
 	require.NoError(t, err)
 	started := time.Now()
-	adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.Error(t, adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		"a reassign that times out leaves the table to the login and must fail startup")
 	require.Less(t, time.Since(started), 10*time.Second)
 	var one int
 	require.NoError(t, pooled.QueryRow(ctx, "SELECT 1").Scan(&one), "the session must survive the lock timeout")
@@ -123,7 +125,7 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	require.NoError(t, holder.Rollback(ctx))
 	require.Equal(t, login, tableOwner(ctx, t, adminConn, table))
 
-	adopt()
+	require.NoError(t, adopt())
 	require.Equal(t, owner, tableOwner(ctx, t, adminConn, table))
 
 	_, err = NewConnection(ctx, integrationConfig("not_a_member_"+suffix, login, "login"))
