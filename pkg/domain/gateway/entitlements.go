@@ -38,18 +38,20 @@ type Entitlements struct {
 	MaxInstances  *int   `json:"max_instances,omitempty"`   // gateway instances per tenant; 0 = unlimited
 	RetentionDays *int   `json:"retention_days,omitempty"`
 	// DataPlane says which data plane serves this gateway's traffic: hosted
-	// (empty, the default) means the SaaS proxy, hybrid means a customer-run
-	// data plane. Proxies that are not hybrid data planes refuse to serve
-	// hybrid gateways so payloads never cross the customer boundary through a
-	// hosted proxy (its deployment-level exporters, TrustGuard calls and
-	// playground trace store all live outside that boundary).
+	// (empty, the default) means the shared SaaS proxy, hybrid means a
+	// customer-run data plane, and dedicated means a data plane NeuralTrust runs
+	// for this gateway alone. Hybrid and dedicated gateways travel only in their
+	// own scoped snapshot, so the shared proxy cannot resolve them; for hybrid
+	// that keeps payloads inside the customer boundary (the shared proxy's
+	// exporters, TrustGuard calls and playground trace store all live outside it).
 	DataPlane string `json:"data_plane,omitempty"`
 }
 
 // DataPlane values. Empty is equivalent to DataPlaneHosted.
 const (
-	DataPlaneHosted = "hosted"
-	DataPlaneHybrid = "hybrid"
+	DataPlaneHosted    = "hosted"
+	DataPlaneHybrid    = "hybrid"
+	DataPlaneDedicated = "dedicated"
 )
 
 func DefaultEntitlements() Entitlements {
@@ -108,14 +110,26 @@ func (e Entitlements) IsHybridDataPlane() bool {
 	return strings.EqualFold(strings.TrimSpace(e.DataPlane), DataPlaneHybrid)
 }
 
+// IsOwnDataPlane reports whether this gateway is served only by a data plane
+// of its own, customer-run (hybrid) or NeuralTrust-run (dedicated), and never
+// by the shared hosted proxy.
+func (e Entitlements) IsOwnDataPlane() bool {
+	switch strings.ToLower(strings.TrimSpace(e.DataPlane)) {
+	case DataPlaneHybrid, DataPlaneDedicated:
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidateDataPlane normalizes the data-plane label; empty means hosted.
 func ValidateDataPlane(dataPlane string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(dataPlane))
 	switch normalized {
-	case "", DataPlaneHosted, DataPlaneHybrid:
+	case "", DataPlaneHosted, DataPlaneHybrid, DataPlaneDedicated:
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("gateway: entitlements.data_plane must be %q or %q: %w", DataPlaneHosted, DataPlaneHybrid, commonerrors.ErrValidation)
+		return "", fmt.Errorf("gateway: entitlements.data_plane must be %q, %q or %q: %w", DataPlaneHosted, DataPlaneHybrid, DataPlaneDedicated, commonerrors.ErrValidation)
 	}
 }
 

@@ -245,10 +245,10 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 		}
 		gateways = scoped
 	} else {
-		// The global snapshot feeds hosted data planes; gateways bound to a
-		// customer-run (hybrid) data plane only travel in their own scoped
-		// snapshot, so a hosted plane cannot even resolve them.
-		gateways = withoutHybridGateways(gateways)
+		// The global snapshot feeds the shared hosted data planes; gateways bound
+		// to a data plane of their own (hybrid or dedicated) only travel in their
+		// own scoped snapshot, so a shared plane cannot even resolve them.
+		gateways = withoutOwnDataPlaneGateways(gateways)
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
@@ -313,10 +313,10 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 			skipped++
 			continue
 		}
-		// Hybrid gateways stay out of the global snapshot (hosted data planes
-		// must not serve them) but keep their scoped snapshot, which is what
-		// their own data plane subscribes to.
-		if !gateways[i].ServedByHybridDataPlane() {
+		// Hybrid and dedicated gateways stay out of the global snapshot (shared
+		// hosted data planes must not serve them) but keep their scoped snapshot,
+		// which is what their own data plane subscribes to.
+		if !gateways[i].ServedByOwnDataPlane() {
 			appendGatewayData(&global, gateways[i], *collected[i])
 		}
 		if scope := gateways[i].ID.String(); scope != "" {
@@ -538,12 +538,12 @@ func stampSessionRevocations(data *readmodel.Data, rows []readmodel.SessionRevoc
 	}
 }
 
-// withoutHybridGateways drops gateways whose entitlements bind them to a
-// customer-run data plane.
-func withoutHybridGateways(gateways []gatewaydomain.Gateway) []gatewaydomain.Gateway {
+// withoutOwnDataPlaneGateways drops gateways whose entitlements bind them to a
+// data plane of their own.
+func withoutOwnDataPlaneGateways(gateways []gatewaydomain.Gateway) []gatewaydomain.Gateway {
 	hosted := make([]gatewaydomain.Gateway, 0, len(gateways))
 	for i := range gateways {
-		if gateways[i].ServedByHybridDataPlane() {
+		if gateways[i].ServedByOwnDataPlane() {
 			continue
 		}
 		hosted = append(hosted, gateways[i])
