@@ -389,7 +389,11 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
 
 ### Admin token
 
-The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY`:
+The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY`. A token
+needs either a `tenant_id` or `"platform_admin": true`: one with neither is
+rejected with 401 (`ADMIN_PLATFORM_CLAIM_REQUIRED`, on by default). Set it to
+`false` only for an issuer that still treats a missing `tenant_id` as platform
+admin.
 
 ```bash
 export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
