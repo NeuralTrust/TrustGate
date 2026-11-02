@@ -69,7 +69,7 @@ func fullAdminDeps(t *testing.T) router.AdminRouterDeps {
 	var deps router.AdminRouterDeps
 	v := reflect.ValueOf(&deps).Elem()
 	for i := 0; i < v.NumField(); i++ {
-		if f := v.Field(i); f.Kind() == reflect.Ptr && f.IsNil() {
+		if f := v.Field(i); f.Kind() == reflect.Pointer && f.IsNil() {
 			f.Set(reflect.New(f.Type().Elem()))
 		}
 	}
