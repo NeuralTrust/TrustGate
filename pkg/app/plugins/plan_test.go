@@ -534,11 +534,18 @@ type toolReaderStreamPlugin struct{ *streamPlugin }
 func (toolReaderStreamPlugin) ReadsStreamToolCalls() bool { return true }
 func (toolReaderStreamPlugin) OwnsStreamOptions() bool    { return false }
 
+// boundedToolReaderStreamPlugin reads tool calls and bounds its own payload,
+// as TrustGuard does: the executor never splits a tool input for it.
+type boundedToolReaderStreamPlugin struct{ toolReaderStreamPlugin }
+
+func (boundedToolReaderStreamPlugin) BoundsStreamPayload() bool { return true }
+
 func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T) {
 	pre := []policy.Stage{policy.StagePreResponse}
 	reader := toolReaderStreamPlugin{newStreamPlugin("reader", nil)}
+	bounded := boundedToolReaderStreamPlugin{toolReaderStreamPlugin{newStreamPlugin("bounded", nil)}}
 	owner := newStreamPlugin("guard", nil)
-	reg := newRegistry(t, reader, owner)
+	reg := newRegistry(t, reader, bounded, owner)
 	on := map[string]any{"enabled": true}
 
 	both := policies(t,
@@ -557,8 +564,22 @@ func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T)
 		"a passive participant that reads tool calls still asks the guard to hold them whole")
 	assert.Equal(t, 1<<20, opts.MaxAccumulatedBytes,
 		"the chain-wide accumulation budget remains the largest participant window")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes,
+		"a reader the executor splits does not narrow the tool input the chain can read")
+
+	withBounded := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+		polSpec{slug: "bounded", enabled: true, priority: 3, stages: pre},
+	)
+	withBounded[0].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 1 << 20}
+	withBounded[1].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 4 << 10}
+	withBounded[2].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 64 << 10}
+	ok, opts = NewStagePlan(reg, withBounded, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.Equal(t, 1<<20, opts.MaxAccumulatedBytes)
 	assert.Equal(t, 64<<10, opts.ToolCallMaxAccumulatedBytes,
-		"tool input must fit every participant that reads tool calls")
+		"tool input must fit every reader that is handed it whole")
 
 	readerOff := policies(t,
 		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
