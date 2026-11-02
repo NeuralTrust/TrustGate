@@ -467,6 +467,12 @@ func (p *Plugin) BoundsStreamPayload() bool { return true }
 
 var _ appplugins.StreamPayloadBound = (*Plugin)(nil)
 
+// StreamPayloadLimit is the longest block one evaluate call accepts
+// (appplugins.StreamPayloadLimit), whatever the configured window.
+func (p *Plugin) StreamPayloadLimit() int { return maxStreamWindowBytes }
+
+var _ appplugins.StreamPayloadLimit = (*Plugin)(nil)
+
 // ReadsStreamToolCalls declares that the engine is sent the tool calls of each
 // segment, so a streamed tool call must reach it whole.
 func (p *Plugin) ReadsStreamToolCalls() bool { return true }
