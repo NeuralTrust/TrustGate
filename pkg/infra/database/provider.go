@@ -30,6 +30,6 @@ func NewConnectionProvider(ctx context.Context, cfg *config.DatabaseConfig, logg
 	return conn, nil
 }
 
-func NewMigrationsManagerProvider(conn *Connection, logger *slog.Logger) *MigrationsManager {
-	return NewMigrationsManager(conn.Pool).WithOwnerRole(conn.Role, logger)
+func NewMigrationsManagerProvider(conn *Connection, cfg *config.DatabaseConfig, logger *slog.Logger) *MigrationsManager {
+	return NewMigrationsManager(conn.Pool).WithOwnerRole(cfg.Role, logger)
 }

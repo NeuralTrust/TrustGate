@@ -1202,6 +1202,14 @@ func TestValidate_PostgresRole(t *testing.T) {
 			t.Fatalf("unexpected validation error: %v", err)
 		}
 	})
+	t.Run("rejects none, which PostgreSQL reads as the login", func(t *testing.T) {
+		cfg := postgresValid()
+		cfg.Database.Role = "none"
+		err := cfg.Validate()
+		if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "POSTGRES_ROLE") {
+			t.Fatalf("error must be ErrInvalidConfig naming POSTGRES_ROLE: %v", err)
+		}
+	})
 	t.Run("rejects a name PostgreSQL would truncate", func(t *testing.T) {
 		cfg := postgresValid()
 		cfg.Database.Role = strings.Repeat("r", maxPostgresIdentifierBytes+1)

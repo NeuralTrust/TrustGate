@@ -39,17 +39,20 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	admin := integrationConfig("", envOr("TEST_DB_USER", "postgres"), envOr("TEST_DB_PASSWORD", "postgres"))
 	adminConn, err := NewConnection(ctx, admin)
 	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI must provide Postgres for the owner-role integration test: %v", err)
+		}
 		t.Skipf("no reachable Postgres for the owner-role integration test: %v", err)
 	}
 	t.Cleanup(adminConn.Close)
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
-	owner, login, table := "owner_"+suffix, "login_"+suffix, "owned_"+suffix
-	ownerID, loginID := pgx.Identifier{owner}.Sanitize(), pgx.Identifier{login}.Sanitize()
+	owner, login, table, sibling := "owner_"+suffix, "login_"+suffix, "owned_"+suffix, "sibling_"+suffix
+	ownerID, loginID, siblingID := pgx.Identifier{owner}.Sanitize(), pgx.Identifier{login}.Sanitize(), pgx.Identifier{sibling}.Sanitize()
 	for _, stmt := range []string{
 		"CREATE ROLE " + ownerID + " NOLOGIN",
 		"CREATE ROLE " + loginID + " LOGIN PASSWORD 'login'",
-		"GRANT " + ownerID + " TO " + loginID + " WITH INHERIT TRUE, SET TRUE",
+		"GRANT " + ownerID + " TO " + loginID,
 		"GRANT CREATE ON SCHEMA public TO " + ownerID + ", " + loginID,
 	} {
 		_, err := adminConn.Pool.Exec(ctx, stmt)
@@ -57,6 +60,7 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, stmt := range []string{
+			"DROP DATABASE IF EXISTS " + siblingID,
 			"DROP TABLE IF EXISTS public." + pgx.Identifier{table}.Sanitize(),
 			"DROP OWNED BY " + loginID + ", " + ownerID,
 			"DROP ROLE IF EXISTS " + loginID,
@@ -83,10 +87,43 @@ func TestIntegration_OwnerRole(t *testing.T) {
 	require.Equal(t, owner, currentUser)
 	require.Equal(t, login, sessionUser)
 
+	adopt := func() {
+		pooled, err := conn.Pool.Acquire(ctx)
+		require.NoError(t, err)
+		defer pooled.Release()
+		adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
+
+	// A login that owns another database is left alone: REASSIGN OWNED would
+	// hand that database to the owner role too.
+	_, err = adminConn.Pool.Exec(ctx, "CREATE DATABASE "+siblingID+" OWNER "+loginID)
+	require.NoError(t, err)
+	adopt()
+	require.Equal(t, login, tableOwner(ctx, t, adminConn, table))
+	var siblingOwner string
+	require.NoError(t, adminConn.Pool.QueryRow(ctx, "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = $1", sibling).Scan(&siblingOwner))
+	require.Equal(t, login, siblingOwner)
+	_, err = adminConn.Pool.Exec(ctx, "DROP DATABASE "+siblingID)
+	require.NoError(t, err)
+
+	// A lock held by another session makes the reassign give up after
+	// lock_timeout, and the session (with its advisory lock) stays usable.
+	holder, err := adminConn.Pool.Begin(ctx)
+	require.NoError(t, err)
+	_, err = holder.Exec(ctx, "LOCK TABLE public."+pgx.Identifier{table}.Sanitize()+" IN ACCESS SHARE MODE")
+	require.NoError(t, err)
 	pooled, err := conn.Pool.Acquire(ctx)
 	require.NoError(t, err)
+	started := time.Now()
 	adoptOwnerRole(ctx, pooled, owner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.Less(t, time.Since(started), 10*time.Second)
+	var one int
+	require.NoError(t, pooled.QueryRow(ctx, "SELECT 1").Scan(&one), "the session must survive the lock timeout")
 	pooled.Release()
+	require.NoError(t, holder.Rollback(ctx))
+	require.Equal(t, login, tableOwner(ctx, t, adminConn, table))
+
+	adopt()
 	require.Equal(t, owner, tableOwner(ctx, t, adminConn, table))
 
 	_, err = NewConnection(ctx, integrationConfig("not_a_member_"+suffix, login, "login"))

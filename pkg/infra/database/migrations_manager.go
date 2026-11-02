@@ -91,6 +91,9 @@ func NewMigrationsManager(pool *pgxpool.Pool) *MigrationsManager {
 // migrating (see adoptOwnerRole). It runs under the migrations advisory lock,
 // so replicas starting together do not race. An empty role skips the step.
 func (m *MigrationsManager) WithOwnerRole(role string, logger *slog.Logger) *MigrationsManager {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	m.role = role
 	m.logger = logger
 	return m
@@ -144,7 +147,7 @@ func (m *MigrationsManager) ApplyPending(ctx context.Context) error {
 		conn.Release()
 	}()
 
-	if m.role != "" && m.logger != nil {
+	if m.role != "" {
 		adoptOwnerRole(ctx, conn, m.role, m.logger)
 	}
 	if err := ensureMigrationsTable(ctx, conn); err != nil {

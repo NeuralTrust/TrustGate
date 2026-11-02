@@ -88,6 +88,10 @@ func (t *fakeTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTa
 	return pgconn.CommandTag{}, nil
 }
 
+func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row {
+	return fakeRow{values: []any{t.conn.shared}}
+}
+
 func (t *fakeTx) Commit(context.Context) error {
 	t.conn.committed = true
 	return nil
@@ -99,6 +103,7 @@ type fakeSessionConn struct {
 	current, session string
 	queryErr         error
 	failOn           string
+	shared           string
 	began            bool
 	committed        bool
 	execs            []string
@@ -137,6 +142,7 @@ func TestLogSessionIdentity(t *testing.T) {
 func TestAdoptOwnerRole(t *testing.T) {
 	const role = `agent"gateway`
 	const reassign = `REASSIGN OWNED BY SESSION_USER TO "agent""gateway"`
+	setup := []string{reassignLockTimeout, reassignStatementTimeout, "SET LOCAL ROLE NONE"}
 
 	t.Run("login that is the role is left alone", func(t *testing.T) {
 		logger, _ := bufferLogger()
@@ -149,9 +155,19 @@ func TestAdoptOwnerRole(t *testing.T) {
 		logger, buf := bufferLogger()
 		conn := &fakeSessionConn{session: "login"}
 		adoptOwnerRole(context.Background(), conn, role, logger)
-		require.Equal(t, []string{"SET LOCAL ROLE NONE", reassign}, conn.execs)
+		require.Equal(t, append(setup, reassign), conn.execs)
 		require.True(t, conn.committed)
 		require.Contains(t, buf.String(), "reassigned objects owned by the postgres login")
+	})
+
+	t.Run("login owning other databases skips the reassign", func(t *testing.T) {
+		logger, buf := bufferLogger()
+		conn := &fakeSessionConn{session: "login", shared: "database analytics"}
+		adoptOwnerRole(context.Background(), conn, role, logger)
+		require.Equal(t, setup, conn.execs)
+		require.False(t, conn.committed)
+		require.Contains(t, buf.String(), "level=WARN")
+		require.Contains(t, buf.String(), "database analytics")
 	})
 
 	t.Run("reassign failure is a warning, not an error", func(t *testing.T) {
