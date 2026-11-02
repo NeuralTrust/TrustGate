@@ -18,7 +18,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Bodies (raw class) | Emitted as `trustgate.request.body` / `trustgate.response.body` when an `otlp` exporter is declared under `exporters.raw[]` |
 | Policy chain | `policy_chain[]` on the Event is JSON-encoded in `trustgate.policy_chain` (evidence never included) |
 | Policy scope | `mcp.policy_scope` on the Event (MCP `tools/call` resolved against an upstream only) records how the consumer's scoped policies applied: `evaluated` counts them, `matched[]` lists the ids that entered the plan and `skipped[]` the ones left out with a `reason` (`destination`, `principal`, `except`). Unscoped policies never appear; `policy_chain[]` keeps listing only the plugins that ran. Absent on discovery, prompts, resources, meta-tools and on consumers without scoped plans. Not flattened to an OTLP attribute yet |
-| `is_flagged` | Emitted as `trustgate.is_flagged` (bool) |
+| `is_flagged` | Emitted as `trustgate.is_flagged` (bool). True when a plugin blocked, reported or throttled, failed, or answered 4xx/5xx. A `rate_limited` decision (a plan quota refusal) is not a flag, so count those through `policy_chain[]` |
 | Retention | `trustgate.retention.expires_at` on **both** classes, or on neither. Absent means the gateway has no stamped plan retention — the sink applies its own fallback |
 
 ## HTTP semconv
