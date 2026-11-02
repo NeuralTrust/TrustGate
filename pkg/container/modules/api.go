@@ -256,7 +256,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
-		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayBaseDomain)
+		return gatewayResolver(cfg, finder, resolver.NewGatewayResolver(finder, cfg.Server.GatewayBaseDomain))
 	}); err != nil {
 		return err
 	}
@@ -397,7 +397,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, store appoauth.FlowStore, cfg *config.Config) *oauthhttp.AuthorizeHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
+		gateways := gatewayResolver(cfg, finder, resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...))
 		return oauthhttp.NewAuthorizeHandler(proxy, gateways, store, oauthhttp.FlowCookies{AllowInsecure: cfg.Server.OAuthInsecureCookies})
 	}); err != nil {
 		return err
@@ -408,7 +408,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
+		gateways := gatewayResolver(cfg, finder, resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...))
 		return oauthhttp.NewTokenHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -467,9 +467,9 @@ func provideWhoAmIHandler(
 	apiKeys appauth.APIKeyFinder,
 	limiter appoauth.ConnectAttemptLimiter,
 ) *mcphttp.WhoAmIHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(
+	gateways := gatewayResolver(cfg, finder, resolver.NewSubdomainGatewayResolver(
 		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
-	)
+	))
 	resolveSource := connectSourceResolver(cfg)
 	opts := []mcphttp.WhoAmIOption{
 		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
@@ -495,7 +495,7 @@ func provideEndUserConnectionsHandler(
 	connections appoauth.EndUserConnectionsService,
 	limiter appoauth.ConnectAttemptLimiter,
 ) *oauthhttp.EndUserConnectionsHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
+	gateways := gatewayResolver(cfg, finder, resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...))
 	resolveSource := connectSourceResolver(cfg)
 	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
 }
@@ -535,6 +535,15 @@ func providePersonalKeyHandler(p personalKeyHandlerParams) *oauthhttp.PersonalKe
 	if p.Pages == nil {
 		return nil
 	}
-	gateways := resolver.NewGatewayResolver(p.Finder, p.Cfg.Server.MCPBaseDomain, p.Cfg.Server.MCPExtraBaseDomains...)
+	gateways := gatewayResolver(p.Cfg, p.Finder, resolver.NewGatewayResolver(p.Finder, p.Cfg.Server.MCPBaseDomain, p.Cfg.Server.MCPExtraBaseDomains...))
 	return oauthhttp.NewPersonalKeyHandler(p.Pages, gateways, oauthhttp.FlowCookies{AllowInsecure: p.Cfg.Server.OAuthInsecureCookies})
+}
+
+// gatewayResolver adds the sole-gateway fallback to base on planes that run for
+// one gateway (SOLE_GATEWAY_FALLBACK).
+func gatewayResolver(cfg *config.Config, finder appgateway.Finder, base resolver.GatewayResolver) resolver.GatewayResolver {
+	if !cfg.Server.SoleGatewayFallback {
+		return base
+	}
+	return resolver.WithSoleGatewayFallback(base, finder)
 }

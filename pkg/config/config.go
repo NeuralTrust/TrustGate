@@ -446,6 +446,10 @@ type ServerConfig struct {
 	// MCPBaseDomain; these only widen what the request router recognises, for
 	// when the same cluster is also reachable under a second domain.
 	MCPExtraBaseDomains []string
+	// SoleGatewayFallback serves the plane's only gateway when a request names
+	// none, by header or by host. For a data plane that runs for one gateway and
+	// answers on a host without the slug. SOLE_GATEWAY_FALLBACK, off by default.
+	SoleGatewayFallback bool
 	// ReservedGatewayDomains are host suffixes no tenant may claim as a
 	// gateway's own domain, on top of the base domains this deployment routes
 	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
@@ -899,6 +903,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		SoleGatewayFallback:            getEnvBool("SOLE_GATEWAY_FALLBACK", false),
 		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
 		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
