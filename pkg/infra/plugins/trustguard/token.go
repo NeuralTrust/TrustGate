@@ -47,12 +47,13 @@ func (p tokenParams) cacheKey() string {
 }
 
 type tokenRequest struct {
-	GrantType    string `json:"grant_type"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Scope        string `json:"scope"`
-	CollectorID  string `json:"collector_id"`
-	GatewayID    string `json:"gateway_id"`
+	GrantType     string `json:"grant_type"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
+	Scope         string `json:"scope"`
+	CollectorID   string `json:"collector_id,omitempty"`
+	IntegrationID string `json:"integration_id,omitempty"`
+	GatewayID     string `json:"gateway_id"`
 }
 
 type tokenResponse struct {
@@ -70,6 +71,9 @@ type tokenManager struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
+	// v3 names the integration as Guard's token endpoint does, integration_id,
+	// where TrustGuard's reads collector_id.
+	v3 bool
 
 	mu    sync.Mutex
 	cache map[string]tokenEntry
@@ -174,14 +178,19 @@ func (m *tokenManager) invalidate(params tokenParams) {
 
 func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntry, error) {
 	tokenURL := strings.TrimRight(params.baseURL, "/") + tokenPath
-	payload, err := json.Marshal(tokenRequest{ // #nosec G117 -- client_secret must be sent in the OAuth2 client-credentials token request body
+	body := tokenRequest{
 		GrantType:    grantType,
 		ClientID:     m.clientID,
 		ClientSecret: m.clientSecret,
 		Scope:        tokenScopePlatform,
-		CollectorID:  params.collectorID,
 		GatewayID:    params.gatewayID,
-	})
+	}
+	if m.v3 {
+		body.IntegrationID = params.collectorID
+	} else {
+		body.CollectorID = params.collectorID
+	}
+	payload, err := json.Marshal(body) // #nosec G117 -- client_secret must be sent in the OAuth2 client-credentials token request body
 	if err != nil {
 		return tokenEntry{}, fmt.Errorf("trustguard: marshal token request: %w", err)
 	}

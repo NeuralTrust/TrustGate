@@ -27,7 +27,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
@@ -598,4 +600,43 @@ func TestPluginRunner_PreResponse_NonSuccessShortCircuitBlocks(t *testing.T) {
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	assert.True(t, IsPolicyBlockedCode(rpcErr.Code))
+}
+
+func TestPluginRunner_ResolvedCall_CarriesMCPServer(t *testing.T) {
+	t.Parallel()
+	custom := mcpRegistry(t, "custom", "https://custom.example.com/mcp")
+	catalog := mcpRegistry(t, "asana", "https://mcp.asana.com/sse")
+	catalog.MCPTarget.Code = "com.asana/mcp"
+	instance := *catalog
+	instance.ID = ids.New[ids.RegistryKind]()
+	instance.InstanceOf = catalog.ID
+
+	cases := []struct {
+		name     string
+		registry *registrydomain.Registry
+		wantID   string
+		wantCode string
+	}{
+		{name: "custom registry", registry: custom, wantID: custom.ID.String()},
+		{name: "catalog registry", registry: catalog, wantID: catalog.ID.String(), wantCode: "com.asana/mcp"},
+		{name: "store instance names its shelf", registry: &instance, wantID: catalog.ID.String(), wantCode: "com.asana/mcp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			exec := pluginmocks.NewExecutor(t)
+			var captured appplugins.StageInput
+			exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+				Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
+				Return(&appplugins.StageOutcome{}, nil).Once()
+			runner := NewPluginRunner(exec, discardLogger())
+
+			call := ToolCall{Exposed: "t", Registry: tc.registry, NativeTool: "t", Arguments: json.RawMessage(testToolArgs)}
+			_, err := runner.PreRequest(context.Background(), routableMCPConsumer(), call)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantID, captured.Request.MCPServerID)
+			assert.Equal(t, tc.wantCode, captured.Request.MCPServerCode)
+			assert.Equal(t, tc.registry.ID.String(), captured.Request.RegistryID)
+		})
+	}
 }

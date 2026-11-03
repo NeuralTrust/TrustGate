@@ -16,7 +16,11 @@ package trustguard
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"strconv"
 	"sync"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 
@@ -72,6 +76,18 @@ var (
 	streamResponses    metric.Int64Counter
 	streamGuardCalls   metric.Int64Histogram
 	streamAddedLatency metric.Int64Histogram
+	v3Evaluates        metric.Int64Counter
+	v3Failures         metric.Int64Counter
+	v3Latency          metric.Int64Histogram
+)
+
+// Outcomes of trustguard_v3_evaluate_total: answered, failed, never sent
+// because Guard has no a2a, or dropped because too many copies were waiting.
+const (
+	v3OutcomeOK      = "ok"
+	v3OutcomeFailed  = "failed"
+	v3OutcomeSkipped = "skipped"
+	v3OutcomeDropped = "dropped"
 )
 
 func initInstruments() {
@@ -110,7 +126,83 @@ func initInstruments() {
 		); err == nil {
 			streamAddedLatency = h
 		}
+		if c, err := meter.Int64Counter(
+			"trustguard_v3_evaluate_total",
+			metric.WithDescription("Evaluations copied to Guard (TrustGuard v3) by gateway and outcome"),
+		); err == nil {
+			v3Evaluates = c
+		}
+		if c, err := meter.Int64Counter(
+			"trustguard_v3_evaluate_failures_total",
+			metric.WithDescription("Guard (TrustGuard v3) evaluate copies that failed, by gateway and reason"),
+		); err == nil {
+			v3Failures = c
+		}
+		if h, err := meter.Int64Histogram(
+			"trustguard_v3_evaluate_latency_ms",
+			metric.WithUnit("ms"),
+			metric.WithDescription("Duration of the Guard (TrustGuard v3) evaluate copy, token included, by gateway and outcome"),
+		); err == nil {
+			v3Latency = h
+		}
 	})
+}
+
+func recordV3Outcome(ctx context.Context, gatewayID, outcome string) {
+	initInstruments()
+	if v3Evaluates == nil {
+		return
+	}
+	v3Evaluates.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("gateway_id", gatewayID),
+		attribute.String("outcome", outcome),
+	))
+}
+
+func recordV3Call(ctx context.Context, gatewayID string, elapsed time.Duration, err error) {
+	outcome := v3OutcomeOK
+	if err != nil {
+		outcome = v3OutcomeFailed
+	}
+	recordV3Outcome(ctx, gatewayID, outcome)
+	if v3Latency != nil {
+		v3Latency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
+			attribute.String("gateway_id", gatewayID),
+			attribute.String("outcome", outcome),
+		))
+	}
+	if err != nil && v3Failures != nil {
+		v3Failures.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("gateway_id", gatewayID),
+			attribute.String("reason", v3FailureReason(err)),
+		))
+	}
+}
+
+// v3FailureReason keeps a 400 apart from every other refusal: it is Guard
+// rejecting the body this plugin built, which is the contract breaking.
+func v3FailureReason(err error) string {
+	var status *v3StatusError
+	var rejected *authRejectedError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return failureReasonTimeout
+	case errors.As(err, &status):
+		switch status.status {
+		case http.StatusBadRequest:
+			return "bad_request"
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return failureReasonUnauthorized
+		case http.StatusTooManyRequests:
+			return "rate_limited"
+		default:
+			return "status_" + strconv.Itoa(status.status)
+		}
+	case errors.As(err, &rejected):
+		return failureReasonUnauthorized
+	default:
+		return failureReasonTransport
+	}
 }
 
 func recordEvaluateFailure(ctx context.Context, reason string) {
