@@ -53,7 +53,7 @@ func NewRequestRecorder(enabled bool, emitter usagedomain.Emitter, outcomes usag
 func (r *requestRecorder) Enabled() bool { return r.enabled }
 
 func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, statusCode int, startTime time.Time) {
-	if !r.enabled || rt == nil {
+	if !r.enabled || rt == nil || rt.IsModelsListing() {
 		return
 	}
 	meta := rt.Metadata()
