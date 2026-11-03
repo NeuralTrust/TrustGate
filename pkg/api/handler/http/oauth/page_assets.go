@@ -93,6 +93,7 @@ code{
   border-radius:var(--radius-md);font-size:.875rem;line-height:1rem;
 }
 .flash svg{flex:none}
+.flash.ok{background:var(--badge-green-bg);color:var(--badge-green);border-color:transparent}
 .toolbar{display:flex;align-items:center;gap:12px;margin:0 0 16px;flex-wrap:wrap}
 .toolbar .input{flex:1;min-width:220px;max-width:360px}
 .count{font-size:.75rem;line-height:1rem;color:var(--fg-muted);margin-left:auto}
@@ -443,7 +444,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 <p class="sub">{{.ServerName}} is outside your access, so asking for it goes to an administrator. Tell them why you need it, in your own words — this is what they read when they decide.</p>
 {{else}}<h1>Configure {{.ServerName}}</h1>
 <p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>{{end}}
-{{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>{{if .Pending}}Sent. An administrator has to approve it; you can return to your application.{{else}}Saved. You can return to your application.{{end}}</div></div>{{end}}
+{{if .Saved}}<div class="flash ok" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>{{if .Pending}}Sent. An administrator has to approve it; you can return to your application.{{else}}Saved. You can return to your application.{{end}}</div></div>{{end}}
 {{if not .Saved}}<form class="connect-form" method="post">
   {{range .Variables}}{{if .Options}}<div class="input choice">
     <select id="{{.Name}}" name="{{.Name}}"{{if and .Required (not .Set)}} required{{end}}>

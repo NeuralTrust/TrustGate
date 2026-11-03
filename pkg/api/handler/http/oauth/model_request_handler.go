@@ -113,7 +113,7 @@ var modelRequestPageTmpl = template.Must(template.New("model-request").Parse(`<!
 <body class="dotted"><div class="card">` + brandHeader + `
 <h1>Request access to {{.Name}} models</h1>
 <p class="sub">Asking for these models goes to an administrator. Tell them why you need them, in your own words — this is what they read when they decide. Once they approve, your personal key reaches the models.</p>
-{{if .Sent}}<div class="flash" role="status">` + modelRequestCheckGlyph + `<div>Sent. An administrator has to approve it; you can return to your application.</div></div>
+{{if .Sent}}<div class="flash ok" role="status">` + modelRequestCheckGlyph + `<div>Sent. An administrator has to approve it; you can return to your application.</div></div>
 {{else if .Notice}}<div class="flash" role="status">` + modelRequestInfoGlyph + `<div>{{.Notice}}</div></div>{{end}}
 {{if not (or .Sent .Closed)}}<form class="connect-form" method="post">
   <div class="input area">
