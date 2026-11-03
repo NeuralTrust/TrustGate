@@ -14,8 +14,16 @@
 
 package channel
 
+import "github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
+
 type Channel string
 
 var (
 	GatewayEventsChannel Channel = "gateway_events"
 )
+
+// GatewayEvents returns GatewayEventsChannel in scope. Pub/Sub channels span
+// every database of a Redis server, so the database number does not separate them.
+func GatewayEvents(scope keyscope.Scope) Channel {
+	return Channel(scope.Key(string(GatewayEventsChannel)))
+}

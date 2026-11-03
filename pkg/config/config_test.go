@@ -465,6 +465,39 @@ func TestValidate_RedisAWSGateRejects(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_RedisKeyScope(t *testing.T) {
+	minimumEnv(t)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Redis.KeyScope != "" {
+		t.Errorf("Redis.KeyScope = %q, want empty by default", cfg.Redis.KeyScope)
+	}
+
+	t.Setenv("REDIS_KEY_SCOPE", " dp-acme ")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Redis.KeyScope != "dp-acme" {
+		t.Errorf("Redis.KeyScope = %q, want %q", cfg.Redis.KeyScope, "dp-acme")
+	}
+}
+
+func TestValidate_RedisKeyScopeRejectsUnsafeValues(t *testing.T) {
+	for _, scope := range []string{"dp{acme}", "dp:acme", "dp-*"} {
+		t.Run(scope, func(t *testing.T) {
+			cfg := redisAWSValid()
+			cfg.Redis.KeyScope = scope
+			err := cfg.Validate()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "REDIS_KEY_SCOPE") {
+				t.Fatalf("error %q must be ErrInvalidConfig naming REDIS_KEY_SCOPE", err)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_RedisGCPLogin(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("REDIS_LOGIN", " GcP ")

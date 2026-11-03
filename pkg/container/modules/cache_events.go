@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -31,8 +33,8 @@ import (
 // the mutating application services and a listener plus subscribers that drop
 // stale in-process cache entries across every process.
 func CacheEvents(c *container.Container) error {
-	if err := c.Provide(func(client cache.Client) cache.EventPublisher {
-		return cache.NewRedisEventPublisher(client, channel.GatewayEventsChannel)
+	if err := c.Provide(func(cfg *config.Config, client cache.Client) cache.EventPublisher {
+		return cache.NewRedisEventPublisher(client, channel.GatewayEvents(keyscope.Scope(cfg.Redis.KeyScope)))
 	}); err != nil {
 		return err
 	}
@@ -51,6 +53,7 @@ func CacheEvents(c *container.Container) error {
 type CacheEventListenerParams struct {
 	dig.In
 	Logger           *slog.Logger
+	Config           *config.Config
 	Listener         cache.EventListener
 	GatewayDataSub   cache.EventSubscriber[event.InvalidateGatewayDataEvent]
 	RegistryCacheSub cache.EventSubscriber[event.InvalidateRegistryCacheEvent]
@@ -67,6 +70,7 @@ func StartCacheEventListener(ctx context.Context, p CacheEventListenerParams) {
 		cache.RegisterEventSubscriber(p.Listener, p.SnapshotDirtySub)
 	}
 
-	go p.Listener.Listen(ctx, channel.GatewayEventsChannel)
-	p.Logger.Info(bootlog.CacheListenerStarted, slog.String("channel", string(channel.GatewayEventsChannel)))
+	ch := channel.GatewayEvents(keyscope.Scope(p.Config.Redis.KeyScope))
+	go p.Listener.Listen(ctx, ch)
+	p.Logger.Info(bootlog.CacheListenerStarted, slog.String("channel", string(ch)))
 }
