@@ -534,22 +534,80 @@ type toolReaderStreamPlugin struct{ *streamPlugin }
 func (toolReaderStreamPlugin) ReadsStreamToolCalls() bool { return true }
 func (toolReaderStreamPlugin) OwnsStreamOptions() bool    { return false }
 
+// boundedToolReaderStreamPlugin reads tool calls and bounds its own payload,
+// as TrustGuard does: the executor never splits a tool input for it.
+type boundedToolReaderStreamPlugin struct {
+	toolReaderStreamPlugin
+	limit int
+}
+
+func (boundedToolReaderStreamPlugin) BoundsStreamPayload() bool { return true }
+func (p boundedToolReaderStreamPlugin) StreamPayloadLimit() int { return p.limit }
+
 func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T) {
 	pre := []policy.Stage{policy.StagePreResponse}
 	reader := toolReaderStreamPlugin{newStreamPlugin("reader", nil)}
+	bounded := boundedToolReaderStreamPlugin{toolReaderStreamPlugin: toolReaderStreamPlugin{newStreamPlugin("bounded", nil)}}
+	limited := boundedToolReaderStreamPlugin{toolReaderStreamPlugin: toolReaderStreamPlugin{newStreamPlugin("limited", nil)}, limit: 64 << 10}
 	owner := newStreamPlugin("guard", nil)
-	reg := newRegistry(t, reader, owner)
+	reg := newRegistry(t, reader, bounded, limited, owner)
 	on := map[string]any{"enabled": true}
 
 	both := policies(t,
 		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
 		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
 	)
-	both[0].Settings, both[1].Settings = on, on
+	both[0].Settings = map[string]any{
+		"enabled": true, "max_accumulated_bytes": 1 << 20,
+	}
+	both[1].Settings = map[string]any{
+		"enabled": true, "max_accumulated_bytes": 64 << 10,
+	}
 	ok, opts := NewStagePlan(reg, both, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.True(t, opts.ReadsToolCalls,
 		"a passive participant that reads tool calls still asks the guard to hold them whole")
+	assert.Equal(t, 1<<20, opts.MaxAccumulatedBytes,
+		"the chain-wide accumulation budget remains the largest participant window")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes,
+		"a reader the executor splits does not narrow the tool input the chain can read")
+
+	withBounded := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "reader", enabled: true, priority: 2, stages: pre},
+		polSpec{slug: "bounded", enabled: true, priority: 3, stages: pre},
+	)
+	withBounded[0].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 1 << 20}
+	withBounded[1].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 4 << 10}
+	withBounded[2].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 64 << 10}
+	ok, opts = NewStagePlan(reg, withBounded, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.Equal(t, 1<<20, opts.MaxAccumulatedBytes)
+	assert.Equal(t, 64<<10, opts.ToolCallMaxAccumulatedBytes,
+		"tool input must fit every reader that is handed it whole")
+
+	observed := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "bounded", enabled: true, priority: 2, stages: pre, mode: policy.ModeObserve},
+	)
+	observed[0].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 1 << 20}
+	observed[1].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 64 << 10}
+	ok, opts = NewStagePlan(reg, observed, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.True(t, opts.ReadsToolCalls)
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes,
+		"an observing reader's refusal does not cut the stream, so the rest of the chain still reads the input")
+
+	limitedWindow := policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
+		polSpec{slug: "limited", enabled: true, priority: 2, stages: pre},
+	)
+	limitedWindow[0].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 1 << 20}
+	limitedWindow[1].Settings = map[string]any{"enabled": true, "max_accumulated_bytes": 8 << 10}
+	ok, opts = NewStagePlan(reg, limitedWindow, nil).StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.Equal(t, 64<<10, opts.ToolCallMaxAccumulatedBytes,
+		"the payload limit, not the configured text window, bounds the tool input it accepts")
 
 	readerOff := policies(t,
 		polSpec{slug: "guard", enabled: true, priority: 1, stages: pre},
@@ -559,11 +617,13 @@ func TestStagePlan_StreamPlan_ReadsToolCallsWhenAnyParticipantDoes(t *testing.T)
 	ok, opts = NewStagePlan(reg, readerOff, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.False(t, opts.ReadsToolCalls, "a reader that does not take part in the stream holds nothing")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes)
 
 	ownerOnly := streamPolicies(t, on, polSpec{slug: "guard", enabled: true, priority: 1, stages: pre})
 	ok, opts = NewStagePlan(reg, ownerOnly, nil).StreamPlan(policy.StagePreResponse)
 	assert.True(t, ok)
 	assert.False(t, opts.ReadsToolCalls, "a chain that reads text alone streams tool deltas as they arrive")
+	assert.Zero(t, opts.ToolCallMaxAccumulatedBytes)
 }
 
 // passiveStreamPlugin is a local rewriter: a participant that must not decide

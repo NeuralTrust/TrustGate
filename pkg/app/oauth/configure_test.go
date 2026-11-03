@@ -54,18 +54,13 @@ func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installa
 	return nil
 }
 
-func (f *fakeInstalls) Find(ctx context.Context, gw ids.GatewayID, sub, code string) (*installationdomain.Installation, error) {
+func (f *fakeInstalls) Find(ctx context.Context, gw ids.GatewayID, sub, code string, registryID ...ids.RegistryID) (*installationdomain.Installation, error) {
 	rows, _ := f.ListByPrincipalAndCode(ctx, gw, sub, code)
-	var pick *installationdomain.Installation
-	for _, in := range rows {
-		if pick == nil || (!pick.IsActive() && in.IsActive()) {
-			pick = in
-		}
-	}
-	if pick == nil {
+	picked := installationdomain.SelectInstallation(rows, installationdomain.FindRegistryID(registryID...))
+	if picked == nil {
 		return nil, installationdomain.ErrNotFound
 	}
-	return pick, nil
+	return picked, nil
 }
 
 func (f *fakeInstalls) ListByPrincipal(_ context.Context, gw ids.GatewayID, sub string) ([]*installationdomain.Installation, error) {

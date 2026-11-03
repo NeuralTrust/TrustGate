@@ -144,6 +144,8 @@ func TestDecodeToken_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, claims)
 	assert.NotNil(t, claims.IssuedAt)
+	assert.Empty(t, claims.TenantID)
+	assert.True(t, claims.PlatformAdmin)
 }
 
 func TestDecodeToken_Invalid(t *testing.T) {

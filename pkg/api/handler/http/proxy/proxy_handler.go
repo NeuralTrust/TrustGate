@@ -61,6 +61,10 @@ var errMethodNotAllowed = errors.New("method is not allowed for this route")
 // consumer: its owner has no model access on the gateway.
 var errNoModelAccess = errors.New("this key has no model access; ask your admin to grant it")
 
+// callerCredentialMessage answers a passthrough call whose Authorization
+// carried a provider key the gateway could not use. It never echoes the key.
+const callerCredentialMessage = "the provider credential in Authorization was rejected; send a valid access token or service-account key"
+
 const (
 	errCodePluginRejected        = "plugin_rejected"
 	errCodeUnauthenticated       = "unauthenticated"
@@ -77,6 +81,7 @@ const (
 	errCodeNoModelAccess         = "no_model_access"
 	errCodeModelNotSupported     = "model_not_supported"
 	errCodeProviderCredential    = "provider_credential_error"
+	errCodeCallerCredential      = "invalid_provider_credential"
 	errCodeBackendError          = "backend_error"
 	errCodeUpstreamTimeout       = adapter.UpstreamTimeoutCode
 	errCodeRateLimitUnavailable  = "rate_limit_unavailable"
@@ -854,6 +859,11 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: modelDeniedMessage(err)}
+	case errors.Is(err, registrydomain.ErrCallerCredentialRejected):
+		return fiber.StatusUnauthorized, httpio.ErrorBody{
+			Error:   errCodeCallerCredential,
+			Message: callerCredentialMessage,
+		}
 	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
 		return fiber.StatusBadGateway, httpio.ErrorBody{
 			Error:   errCodeProviderCredential,

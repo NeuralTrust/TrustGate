@@ -454,15 +454,31 @@ definitions:
     properties:
       applied_version:
         type: string
+      deployment_type:
+        type: string
       first_seen:
         type: string
       instance_id:
         type: string
+      last_heartbeat:
+        description: LastHeartbeat is null for a data plane that predates heartbeats.
+        type: string
       last_seen:
+        type: string
+      region:
         type: string
       scope:
         type: string
       state:
+        type: string
+      trustguard_base_url:
+        description: |-
+          TrustGuardBaseURL and TrustGuardClientID name the TrustGuard the
+          gateway's guardrail policies call, as its data plane reports it.
+        type: string
+      trustguard_client_id:
+        type: string
+      version:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse:
@@ -2136,6 +2152,10 @@ definitions:
     properties:
       code:
         type: string
+      groups:
+        items:
+          type: string
+        type: array
       instance_id:
         description: |-
           InstanceID pins the link to one installed instance of Code, for a server
@@ -3032,11 +3052,12 @@ definitions:
       data_plane:
         description: |-
           DataPlane says which data plane serves this gateway's traffic: hosted
-          (empty, the default) means the SaaS proxy, hybrid means a customer-run
-          data plane. Proxies that are not hybrid data planes refuse to serve
-          hybrid gateways so payloads never cross the customer boundary through a
-          hosted proxy (its deployment-level exporters, TrustGuard calls and
-          playground trace store all live outside that boundary).
+          (empty, the default) means the shared SaaS proxy, hybrid means a
+          customer-run data plane, and dedicated means a data plane NeuralTrust runs
+          for this gateway alone. Hybrid and dedicated gateways travel only in their
+          own scoped snapshot, so the shared proxy cannot resolve them; for hybrid
+          that keeps payloads inside the customer boundary (the shared proxy's
+          exporters, TrustGuard calls and playground trace store all live outside it).
         type: string
       max_instances:
         description: gateway instances per tenant; 0 = unlimited
@@ -5792,10 +5813,10 @@ paths:
     get:
       description: 'Returns the monthly budget of every directory group that has one
         on the gateway. A group budget holds the group keys (personal keys with a
-        group_id) of the group on /store/v1: monthly_limit_usd caps the group''s total,
-        member_monthly_limit_usd each member''s own spend through their key for the
-        group, and member_overrides replaces that per-member limit for the members
-        it names. A null limit is no limit.'
+        group_id) of the group: monthly_limit_usd caps the group''s total, member_monthly_limit_usd
+        each member''s own spend through their key for the group, and member_overrides
+        replaces that per-member limit for the members it names. A null limit is no
+        limit.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -7914,12 +7935,12 @@ paths:
     delete:
       description: 'Deletes the default identity provider''s refresh records for this
         gateway, the caller''s tenant and the subject in the path, and removes their
-        owner-index entries. It records the revocation durably and in Redis, so a
-        refresh record that was not in the index cannot be rotated into a new session,
-        including on a data plane that keeps its own session store. The durable record
-        is what the config snapshot carries; a data plane built before that snapshot
-        field ignores the field and keeps serving until it is upgraded. A successful
-        call answers 200 with recorded true, including when this process deleted nothing:
+        owner-index entries. It records the revocation durably, so a refresh record
+        that was not in the index cannot be rotated into a new session, including
+        on a data plane that keeps its own session store. The durable record is what
+        the config snapshot carries; a data plane built before that snapshot field
+        ignores the field and keeps serving until it is upgraded. A successful call
+        answers 200 with recorded true, including when this process deleted nothing:
         {"revoked": 0, "recorded": true}. revoked counts records deleted here. A failure
         to write the durable record answers 500 and does not delete records. Records
         for another org, gateway, subject or identity provider are left in place,

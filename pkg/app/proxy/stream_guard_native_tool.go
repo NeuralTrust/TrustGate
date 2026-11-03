@@ -43,7 +43,7 @@ func (g *streamGuard) trackTool(ev *streamEvent) {
 }
 
 func (g *streamGuard) holdsTool() bool {
-	return (g.native || g.chatTools()) && g.toolOpen && g.now().Sub(g.toolSince) < g.cfg.nativeToolHold
+	return (g.native || g.nativeSSETools || g.chatTools()) && g.toolOpen && g.now().Sub(g.toolSince) < g.cfg.nativeToolHold
 }
 
 func (g *streamGuard) toolBlocks() []nativeToolBlock {
@@ -80,6 +80,9 @@ type toolVerdict struct {
 	outcome *appplugins.SegmentOutcome
 	stop    bool
 	failed  bool
+	// capped says the call was refused unread under fail_closed, so the cut
+	// is resolved as chatToolCapped resolves it.
+	capped bool
 }
 
 func (g *streamGuard) toolSegment(input string) appplugins.StreamSegment {
@@ -112,7 +115,7 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		var raw strings.Builder
-		for _, di := range b.deltas {
+		for _, di := range append([]int{b.events[0]}, b.deltas...) {
 			for _, tc := range g.produced[di].toolCalls {
 				raw.WriteString(tc.ArgumentsDelta)
 			}
@@ -122,6 +125,30 @@ func (g *streamGuard) inspectTools(ctx context.Context) toolVerdict {
 			continue
 		}
 		view, normalised := adapter.NormalizeToolInput(raw.String())
+		// toolSegment sends the view as its own text and does not pass through
+		// budget. An entry that bounds its own payload is handed it whole, so a
+		// view past its window is refused (trustguard: stream_block_too_large)
+		// and an enforcing chain turns that refusal into a block. Resolve it
+		// as a hold that outgrew the ceiling does: fail_closed stops the
+		// stream, anything else releases the call.
+		if len(view) > g.cfg.toolCallMaxAccumBytes {
+			if g.cfg.onError == streamFailClosed {
+				if g.logger != nil {
+					g.logger.Warn("tool call outgrew the hold; refusing it",
+						slog.String("cause", "size"),
+						slog.String("format", string(g.source)))
+				}
+				return toolVerdict{stop: true, capped: true}
+			}
+			g.degrade(degradeToolInputUninspected)
+			if !g.toolUninspectedLogged && g.logger != nil {
+				g.toolUninspectedLogged = true
+				g.logger.Warn("tool call released without inspecting its input",
+					slog.String("cause", "size"),
+					slog.String("format", string(g.source)))
+			}
+			continue
+		}
 		outcome, err := g.call(ctx, g.toolSegment(view))
 		if err != nil {
 			g.failures++
@@ -274,6 +301,11 @@ func (g *streamGuard) flagUninspectedTools() {
 func (g *streamGuard) applyToolMask(b nativeToolBlock, view, masked string, normalised bool) adapter.MaskCause {
 	if !normalised {
 		return adapter.MaskCauseToolInput
+	}
+	for _, tc := range g.produced[b.events[0]].toolCalls {
+		if tc.ArgumentsDelta != "" {
+			return adapter.MaskCauseToolFrames
+		}
 	}
 	input, ok := adapter.MaskToolInput(view, masked)
 	if !ok {

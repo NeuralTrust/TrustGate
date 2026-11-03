@@ -194,8 +194,8 @@ func TestRateLimitErrorForwardsHeadersAndBody(t *testing.T) {
 	if got := pe.Headers["Retry-After"]; len(got) != 1 || got[0] != "7" {
 		t.Fatalf("Retry-After = %v", got)
 	}
-	if string(pe.Body) != `{"error":"rate limit exceeded","reason":"quota"}` {
-		t.Fatalf("body = %s", pe.Body)
+	if string(pe.Body) != `{"error":"rate limit exceeded","reason":"quota","source":"trustguard"}` {
+		t.Fatalf("body = %s, want TrustGuard's body marked with its source", pe.Body)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestRateLimitErrorEmptyBodyFallback(t *testing.T) {
 	if pe.StatusCode != 429 {
 		t.Fatalf("status = %d, want 429", pe.StatusCode)
 	}
-	want := `{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`
+	want := `{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded.","source":"trustguard"}`
 	if string(pe.Body) != want {
 		t.Fatalf("body = %s, want %s", pe.Body, want)
 	}

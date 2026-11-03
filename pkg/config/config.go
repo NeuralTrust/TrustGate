@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
@@ -176,12 +177,15 @@ const (
 	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
 	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
 	minConfigSyncTokenRevocationRefresh           = time.Second
+	defaultConfigSyncHeartbeatInterval            = 30 * time.Second
+	minConfigSyncHeartbeatInterval                = time.Second
+	defaultInstanceDeploymentType                 = InstanceDeploymentSelfHosted
 
 	configSyncKeyBytes = 32
 
 	defaultAdminM2MAudience           = "trustgate-admin"
 	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
-	defaultAdminPlatformClaimRequired = false
+	defaultAdminPlatformClaimRequired = true
 	maxAdminTokenMaxTTL               = 24 * time.Hour
 )
 
@@ -339,7 +343,9 @@ type AdminM2MConfig struct {
 	MaxTokenTTL time.Duration
 	// PlatformClaimRequired turns a missing tenant claim from an implicit
 	// platform-admin grant into a rejection unless `platform_admin` is set.
-	// Off by default so TrustGate can ship before the issuer stamps the claim.
+	// On by default: a console token needs tenant_id or an explicit
+	// platform_admin claim. Set ADMIN_PLATFORM_CLAIM_REQUIRED=false only for
+	// an issuer that still treats a missing tenant_id as platform admin.
 	PlatformClaimRequired bool
 }
 
@@ -360,6 +366,12 @@ const (
 	ConfigSyncTokenRevocationOff     = "off"
 	ConfigSyncTokenRevocationShadow  = "shadow"
 	ConfigSyncTokenRevocationEnforce = "enforce"
+)
+
+// Instance deployment types a data plane reports in its heartbeat.
+const (
+	InstanceDeploymentSaaS       = dataplane.DeploymentSaaS
+	InstanceDeploymentSelfHosted = dataplane.DeploymentSelfHosted
 )
 
 type ConfigSyncConfig struct {
@@ -407,6 +419,16 @@ type ConfigSyncConfig struct {
 	// TokenRevocationRefreshInterval is how often each control replica reloads
 	// the stored revocations.
 	TokenRevocationRefreshInterval time.Duration
+	// HeartbeatInterval is how often a data plane sends its heartbeat on the
+	// Sync stream, and how often the control plane refreshes last_seen for the
+	// streams it holds.
+	HeartbeatInterval time.Duration
+	// Region is INSTANCE_REGION, the region a data plane reports in its
+	// heartbeat. Informational: nothing routes on it.
+	Region string
+	// DeploymentType is INSTANCE_DEPLOYMENT_TYPE, saas or self-hosted, as a data
+	// plane reports it in its heartbeat.
+	DeploymentType string
 }
 
 type ServerConfig struct {
@@ -447,7 +469,7 @@ type ServerConfig struct {
 	MCPDefaultIdP      MCPDefaultIdPConfig
 	GoogleWorkspaceMCP GoogleWorkspaceMCPConfig
 	// ServeHybridGateways marks a proxy deployment as allowed to serve gateways
-	// whose entitlements say data_plane=hybrid. Defaults to true only on
+	// whose entitlements say data_plane=hybrid or dedicated. Defaults to true only on
 	// config-sync data planes (the customer-run deployment those gateways belong
 	// to); the hosted SaaS proxy refuses them so payloads never leave the
 	// customer boundary through it. PROXY_SERVE_HYBRID_GATEWAYS overrides for
@@ -550,6 +572,11 @@ type DatabaseConfig struct {
 	MaxConnIdleTime   time.Duration
 	HealthCheckPeriod time.Duration
 	ConnectTimeout    time.Duration
+	// Role is the PostgreSQL role every session on the service database runs
+	// as (the "role" startup parameter), in the main pool and in the telemetry
+	// fallback pool, so the objects they create belong to it rather than to the
+	// login principal. Empty keeps the login's own role.
+	Role string
 }
 
 type RedisConfig struct {
@@ -739,9 +766,16 @@ type TrustGuardConfig struct {
 }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
+// When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
+// hold its OAuth client, or JWTError says why it was rejected.
 type FirewallComplexityConfig struct {
 	BaseURL       string
+	BaseURLSource string
 	SecretKey     string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTSet        bool
+	JWTError      error
+	ClientID      string
+	ClientSecret  string // #nosec G117 -- config struct field, not a hardcoded credential
 	Timeout       time.Duration
 	ModelRevision string
 }
@@ -913,6 +947,7 @@ func getDatabaseConfig() DatabaseConfig {
 
 	return DatabaseConfig{
 		Login:             login,
+		Role:              strings.TrimSpace(os.Getenv("POSTGRES_ROLE")),
 		Host:              getEnv("DB_HOST", defaultDBHost),
 		Port:              getEnvInt("DB_PORT", defaultDBPort),
 		User:              getEnv("DB_USER", defaultDBUser),
@@ -1263,12 +1298,16 @@ func getTrustGuardConfig() TrustGuardConfig {
 }
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
-	return FirewallComplexityConfig{
-		BaseURL:       getEnv("FIREWALL_BASE_URL", ""),
+	cfg := FirewallComplexityConfig{
+		BaseURL:       getEnv(firewallBaseURLEnv, ""),
 		SecretKey:     getEnv("FIREWALL_SECRET_KEY", ""),
 		Timeout:       defaultFirewallComplexityTimeout,
 		ModelRevision: getEnv("FIREWALL_COMPLEXITY_MODEL_REVISION", defaultFirewallComplexityModelRevision),
 	}
+	if raw := unquoteEnv(getEnv(firewallJWTEnv, "")); raw != "" {
+		cfg.applyFirewallJWT(raw)
+	}
+	return cfg
 }
 
 func getOpenAIModerationConfig() OpenAIModerationConfig {
@@ -1327,6 +1366,10 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
 			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
 		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
+		HeartbeatInterval:              getEnvDuration("CONFIG_SYNC_HEARTBEAT_INTERVAL", defaultConfigSyncHeartbeatInterval),
+		Region:                         strings.TrimSpace(getEnv("INSTANCE_REGION", "")),
+		DeploymentType: strings.ToLower(strings.TrimSpace(
+			getEnv("INSTANCE_DEPLOYMENT_TYPE", defaultInstanceDeploymentType))),
 	}
 }
 
@@ -1585,6 +1628,12 @@ func (c *Config) Validate() error {
 		if c.Database.Name == "" {
 			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
 		}
+		if len(c.Database.Role) > maxPostgresIdentifierBytes {
+			return fmt.Errorf("%w: POSTGRES_ROLE must be at most %d bytes", errors.ErrInvalidConfig, maxPostgresIdentifierBytes)
+		}
+		if c.Database.Role == postgresRoleNone {
+			return fmt.Errorf("%w: POSTGRES_ROLE must name a role; %q keeps the login's own role, leave it empty instead", errors.ErrInvalidConfig, postgresRoleNone)
+		}
 		if c.Database.Login.UsesTokenAuth() {
 			c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
 			if c.Database.SSLMode != "require" && c.Database.SSLMode != "verify-ca" && c.Database.SSLMode != "verify-full" {
@@ -1628,6 +1677,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.ConfigSync.validateTokenRevocation(); err != nil {
+		return err
+	}
+	if err := c.ConfigSync.validateHeartbeat(); err != nil {
 		return err
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
@@ -1707,6 +1759,26 @@ func (cs ConfigSyncConfig) RevocationRefreshInterval() time.Duration {
 		return defaultConfigSyncTokenRevocationRefresh
 	}
 	return cs.TokenRevocationRefreshInterval
+}
+
+// HeartbeatEvery returns the heartbeat interval, the default when unset.
+func (cs ConfigSyncConfig) HeartbeatEvery() time.Duration {
+	if cs.HeartbeatInterval == 0 {
+		return defaultConfigSyncHeartbeatInterval
+	}
+	return cs.HeartbeatInterval
+}
+
+func (cs ConfigSyncConfig) validateHeartbeat() error {
+	if cs.HeartbeatEvery() < minConfigSyncHeartbeatInterval {
+		return fmt.Errorf("%w: CONFIG_SYNC_HEARTBEAT_INTERVAL must be at least %s", errors.ErrInvalidConfig, minConfigSyncHeartbeatInterval)
+	}
+	switch cs.DeploymentType {
+	case "", InstanceDeploymentSaaS, InstanceDeploymentSelfHosted:
+		return nil
+	default:
+		return fmt.Errorf("%w: INSTANCE_DEPLOYMENT_TYPE must be %q or %q", errors.ErrInvalidConfig, InstanceDeploymentSaaS, InstanceDeploymentSelfHosted)
+	}
 }
 
 func (cs ConfigSyncConfig) validateTokenRevocation() error {

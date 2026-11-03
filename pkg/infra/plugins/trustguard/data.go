@@ -175,6 +175,9 @@ type guardData struct {
 	// are omitempty, so events that did inspect are unchanged.
 	Skipped    bool   `json:"skipped,omitempty"`
 	SkipReason string `json:"skip_reason,omitempty"`
+	// RateLimitReason is the TrustGuard plan limit that refused the call
+	// (burst or quota), set with decision rate_limited.
+	RateLimitReason string `json:"rate_limit_reason,omitempty"`
 	// AttachmentsNotInspected counts the attachments of the request that were
 	// not sent because TrustGuard cannot resolve them (a file_id, a gs:// URI,
 	// data that is not base64). The text beside them was inspected; the

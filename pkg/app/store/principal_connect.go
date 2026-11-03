@@ -22,7 +22,10 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // ServerTicketMinter mints a connect ticket scoped to one catalog server for one
@@ -41,6 +44,7 @@ type PrincipalConnectRequest struct {
 	GatewayID    ids.GatewayID
 	PrincipalSub string
 	Code         string
+	Groups       []string
 	RegistryID   ids.RegistryID
 	// ResumeURL is where the connect page sends the user back to once the
 	// account is connected: the Portal screen they opened it from. Empty
@@ -69,14 +73,26 @@ type PrincipalConnectLinker interface {
 }
 
 type principalConnectLinker struct {
-	tickets ServerTicketMinter
+	tickets    ServerTicketMinter
+	registries RegistryLister
+	grants     storeaccessdomain.Reader
+	modes      ModeResolver
+	gateways   GatewayFinder
 }
 
-func NewPrincipalConnectLinker(tickets ServerTicketMinter) (PrincipalConnectLinker, error) {
-	if tickets == nil {
+func NewPrincipalConnectLinker(
+	tickets ServerTicketMinter,
+	registries RegistryLister,
+	grants storeaccessdomain.Reader,
+	modes ModeResolver,
+	gateways GatewayFinder,
+) (PrincipalConnectLinker, error) {
+	if tickets == nil || registries == nil {
 		return nil, ErrUnavailable
 	}
-	return &principalConnectLinker{tickets: tickets}, nil
+	return &principalConnectLinker{
+		tickets: tickets, registries: registries, grants: grants, modes: modes, gateways: gateways,
+	}, nil
 }
 
 // LinkFor mints the ticket against the Store's own consumer path: the Store is
@@ -94,10 +110,63 @@ func (l *principalConnectLinker) LinkFor(
 	if principalSub == "" || code == "" {
 		return nil, fmt.Errorf("store: principal and code are required: %w", commonerrors.ErrValidation)
 	}
+	groups := identity.GroupsFromClaim(in.Groups)
+	fallback := gatewaydomain.StoreModeCurated
+	if l.gateways != nil {
+		gateway, err := l.gateways.FindByID(ctx, in.GatewayID)
+		if err != nil {
+			return nil, fmt.Errorf("store: load gateway: %w", err)
+		}
+		if gateway != nil {
+			fallback = gateway.StoreMode()
+		}
+	}
+	mode := ResolveMode(ctx, l.modes, ModeQuery{
+		GatewayID: in.GatewayID,
+		Subject:   principalSub,
+		Groups:    groups,
+		Fallback:  fallback,
+	})
+	if mode == gatewaydomain.StoreModeNone {
+		return nil, ErrStoreClosed
+	}
+	registries, err := findRegistriesByCode(ctx, l.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	var grants *storeaccessdomain.Set
+	if mode != gatewaydomain.StoreModeOpen {
+		grants, err = loadGrantSet(ctx, l.grants, in.GatewayID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	consumerPath := appconsumer.MCPPath(consumerdomain.StoreSlug)
-	instanceID := ""
-	if !in.RegistryID.IsNil() {
-		instanceID = in.RegistryID.String()
+	var instanceID string
+	for _, registry := range registries {
+		if registry == nil || (!in.RegistryID.IsNil() && registry.ID != in.RegistryID) {
+			continue
+		}
+		if !registry.Enabled {
+			if !in.RegistryID.IsNil() {
+				return nil, ErrServerDisabled
+			}
+			continue
+		}
+		if mode != gatewaydomain.StoreModeOpen && !grants.InstanceAllows(code, registry.ID, groups, principalSub) {
+			if !in.RegistryID.IsNil() {
+				return nil, fmt.Errorf("store: instance is not granted to this principal: %w", commonerrors.ErrForbidden)
+			}
+			continue
+		}
+		instanceID = registry.ID.String()
+		break
+	}
+	if instanceID == "" {
+		if !in.RegistryID.IsNil() {
+			return nil, ErrUnknownInstance
+		}
+		return nil, fmt.Errorf("store: no enabled instance is granted to this principal: %w", commonerrors.ErrForbidden)
 	}
 	ticket, err := l.tickets.CreateResumableServerTicket(
 		ctx, in.GatewayID, principalSub, consumerPath, code, instanceID, strings.TrimSpace(in.ResumeURL),

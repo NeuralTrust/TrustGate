@@ -123,8 +123,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		identity = configsyncrevocation.Identity{Scope: scope}
 	}
 	conn := s.hub.register(identity, hello.GetInstanceId())
-	defer s.hub.unregister(conn)
-	defer s.hub.markDisconnected(conn)
+	defer s.hub.teardown(conn)
 	// The interceptor admitted this token before the stream registered. A
 	// revocation loaded in between is caught here: the refresher swaps the
 	// snapshot before it walks the hub, so a stream that registered after
@@ -163,6 +162,9 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 			}
 			if ack := msg.GetAck(); ack != nil {
 				s.hub.markAck(conn, ack.GetAppliedVersion())
+			}
+			if hb := msg.GetHeartbeat(); hb != nil {
+				s.hub.markHeartbeat(conn, heartbeatFromProto(hb))
 			}
 		}
 	}()

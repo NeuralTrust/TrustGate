@@ -116,6 +116,10 @@ const (
 	decisionAllowed     = "allowed"
 	decisionFailedOpen  = "failed_open"
 	decisionTransformed = "transformed"
+	// decisionRateLimited is TrustGuard refusing the call because the tenant
+	// reached its TrustGuard plan limit. It is not a verdict on the content, so
+	// it is not recorded as blocked.
+	decisionRateLimited = "rate_limited"
 	// Statuses a successful TrustGuard evaluate puts on GuardResponse.Status.
 	// allow, report, transform, ask, block and skip are switched on here.
 	// skip continues the request and is recorded allowed. error is a status
@@ -382,7 +386,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked, AttachmentsNotInspected: tgt.attachmentsOmitted, AttachmentsNotFetched: tgt.attachmentsNotFetched})
+			recordGuardOutcome(in.Event, guardData{
+				Direction:               direction,
+				Decision:                decisionRateLimited,
+				RateLimitReason:         limited.reason(),
+				AttachmentsNotInspected: tgt.attachmentsOmitted,
+				AttachmentsNotFetched:   tgt.attachmentsNotFetched,
+			})
 			return nil, rateLimitError(limited)
 		}
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, reasonOfError(ctx, err), err)
@@ -456,6 +466,12 @@ func (p *Plugin) InspectSegment(
 func (p *Plugin) BoundsStreamPayload() bool { return true }
 
 var _ appplugins.StreamPayloadBound = (*Plugin)(nil)
+
+// StreamPayloadLimit is the longest block one evaluate call accepts
+// (appplugins.StreamPayloadLimit), whatever the configured window.
+func (p *Plugin) StreamPayloadLimit() int { return maxStreamWindowBytes }
+
+var _ appplugins.StreamPayloadLimit = (*Plugin)(nil)
 
 // ReadsStreamToolCalls declares that the engine is sent the tool calls of each
 // segment, so a streamed tool call must reach it whole.
@@ -560,7 +576,9 @@ func (p *Plugin) mcpInspectionPayload(
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
 	respBody := in.Response.Body
-	tgt.applyPayload = mcpTransformedResult
+	tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+		return mcpTransformedResult(payload, respBody)
+	}
 	tgt.apply = func(masked string) ([]byte, bool) { return rewriteMCPResponse(respBody, masked) }
 	tgt.textBytes = mcpOutputTextBytes(respBody)
 	payload, err := mcpToolsResultPayload(respBody)

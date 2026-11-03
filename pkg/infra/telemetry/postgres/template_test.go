@@ -56,6 +56,23 @@ func TestFallbackPoolConfig_UsesServiceDatabaseConfig(t *testing.T) {
 	assert.Equal(t, telemetryMinConns, conf.MinConns)
 }
 
+func TestFallbackPoolConfig_RunsAsSessionRole(t *testing.T) {
+	dbCfg := &config.DatabaseConfig{
+		Login:   "default",
+		Role:    "agentgateway",
+		Host:    "db.example.com",
+		Port:    5432,
+		User:    "agentgateway_login",
+		Name:    "agentgateway",
+		SSLMode: "require",
+	}
+	conf, err := NewTemplate(testLogger(), dbCfg).fallbackPoolConfig(context.Background())
+	require.NoError(t, err)
+	// The fallback sink writes to the service's own database as the same login,
+	// so its tables must belong to POSTGRES_ROLE like the main pool's.
+	assert.Equal(t, "agentgateway", conf.ConnConfig.RuntimeParams["role"])
+}
+
 func TestFallbackPoolConfig_IAMAuthStrategy(t *testing.T) {
 	t.Setenv("AWS_REGION", "eu-west-1")
 

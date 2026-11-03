@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infralogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -156,4 +158,18 @@ func TestNewDefaultExporters_EmptyPathUsesOtlpTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, configs, 2)
 	assert.Equal(t, []string{"metadata-otlp", "raw-otlp"}, []string{configs[0].Name, configs[1].Name})
+}
+
+// The production handler strips any attribute keyed "source" below WARN, so the
+// winning exporter source must use a key that survives it.
+func TestNewDefaultExporters_LogsWinningSourceThroughProductionHandler(t *testing.T) {
+	t.Parallel()
+	factory := mocks.NewExporterFactory(t)
+	factory.EXPECT().Validate(mock.Anything).Return(nil)
+	var buf bytes.Buffer
+	log := slog.New(infralogger.NewSourceFilterHandler(slog.NewJSONHandler(&buf, nil)))
+
+	_, err := newDefaultExporters(log, factory, "", "otlp", "")
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), `"exporters_source":"environment"`)
 }

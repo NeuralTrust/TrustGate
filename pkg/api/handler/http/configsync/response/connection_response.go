@@ -27,6 +27,15 @@ type ConnectionResponse struct {
 	AppliedVersion string    `json:"applied_version"`
 	FirstSeen      time.Time `json:"first_seen"`
 	LastSeen       time.Time `json:"last_seen"`
+	// LastHeartbeat is null for a data plane that predates heartbeats.
+	LastHeartbeat  *time.Time `json:"last_heartbeat"`
+	Version        string     `json:"version"`
+	Region         string     `json:"region"`
+	DeploymentType string     `json:"deployment_type"`
+	// TrustGuardBaseURL and TrustGuardClientID name the TrustGuard the
+	// gateway's guardrail policies call, as its data plane reports it.
+	TrustGuardBaseURL  string `json:"trustguard_base_url"`
+	TrustGuardClientID string `json:"trustguard_client_id"`
 }
 
 type ListConnectionsResponse struct {
@@ -41,5 +50,12 @@ func FromConnection(c configsyncconn.Connection) ConnectionResponse {
 		AppliedVersion: c.AppliedVersion,
 		FirstSeen:      c.FirstSeen,
 		LastSeen:       c.LastSeen,
+		LastHeartbeat:  c.LastHeartbeat,
+		Version:        c.Version,
+		Region:         c.Region,
+		DeploymentType: c.DeploymentType,
+
+		TrustGuardBaseURL:  c.TrustGuardBaseURL,
+		TrustGuardClientID: c.TrustGuardClientID,
 	}
 }

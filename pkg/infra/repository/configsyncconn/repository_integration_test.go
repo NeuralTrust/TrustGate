@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -203,4 +204,135 @@ func mustGet(t *testing.T, repo *Repository, scope, instanceID string) (Connecti
 		t.Fatalf("connection %s/%s not found", scope, instanceID)
 	}
 	return c, ok
+}
+
+func TestIntegration_HeartbeatRecordsReport(t *testing.T) {
+	_, repo := setupRepository(t)
+	ctx := context.Background()
+	scope := "hb-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	if err := repo.MarkConnected(ctx, scope, "dp-1"); err != nil {
+		t.Fatalf("MarkConnected: %v", err)
+	}
+	before, _ := mustGet(t, repo, scope, "dp-1")
+	if before.LastHeartbeat != nil || before.Version != "" || before.TrustGuardBaseURL != "" {
+		t.Fatalf("before any heartbeat = %+v, want no heartbeat, version or TrustGuard", before)
+	}
+
+	hb := dataplane.Heartbeat{
+		Version:            "v0.64.0",
+		Region:             "eu-west-1",
+		DeploymentType:     "self-hosted",
+		TrustGuardBaseURL:  "https://trustguard.eu.example.com",
+		TrustGuardClientID: "tgc_eu",
+	}
+	if err := repo.MarkHeartbeat(ctx, scope, "dp-1", hb); err != nil {
+		t.Fatalf("MarkHeartbeat: %v", err)
+	}
+	after, _ := mustGet(t, repo, scope, "dp-1")
+	if after.LastHeartbeat == nil {
+		t.Fatal("last_heartbeat is NULL after a heartbeat")
+	}
+	got := dataplane.Heartbeat{
+		Version:            after.Version,
+		Region:             after.Region,
+		DeploymentType:     after.DeploymentType,
+		TrustGuardBaseURL:  after.TrustGuardBaseURL,
+		TrustGuardClientID: after.TrustGuardClientID,
+	}
+	if got != hb {
+		t.Fatalf("after heartbeat = %+v, want %+v", got, hb)
+	}
+	if after.LastSeen.Before(before.LastSeen) {
+		t.Fatalf("last_seen went back: %v -> %v", before.LastSeen, after.LastSeen)
+	}
+}
+
+func TestIntegration_TouchConnectedRestoresHeldStreams(t *testing.T) {
+	_, repo := setupRepository(t)
+	ctx := context.Background()
+	scope := "touch-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	if err := repo.MarkConnected(ctx, scope, "dp-1"); err != nil {
+		t.Fatalf("MarkConnected dp-1: %v", err)
+	}
+	if err := repo.MarkConnected(ctx, scope, "dp-2"); err != nil {
+		t.Fatalf("MarkConnected dp-2: %v", err)
+	}
+	// A stale teardown, for instance from a replica that still held an older
+	// stream, marks dp-2 disconnected while this replica holds its live stream.
+	if err := repo.MarkDisconnected(ctx, scope, "dp-2"); err != nil {
+		t.Fatalf("MarkDisconnected dp-2: %v", err)
+	}
+	live, _ := mustGet(t, repo, scope, "dp-1")
+	stale, _ := mustGet(t, repo, scope, "dp-2")
+
+	time.Sleep(20 * time.Millisecond)
+	keys := []dataplane.StreamKey{
+		{Scope: scope, InstanceID: "dp-1"},
+		{Scope: scope, InstanceID: "dp-2"},
+		{Scope: scope, InstanceID: "dp-2"},
+		{Scope: scope, InstanceID: "dp-3"},
+	}
+	if err := repo.TouchConnected(ctx, keys); err != nil {
+		t.Fatalf("TouchConnected: %v", err)
+	}
+
+	touched, _ := mustGet(t, repo, scope, "dp-1")
+	if !touched.LastSeen.After(live.LastSeen) || touched.State != "connected" {
+		t.Fatalf("held stream not refreshed: %+v -> %+v", live, touched)
+	}
+	restored, _ := mustGet(t, repo, scope, "dp-2")
+	if !restored.LastSeen.After(stale.LastSeen) || restored.State != "connected" {
+		t.Fatalf("stale disconnect not overridden: %+v -> %+v", stale, restored)
+	}
+	if missing, _ := mustGet(t, repo, scope, "dp-3"); missing.State != "connected" {
+		t.Fatalf("held stream with no row = %+v, want it inserted as connected", missing)
+	}
+	if err := repo.TouchConnected(ctx, nil); err != nil {
+		t.Fatalf("TouchConnected(nil): %v", err)
+	}
+}
+
+func TestIntegration_HeartbeatInsertsMissingRow(t *testing.T) {
+	_, repo := setupRepository(t)
+	ctx := context.Background()
+	scope := "hb-missing-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	hb := dataplane.Heartbeat{Version: "v0.64.0", Region: "eu-west-1"}
+	if err := repo.MarkHeartbeat(ctx, scope, "dp-1", hb); err != nil {
+		t.Fatalf("MarkHeartbeat: %v", err)
+	}
+	c, _ := mustGet(t, repo, scope, "dp-1")
+	if c.State != "connected" || c.LastHeartbeat == nil || c.Version != "v0.64.0" || c.Region != "eu-west-1" {
+		t.Fatalf("row after heartbeat with no prior MarkConnected = %+v", c)
+	}
+}
+
+func TestIntegration_ReconnectClearsPreviousReport(t *testing.T) {
+	_, repo := setupRepository(t)
+	ctx := context.Background()
+	scope := "hb-reconnect-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	if err := repo.MarkConnected(ctx, scope, "dp-1"); err != nil {
+		t.Fatalf("MarkConnected: %v", err)
+	}
+	hb := dataplane.Heartbeat{
+		Version:            "v0.64.0",
+		Region:             "eu-west-1",
+		DeploymentType:     "self-hosted",
+		TrustGuardBaseURL:  "https://trustguard.eu.example.com",
+		TrustGuardClientID: "tgc_eu",
+	}
+	if err := repo.MarkHeartbeat(ctx, scope, "dp-1", hb); err != nil {
+		t.Fatalf("MarkHeartbeat: %v", err)
+	}
+	if err := repo.MarkConnected(ctx, scope, "dp-1"); err != nil {
+		t.Fatalf("MarkConnected (reconnect): %v", err)
+	}
+	c, _ := mustGet(t, repo, scope, "dp-1")
+	if c.LastHeartbeat != nil || c.Version != "" || c.Region != "" || c.DeploymentType != "" ||
+		c.TrustGuardBaseURL != "" || c.TrustGuardClientID != "" {
+		t.Fatalf("report survived the reconnect: %+v", c)
+	}
 }

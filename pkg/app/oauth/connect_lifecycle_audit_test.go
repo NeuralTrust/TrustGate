@@ -62,6 +62,7 @@ type connectAuditFixtureData struct {
 	gatewayID  ids.GatewayID
 	consumerID ids.ConsumerID
 	authID     ids.AuthID
+	registryID ids.RegistryID
 }
 
 func newConnectAuditFixture(
@@ -125,6 +126,7 @@ func newConnectAuditFixture(
 		gatewayID:  gatewayID,
 		consumerID: consumerID,
 		authID:     authID,
+		registryID: reg.ID,
 	}
 }
 
@@ -224,7 +226,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	}
 	ticketAudit := auditor.EXPECT().TicketCreated(ctx, identity).Once()
 	linkAudit := auditor.EXPECT().
-		ProviderLinked(ctx, identity, connectAuditProviderID).
+		ProviderLinked(ctx, identity, connectAuditProviderID, fixture.registryID.String()).
 		Once()
 	linkAudit.NotBefore(ticketAudit)
 	unlinkAudit := auditor.EXPECT().

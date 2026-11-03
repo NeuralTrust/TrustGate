@@ -88,6 +88,13 @@ const (
 	// not a JSON integer. The decoder rejects the chunk, so its tool calls
 	// would otherwise leave as raw bytes no guard has read.
 	streamToolChoiceUnreadMessage = "Response blocked: a streamed choice index could not be read."
+	// streamToolArgsMessage refuses a streamed tool call whose boundary event
+	// carries arguments that disagree with the deltas already held, or that
+	// append to a complete input the call already provided.
+	streamToolArgsMessage = "Response blocked: a streamed tool call changed its arguments."
+	// streamToolUnreadableMessage refuses a streamed item that asks the client
+	// to run a tool whose input the guard cannot read.
+	streamToolUnreadableMessage = "Response blocked: a streamed tool call of this type cannot be inspected."
 
 	// streamCutReason is the canonical finish reason a cut terminator carries.
 	// Every source adapter maps it to its own dialect — Anthropic refusal,
@@ -115,7 +122,15 @@ const (
 // same reason: a stream whose events carry no inspectable text closes no block
 // on chars and none on the clock either once the gate's ceiling is measured
 // against an idle guard, so without it the rest of the response accumulates.
-const maxHeadHeldBytes = 256 << 10
+// An open tool call is held inside that block, so the ceiling is also how many
+// wire bytes of a streamed tool call stay buffered for inspection. Above it
+// the call is released as it came. One provider line can still land past the
+// ceiling. Peak for one held stream is the held wire plus the text
+// accumulators, the joined input and the normalised view. Normalising can
+// about double the wire (U+2028 is three bytes on the wire and six once
+// re-encoded), so the peak is roughly 3-5 MiB, against about 1 MiB at the
+// previous 256 KiB ceiling. A view longer than the chain's window is not sent.
+const maxHeadHeldBytes = 1 << 20
 
 const (
 	defaultMinCharsBetweenEvals = 2048
@@ -166,6 +181,10 @@ type streamGuardConfig struct {
 	minChars      int
 	maxHold       time.Duration
 	maxAccumBytes int
+	// toolCallMaxAccumBytes is the longest tool input the chain can read whole:
+	// the smallest window of an entry that reads tool calls and bounds its own
+	// payload, never above maxAccumBytes.
+	toolCallMaxAccumBytes int
 	// nativeToolHold is how long a native tool call may be held, from its start
 	// frame, before its frames are released as they are. It does not depend on
 	// maxHold: a short block hold must not turn tool inspection off.
@@ -174,6 +193,9 @@ type streamGuardConfig struct {
 	// the same nativeToolHold cap. It is set only when an entry on the chain
 	// reads tool calls; otherwise the argument deltas stream as they arrive.
 	holdChatTools bool
+	// holdNativeTools holds tool calls on native Anthropic and Responses SSE
+	// streams until their explicit end event arrives.
+	holdNativeTools bool
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -198,6 +220,9 @@ func (c streamGuardConfig) withDefaults() streamGuardConfig {
 	if c.maxAccumBytes > maxAccumulatedCeiling {
 		c.maxAccumBytes = maxAccumulatedCeiling
 	}
+	if c.toolCallMaxAccumBytes <= 0 || c.toolCallMaxAccumBytes > c.maxAccumBytes {
+		c.toolCallMaxAccumBytes = c.maxAccumBytes
+	}
 	return c
 }
 
@@ -219,6 +244,10 @@ type streamGuard struct {
 	source adapter.Format
 	logger *slog.Logger
 	now    func() time.Time
+	// nativeSSETools distinguishes native Anthropic and Responses SSE tool
+	// calls from Bedrock-native frames. Both need whole-call inspection, but
+	// only Bedrock frames support in-place masking.
+	nativeSSETools bool
 	// drain hands the rest of an abandoned upstream to a background reader, so
 	// a cut still accounts the usage the last chunk carries. A nil drain cuts
 	// the same way and charges nothing.
@@ -261,8 +290,11 @@ type streamGuard struct {
 	// tail window, and the bytes in front of that window are text no verdict of
 	// that block speaks for.
 	inspected string
-	sentChars int
-	finalSent bool
+	// inspectedTools is the tool calls the last call carried, after the
+	// accumulation budget windowed their arguments.
+	inspectedTools []adapter.CanonicalToolCall
+	sentChars      int
+	finalSent      bool
 	// finalInspected is set only once the final block's call came back with a
 	// verdict from every entry and every entry was handed the whole accumulated text
 	// (neither the guard's cap nor an entry's own window cut it). finalSent
@@ -302,6 +334,15 @@ type streamGuard struct {
 	chatSeen         map[int]struct{}
 	toolMultiChoice  bool
 	toolChoiceUnread bool
+	// sseOpen is the native SSE tool calls still streaming, keyed by the index
+	// the wire names. toolArgsMismatch is set when a boundary event disagrees
+	// with the arguments already held for one of them, and toolUnreadable when
+	// an item asks the client to run a tool whose input the guard cannot read.
+	sseOpen          map[int]sseOpenCall
+	sseSealed        map[int]struct{}
+	ssePrefix        map[int]struct{}
+	toolArgsMismatch bool
+	toolUnreadable   bool
 	degradedReason   string
 	fallbackReason   string
 
@@ -344,17 +385,19 @@ func newStreamGuard(
 	logger *slog.Logger,
 ) *streamGuard {
 	g := &streamGuard{
-		runner:   runner,
-		seg:      newSegmenter(codec, source),
-		codec:    codec,
-		in:       in,
-		cfg:      cfg.withDefaults(),
-		source:   source,
-		logger:   logger,
-		now:      time.Now,
-		chatHold: cfg.holdChatTools && chatCompletionsWire(source),
+		runner:         runner,
+		seg:            newSegmenter(codec, source),
+		codec:          codec,
+		in:             in,
+		cfg:            cfg.withDefaults(),
+		source:         source,
+		logger:         logger,
+		now:            time.Now,
+		chatHold:       cfg.holdChatTools && chatCompletionsWire(source),
+		nativeSSETools: cfg.holdNativeTools && nativeSSEToolWire(source),
 	}
 	g.seg.choices = g.chatHold
+	g.seg.toolPhases = g.nativeSSETools
 	return g
 }
 
@@ -463,6 +506,9 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 		g.unhandledTools.merge(ev.toolCalls)
 		g.trackToolEvent(ev)
 		g.trackTool(ev)
+	case g.nativeSSETools:
+		g.toolUnreadable = g.toolUnreadable || ev.unreadableTool
+		g.trackNativeSSETool(ev)
 	case g.chatTools():
 		g.trackChatTool(ev)
 	}
@@ -508,6 +554,10 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
 	}
 	if v := g.inspectTools(ctx); v.stop {
+		if v.capped {
+			g.markCut()
+			return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
+		}
 		if v.failed {
 			g.cutOnFailure = g.cutAtEval == 0
 			g.markCut()
@@ -781,30 +831,33 @@ func (g *streamGuard) inspect(ctx context.Context) {
 // and an encode that produced nothing has no event to put the mask in.
 func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 	produced := g.text.String()
-	if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
-		return g.cannotMask(adapter.MaskCauseNoWindow)
+	if outcome.Transformed == g.inspected {
+		if outcome.TransformedToolCalls == nil {
+			return g.cannotMask(adapter.MaskCauseNotAReplacement)
+		}
+	} else {
+		if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
+			return g.cannotMask(adapter.MaskCauseNoWindow)
+		}
+		masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
+		first, ok := g.rewritableHold()
+		if g.native {
+			// The limits rewritableHold keeps come from re-encoding an event out of
+			// its text, which a native frame never is: it is patched in place and
+			// then read again, and the read-again is what stands behind it.
+			first, ok = 0, true
+		}
+		if !ok || !strings.HasPrefix(masked, g.releasedText()) {
+			return g.cannotMask(adapter.MaskCauseReleasedText)
+		}
+		if !g.remask(masked, first) {
+			return false
+		}
 	}
-	masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
-	// A verdict that left the buffer byte-identical masked something the buffer
-	// cannot see. It reads the same as a verdict re-flagging a mask the guard
-	// itself already applied and handing it back unchanged, and the verdict
-	// names no offsets to tell them apart, so both end the stream: releasing on
-	// the wrong reading releases exactly the content the policy asked to mask.
-	// Finding offsets on SegmentOutcome are what would separate them (§11).
-	if masked == produced {
-		return g.cannotMask(adapter.MaskCauseNotAReplacement)
+	if outcome.TransformedToolCalls != nil {
+		return g.remaskChatToolCalls(outcome.TransformedToolCalls)
 	}
-	first, ok := g.rewritableHold()
-	if g.native {
-		// The limits rewritableHold keeps come from re-encoding an event out of
-		// its text, which a native frame never is: it is patched in place and
-		// then read again, and the read-again is what stands behind it.
-		first, ok = 0, true
-	}
-	if !ok || !strings.HasPrefix(masked, g.releasedText()) {
-		return g.cannotMask(adapter.MaskCauseReleasedText)
-	}
-	return g.remask(masked, first)
+	return true
 }
 
 // rewritableHold reports whether the held events can carry a mask at all, and
@@ -837,11 +890,16 @@ func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
 // block would move into an earlier one and leave an empty text block behind —
 // which reconstructs the same string but which the Messages API rejects on
 // input, so an agent replaying the turn gets a 400 it did not get before.
+//
+// On a chat stream whose tool calls are held whole, an event that carries tool
+// calls and nothing else is left to remaskChatToolCalls, provided it does not
+// sit between two held text events: the collapse would move the later text in
+// front of it.
 func (g *streamGuard) rewritableHold() (int, bool) {
 	first, last := -1, -1
 	for i := g.releasedIdx; i < len(g.produced); i++ {
 		ev := g.produced[i]
-		if ev.reasoning != "" || len(ev.toolCalls) > 0 {
+		if ev.reasoning != "" || len(ev.toolCalls) > 0 && (ev.text != "" || !g.chatTools()) {
 			return 0, false
 		}
 		if ev.text == "" {
@@ -859,7 +917,7 @@ func (g *streamGuard) rewritableHold() (int, bool) {
 		return 0, false
 	}
 	for _, ev := range g.produced[first+1 : last+1] {
-		if ev.mark.op != markNone {
+		if ev.mark.op != markNone || len(ev.toolCalls) > 0 {
 			return 0, false
 		}
 	}
@@ -960,6 +1018,7 @@ func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 		g.degrade(degradeAccumulationCap)
 	}
 	g.inspected = accumulated
+	g.inspectedTools = slices.Clone(calls)
 	final := g.final() && !g.finalSent
 	g.finalSent = g.finalSent || final
 	g.seq++
