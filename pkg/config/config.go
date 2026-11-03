@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
@@ -596,6 +597,9 @@ type RedisConfig struct {
 	// TLSCAFile is a PEM bundle that replaces the system roots when verifying
 	// the Redis server certificate.
 	TLSCAFile string
+	// KeyScope namespaces the keys and channels global to this plane, for
+	// planes that share one Redis database. Empty keeps the unscoped names.
+	KeyScope string
 }
 
 type CacheConfig struct {
@@ -990,6 +994,7 @@ func getRedisConfig() RedisConfig {
 		AWSServerless:     getEnvBool("REDIS_AWS_SERVERLESS", false),
 		Cluster:           cluster,
 		TLSCAFile:         strings.TrimSpace(getEnv("REDIS_TLS_CA_FILE", "")),
+		KeyScope:          strings.TrimSpace(getEnv("REDIS_KEY_SCOPE", "")),
 	}
 }
 
@@ -1844,6 +1849,9 @@ func (c *Config) validateRedis() error {
 		if c.Redis.TLSInsecureVerify {
 			return fmt.Errorf("%w: REDIS_TLS_CA_FILE and REDIS_TLS_INSECURE_VERIFY are mutually exclusive", errors.ErrInvalidConfig)
 		}
+	}
+	if err := keyscope.Validate(c.Redis.KeyScope); err != nil {
+		return fmt.Errorf("%w: REDIS_KEY_SCOPE: %w", errors.ErrInvalidConfig, err)
 	}
 	if c.Redis.Cluster {
 		if c.Redis.DB != 0 {

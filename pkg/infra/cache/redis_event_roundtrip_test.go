@@ -102,3 +102,47 @@ func TestRedisEventBus_DeliversSnapshotDirtyAndGatewayDataEvents(t *testing.T) {
 		t.Fatalf("gateway id = %q, want %q", gotID, gatewayID)
 	}
 }
+
+func TestRedisEventBus_ScopedChannelsAreIsolated(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	c := &client{redisClient: rdb}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	listener := NewRedisEventListener(logger, c, event.GetEventsRegistry())
+	data := gatewayDataRecorder{ids: make(chan string, 64)}
+	RegisterEventSubscriber[event.InvalidateGatewayDataEvent](listener, data)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go listener.Listen(ctx, channel.GatewayEvents("dp-a"))
+
+	own := NewRedisEventPublisher(c, channel.GatewayEvents("dp-a"))
+	other := NewRedisEventPublisher(c, channel.GatewayEvents("dp-b"))
+	unscoped := NewRedisEventPublisher(c, channel.GatewayEventsChannel)
+
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		for _, p := range []EventPublisher{other, unscoped} {
+			if err := p.Publish(ctx, event.InvalidateGatewayDataEvent{GatewayID: "foreign"}); err != nil {
+				t.Fatalf("publish foreign: %v", err)
+			}
+		}
+		if err := own.Publish(ctx, event.InvalidateGatewayDataEvent{GatewayID: "own"}); err != nil {
+			t.Fatalf("publish own: %v", err)
+		}
+		select {
+		case id := <-data.ids:
+			if id != "own" {
+				t.Fatalf("listener on dp-a received %q from another channel", id)
+			}
+			return
+		case <-tick.C:
+		case <-deadline:
+			t.Fatal("event on the scoped channel was not dispatched")
+		}
+	}
+}
