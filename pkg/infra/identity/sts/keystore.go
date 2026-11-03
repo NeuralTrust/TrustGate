@@ -24,10 +24,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/redis/go-redis/v9"
 )
 
-// SharedSigningKeyRedisKey is the Redis key under which the auto-provisioned STS
+// SharedSigningKeyRedisKey is the unscoped Redis key under which the auto-provisioned STS
 // signing key is stored so every replica signs and verifies with the same key.
 const SharedSigningKeyRedisKey = "trustgate:sts:signing-key:pkcs8-pem"
 
@@ -35,11 +36,12 @@ const SharedSigningKeyRedisKey = "trustgate:sts:signing-key:pkcs8-pem"
 // replicas via Redis. It returns the stored key when present; otherwise it
 // generates one and stores it with SETNX so concurrent replicas converge on a
 // single key instead of each minting with its own ephemeral key.
-func ResolveSharedSigningKey(ctx context.Context, rdb redis.UniversalClient, logger *slog.Logger) (string, error) {
+func ResolveSharedSigningKey(ctx context.Context, rdb redis.UniversalClient, scope keyscope.Scope, logger *slog.Logger) (string, error) {
 	if rdb == nil {
 		return "", errors.New("sts: redis client is required to auto-provision a signing key")
 	}
-	if existing, err := rdb.Get(ctx, SharedSigningKeyRedisKey).Result(); err == nil && existing != "" {
+	key := scope.Key(SharedSigningKeyRedisKey)
+	if existing, err := rdb.Get(ctx, key).Result(); err == nil && existing != "" {
 		return existing, nil
 	} else if err != nil && !errors.Is(err, redis.Nil) {
 		return "", fmt.Errorf("sts: read shared signing key: %w", err)
@@ -48,7 +50,7 @@ func ResolveSharedSigningKey(ctx context.Context, rdb redis.UniversalClient, log
 	if err != nil {
 		return "", err
 	}
-	won, err := rdb.SetNX(ctx, SharedSigningKeyRedisKey, generated, 0).Result()
+	won, err := rdb.SetNX(ctx, key, generated, 0).Result()
 	if err != nil {
 		return "", fmt.Errorf("sts: persist shared signing key: %w", err)
 	}
@@ -58,7 +60,7 @@ func ResolveSharedSigningKey(ctx context.Context, rdb redis.UniversalClient, log
 		}
 		return generated, nil
 	}
-	stored, err := rdb.Get(ctx, SharedSigningKeyRedisKey).Result()
+	stored, err := rdb.Get(ctx, key).Result()
 	if err != nil {
 		return "", fmt.Errorf("sts: read shared signing key after race: %w", err)
 	}

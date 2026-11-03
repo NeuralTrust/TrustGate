@@ -25,6 +25,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -76,6 +77,7 @@ func newLabelStream(cc cache.Client, cfg *config.Config) *labelstream.Stream {
 		MaxLen:                cfg.TrafficLabels.StreamMaxLen,
 		Retention:             cfg.TrafficLabels.StreamRetention,
 		GatewayQuotaPerSecond: cfg.TrafficLabels.GatewayQuotaPerSecond,
+		KeyScope:              keyscope.Scope(cfg.Redis.KeyScope),
 	})
 }
 

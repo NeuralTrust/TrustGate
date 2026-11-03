@@ -30,7 +30,7 @@ func TestResolveSharedSigningKey_GeneratesAndPersists(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
 
-	first, err := ResolveSharedSigningKey(ctx, rdb, nil)
+	first, err := ResolveSharedSigningKey(ctx, rdb, "", nil)
 	require.NoError(t, err)
 	require.True(t, strings.Contains(first, "-----BEGIN"), "expected a PEM block")
 
@@ -38,7 +38,7 @@ func TestResolveSharedSigningKey_GeneratesAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, stored)
 
-	second, err := ResolveSharedSigningKey(ctx, rdb, nil)
+	second, err := ResolveSharedSigningKey(ctx, rdb, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, first, second, "existing key must be reused, not regenerated")
 }
@@ -55,7 +55,7 @@ func TestResolveSharedSigningKey_ConcurrentReplicasConverge(t *testing.T) {
 	for i := 0; i < replicas; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			key, err := ResolveSharedSigningKey(ctx, rdb, nil)
+			key, err := ResolveSharedSigningKey(ctx, rdb, "", nil)
 			require.NoError(t, err)
 			results[idx] = key
 		}(i)
@@ -68,7 +68,7 @@ func TestResolveSharedSigningKey_ConcurrentReplicasConverge(t *testing.T) {
 }
 
 func TestResolveSharedSigningKey_NilClient(t *testing.T) {
-	_, err := ResolveSharedSigningKey(context.Background(), nil, nil)
+	_, err := ResolveSharedSigningKey(context.Background(), nil, "", nil)
 	require.Error(t, err)
 }
 
@@ -76,10 +76,27 @@ func TestResolveSharedSigningKey_UsableBySigner(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-	keyPEM, err := ResolveSharedSigningKey(context.Background(), rdb, nil)
+	keyPEM, err := ResolveSharedSigningKey(context.Background(), rdb, "", nil)
 	require.NoError(t, err)
 
 	signer, err := NewSigner("trustgate", keyPEM, nil)
 	require.NoError(t, err)
 	require.NotNil(t, signer)
+}
+
+func TestResolveSharedSigningKey_ScopesDoNotShareTheKey(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	a, err := ResolveSharedSigningKey(ctx, rdb, "dp-a", nil)
+	require.NoError(t, err)
+	b, err := ResolveSharedSigningKey(ctx, rdb, "dp-b", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, a, b)
+
+	stored, err := mr.Get("dp-a:" + SharedSigningKeyRedisKey)
+	require.NoError(t, err)
+	require.Equal(t, a, stored)
+	require.False(t, mr.Exists(SharedSigningKeyRedisKey))
 }

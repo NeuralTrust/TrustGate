@@ -22,10 +22,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/redis/go-redis/v9"
 )
 
-// SharedSecretKeyRedisKey is the Redis key under which the auto-provisioned
+// SharedSecretKeyRedisKey is the unscoped Redis key under which the auto-provisioned
 // SERVER_SECRET_KEY is stored so every replica encrypts vault material and
 // verifies admin-plane JWTs with the same secret.
 const SharedSecretKeyRedisKey = "trustgate:server:secret-key"
@@ -36,11 +37,12 @@ const sharedSecretBytes = 32
 // via Redis. It returns the stored secret when present; otherwise it generates
 // one and stores it with SETNX so concurrent replicas converge on a single
 // value instead of each minting with its own ephemeral secret.
-func ResolveSharedSecretKey(ctx context.Context, rdb redis.UniversalClient, logger *slog.Logger) (string, error) {
+func ResolveSharedSecretKey(ctx context.Context, rdb redis.UniversalClient, scope keyscope.Scope, logger *slog.Logger) (string, error) {
 	if rdb == nil {
 		return "", errors.New("crypto: redis client is required to auto-provision SERVER_SECRET_KEY")
 	}
-	if existing, err := rdb.Get(ctx, SharedSecretKeyRedisKey).Result(); err == nil && existing != "" {
+	key := scope.Key(SharedSecretKeyRedisKey)
+	if existing, err := rdb.Get(ctx, key).Result(); err == nil && existing != "" {
 		return existing, nil
 	} else if err != nil && !errors.Is(err, redis.Nil) {
 		return "", fmt.Errorf("crypto: read shared secret key: %w", err)
@@ -49,7 +51,7 @@ func ResolveSharedSecretKey(ctx context.Context, rdb redis.UniversalClient, logg
 	if err != nil {
 		return "", err
 	}
-	won, err := rdb.SetNX(ctx, SharedSecretKeyRedisKey, generated, 0).Result()
+	won, err := rdb.SetNX(ctx, key, generated, 0).Result()
 	if err != nil {
 		return "", fmt.Errorf("crypto: persist shared secret key: %w", err)
 	}
@@ -59,7 +61,7 @@ func ResolveSharedSecretKey(ctx context.Context, rdb redis.UniversalClient, logg
 		}
 		return generated, nil
 	}
-	stored, err := rdb.Get(ctx, SharedSecretKeyRedisKey).Result()
+	stored, err := rdb.Get(ctx, key).Result()
 	if err != nil {
 		return "", fmt.Errorf("crypto: read shared secret key after race: %w", err)
 	}
