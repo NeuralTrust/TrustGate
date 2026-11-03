@@ -57,11 +57,19 @@ type GuardAttachment struct {
 }
 
 type GuardAttributes struct {
-	ContentType string         `json:"content_type"`
-	Model       GuardModel     `json:"model"`
-	User        *GuardUser     `json:"user,omitempty"`
-	Consumer    *GuardConsumer `json:"consumer,omitempty"`
-	Stream      *GuardStream   `json:"stream,omitempty"`
+	ContentType string          `json:"content_type"`
+	Model       GuardModel      `json:"model"`
+	User        *GuardUser      `json:"user,omitempty"`
+	Consumer    *GuardConsumer  `json:"consumer,omitempty"`
+	MCPServer   *GuardMCPServer `json:"mcp_server,omitempty"`
+	Stream      *GuardStream    `json:"stream,omitempty"`
+}
+
+// GuardMCPServer names the MCP server a tools/call goes to: the registry id,
+// and the catalog code when the registry came from the catalog.
+type GuardMCPServer struct {
+	ID   string `json:"id"`
+	Code string `json:"code,omitempty"`
 }
 
 // GuardConsumer names the application a request came from. TrustGuard stores

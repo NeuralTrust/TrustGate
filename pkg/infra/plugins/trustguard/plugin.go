@@ -164,6 +164,8 @@ type Plugin struct {
 	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
+	v3 *v3Sender
+
 	cfgCache sync.Map
 
 	// streamFailures holds, per stream and policy, a *streamFailure: why the
@@ -181,7 +183,11 @@ type Plugin struct {
 	streamBlocksSweptAt atomic.Int64
 }
 
-func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...clientOption) *Plugin {
+func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...Option) *Plugin {
+	cfg := clientConfig{baseTransport: http.DefaultTransport}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	c := newClient(timeout, opts...)
 	// The token client keeps the deployment-wide timeout: its fetch is shared
 	// through singleflight and runs detached from every caller's deadline
@@ -194,6 +200,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 		baseURL:  baseURL,
 		logger:   logger,
 		timeout:  timeout,
+		v3:       newV3Sender(cfg.v3, cfg.baseTransport, logger),
 	}
 }
 
@@ -333,8 +340,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:     principalUser(ctx),
-			Consumer: guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			User:      principalUser(ctx),
+			Consumer:  guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			MCPServer: guardMCPServer(in.Request),
 		},
 	}
 
@@ -353,6 +361,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
+	p.v3.send(ctx, cfg.CollectorID, traceID, body)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
@@ -971,6 +980,17 @@ func guardConsumer(id, name string) *GuardConsumer {
 		return nil
 	}
 	return &GuardConsumer{ID: id, Name: name}
+}
+
+func guardMCPServer(req *infracontext.RequestContext) *GuardMCPServer {
+	if !req.MCP {
+		return nil
+	}
+	id := strings.TrimSpace(req.MCPServerID)
+	if id == "" {
+		return nil
+	}
+	return &GuardMCPServer{ID: id, Code: strings.TrimSpace(req.MCPServerCode)}
 }
 
 func principalUser(ctx context.Context) *GuardUser {

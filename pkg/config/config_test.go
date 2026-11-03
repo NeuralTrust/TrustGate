@@ -1015,6 +1015,49 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TrustGuardV3(t *testing.T) {
+	t.Run("off by default", func(t *testing.T) {
+		minimumEnv(t)
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if len(cfg.TrustGuard.V3.Gateways) != 0 {
+			t.Errorf("TrustGuard.V3.Gateways = %v, want none", cfg.TrustGuard.V3.Gateways)
+		}
+		if cfg.TrustGuard.V3.Timeout != defaultTrustGuardV3Timeout {
+			t.Errorf("TrustGuard.V3.Timeout = %v, want %v", cfg.TrustGuard.V3.Timeout, defaultTrustGuardV3Timeout)
+		}
+	})
+	t.Run("env overrides", func(t *testing.T) {
+		minimumEnv(t)
+		t.Setenv("TRUSTGUARD_V3_BASE_URL", "https://guard.v3.example")
+		t.Setenv("TRUSTGUARD_V3_TIMEOUT", "2s")
+		t.Setenv("TRUSTGUARD_V3_CLIENT_ID", "tgc_platform")
+		t.Setenv("TRUSTGUARD_V3_CLIENT_SECRET", "platform-secret")
+		t.Setenv("TRUSTGUARD_V3_GATEWAYS", " gw-a , gw-b=6f0c3c1e-8a52-4b8e-9d0e-1f2a3b4c5d6e,,=orphan")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		v3 := cfg.TrustGuard.V3
+		if v3.BaseURL != "https://guard.v3.example" || v3.Timeout != 2*time.Second ||
+			v3.ClientID != "tgc_platform" || v3.ClientSecret != "platform-secret" {
+			t.Errorf("TrustGuard.V3 = %+v", v3)
+		}
+		want := map[string]string{"gw-a": "", "gw-b": "6f0c3c1e-8a52-4b8e-9d0e-1f2a3b4c5d6e"}
+		if len(v3.Gateways) != len(want) {
+			t.Fatalf("TrustGuard.V3.Gateways = %v, want %v", v3.Gateways, want)
+		}
+		for gw, integration := range want {
+			if got, ok := v3.Gateways[gw]; !ok || got != integration {
+				t.Errorf("TrustGuard.V3.Gateways[%q] = %q, %v; want %q", gw, got, ok, integration)
+			}
+		}
+	})
+}
+
 func valid() *Config {
 	return &Config{
 		Server:   validServer(),
