@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -89,7 +90,7 @@ func resolveServerSecret(cfg *config.Config, cc cache.Client, logger *slog.Logge
 	if env != "prod" && env != "production" {
 		return "", nil
 	}
-	resolved, err := crypto.ResolveSharedSecretKey(context.Background(), cc.RedisClient(), logger)
+	resolved, err := crypto.ResolveSharedSecretKey(context.Background(), cc.RedisClient(), keyscope.Scope(cfg.Redis.KeyScope), logger)
 	if err != nil {
 		return "", err
 	}
