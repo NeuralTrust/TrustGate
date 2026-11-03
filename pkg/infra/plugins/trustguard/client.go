@@ -145,11 +145,19 @@ type client struct {
 
 type clientConfig struct {
 	baseTransport http.RoundTripper
+	v3            V3Config
 }
 
-type clientOption func(*clientConfig)
+// Option configures the plugin beyond its required arguments.
+type Option func(*clientConfig)
 
-func withBaseTransport(base http.RoundTripper) clientOption {
+// WithV3 sends a copy of every evaluation of the gateways cfg lists to Guard
+// (TrustGuard v3). TrustGuard's answer alone decides.
+func WithV3(cfg V3Config) Option {
+	return func(c *clientConfig) { c.v3 = cfg }
+}
+
+func withBaseTransport(base http.RoundTripper) Option {
 	return func(cfg *clientConfig) { cfg.baseTransport = base }
 }
 
@@ -157,7 +165,7 @@ func withBaseTransport(base http.RoundTripper) clientOption {
 // every call brings its own deadline, the deployment-wide timeout or the stream
 // guard timeout, and a shorter client timeout would cap it without saying so.
 // The backstop never sits below either.
-func newClient(timeout time.Duration, opts ...clientOption) *client {
+func newClient(timeout time.Duration, opts ...Option) *client {
 	cfg := clientConfig{baseTransport: http.DefaultTransport}
 	for _, opt := range opts {
 		opt(&cfg)
