@@ -197,7 +197,6 @@ func (s *v3Sender) integrationFor(gatewayID, collectorID string) (string, bool) 
 	return integration, integration != ""
 }
 
-// send hands Guard its copy of body and returns at once.
 func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body GuardRequest) {
 	if s == nil {
 		return
