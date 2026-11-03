@@ -333,8 +333,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:     principalUser(ctx),
-			Consumer: guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			User:      principalUser(ctx),
+			Consumer:  guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			MCPServer: guardMCPServer(in.Request),
 		},
 	}
 
@@ -971,6 +972,17 @@ func guardConsumer(id, name string) *GuardConsumer {
 		return nil
 	}
 	return &GuardConsumer{ID: id, Name: name}
+}
+
+func guardMCPServer(req *infracontext.RequestContext) *GuardMCPServer {
+	if !req.MCP {
+		return nil
+	}
+	id := strings.TrimSpace(req.MCPServerID)
+	if id == "" {
+		return nil
+	}
+	return &GuardMCPServer{ID: id, Code: strings.TrimSpace(req.MCPServerCode)}
 }
 
 func principalUser(ctx context.Context) *GuardUser {
