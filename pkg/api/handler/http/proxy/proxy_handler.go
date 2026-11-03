@@ -630,6 +630,9 @@ type modelsSource[In any] interface {
 }
 
 func serveModels[In any](c *fiber.Ctx, route apiresolver.ProxyRoute, models modelsSource[In], in In) error {
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.MarkModelsListing()
+	}
 	id := apiresolver.ModelsIDFromRest(route.Rest)
 	if id == "" {
 		list, err := models.List(c.UserContext(), in)

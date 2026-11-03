@@ -1497,6 +1497,51 @@ func TestHandle_ModelsList(t *testing.T) {
 	}
 }
 
+func TestHandle_ModelsMarksTheTrace(t *testing.T) {
+	for name, path := range map[string]string{
+		"list": "/" + consumerSlug + "/v1/models",
+		"get":  "/" + consumerSlug + "/v1/models/gpt-4o-mini",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt := trace.New("trace-models", trace.Metadata{})
+			app := fiber.New()
+			app.Use(func(c *fiber.Ctx) error {
+				c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+				return c.Next()
+			})
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			lister := stubModelsLister{card: &appproxy.ModelCard{ID: "gpt-4o-mini", Object: "model"}}
+			app.All("/*", proxyhttp.NewForwardedHandler(proxymocks.NewForwarder(t)).WithModels(lister).Handle)
+
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			assert.True(t, rt.IsModelsListing())
+		})
+	}
+}
+
+func TestHandle_ChatDoesNotMarkModelsListing(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrModelNotAllowed).
+		Once()
+
+	rt := trace.New("trace-chat", trace.Metadata{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+		return c.Next()
+	})
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+
+	_, err := app.Test(newProxyRequest())
+	require.NoError(t, err)
+	assert.False(t, rt.IsModelsListing())
+}
+
 func TestHandle_ModelsGet(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	lister := stubModelsLister{
@@ -2171,4 +2216,5 @@ func TestHandleStore_ModelsListTheUnionAndStampNoConsumer(t *testing.T) {
 	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 	assert.Empty(t, rt.Metadata().ConsumerID)
 	assert.Equal(t, authID.String(), rt.Metadata().AuthID)
+	assert.True(t, rt.IsModelsListing())
 }
