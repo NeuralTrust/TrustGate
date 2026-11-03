@@ -249,6 +249,33 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "over-budget tools/call must not reach the upstream CallTool")
 }
 
+func TestPluginE2E_PerToolRateLimiter_MCPRuleWithNativeToolName(t *testing.T) {
+	defer Track(t, "PluginPerToolRateLimiter")()
+
+	var calls int64
+	upstream := startMCPUpstream(t, func(s *sdk.Server) { addCountingFixedTool(s, "send_email", "sent", &calls) })
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+	headers := apiKeyHeaders(key)
+	sendEmail := exposedToolName(registryID, "send_email")
+	require.NotEqual(t, "send_email", sendEmail, "the case is only meaningful when the exposed name carries a prefix")
+	attachPerToolMCPPolicy(t, gatewayID, consumerID, map[string]any{
+		"rules": []any{perToolRule("send_email", 1, "reject_response")},
+	})
+
+	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
+	_ = rpcResult(t, status, body)
+	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "first tools/call is under budget and reaches the upstream")
+
+	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
+	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
+		"a rule naming the upstream's own tool must limit the call made under its exposed name")
+	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "over-budget tools/call must not reach the upstream CallTool")
+}
+
 func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
