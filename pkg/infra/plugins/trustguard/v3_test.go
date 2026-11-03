@@ -210,23 +210,35 @@ func TestV3IntegrationOverrideAndTokenCache(t *testing.T) {
 
 func TestV3CopiesMCPWithItsServer(t *testing.T) {
 	t.Parallel()
-	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
-	req := mcpRequestContext()
-	req.MCPServerID = "reg-1"
-	req.MCPServerCode = "com.asana/mcp"
+	cases := map[string]struct {
+		code string
+		want string
+	}{
+		"catalog server is its code":    {code: "com.asana/mcp", want: "com.asana/mcp"},
+		"custom server is its registry": {want: "reg-1"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+			v3 := &fakeV3{}
+			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+			req := mcpRequestContext()
+			req.MCPServerID = "reg-1"
+			req.MCPServerCode = tc.code
 
-	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
-	require.NoError(t, err)
-	p.v3.wait()
+			_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
+			require.NoError(t, err)
+			p.v3.wait()
 
-	requests, _, invalid := v3.seen()
-	require.Zero(t, invalid)
-	require.Len(t, requests, 1)
-	assert.Equal(t, protocolMCP, requests[0].Protocol)
-	assert.Equal(t, "consumer-mcp", requests[0].ApplicationID)
-	assert.Equal(t, map[string]any{"id": "reg-1", "code": "com.asana/mcp"}, requests[0].Attributes["mcp_server"])
+			requests, _, invalid := v3.seen()
+			require.Zero(t, invalid)
+			require.Len(t, requests, 1)
+			assert.Equal(t, protocolMCP, requests[0].Protocol)
+			assert.Equal(t, "consumer-mcp", requests[0].ApplicationID)
+			assert.Equal(t, map[string]any{"id": tc.want}, requests[0].Attributes["mcp_server"])
+		})
+	}
 }
 
 func TestV3SkipsA2A(t *testing.T) {

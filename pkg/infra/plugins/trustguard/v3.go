@@ -78,16 +78,22 @@ type v3Request struct {
 }
 
 type v3Attributes struct {
-	ContentType string          `json:"content_type"`
-	Model       GuardModel      `json:"model"`
-	User        *GuardUser      `json:"user,omitempty"`
-	Application *v3Application  `json:"application,omitempty"`
-	MCPServer   *GuardMCPServer `json:"mcp_server,omitempty"`
-	Stream      *GuardStream    `json:"stream,omitempty"`
+	ContentType string         `json:"content_type"`
+	Model       GuardModel     `json:"model"`
+	User        *GuardUser     `json:"user,omitempty"`
+	Application *v3Application `json:"application,omitempty"`
+	MCPServer   *v3MCPServer   `json:"mcp_server,omitempty"`
+	Stream      *GuardStream   `json:"stream,omitempty"`
 }
 
 type v3Application struct {
 	Name string `json:"name"`
+}
+
+// v3MCPServer carries Guard's canonical id of the server: the catalog code, or
+// the registry id of a server added by URL.
+type v3MCPServer struct {
+	ID string `json:"id"`
 }
 
 func toV3Request(body GuardRequest) v3Request {
@@ -103,7 +109,7 @@ func toV3Request(body GuardRequest) v3Request {
 			ContentType: body.Attributes.ContentType,
 			Model:       body.Attributes.Model,
 			User:        body.Attributes.User,
-			MCPServer:   body.Attributes.MCPServer,
+			MCPServer:   v3MCPServerOf(body.Attributes.MCPServer),
 			Stream:      body.Attributes.Stream,
 		},
 	}
@@ -111,6 +117,16 @@ func toV3Request(body GuardRequest) v3Request {
 		req.Attributes.Application = &v3Application{Name: c.Name}
 	}
 	return req
+}
+
+func v3MCPServerOf(server *GuardMCPServer) *v3MCPServer {
+	if server == nil {
+		return nil
+	}
+	if server.Code != "" {
+		return &v3MCPServer{ID: server.Code}
+	}
+	return &v3MCPServer{ID: server.ID}
 }
 
 type v3StatusError struct {
