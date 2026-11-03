@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -1234,6 +1235,78 @@ func TestPlugin_MCP_PreRequest_NoMatchOrEmptyOk(t *testing.T) {
 			assert.Equal(t, http.StatusOK, res.StatusCode)
 		})
 	}
+}
+
+func rule(tool string, max int) map[string]any {
+	return map[string]any{
+		"tool": tool, "behavior": "reject_response",
+		"windows": []any{map[string]any{"duration": "1m", "max": max}},
+	}
+}
+
+func mcpBoundReq(t *testing.T, exposed, native string) *infracontext.RequestContext {
+	t.Helper()
+	req := mcpReq(mcpBody(t, exposed))
+	req.MCPTool = native
+	return req
+}
+
+func TestPlugin_MCP_RuleMatchesNativeOrExposedName(t *testing.T) {
+	const exposed, native = "s9f062919_get_weather", "get_weather"
+	tests := []struct {
+		name  string
+		rules []any
+		limit int
+	}{
+		{name: "native name", rules: []any{rule("get_weather", 1)}, limit: 1},
+		{name: "exposed name", rules: []any{rule(exposed, 1)}, limit: 1},
+		{name: "glob over the exposed name", rules: []any{rule("*get_weather", 1)}, limit: 1},
+		{name: "first match wins across spellings", rules: []any{rule(exposed, 1), rule("get_*", 10)}, limit: 1},
+		{name: "an earlier native match shadows a later exposed rule", rules: []any{rule("get_*", 3), rule(exposed, 1)}, limit: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := map[string]any{"rules": tt.rules}
+			seed(t, rdb, consumerKey(exposed, 0), tt.limit)
+
+			_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpBoundReq(t, exposed, native), nil))
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok, "a spent budget refuses the call")
+			assert.Equal(t, `tool "`+exposed+`" rate limit exceeded`, pe.Message)
+			assert.Equal(t, []string{strconv.Itoa(tt.limit)}, pe.Headers["X-RateLimit-consumer-Limit"])
+		})
+	}
+}
+
+func TestPlugin_MCP_NativeRuleCountsUnderTheExposedName(t *testing.T) {
+	const exposed, native = "s9f062919_get_weather", "get_weather"
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings(native, "reject_response", "1m", 1)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpBoundReq(t, exposed, native), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	res, err = p.Execute(context.Background(), input(policy.StagePreResponse, settings, mcpBoundReq(t, exposed, native), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Equal(t, "1", rdb.Get(context.Background(), consumerKey(exposed, 0)).Val())
+	assert.Empty(t, rdb.Keys(context.Background(), consumerKey(native, 0)).Val(), "the counter is keyed by the exposed name")
+
+	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpBoundReq(t, exposed, native), nil))
+	_, ok := appplugins.AsPluginError(err)
+	assert.True(t, ok, "the second call sees the count the first one recorded")
+}
+
+func TestPlugin_MCP_UnboundCallMatchesOnlyTheExposedName(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("get_weather", "reject_response", "1m", 1)
+	seed(t, rdb, consumerKey("trustgate_list_tools", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpBoundReq(t, "trustgate_list_tools", ""), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
 }
 
 func TestPlugin_MCP_PreResponse_CountsPerCall(t *testing.T) {
