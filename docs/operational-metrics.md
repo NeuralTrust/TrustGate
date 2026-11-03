@@ -40,6 +40,17 @@ number of gateways, consumers or label sets; per-request detail lives in the
   every collection, so a backlog is visible without traffic. A growing length
   means requests arrive faster than they are labeled.
 
+The product-event pipeline reports its own health:
+
+- `agentgateway.telemetry.dropped_events` (`{event}`): events that never
+  reached an exporter. `reason` is `closed` (after shutdown began),
+  `queue_full` (the worker queue was full), or `panic` (an exporter task
+  panicked).
+- `agentgateway.telemetry.exporters.configured` (`{exporter}`): a gauge of the
+  default exporters per `data_class` (`metadata`, `raw`). A class with no
+  exporter reports `0`, so missing telemetry shows up as a value instead of
+  an absence of data.
+
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.
 

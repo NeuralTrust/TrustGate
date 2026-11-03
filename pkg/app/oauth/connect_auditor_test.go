@@ -34,10 +34,11 @@ func TestConnectAuditorExactFields(t *testing.T) {
 		AuthID:     "auth-sentinel",
 	}
 	tests := []struct {
-		name     string
-		event    string
-		provider string
-		emit     func(oauth.ConnectAuditor)
+		name       string
+		event      string
+		provider   string
+		instanceID string
+		emit       func(oauth.ConnectAuditor)
 	}{
 		{
 			name:  "ticket created",
@@ -47,11 +48,12 @@ func TestConnectAuditorExactFields(t *testing.T) {
 			},
 		},
 		{
-			name:     "provider linked",
-			event:    "mcp_provider_linked",
-			provider: "provider-sentinel",
+			name:       "provider linked",
+			event:      "mcp_provider_linked",
+			provider:   "provider-sentinel",
+			instanceID: "instance-sentinel",
 			emit: func(auditor oauth.ConnectAuditor) {
-				auditor.ProviderLinked(context.Background(), identity, "provider-sentinel")
+				auditor.ProviderLinked(context.Background(), identity, "provider-sentinel", "instance-sentinel")
 			},
 		},
 		{
@@ -89,6 +91,9 @@ func TestConnectAuditorExactFields(t *testing.T) {
 			}
 			if tt.provider != "" {
 				want["provider_id"] = tt.provider
+			}
+			if tt.instanceID != "" {
+				want["instance_id"] = tt.instanceID
 			}
 			require.Equal(t, want, record)
 			require.NotContains(t, output.String(), "subject-sentinel")

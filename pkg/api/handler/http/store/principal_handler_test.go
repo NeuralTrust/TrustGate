@@ -25,6 +25,7 @@ import (
 
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -92,6 +93,10 @@ func newPrincipalAppFor(
 	if caller != "" {
 		app.Use(func(c *fiber.Ctx) error {
 			c.Locals(string(infracontext.UserIDContextKey), caller)
+			c.SetUserContext(identity.WithPrincipal(c.UserContext(), &identity.Principal{
+				Subject: caller,
+				Claims:  map[string]any{identity.ClaimGroups: []string{"eng"}},
+			}))
 			return c.Next()
 		})
 	}
@@ -317,12 +322,13 @@ func TestPrincipalHandler_ConnectLink_MintsForTheCaller(t *testing.T) {
 	linker := &fakeConnectLinker{res: &appstore.PrincipalConnectLink{Ticket: "tkt-1", ConsumerPath: "/store/mcp"}}
 	app := newPrincipalAppFor(&fakePreview{}, nil, linker, "ana")
 	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/connect-link",
-		`{"principal_sub":"ana","code":"com.ahrefs/mcp","instance_id":"`+reg.String()+`"}`)
+		`{"principal_sub":"ana","code":"com.ahrefs/mcp","groups":["finance"],"instance_id":"`+reg.String()+`"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
 	if linker.got == nil || linker.got.PrincipalSub != "ana" || linker.got.Code != "com.ahrefs/mcp" ||
-		linker.got.RegistryID != reg || linker.got.GatewayID != gw {
+		linker.got.RegistryID != reg || linker.got.GatewayID != gw || len(linker.got.Groups) != 1 ||
+		linker.got.Groups[0] != "finance" {
 		t.Fatalf("request not forwarded: %+v", linker.got)
 	}
 	var body map[string]any

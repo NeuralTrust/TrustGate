@@ -17,6 +17,9 @@ package oauth
 import (
 	"context"
 	"log/slog"
+
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 const (
@@ -34,7 +37,7 @@ type ConnectAuditIdentity struct {
 //go:generate mockery --name=ConnectAuditor --dir=. --output=./mocks --filename=oauth_connect_auditor_mock.go --case=underscore --with-expecter
 type ConnectAuditor interface {
 	TicketCreated(ctx context.Context, identity ConnectAuditIdentity)
-	ProviderLinked(ctx context.Context, identity ConnectAuditIdentity, providerID string)
+	ProviderLinked(ctx context.Context, identity ConnectAuditIdentity, providerID, instanceID string)
 	ProviderUnlinked(ctx context.Context, identity ConnectAuditIdentity, providerID string)
 }
 
@@ -53,9 +56,12 @@ func (a *connectAuditor) TicketCreated(ctx context.Context, identity ConnectAudi
 func (a *connectAuditor) ProviderLinked(
 	ctx context.Context,
 	identity ConnectAuditIdentity,
-	providerID string,
+	providerID, instanceID string,
 ) {
-	a.log(ctx, connectAuditProviderLinked, identity, slog.String("provider_id", providerID))
+	a.log(ctx, connectAuditProviderLinked, identity,
+		slog.String("provider_id", providerID),
+		slog.String("instance_id", instanceID),
+	)
 }
 
 func (a *connectAuditor) ProviderUnlinked(
@@ -91,6 +97,20 @@ func connectAuditIdentity(ticket *ConnectTicket) (ConnectAuditIdentity, bool) {
 	return ConnectAuditIdentity{
 		GatewayID:  ticket.GatewayID,
 		ConsumerID: ticket.ConsumerID,
+		AuthID:     ticket.AuthID,
+	}, true
+}
+
+func providerLinkAuditIdentity(ticket *ConnectTicket) (ConnectAuditIdentity, bool) {
+	if identity, ok := connectAuditIdentity(ticket); ok {
+		return identity, true
+	}
+	if ticket == nil || !consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(ticket.ConsumerPath)) {
+		return ConnectAuditIdentity{}, false
+	}
+	return ConnectAuditIdentity{
+		GatewayID:  ticket.GatewayID,
+		ConsumerID: consumerdomain.StoreConsumerID().String(),
 		AuthID:     ticket.AuthID,
 	}, true
 }

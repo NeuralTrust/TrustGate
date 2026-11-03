@@ -84,6 +84,42 @@ func TestExceededBodyExplainsReason(t *testing.T) {
 	}
 }
 
+func TestExceededBodyNamesTrustGuardPlan(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   string
+	}{
+		{reason: ReasonBurst, want: "TrustGate blocked this request: TrustGuard plan burst rate limit exceeded. Retry in 42s."},
+		{reason: ReasonQuota, want: "TrustGate blocked this request: TrustGuard plan monthly request quota exceeded. Retry in 42s."},
+	}
+	for _, tt := range tests {
+		err := &Exceeded{Reason: tt.reason, Limit: 100, RetryAfter: 42 * time.Second, Source: SourceTrustGuard}
+		if got := err.ClientMessage(); got != tt.want {
+			t.Fatalf("ClientMessage(%s) = %q, want %q", tt.reason, got, tt.want)
+		}
+		var payload map[string]any
+		if uerr := json.Unmarshal(err.Body(), &payload); uerr != nil {
+			t.Fatalf("unmarshal body: %v", uerr)
+		}
+		if payload["source"] != SourceTrustGuard {
+			t.Fatalf("source = %v, want %s", payload["source"], SourceTrustGuard)
+		}
+		if payload["message"] != tt.want {
+			t.Fatalf("message = %v, want %q", payload["message"], tt.want)
+		}
+	}
+}
+
+func TestExceededBodyOfGatewayPlanHasNoSource(t *testing.T) {
+	var payload map[string]any
+	if err := json.Unmarshal((&Exceeded{Reason: ReasonBurst, Limit: 60}).Body(), &payload); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if _, ok := payload["source"]; ok {
+		t.Fatalf("source = %v, want it omitted for the gateway's own plan", payload["source"])
+	}
+}
+
 func TestRetryAfterSecondsCeil(t *testing.T) {
 	tests := []struct {
 		in   time.Duration

@@ -42,8 +42,9 @@ type Install struct {
 // it mints completes OAuth as that principal, so nobody may ask for someone
 // else's.
 type ConnectLink struct {
-	PrincipalSub string `json:"principal_sub"`
-	Code         string `json:"code"`
+	PrincipalSub string   `json:"principal_sub"`
+	Code         string   `json:"code"`
+	Groups       []string `json:"groups"`
 	// InstanceID pins the link to one installed instance of Code, for a server
 	// the gateway holds more than once. Empty opens the code's own card.
 	InstanceID string `json:"instance_id"`

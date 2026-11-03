@@ -32,6 +32,12 @@ const (
 	ReasonQuota = "quota"
 )
 
+// SourceTrustGuard names TrustGuard's plan as the one a request ran out of.
+// TrustGuard meters every evaluate call the gateway makes on its own counter,
+// with its own caps, so a request through a TrustGuard policy can reach that
+// limit before the gateway's.
+const SourceTrustGuard = "trustguard"
+
 // ErrUnavailable is retained for transport mapping (HTTP 503 / JSON-RPC -32005).
 // TrustGate Check fails open on entitlement load errors (including missing gateways);
 // callers that still return this error map it to 503.
@@ -48,6 +54,9 @@ type Exceeded struct {
 	Limit      int
 	Remaining  int
 	RetryAfter time.Duration
+	// Source is the product whose plan was exhausted: empty for this
+	// gateway's, SourceTrustGuard for TrustGuard's.
+	Source string
 }
 
 func (e *Exceeded) Error() string {
@@ -69,7 +78,7 @@ func (e *Exceeded) Headers() map[string][]string {
 // ClientMessage is the sentence a person or an SDK reads. The HTTP proxy puts
 // it in the ingress dialect envelope; Body keeps the flat shape MCP embeds.
 func (e *Exceeded) ClientMessage() string {
-	return rateLimitClientMessage(e.Reason, RetryAfterSeconds(e.RetryAfter))
+	return rateLimitClientMessage(e.Source, e.Reason, RetryAfterSeconds(e.RetryAfter))
 }
 
 func (e *Exceeded) Body() []byte {
@@ -81,6 +90,9 @@ func (e *Exceeded) Body() []byte {
 		"limit":               e.Limit,
 		"retry_after_seconds": retryAfter,
 	}
+	if e.Source != "" {
+		payload["source"] = e.Source
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return []byte(fmt.Sprintf(`{"error":"rate limit exceeded","reason":%q}`, e.Reason))
@@ -88,7 +100,10 @@ func (e *Exceeded) Body() []byte {
 	return raw
 }
 
-func rateLimitClientMessage(reason string, retryAfterSeconds int) string {
+func rateLimitClientMessage(source, reason string, retryAfterSeconds int) string {
+	if source == SourceTrustGuard {
+		return trustGuardRateLimitClientMessage(reason, retryAfterSeconds)
+	}
 	switch reason {
 	case ReasonBurst:
 		return fmt.Sprintf("TrustGate blocked this request: gateway burst rate limit exceeded. Retry in %ds.", retryAfterSeconds)
@@ -96,6 +111,19 @@ func rateLimitClientMessage(reason string, retryAfterSeconds int) string {
 		return fmt.Sprintf("TrustGate blocked this request: monthly request quota exceeded. Retry in %ds.", retryAfterSeconds)
 	default:
 		return fmt.Sprintf("TrustGate blocked this request: rate limit exceeded (%s). Retry in %ds.", reason, retryAfterSeconds)
+	}
+}
+
+// trustGuardRateLimitClientMessage names TrustGuard's plan, so a client is not
+// told the gateway's limit was reached when it was TrustGuard's.
+func trustGuardRateLimitClientMessage(reason string, retryAfterSeconds int) string {
+	switch reason {
+	case ReasonBurst:
+		return fmt.Sprintf("TrustGate blocked this request: TrustGuard plan burst rate limit exceeded. Retry in %ds.", retryAfterSeconds)
+	case ReasonQuota:
+		return fmt.Sprintf("TrustGate blocked this request: TrustGuard plan monthly request quota exceeded. Retry in %ds.", retryAfterSeconds)
+	default:
+		return fmt.Sprintf("TrustGate blocked this request: TrustGuard plan rate limit exceeded (%s). Retry in %ds.", reason, retryAfterSeconds)
 	}
 }
 

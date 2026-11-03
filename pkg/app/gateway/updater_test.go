@@ -321,6 +321,81 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_DedicatedGatewayKeepsItsSlug(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		dataPlane string
+		slug      string
+		wantErr   bool
+	}{
+		"dedicated rename refused":        {dataPlane: domain.DataPlaneDedicated, slug: "renamed", wantErr: true},
+		"dedicated same slug accepted":    {dataPlane: domain.DataPlaneDedicated, slug: "old"},
+		"dedicated same slug, other case": {dataPlane: domain.DataPlaneDedicated, slug: "OLD"},
+		"hybrid rename accepted":          {dataPlane: domain.DataPlaneHybrid, slug: "renamed"},
+		"hosted rename accepted":          {dataPlane: "", slug: "renamed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			id := ids.New[ids.GatewayKind]()
+			now := time.Now().UTC()
+			existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+			existing.Entitlements.DataPlane = tc.dataPlane
+			repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+			if !tc.wantErr {
+				repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Maybe()
+			}
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
+			slug := tc.slug
+			_, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, Slug: &slug})
+			if tc.wantErr != errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("Update error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestUpdater_Update_PlanStampKeepsTheStoredDataPlane(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		stored, sent, want string
+	}{
+		"omitted keeps dedicated":    {stored: domain.DataPlaneDedicated, sent: "", want: domain.DataPlaneDedicated},
+		"omitted keeps hybrid":       {stored: domain.DataPlaneHybrid, sent: "", want: domain.DataPlaneHybrid},
+		"explicit hosted clears it":  {stored: domain.DataPlaneDedicated, sent: domain.DataPlaneHosted, want: domain.DataPlaneHosted},
+		"explicit value replaces it": {stored: "", sent: domain.DataPlaneDedicated, want: domain.DataPlaneDedicated},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			id := ids.New[ids.GatewayKind]()
+			now := time.Now().UTC()
+			existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+			existing.Entitlements = stampedEntitlements("enterprise")
+			existing.Entitlements.DataPlane = tc.stored
+
+			repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+			repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+			updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
+			ent := stampedEntitlements("standard")
+			ent.DataPlane = tc.sent
+			got, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, PlatformAdmin: true, Entitlements: &ent})
+			if err != nil {
+				t.Fatalf("Update error: %v", err)
+			}
+			if got.Entitlements.DataPlane != tc.want || got.Entitlements.Tier != "standard" {
+				t.Fatalf("entitlements = %+v, want tier standard and data_plane %q", got.Entitlements, tc.want)
+			}
+		})
+	}
+}
+
 func TestUpdater_Update_EmptyTenantDoesNotImplyPlatform(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

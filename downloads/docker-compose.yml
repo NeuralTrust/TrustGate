@@ -61,6 +61,14 @@ services:
       CONFIG_SYNC_TLS_CA: ${CONFIG_SYNC_TLS_CA:-}
 
       # ----------------------------------------------------------------------
+      # TrustGate proxy — firewall (smart-routing complexity scoring)
+      # ----------------------------------------------------------------------
+      # Firewall client issued by the console for this gateway (shown once on
+      # its deploy step); it carries the firewall URL. Optional: without it,
+      # smart routing skips scoring and takes its fallback route.
+      FIREWALL_JWT: ${FIREWALL_JWT:-}
+
+      # ----------------------------------------------------------------------
       # TrustGate proxy — single-tenant trust
       # This stack serves one operator, so the people who configure providers,
       # identity providers and exporters are the people who run it. Let those

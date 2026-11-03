@@ -11,14 +11,14 @@ import (
 )
 
 // setupHybridRoute mirrors setupRoute but stamps the gateway with
-// entitlements.data_plane=hybrid, marking its traffic as belonging to a
-// customer-run data plane.
-func setupHybridRoute(t *testing.T, up *fakeUpstream) (apiKey, path string) {
+// entitlements.data_plane=dataPlane (hybrid or dedicated), marking its traffic
+// as belonging to a data plane of its own.
+func setupHybridRoute(t *testing.T, up *fakeUpstream, dataPlane string) (apiKey, path string) {
 	t.Helper()
 	plan := functionalSuitePlan()
-	plan["data_plane"] = "hybrid"
+	plan["data_plane"] = dataPlane
 	gatewayID := CreateGateway(t, map[string]any{
-		"slug":         uniqueName("hybrid-gw"),
+		"slug":         uniqueName(dataPlane + "-gw"),
 		"entitlements": plan,
 	})
 	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("hybrid-be"), up.URL()))
@@ -36,13 +36,24 @@ func TestHybridGatewayGuardE2E(t *testing.T) {
 
 	t.Run("hybrid gateway is refused with 421 and the upstream is never called", func(t *testing.T) {
 		up := newJSONUpstream(t, "hybrid-upstream")
-		apiKey, path := setupHybridRoute(t, up)
+		apiKey, path := setupHybridRoute(t, up, "hybrid")
 
 		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusMisdirectedRequest, status, "body: %s", body)
 		assert.Contains(t, string(body), "gateway_served_by_external_data_plane")
 		assert.Equal(t, 0, up.Hits(), "a refused hybrid gateway must never reach the upstream")
+	})
+
+	t.Run("dedicated gateway is refused with 421 and the upstream is never called", func(t *testing.T) {
+		up := newJSONUpstream(t, "dedicated-upstream")
+		apiKey, path := setupHybridRoute(t, up, "dedicated")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusMisdirectedRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), "gateway_served_by_external_data_plane")
+		assert.Equal(t, 0, up.Hits(), "a refused dedicated gateway must never reach the upstream")
 	})
 
 	t.Run("hosted gateway keeps being served", func(t *testing.T) {

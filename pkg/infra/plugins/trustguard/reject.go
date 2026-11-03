@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 )
 
 const typeBlocked = "trustguard_blocked"
@@ -43,17 +44,32 @@ func blockError(resp *GuardResponse, direction string) *appplugins.PluginError {
 }
 
 func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
-	body := err.body
-	if len(body) == 0 {
-		body = []byte(`{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`)
-	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusTooManyRequests,
 		Type:       typeRateLimited,
 		Message:    rateLimitMessage,
 		Headers:    err.headers,
-		Body:       body,
+		Body:       rateLimitBody(err.body),
 	}
+}
+
+// rateLimitBody is TrustGuard's 429 body with source set to TrustGuard, so the
+// proxy tells the client it was TrustGuard's plan that was reached and not the
+// gateway's. A body that is not a JSON object is replaced.
+func rateLimitBody(raw []byte) []byte {
+	var payload map[string]any
+	if json.Unmarshal(raw, &payload) != nil || payload == nil {
+		payload = map[string]any{
+			"error":   rateLimitMessage,
+			"message": "Request blocked: rate limit exceeded.",
+		}
+	}
+	payload["source"] = ratelimitapp.SourceTrustGuard
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return body
 }
 
 func blockBody(resp *GuardResponse, message, direction string) []byte {

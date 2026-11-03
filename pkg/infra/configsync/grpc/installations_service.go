@@ -125,8 +125,9 @@ func (s *InstallationsService) upsertInstallation(
 	return in, nil
 }
 
-// Find returns the installation for (gateway, principal, code), reporting a
-// missing row as found=false rather than an error.
+// Find returns the installation for (gateway, principal, code). A registry id
+// on the request scopes that lookup; an empty one does not. A missing row is
+// found=false rather than an error.
 func (s *InstallationsService) Find(
 	ctx context.Context,
 	req *snapshotpb.FindInstallationRequest,
@@ -138,7 +139,15 @@ func (s *InstallationsService) Find(
 	if err := s.authorizeGateway(ctx, "find", gatewayID); err != nil {
 		return nil, err
 	}
-	found, err := s.repo.Find(ctx, gatewayID, req.GetPrincipalSub(), req.GetCatalogCode())
+	var registryID []ids.RegistryID
+	if raw := req.GetRegistryId(); raw != "" {
+		parsed, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "store installations: find: parse registry id: %v", err)
+		}
+		registryID = append(registryID, parsed)
+	}
+	found, err := s.repo.Find(ctx, gatewayID, req.GetPrincipalSub(), req.GetCatalogCode(), registryID...)
 	if err != nil {
 		if errors.Is(err, installationdomain.ErrNotFound) {
 			return &snapshotpb.FindInstallationResponse{Found: false}, nil

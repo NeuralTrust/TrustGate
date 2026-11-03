@@ -38,7 +38,7 @@ func (f *fakeStreamInstalls) ListByPrincipal(context.Context, ids.GatewayID, str
 func (f *fakeStreamInstalls) Upsert(context.Context, *installationdomain.Installation) error {
 	return nil
 }
-func (f *fakeStreamInstalls) Find(context.Context, ids.GatewayID, string, string) (*installationdomain.Installation, error) {
+func (f *fakeStreamInstalls) Find(context.Context, ids.GatewayID, string, string, ...ids.RegistryID) (*installationdomain.Installation, error) {
 	return nil, installationdomain.ErrNotFound
 }
 func (f *fakeStreamInstalls) ListByCatalogCode(context.Context, ids.GatewayID, string) ([]*installationdomain.Installation, error) {

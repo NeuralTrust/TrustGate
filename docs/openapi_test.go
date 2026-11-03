@@ -30,13 +30,18 @@ type openAPIOperation struct {
 		Name string `json:"name"`
 		In   string `json:"in"`
 	} `json:"parameters"`
-	RequestBody struct {
-		Content map[string]openAPIMediaType `json:"content"`
-	} `json:"requestBody"`
-	Responses map[string]struct {
+	RequestBody openAPIRequestBody `json:"requestBody"`
+	Responses   map[string]struct {
 		Description string                      `json:"description"`
 		Content     map[string]openAPIMediaType `json:"content"`
 	} `json:"responses"`
+}
+
+// openAPIRequestBody is inline, or a $ref into components.requestBodies when
+// several operations share the same body.
+type openAPIRequestBody struct {
+	Ref     string                      `json:"$ref"`
+	Content map[string]openAPIMediaType `json:"content"`
 }
 
 type openAPIMediaType struct {
@@ -57,7 +62,8 @@ type openAPIDocument struct {
 		Delete openAPIOperation `json:"delete"`
 	} `json:"paths"`
 	Components struct {
-		Schemas map[string]openAPISchema `json:"schemas"`
+		Schemas       map[string]openAPISchema      `json:"schemas"`
+		RequestBodies map[string]openAPIRequestBody `json:"requestBodies"`
 	} `json:"components"`
 }
 
@@ -69,6 +75,17 @@ func loadOpenAPIDocument(t *testing.T) openAPIDocument {
 	var document openAPIDocument
 	require.NoError(t, json.Unmarshal(raw, &document))
 	return document
+}
+
+func jsonBodySchemaRef(t *testing.T, document openAPIDocument, body openAPIRequestBody) string {
+	t.Helper()
+	if body.Ref != "" {
+		name := strings.TrimPrefix(body.Ref, "#/components/requestBodies/")
+		resolved, ok := document.Components.RequestBodies[name]
+		require.True(t, ok, "request body %s not found", name)
+		body = resolved
+	}
+	return body.Content["application/json"].Schema.Ref
 }
 
 func schemaByRef(t *testing.T, document openAPIDocument, ref string) openAPISchema {
@@ -312,10 +329,10 @@ func TestPersonalKeyOpenAPIDocumentsTheSelfOnlyEndpoints(t *testing.T) {
 		assert.Contains(t, read.Properties, field)
 	}
 	assert.NotContains(t, read.Properties, "api_key", "GET never carries the secret")
-	create := schemaByRef(t, document, key.Post.RequestBody.Content["application/json"].Schema.Ref)
+	create := schemaByRef(t, document, jsonBodySchemaRef(t, document, key.Post.RequestBody))
 	assert.Contains(t, create.Properties, "expires_at")
 	assert.NotContains(t, create.Properties, "principal_sub", "the owner is always the caller")
-	assert.Contains(t, schemaByRef(t, document, rotate.Post.RequestBody.Content["application/json"].Schema.Ref).Properties, "expires_at")
+	assert.Contains(t, schemaByRef(t, document, jsonBodySchemaRef(t, document, rotate.Post.RequestBody)).Properties, "expires_at")
 }
 
 func TestSubjectSessionsOpenAPIDocumentsRecorded(t *testing.T) {

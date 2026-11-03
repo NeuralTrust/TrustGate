@@ -17,6 +17,7 @@ package trustguard
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -70,9 +71,10 @@ func mcpInputText(body []byte) string {
 
 // mcpOutputText concatenates the inspectable text of a CallToolResult: the text
 // of every text content block and of every embedded resource (image and audio
-// blocks carry no text), followed by every string leaf of structuredContent, in
-// the order rewriteMCPResponse writes them back. The isError flag does not
-// change extraction. It returns "" when there is nothing to inspect.
+// blocks carry no text), followed by every inspectable part of
+// structuredContent, in the order rewriteMCPResponse writes them back. The
+// isError flag does not change extraction. It returns "" when there is nothing
+// to inspect.
 //
 // structuredContent is included because a tool may return its payload there
 // instead of, or in addition to, text blocks — it reaches the agent all the
@@ -92,7 +94,7 @@ func mcpOutputText(body []byte) string {
 		}
 		parts = append(parts, text)
 	}
-	parts = append(parts, flattenArgumentStrings(result.StructuredContent)...)
+	parts = append(parts, flattenStructuredContent(result.StructuredContent)...)
 	return strings.Join(parts, "\n")
 }
 
@@ -112,10 +114,9 @@ func mcpOutputInspectable(body []byte) bool {
 }
 
 // flattenArgumentStrings walks the decoded arguments value and collects string
-// leaves (recursing maps and arrays); numbers, bools and nulls are skipped. Map
-// keys are visited in sorted order for deterministic output. When arguments are
-// not valid JSON it returns the raw trimmed arguments so free-form input stays
-// inspectable.
+// leaves. Map keys are visited in sorted order for deterministic output. When
+// arguments are not valid JSON it returns the raw trimmed arguments so
+// free-form input stays inspectable.
 func flattenArgumentStrings(raw json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
@@ -127,10 +128,38 @@ func flattenArgumentStrings(raw json.RawMessage) []string {
 		}
 		return nil
 	}
+	return collectStringValues(decoded, nil)
+}
+
+func flattenStructuredContent(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var decoded any
+	if err := decodeJSON(string(raw), &decoded); err != nil {
+		return nil
+	}
 	return collectStrings(decoded, nil)
 }
 
+// collectStrings flattens a decoded structuredContent value (decoded with
+// UseNumber) into its inspectable parts. A top-level null holds nothing to
+// inspect; a null nested in an object or array is a leaf like any other.
 func collectStrings(value any, acc []string) []string {
+	for _, part := range structuredParts(value) {
+		acc = append(acc, part.text)
+	}
+	return acc
+}
+
+func structuredParts(value any) []inspectablePart {
+	if value == nil {
+		return nil
+	}
+	return collectInspectableParts(value, nil)
+}
+
+func collectStringValues(value any, acc []string) []string {
 	switch v := value.(type) {
 	case string:
 		if strings.TrimSpace(v) != "" {
@@ -143,12 +172,52 @@ func collectStrings(value any, acc []string) []string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			acc = collectStrings(v[k], acc)
+			acc = collectStringValues(v[k], acc)
 		}
 	case []any:
 		for _, item := range v {
-			acc = collectStrings(item, acc)
+			acc = collectStringValues(item, acc)
 		}
+	}
+	return acc
+}
+
+// inspectablePart is one piece of structuredContent sent for inspection. Only
+// string values can be written back; keys and non-string scalars are inspected
+// but a mask that changes them cannot be applied.
+type inspectablePart struct {
+	text       string
+	rewritable bool
+}
+
+func collectInspectableParts(value any, acc []inspectablePart) []inspectablePart {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			acc = append(acc, inspectablePart{text: v, rewritable: true})
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if strings.TrimSpace(k) != "" {
+				acc = append(acc, inspectablePart{text: k})
+			}
+			acc = collectInspectableParts(v[k], acc)
+		}
+	case []any:
+		for _, item := range v {
+			acc = collectInspectableParts(item, acc)
+		}
+	case nil:
+		acc = append(acc, inspectablePart{text: "null"})
+	case bool:
+		acc = append(acc, inspectablePart{text: strconv.FormatBool(v)})
+	case json.Number:
+		acc = append(acc, inspectablePart{text: v.String()})
 	}
 	return acc
 }
@@ -213,16 +282,49 @@ func mcpToolsCallPayload(body []byte) (json.RawMessage, error) {
 
 // mcpToolsResultPayload wraps a CallToolResult body as a JSON-RPC result
 // envelope for protocol=mcp output evaluation.
+//
+// TrustGuard masks the string values of structuredContent but never its keys,
+// so a key holding flagged text would come back unchanged inside a transform.
+// The envelope therefore carries one extra text block, the probe, listing
+// structuredContent's keys and leaves as plain text. mcpTransformedResult
+// strips it again and refuses the mask when the probe shows a key or scalar
+// was flagged.
 func mcpToolsResultPayload(body []byte) (json.RawMessage, error) {
 	var result any
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := decodeJSON(string(body), &result); err != nil {
 		return nil, err
+	}
+	if fields, ok := result.(map[string]any); ok {
+		if probe, _, ok := structuredProbe(fields); ok {
+			blocks, _ := fields["content"].([]any)
+			fields["content"] = append(blocks, map[string]any{"type": "text", "text": probe})
+		}
 	}
 	return marshalNoEscape(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"result":  result,
 	})
+}
+
+// structuredProbe returns the probe text for a decoded CallToolResult and the
+// parts it was built from. There is no probe when structuredContent holds
+// nothing to inspect or when content is not an array the probe can join.
+func structuredProbe(result map[string]any) (string, []inspectablePart, bool) {
+	parts := structuredParts(result["structuredContent"])
+	if len(parts) == 0 {
+		return "", nil, false
+	}
+	switch result["content"].(type) {
+	case nil, []any:
+	default:
+		return "", nil, false
+	}
+	texts := make([]string, len(parts))
+	for i, part := range parts {
+		texts[i] = part.text
+	}
+	return strings.Join(texts, "\n"), parts, true
 }
 
 func llmPayload(input string) (json.RawMessage, error) {

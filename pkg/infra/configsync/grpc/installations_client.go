@@ -59,12 +59,17 @@ func (c *InstallationsClient) Find(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
+	registryID ...ids.RegistryID,
 ) (*installationdomain.Installation, error) {
-	resp, err := c.cli.Find(ctx, &snapshotpb.FindInstallationRequest{
+	req := &snapshotpb.FindInstallationRequest{
 		GatewayId:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		CatalogCode:  catalogCode,
-	})
+	}
+	if id := installationdomain.FindRegistryID(registryID...); !id.IsNil() {
+		req.RegistryId = id.String()
+	}
+	resp, err := c.cli.Find(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("installations: find: %w", err)
 	}

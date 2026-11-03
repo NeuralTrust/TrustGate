@@ -18,26 +18,34 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
+// buildRetryInterval spaces out rebuilds of an exporter that failed to build,
+// so a transient failure heals without every request paying for a rebuild.
+const buildRetryInterval = time.Minute
+
 type ExporterCache struct {
 	factory ExporterFactory
 	logger  *slog.Logger
+	now     func() time.Time
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
 }
 
 type cacheEntry struct {
-	once     sync.Once
+	mu       sync.Mutex
 	exporter Exporter
+	retryAt  time.Time
 }
 
 func NewExporterCache(factory ExporterFactory, logger *slog.Logger) *ExporterCache {
 	return &ExporterCache{
 		factory: factory,
 		logger:  logger,
+		now:     time.Now,
 		entries: make(map[string]*cacheEntry),
 	}
 }
@@ -89,30 +97,41 @@ func (c *ExporterCache) get(key string, item SourcedExporter) Exporter {
 	}
 	c.mu.Unlock()
 
-	entry.once.Do(func() {
-		build := c.factory.Build
-		if item.Tenant {
-			build = c.factory.BuildTenant
-		}
-		exporter, err := build(cfg)
-		if err != nil {
-			c.logger.Warn("failed to build gateway exporter, skipping",
-				slog.String("exporter", cfg.Name),
-				slog.String("error", err.Error()))
-			return
-		}
-		entry.exporter = exporter
-	})
-	return entry.exporter
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.exporter != nil {
+		return entry.exporter
+	}
+	now := c.now()
+	if now.Before(entry.retryAt) {
+		return nil
+	}
+	build := c.factory.Build
+	if item.Tenant {
+		build = c.factory.BuildTenant
+	}
+	exporter, err := build(cfg)
+	if err != nil {
+		entry.retryAt = now.Add(buildRetryInterval)
+		c.logger.Warn("failed to build gateway exporter, skipping",
+			slog.String("exporter", cfg.Name),
+			slog.String("error", err.Error()),
+			slog.Duration("retry_in", buildRetryInterval))
+		return nil
+	}
+	entry.exporter = exporter
+	return exporter
 }
 
 func (c *ExporterCache) CloseAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for key, entry := range c.entries {
+		entry.mu.Lock()
 		if entry.exporter != nil {
 			entry.exporter.Close()
 		}
+		entry.mu.Unlock()
 		delete(c.entries, key)
 	}
 }

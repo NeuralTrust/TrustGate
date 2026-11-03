@@ -162,8 +162,10 @@ func forwardTrustGuardRateLimit(t *testing.T, mode policy.Mode) {
 	t.Helper()
 
 	// Not the flat plan shape (reason is not burst or quota), so the forwarder
-	// leaves the body as TrustGuard wrote it on both legs.
+	// leaves the body as the plugin hands it over on both legs: TrustGuard's,
+	// marked with its source.
 	raw := []byte(`{"error":"rate limit exceeded","reason":"collector"}`)
+	want := `{"error":"rate limit exceeded","reason":"collector","source":"trustguard"}`
 	allowRaw, err := json.Marshal(trustguard.GuardResponse{Status: "allow"})
 	require.NoError(t, err)
 
@@ -249,7 +251,7 @@ func forwardTrustGuardRateLimit(t *testing.T, mode policy.Mode) {
 	require.Equal(t, http.StatusTooManyRequests, buffered.StatusCode)
 	require.Equal(t, http.StatusTooManyRequests, streamed.StatusCode)
 	require.Nil(t, streamed.Stream)
-	require.JSONEq(t, string(raw), string(buffered.Body))
+	require.JSONEq(t, want, string(buffered.Body))
 	require.JSONEq(t, string(buffered.Body), string(streamed.Body))
 	for _, name := range []string{"Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reason"} {
 		assert.Equal(t, buffered.Headers[name], streamed.Headers[name], name)

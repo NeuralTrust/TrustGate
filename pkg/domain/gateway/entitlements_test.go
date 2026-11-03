@@ -276,10 +276,12 @@ func TestRequireStampedEntitlements_CarriesRetentionAlongsideCaps(t *testing.T) 
 func TestNormalizeEntitlements_DataPlaneNormalizedAndValidated(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{
-		"":         "",
-		"hosted":   DataPlaneHosted,
-		"hybrid":   DataPlaneHybrid,
-		" Hybrid ": DataPlaneHybrid,
+		"":           "",
+		"hosted":     DataPlaneHosted,
+		"hybrid":     DataPlaneHybrid,
+		" Hybrid ":   DataPlaneHybrid,
+		"dedicated":  DataPlaneDedicated,
+		"DEDICATED ": DataPlaneDedicated,
 	} {
 		got, err := NormalizeEntitlements(Entitlements{Tier: "free", DataPlane: input})
 		if err != nil {
@@ -309,6 +311,39 @@ func TestIsHybridDataPlane(t *testing.T) {
 	}
 	if !(Entitlements{DataPlane: "HYBRID"}).IsHybridDataPlane() {
 		t.Fatal("hybrid stamp (any case) must report hybrid")
+	}
+}
+
+func TestIsOwnDataPlane(t *testing.T) {
+	t.Parallel()
+	for dataPlane, want := range map[string]bool{
+		"":                 false,
+		DataPlaneHosted:    false,
+		DataPlaneHybrid:    true,
+		DataPlaneDedicated: true,
+		" Dedicated ":      true,
+	} {
+		if got := (Entitlements{DataPlane: dataPlane}).IsOwnDataPlane(); got != want {
+			t.Fatalf("IsOwnDataPlane(%q) = %v, want %v", dataPlane, got, want)
+		}
+	}
+}
+
+func TestGateway_DedicatedKeepsHostedFeatures(t *testing.T) {
+	t.Parallel()
+	g := &Gateway{Entitlements: Entitlements{DataPlane: DataPlaneDedicated}}
+	if !g.ServedByOwnDataPlane() {
+		t.Fatal("a dedicated gateway is served only by its own data plane")
+	}
+	if g.ServedByHybridDataPlane() {
+		t.Fatal("a dedicated gateway is not a hybrid one")
+	}
+	if !g.AllowsPersonal() {
+		t.Fatal("a dedicated gateway keeps personal consumers")
+	}
+	var nilGateway *Gateway
+	if nilGateway.ServedByOwnDataPlane() {
+		t.Fatal("nil gateway must not report its own data plane")
 	}
 }
 

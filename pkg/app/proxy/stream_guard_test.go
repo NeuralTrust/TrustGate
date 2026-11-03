@@ -469,11 +469,12 @@ func TestStreamGuard_ToolCallArgumentsAreWholeBySegment(t *testing.T) {
 func TestStreamGuard_HeadStopsAtTheHeldBytesCeiling(t *testing.T) {
 	t.Parallel()
 	filler := `data: {"pad":"` + strings.Repeat("a", 8<<10) + `"}`
-	lines := make([]string, 0, 2*128)
-	for range 128 {
+	n := 3*maxHeadHeldBytes/len(filler) + 2
+	lines := make([]string, 0, 2*n)
+	for range n {
 		lines = append(lines, filler, "")
 	}
-	require.Greater(t, len(filler)*128, 3*maxHeadHeldBytes, "the source must outrun the ceiling by a wide margin")
+	require.Greater(t, len(filler)*n, 3*maxHeadHeldBytes, "the source must outrun the ceiling by a wide margin")
 
 	runner := &scriptedRunner{}
 	g := newStreamGuard(runner, failingCodec{}, adapter.FormatOpenAI, stageInputFixture(),

@@ -23,6 +23,7 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/gofiber/fiber/v2"
@@ -323,6 +324,7 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		GatewayID:    gatewayID,
 		PrincipalSub: principalSub,
 		Code:         strings.TrimSpace(req.Code),
+		Groups:       requestGroups(c, req.Groups),
 		RegistryID:   registryID,
 		ResumeURL:    strings.TrimSpace(req.ResumeURL),
 	})
@@ -335,6 +337,16 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		ConnectPath:  link.ConsumerPath + "/connect",
 		ExpiresAt:    time.Now().UTC().Add(appoauth.ConnectTicketTTL),
 	})
+}
+
+func requestGroups(c *fiber.Ctx, groups []string) []string {
+	if len(groups) > 0 {
+		return groups
+	}
+	if principal := identity.PrincipalFromContext(c.UserContext()); principal != nil {
+		return principal.StoreGroups()
+	}
+	return nil
 }
 
 // ConfigureLink godoc

@@ -36,6 +36,7 @@ message ClientMessage {
   oneof msg {
     Hello hello = 1;
     Ack ack = 2;
+    Heartbeat heartbeat = 3;
   }
 }
 
@@ -54,6 +55,22 @@ message Hello {
 
 message Ack {
   string applied_version = 1;
+}
+
+// Heartbeat is sent right after Hello and then on an interval, so the control
+// plane can tell a live data plane from a silent one and show what it runs.
+// Control planes that predate it skip the message.
+message Heartbeat {
+  string version = 1;
+  string region = 2;
+  // deployment_type is saas or self-hosted.
+  string deployment_type = 3;
+  // trustguard_base_url is the TrustGuard the gateway's guardrail policies
+  // call, from TRUSTGUARD_BASE_URL without credentials, query or fragment, and
+  // trustguard_client_id the TRUSTGUARD_CLIENT_ID it presents there. The
+  // client secret is never reported.
+  string trustguard_base_url = 4;
+  string trustguard_client_id = 5;
 }
 
 message ServerMessage {

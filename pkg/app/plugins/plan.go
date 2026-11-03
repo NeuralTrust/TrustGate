@@ -180,6 +180,15 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
+// refusalBlocks reports whether an entry refuses a tool input longer than it can
+// read whole and that refusal cuts the stream: it bounds its own payload, so the
+// executor never splits the input for it, and its mode blocks, so the refusal,
+// which is the input's own (ExternalStreamOutcome), is a block whatever on_error
+// says. An observing entry records it and the rest of the chain still reads.
+func refusalBlocks(inspector StreamInspector, entry chainEntry) bool {
+	return boundsOwnPayload(inspector) && Blocks(entry.mode)
+}
+
 const streamOnErrorFailOpen = "fail_open"
 
 // StreamPlan reports whether any entry of the stage takes part in per-segment
@@ -225,12 +234,14 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		return false, StreamOptions{}
 	}
 	var (
-		passive    StreamOptions
-		hasPassive bool
-		owner      StreamOptions
-		hasOwner   bool
-		maxBytes   int
-		readsTools bool
+		passive      StreamOptions
+		hasPassive   bool
+		owner        StreamOptions
+		hasOwner     bool
+		maxBytes     int
+		readsTools   bool
+		boundReaders bool
+		toolBytes    int
 	)
 	for _, entry := range p.byStage[stage] {
 		inspector, ok := streamInspector(entry.plugin)
@@ -242,7 +253,15 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			continue
 		}
 		maxBytes = max(maxBytes, opts.MaxAccumulatedBytes)
-		readsTools = readsTools || readsStreamToolCalls(entry.plugin)
+		if readsStreamToolCalls(entry.plugin) {
+			readsTools = true
+			if refusalBlocks(inspector, entry) {
+				limit := payloadLimit(inspector, opts.MaxAccumulatedBytes)
+				if !boundReaders || limit < toolBytes {
+					toolBytes, boundReaders = limit, true
+				}
+			}
+		}
 		if !ownsStreamOptions(entry.plugin) {
 			if !hasPassive {
 				passive, hasPassive = opts, true
@@ -259,6 +278,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			owner.MaxAccumulatedBytes = maxBytes
 		}
 		owner.ReadsToolCalls = readsTools
+		owner.ToolCallMaxAccumulatedBytes = toolBytes
 		return true, owner
 	}
 	if hasPassive {
@@ -266,6 +286,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			passive.MaxAccumulatedBytes = maxBytes
 		}
 		passive.ReadsToolCalls = readsTools
+		passive.ToolCallMaxAccumulatedBytes = toolBytes
 		return true, passive
 	}
 	return false, StreamOptions{}

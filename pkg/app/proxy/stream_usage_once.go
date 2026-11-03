@@ -66,7 +66,7 @@ func (u *usageOnce) adapt(emit func([][]byte) bool, payload []byte) bool {
 		u.logger.Warn("stream adapt chunk failed", slog.String("error", err.Error()))
 		return true
 	}
-	if chunk == nil || chunk.UpstreamErrorOnly() {
+	if chunk == nil || chunk.UpstreamErrorOnly() || chunk.DropGuardOnlyToolCalls() {
 		return true
 	}
 	chunk.ProviderExtensions = nil

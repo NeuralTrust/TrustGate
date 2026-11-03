@@ -110,24 +110,20 @@ func (r *Repository) Find(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
+	registryID ...ids.RegistryID,
 ) (*domain.Installation, error) {
-	// Several instances of one code may exist. Prefer an ACTIVE (installed) row,
-	// then the earliest, deterministically: single-instance readers (dial-time
-	// config resolver, admin reads) must never pick a revoked or pending row over
-	// a live one.
-	const query = selectColumns + `
-		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
-		ORDER BY (status = $4) DESC, created_at, id
-		LIMIT 1`
-	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode, string(domain.StatusInstalled))
-	in, err := scanInstallation(row)
+	// One code can have several rows (a different config is a new row). Pick in
+	// process so the choice can prefer the named registry or instance and the
+	// newest installed row. A principal holds few rows of one code.
+	rows, err := r.ListByPrincipalAndCode(ctx, gatewayID, principalSub, catalogCode)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrNotFound
-		}
 		return nil, err
 	}
-	return in, nil
+	picked := domain.SelectInstallation(rows, domain.FindRegistryID(registryID...))
+	if picked == nil {
+		return nil, domain.ErrNotFound
+	}
+	return picked, nil
 }
 
 func (r *Repository) FindByID(

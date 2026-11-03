@@ -24,6 +24,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 func mergeEntry(mode policy.Mode) chainEntry {
@@ -293,4 +294,23 @@ func TestMergeChunkVerdicts_ATypedInputErrorInObserveKeepsTheOtherChunksFingerpr
 	_, err = mergeOf(policy.ModeObserve, []*SegmentVerdict{{}, nil, {}}, errs)
 	require.ErrorAs(t, err, &typed)
 	assert.Same(t, failure, typed)
+}
+
+// Every piece carries the block's whole tool calls, so their rewrite survives
+// the merge even when no piece's text changed.
+func TestMergeChunkVerdicts_KeepsTheToolCallRewrite(t *testing.T) {
+	t.Parallel()
+	calls := []adapter.CanonicalToolCall{{ID: "call_1", Arguments: `{"cmd":"[MASK]"}`}}
+	verdicts := []*SegmentVerdict{
+		{HasTransform: true, Transformed: "0123456789", TransformedToolCalls: calls},
+		{HasTransform: true, Transformed: "0123456789", TransformedToolCalls: calls},
+	}
+
+	got, err := mergeOf(policy.ModeEnforce, verdicts, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.HasTransform)
+	assert.Equal(t, "01234567890123456789", got.Transformed)
+	assert.Equal(t, calls, got.TransformedToolCalls)
 }

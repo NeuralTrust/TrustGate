@@ -23,23 +23,30 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	keygrouphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/keygroup"
+	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	revokermocks "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation/mocks"
 	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	keygroupmocks "github.com/NeuralTrust/TrustGate/pkg/app/keygroup/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	jwtmocks "github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/gofiber/fiber/v2"
+	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -259,4 +266,148 @@ type subjectSessionsMustNotRun struct{}
 
 func (subjectSessionsMustNotRun) RevokeSubjectSessions(context.Context, string, string, string) (int, error) {
 	return 0, errors.New("handler must not run")
+}
+
+// signConsoleToken mints an HS256 console JWT for a tenant caller. An empty
+// tenantID leaves both tenant_id and platform_admin unset, which the admin
+// API rejects while the platform-claim requirement is on.
+func signConsoleToken(t *testing.T, secret, tenantID string) string {
+	t.Helper()
+	return signConsoleClaims(t, secret, &jwt.Claims{TenantID: tenantID, UserID: "user-1"})
+}
+
+// signPlatformToken mints a console JWT with the explicit platform_admin grant
+// and no tenant_id, the only form a cross-tenant caller may present.
+func signPlatformToken(t *testing.T, secret string) string {
+	t.Helper()
+	return signConsoleClaims(t, secret, &jwt.Claims{UserID: "user-1", PlatformAdmin: true})
+}
+
+func signConsoleClaims(t *testing.T, secret string, claims *jwt.Claims) string {
+	t.Helper()
+	claims.ExpiresAt = golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+	require.NoError(t, err)
+	return token
+}
+
+type fakeConnectionLister struct {
+	byScope map[string][]configsyncconn.Connection
+}
+
+func (f fakeConnectionLister) List(_ context.Context, scope string, _ *listing.Page) ([]configsyncconn.Connection, error) {
+	return f.byScope[scope], nil
+}
+
+// TestAdminRouterScopesConfigSyncConnectionsToCallerTenant is a regression test
+// for the full route (auth + RequireConfigSyncScopeAccess + handler): a tenant
+// caller must name one of its own gateways in ?scope= and is refused a foreign
+// one, while a platform caller may list every data plane unscoped.
+func TestAdminRouterScopesConfigSyncConnectionsToCallerTenant(t *testing.T) {
+	t.Parallel()
+	const secret = "secret"
+	ownGateway := ids.New[ids.GatewayKind]()
+	foreignGateway := ids.New[ids.GatewayKind]()
+
+	gateways := gatewaymocks.NewFinder(t)
+	gateways.EXPECT().FindByID(mock.Anything, ownGateway).
+		Return(&gatewaydomain.Gateway{ID: ownGateway, Metadata: gatewaydomain.WithTenantID(nil, "acme")}, nil)
+	gateways.EXPECT().FindByID(mock.Anything, foreignGateway).
+		Return(&gatewaydomain.Gateway{ID: foreignGateway, Metadata: gatewaydomain.WithTenantID(nil, "globex")}, nil)
+
+	lister := fakeConnectionLister{byScope: map[string][]configsyncconn.Connection{
+		ownGateway.String():     {{Scope: ownGateway.String(), InstanceID: "dp-acme"}},
+		foreignGateway.String(): {{Scope: foreignGateway.String(), InstanceID: "dp-globex"}},
+	}}
+
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport:       middleware.NewTransport(),
+		AdminAuth:                 middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, true),
+		AdminAuthz:                middleware.NewAdminAuthzMiddleware(nil, gateways),
+		ListConfigSyncConnections: configsynchttp.NewListConnectionsHandler(lister),
+	}).BuildRoutes(app))
+
+	get := func(bearer, target string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+bearer)
+		res, err := app.Test(req)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		return res.StatusCode, string(raw)
+	}
+
+	tenantToken := signConsoleToken(t, secret, "acme")
+
+	status, body := get(tenantToken, "/v1/config-sync/connections?scope="+ownGateway.String())
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, "dp-acme")
+
+	status, body = get(tenantToken, "/v1/config-sync/connections?scope="+foreignGateway.String())
+	require.Equal(t, http.StatusNotFound, status, body)
+	assert.NotContains(t, body, "dp-globex")
+
+	status, body = get(tenantToken, "/v1/config-sync/connections")
+	require.Equal(t, http.StatusBadRequest, status, body)
+
+	status, body = get(signConsoleToken(t, secret, ""), "/v1/config-sync/connections")
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "dp-acme")
+
+	status, body = get(signPlatformToken(t, secret), "/v1/config-sync/connections")
+	require.Equal(t, http.StatusOK, status, body)
+}
+
+type fakeTraceFinder struct {
+	evt *events.Event
+}
+
+func (f fakeTraceFinder) Find(_ context.Context, _ string) (*events.Event, error) {
+	return f.evt, nil
+}
+
+// TestAdminRouterScopesPlaygroundTracesToCallerTenant is a regression test for
+// the full route (auth + RequireInteractiveIdentity + handler): a tenant
+// caller may only read a trace stamped with its own tenant, while a platform
+// caller may read any trace.
+func TestAdminRouterScopesPlaygroundTracesToCallerTenant(t *testing.T) {
+	t.Parallel()
+	const secret = "secret"
+	finder := fakeTraceFinder{evt: &events.Event{TraceID: "trace-1", GatewayID: "gw-acme", TenantID: "acme"}}
+
+	app := fiber.New()
+	require.NoError(t, router.NewAdminRouter(router.AdminRouterDeps{
+		MiddlewareTransport: middleware.NewTransport(),
+		AdminAuth:           middleware.NewAdminAuthMiddleware(nil, jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}), nil, true),
+		AdminAuthz:          middleware.NewAdminAuthzMiddleware(nil, nil),
+		GetTrace:            playgroundhttp.NewGetTraceHandler(finder),
+	}).BuildRoutes(app))
+
+	get := func(bearer string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/playground/traces/trace-1", nil)
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+bearer)
+		res, err := app.Test(req)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(res.Body)
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		return res.StatusCode, string(raw)
+	}
+
+	status, body := get(signConsoleToken(t, secret, "acme"))
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, "trace-1")
+
+	status, body = get(signConsoleToken(t, secret, "globex"))
+	require.Equal(t, http.StatusNotFound, status, body)
+
+	status, body = get(signConsoleToken(t, secret, ""))
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "trace-1")
+
+	status, body = get(signPlatformToken(t, secret))
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, "trace-1")
 }

@@ -165,12 +165,15 @@ func TestNativeToolDegrade_UncleanCallIsFlagged(t *testing.T) {
 // P9: the input is larger than the bytes the guard may hold.
 func TestNativeToolDegrade_CallLargerThanTheByteBoundIsFlagged(t *testing.T) {
 	t.Parallel()
+	pad := strings.Repeat("a", 16<<10)
 	frags := []string{`{"to":"bob@x.io","pad":"`}
-	for range 80 {
-		frags = append(frags, strings.Repeat("a", 4000))
+	for range maxHeadHeldBytes/len(pad) + 4 {
+		frags = append(frags, pad)
 	}
 	frags = append(frags, `"}`)
-	frames := append([][]byte{deltaFrame(t, "Sending it")}, converseToolFrames(t, 1, frags...)...)
+	tool := converseToolFrames(t, 1, frags...)
+	require.Greater(t, frameWire(tool), maxHeadHeldBytes, "the call must cross the held-bytes ceiling")
+	frames := append([][]byte{deltaFrame(t, "Sending it")}, tool...)
 	frames = append(frames, testEventFrame(t, "messageStop", `{"stopReason":"tool_use"}`))
 	g, logs := loggedGuard(&maskRunner{from: streamEmail, to: "<EMAIL>"}, toolBlocks)
 	got, pe := runNativeGuard(t, g, frames)

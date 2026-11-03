@@ -15,14 +15,19 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 func TestStoreInstall_UnknownCodeIsAToolError(t *testing.T) {
@@ -215,6 +220,53 @@ func TestStoreSearch_ReportsInstalledCodes(t *testing.T) {
 	}
 	if got["github"]["store_state"] != storeStateAvailable {
 		t.Fatalf("github store_state = %v, want available", got["github"]["store_state"])
+	}
+}
+
+// Under Selected, an installation row is not enough. Search reports installed
+// only while a grant still allows the instance the scoper would expose; a
+// removed grant reads as a request. Open access does not consult grants.
+func TestStoreSearch_RevokedGrantDoesNotReportInstalled(t *testing.T) {
+	gitlab := ids.New[ids.RegistryKind]()
+	github := ids.New[ids.RegistryKind]()
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), &fakeInstaller{
+		installedCodes: map[string]struct{}{"gitlab": {}, "github": {}},
+		shelves: map[string][]ids.RegistryID{
+			"gitlab": {gitlab},
+			"github": {github},
+		},
+	}, nil, fakeGrantReader{items: []*storeaccessdomain.Grant{
+		grantFor("github", github, nil, []string{"ana"}),
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
+	curated := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated),
+	)
+	raw, err := tool.Call(curated, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := resultsByCode(t, raw)
+	if got["github"]["store_state"] != storeStateInstalled {
+		t.Fatalf("github store_state = %v, want installed while its grant remains", got["github"]["store_state"])
+	}
+	if got["gitlab"]["store_state"] != storeStateRequest {
+		t.Fatalf("gitlab store_state = %v, want request after its grant was removed", got["gitlab"]["store_state"])
+	}
+	if got["salesforce"]["store_state"] != storeStateRequest {
+		t.Fatalf("salesforce store_state = %v, want request", got["salesforce"]["store_state"])
+	}
+
+	raw, err = tool.Call(identity.WithPrincipal(selfServiceCtx(), &identity.Principal{Subject: "ana"}), storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("open search: %v", err)
+	}
+	got = resultsByCode(t, raw)
+	if got["gitlab"]["store_state"] != storeStateInstalled || got["github"]["store_state"] != storeStateInstalled {
+		t.Fatalf("open access keeps installed rows without a grant: gitlab=%v github=%v", got["gitlab"]["store_state"], got["github"]["store_state"])
 	}
 }
 

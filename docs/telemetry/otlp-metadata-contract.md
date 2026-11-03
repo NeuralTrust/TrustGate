@@ -18,7 +18,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Bodies (raw class) | Emitted as `trustgate.request.body` / `trustgate.response.body` when an `otlp` exporter is declared under `exporters.raw[]` |
 | Policy chain | `policy_chain[]` on the Event is JSON-encoded in `trustgate.policy_chain` (evidence never included) |
 | Policy scope | `mcp.policy_scope` on the Event (MCP `tools/call` resolved against an upstream only) records how the consumer's scoped policies applied: `evaluated` counts them, `matched[]` lists the ids that entered the plan and `skipped[]` the ones left out with a `reason` (`destination`, `principal`, `except`). Unscoped policies never appear; `policy_chain[]` keeps listing only the plugins that ran. Absent on discovery, prompts, resources, meta-tools and on consumers without scoped plans. Not flattened to an OTLP attribute yet |
-| `is_flagged` | Emitted as `trustgate.is_flagged` (bool) |
+| `is_flagged` | Emitted as `trustgate.is_flagged` (bool). True when a plugin blocked, reported or throttled, failed, or answered 4xx/5xx. A `rate_limited` decision (a plan quota refusal) is not a flag, so count those through `policy_chain[]` |
 | Retention | `trustgate.retention.expires_at` on **both** classes, or on neither. Absent means the gateway has no stamped plan retention — the sink applies its own fallback |
 
 ## HTTP semconv
@@ -327,13 +327,13 @@ The settings decide how much is held at a time, which is what a verdict can stil
 
 - **Head.** Nothing is written until the head has a verdict. The head closes on
   `head_chars` of inspectable text (400 by default), on the terminal event, or on the
-  held-bytes ceiling (256 KiB), and an open tool call extends it. A refusal at the head is a
+  held-bytes ceiling (1 MiB), and an open tool call extends it. A refusal at the head is a
   real HTTP 403 with no byte sent.
 - **Blocks.** After the head, a block closes on the terminal event; on the first event
   that arrives once `max_hold_ms` has passed since the block opened (800 ms by default;
   500 ms for `openai_moderation` and `regex_replace`); once it carries
   `min_chars_between_evals` (2048 by default; 1024 for `openai_moderation`); or once it
-  holds 256 KiB. There is no timer: the gate is checked as events arrive. An open native
+  holds 1 MiB. There is no timer: the gate is checked as events arrive. An open native
   tool call keeps the block open past `max_hold_ms`.
 - **Payload.** The prefix a call carries is bounded by each plugin's window, which a
   `max_accumulated_bytes` setting can lower but never raise: `trustguard` 64 KiB,

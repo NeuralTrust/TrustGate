@@ -15,6 +15,9 @@
 package providers
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -65,18 +68,66 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	return creds
 }
 
-const bearerPrefix = "Bearer "
+const (
+	bearerPrefix = "Bearer "
+
+	maxServiceAccountKeyBytes = 16 << 10
+	serviceAccountKeyType     = "service_account"
+)
 
 // ApplyIncomingBearer copies the caller's Authorization token onto credentials
 // when the registry auth type is passthrough. The Vertex client already sends
-// Credentials.ApiKey as Authorization: Bearer.
+// Credentials.ApiKey as Authorization: Bearer. A caller that sends a
+// service-account key instead, as raw or base64 JSON, gets it carried as
+// Credentials.GCP so the client mints an access token from it.
 func ApplyIncomingBearer(creds *Credentials, auth *registry.TargetAuth, authorization string) {
 	if creds == nil || auth == nil || auth.Type != registry.AuthTypePassthrough {
 		return
 	}
-	if token := bearerToken(authorization); token != "" {
-		creds.ApiKey = token
+	token := bearerToken(authorization)
+	if token == "" {
+		return
 	}
+	if key, ok := serviceAccountKey(token); ok {
+		creds.GCP = &GCP{ServiceAccountJSON: key, FromCaller: true}
+		return
+	}
+	creds.ApiKey = token
+}
+
+// serviceAccountKey reports whether token is a service-account key file. A dot
+// rules out base64 because access tokens (ya29.…) and JWTs always carry one.
+func serviceAccountKey(token string) (string, bool) {
+	if len(token) > maxServiceAccountKeyBytes {
+		return "", false
+	}
+	raw := []byte(token)
+	if token[0] != '{' {
+		if strings.Contains(token, ".") {
+			return "", false
+		}
+		decoded, ok := decodeBase64(token)
+		if !ok {
+			return "", false
+		}
+		raw = bytes.TrimSpace(decoded)
+	}
+	var key struct {
+		Type string `json:"type"`
+	}
+	if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &key) != nil || key.Type != serviceAccountKeyType {
+		return "", false
+	}
+	return string(raw), true
+}
+
+func decodeBase64(s string) ([]byte, bool) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(s); err == nil {
+			return b, true
+		}
+	}
+	return nil, false
 }
 
 func bearerToken(raw string) string {

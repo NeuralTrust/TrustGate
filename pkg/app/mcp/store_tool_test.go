@@ -576,9 +576,14 @@ type fakeInstaller struct {
 	// held answers Installed: the instance the principal already has.
 	held          *appstore.InstallResult
 	installedCall int
-	// installedCodes is what search reports as store_state installed.
+	// installedCodes is what search reports as store_state installed outside
+	// curated mode.
 	installedCodes    map[string]struct{}
 	installedCodesErr error
+	// shelves is the registry each active install is served by. Curated search
+	// reports installed only when a grant still allows one of them.
+	shelves    map[string][]ids.RegistryID
+	shelvesErr error
 }
 
 func (f *fakeInstaller) Installed(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
@@ -636,6 +641,13 @@ func (f *fakeInstaller) InstalledCodes(context.Context, ids.GatewayID, string) (
 		return nil, f.installedCodesErr
 	}
 	return f.installedCodes, nil
+}
+
+func (f *fakeInstaller) InstalledShelves(context.Context, ids.GatewayID, string) (map[string][]ids.RegistryID, error) {
+	if f.shelvesErr != nil {
+		return nil, f.shelvesErr
+	}
+	return f.shelves, nil
 }
 
 func (f *fakeInstaller) PinTarget(context.Context, appstore.InstallRequest) (*registrydomain.MCPTarget, error) {

@@ -53,12 +53,17 @@ func (m *memInstallations) Upsert(_ context.Context, in *installationdomain.Inst
 }
 
 func (m *memInstallations) Find(
-	_ context.Context, g ids.GatewayID, sub, code string,
+	_ context.Context, g ids.GatewayID, sub, code string, registryID ...ids.RegistryID,
 ) (*installationdomain.Installation, error) {
-	if in, ok := m.rows[key(g, sub, code)]; ok {
-		return in, nil
+	in, ok := m.rows[key(g, sub, code)]
+	if !ok {
+		return nil, installationdomain.ErrNotFound
 	}
-	return nil, installationdomain.ErrNotFound
+	picked := installationdomain.SelectInstallation([]*installationdomain.Installation{in}, installationdomain.FindRegistryID(registryID...))
+	if picked == nil {
+		return nil, installationdomain.ErrNotFound
+	}
+	return picked, nil
 }
 
 func (m *memInstallations) ListByPrincipal(
@@ -229,6 +234,40 @@ func TestInstallationsClient_FindMissingIsNotFound(t *testing.T) {
 	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
 	if _, err := client.Find(context.Background(), gatewayID, "nobody", "ghost"); !errors.Is(err, installationdomain.ErrNotFound) {
 		t.Fatalf("Find err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestInstallationsClient_FindScopesByRegistry(t *testing.T) {
+	repo := newMemInstallations()
+	client := dialInstallations(t, repo)
+	ctx := context.Background()
+	gatewayID, err := ids.NewV7[ids.GatewayKind]()
+	if err != nil {
+		t.Fatalf("gateway id: %v", err)
+	}
+	in, err := installationdomain.New(gatewayID, "user-sub", "github", "user-sub", nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	registryID := ids.New[ids.RegistryKind]()
+	in.RegistryID = registryID
+	if err := client.Upsert(ctx, in); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	got, err := client.Find(ctx, gatewayID, "user-sub", "github", registryID)
+	if err != nil {
+		t.Fatalf("Find scoped: %v", err)
+	}
+	if got.ID != in.ID || got.RegistryID != registryID {
+		t.Fatalf("scoped Find = %+v, want id %s registry %s", got, in.ID, registryID)
+	}
+	unscoped, err := client.Find(ctx, gatewayID, "user-sub", "github")
+	if err != nil || unscoped.ID != in.ID {
+		t.Fatalf("unscoped Find = (%+v, %v), want the same row", unscoped, err)
+	}
+	if _, err := client.Find(ctx, gatewayID, "user-sub", "github", ids.New[ids.RegistryKind]()); !errors.Is(err, installationdomain.ErrNotFound) {
+		t.Fatalf("Find for another registry err = %v, want ErrNotFound", err)
 	}
 }
 

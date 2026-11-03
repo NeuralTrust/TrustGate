@@ -67,17 +67,21 @@ type Claims struct {
 	// token is being replayed on the wrong verifier and must be rejected.
 	TokenUse string `json:"token_use,omitempty"`
 	// PlatformAdmin is the explicit cross-tenant grant. Absence of tenant_id is
-	// not sufficient once ADMIN_PLATFORM_CLAIM_REQUIRED is on.
+	// not a platform grant unless ADMIN_PLATFORM_CLAIM_REQUIRED is turned off.
 	PlatformAdmin bool `json:"platform_admin,omitempty"`
 	jwt.RegisteredClaims
 }
 
+// CreateToken mints a short-lived console token with the explicit
+// platform_admin grant and no tenant. A token with neither claim is rejected
+// by the admin API while ADMIN_PLATFORM_CLAIM_REQUIRED is on.
 func (m *manager) CreateToken() (string, error) {
 	if m.config.SecretKey == "" {
 		return "", ErrInvalidToken
 	}
 	now := time.Now()
 	claims := &Claims{
+		PlatformAdmin: true,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.maxTTL())),

@@ -25,6 +25,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
@@ -612,4 +613,46 @@ func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("condition not met within %s", timeout)
+}
+
+func gatewayIDsOf(snapshot *readmodel.Snapshot) []string {
+	data := snapshot.Data()
+	out := make([]string, 0, len(data.Gateways))
+	for i := range data.Gateways {
+		out = append(out, data.Gateways[i].ID.String())
+	}
+	return out
+}
+
+func TestCompile_OwnDataPlaneGatewaysOnlyTravelInTheirScope(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwH := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	gwD := mustGatewayID(t, "44444444-4444-4444-4444-444444444444")
+	compiler := newDispatchCompiler(fakeGateways{items: []*gatewaydomain.Gateway{
+		{ID: gwA},
+		{ID: gwH, Entitlements: gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneHybrid}},
+		{ID: gwD, Entitlements: gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneDedicated}},
+	}})
+
+	global, scoped, _, err := compiler.CompileAll(context.Background())
+	if err != nil {
+		t.Fatalf("compile all: %v", err)
+	}
+	if got := gatewayIDsOf(global); len(got) != 1 || got[0] != gwA.String() {
+		t.Fatalf("the shared snapshot must hold only the hosted gateway, got %v", got)
+	}
+	for _, gw := range []ids.GatewayID{gwH, gwD} {
+		if got := gatewayIDsOf(scoped[gw.String()]); len(got) != 1 || got[0] != gw.String() {
+			t.Fatalf("gateway %s must travel in its own scope, got %v", gw, got)
+		}
+	}
+
+	single, err := compiler.Compile(context.Background())
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if got := gatewayIDsOf(single); len(got) != 1 || got[0] != gwA.String() {
+		t.Fatalf("the single global snapshot must hold only the hosted gateway, got %v", got)
+	}
 }

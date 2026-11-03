@@ -286,6 +286,12 @@ X-RateLimit-Reason: burst|quota
 
 MCP: JSON-RPC `-32004` plus the same HTTP headers. Headers, `Retry-After` and body are unchanged by the in-memory counter.
 
+**Whose plan.** A request through a TrustGuard policy can reach TrustGuard's plan before the gateway's: TrustGuard's burst cap is lower and every inspected leg spends a Guard unit (section 6). The 429 then comes from the TrustGuard plugin, and it says so:
+
+- The body names TrustGuard's plan: `TrustGate blocked this request: TrustGuard plan burst rate limit exceeded. Retry in 42s.` (or `TrustGuard plan monthly request quota exceeded`). The gateway's own limit keeps `gateway burst rate limit exceeded` / `monthly request quota exceeded`. The plugin marks TrustGuard's flat body with `"source": "trustguard"` (also what MCP carries in the error data) and the proxy renders the dialect envelope from it.
+- `X-RateLimit-Limit` is TrustGuard's cap, not the gateway's.
+- The policy chain records the TrustGuard entry with decision `rate_limited` and `extras.rate_limit_reason` (`burst`/`quota`), not `blocked`, and the entry does not flag the request. It is a plan limit, not a verdict on the content.
+
 ---
 
 ## Annex A. Counter semantics

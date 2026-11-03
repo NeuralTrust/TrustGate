@@ -219,7 +219,13 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	// plane without one the Portal simply gets no Connect button.
 	var linker appstore.PrincipalConnectLinker
 	if p.Connect != nil {
-		linker, err = appstore.NewPrincipalConnectLinker(p.Connect)
+		linker, err = appstore.NewPrincipalConnectLinker(
+			p.Connect,
+			p.Registries,
+			p.Grants,
+			appstore.NewModeResolver(p.Policies),
+			gateways,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -228,6 +234,11 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	if p.Configure != nil {
 		configurer, err = appstore.NewPrincipalConfigureLinker(
 			appoauth.StoreConfigureTickets{Service: p.Configure},
+			p.Registries,
+			p.Installs,
+			p.Grants,
+			appstore.NewModeResolver(p.Policies),
+			gateways,
 		)
 		if err != nil {
 			return nil, err
