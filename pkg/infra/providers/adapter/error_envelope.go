@@ -163,7 +163,7 @@ func errorDialect(f Format) Format {
 	switch normalizeFormat(f) {
 	case FormatAnthropic:
 		return FormatAnthropic
-	case FormatGemini, FormatVertexEmbed, FormatVertexPredictEmbed:
+	case FormatGemini, FormatVertexEmbed, FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
 		return FormatGemini
 	case FormatCohere, FormatCohereEmbed, FormatCohereRerank:
 		return FormatCohere
@@ -183,12 +183,14 @@ func OpenAIErrorDialect(format Format) bool {
 
 // gatewayErrorDialect is narrower than errorDialect on purpose: rerank and the
 // other embedding sources have always answered gateway errors in OpenAI's
-// envelope, and only the Vertex :predict route moves to Google's.
+// envelope, and only the native Google embeddings routes move to Google's.
 func gatewayErrorDialect(source Format) Format {
-	if source == FormatVertexPredictEmbed {
+	switch source {
+	case FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
 		return FormatGemini
+	default:
+		return normalizeFormat(source)
 	}
-	return normalizeFormat(source)
 }
 
 // EncodeErrorBody encodes a gateway-originated error in the client's dialect.

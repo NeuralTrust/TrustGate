@@ -1620,6 +1620,9 @@ func TestHandle_WrongMethodIs405WithoutForwarding(t *testing.T) {
 		{http.MethodGet, "/v1/messages", "POST"},
 		{http.MethodGet, "/v1/responses", "POST"},
 		{http.MethodGet, "/v1/embeddings", "POST"},
+		{http.MethodGet, "/v1beta/models/gemini-embedding-001:embedContent", "POST"},
+		{http.MethodGet, "/v1beta/models/gemini-embedding-001:batchEmbedContents", "POST"},
+		{http.MethodGet, "/v1/projects/p/locations/r/publishers/google/models/gemini-embedding-001:embedContent", "POST"},
 		{http.MethodGet, "/v1/rerank", "POST"},
 		{http.MethodGet, "/v1/images/generations", "POST"},
 		{http.MethodGet, "/v1/audio/speech", "POST"},
@@ -2217,4 +2220,41 @@ func TestHandleStore_ModelsListTheUnionAndStampNoConsumer(t *testing.T) {
 	assert.Empty(t, rt.Metadata().ConsumerID)
 	assert.Equal(t, authID.String(), rt.Metadata().AuthID)
 	assert.True(t, rt.IsModelsListing())
+}
+
+func TestHandle_NativeEmbeddingsErrorsUseTheGeminiErrorObject(t *testing.T) {
+	paths := []string{
+		"/v1beta/models/gemini-embedding-001:embedContent",
+		"/v1beta/models/gemini-embedding-001:batchEmbedContents",
+		"/v1/projects/p/locations/r/publishers/google/models/gemini-embedding-001:embedContent",
+		"/v1beta1/publishers/google/models/gemini-embedding-001:batchEmbedContents",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			app := fiber.New()
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.DiscardHandler)).Handle)
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(nil, fmt.Errorf("%w: every request in a batch must use the same taskType", appproxy.ErrInvalidRequestPayload)).
+				Once()
+
+			req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+path, strings.NewReader(`{"requests":[]}`))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+			var got struct {
+				Error struct {
+					Code   int    `json:"code"`
+					Status string `json:"status"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			assert.Equal(t, http.StatusBadRequest, got.Error.Code)
+			assert.Equal(t, "INVALID_ARGUMENT", got.Error.Status)
+		})
+	}
 }

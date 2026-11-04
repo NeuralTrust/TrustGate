@@ -51,6 +51,8 @@ const (
 	// FormatVertexPredictEmbed is the Vertex `:predict` embeddings dialect
 	// (instances[].content in, predictions[].embeddings.values out).
 	FormatVertexPredictEmbed Format = "vertex_predict_embed"
+	FormatGeminiEmbed        Format = "gemini_embed"
+	FormatGeminiBatchEmbed   Format = "gemini_batch_embed"
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -194,7 +196,8 @@ func IsChatRequest(capability string, f Format) bool {
 	}
 	switch f {
 	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
-		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed:
+		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed,
+		FormatGeminiEmbed, FormatGeminiBatchEmbed:
 		return false
 	default:
 		return true
@@ -207,7 +210,18 @@ func SupportedSourceFormat(f Format) bool {
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
 		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
 		FormatCohereEmbed, FormatCohereRerank,
-		FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed:
+		FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
+		return true
+	default:
+		return false
+	}
+}
+
+// ModelInPath reports whether a request in format f names its model in the URL
+// path, as the Gemini and Vertex actions do, rather than in the body.
+func ModelInPath(f Format) bool {
+	switch f {
+	case FormatGemini, FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
 		return true
 	default:
 		return false
@@ -437,10 +451,7 @@ func ResolveTargetFormatForCapability(
 		case provider.Cohere:
 			return FormatCohereEmbed
 		case provider.Vertex:
-			if sourceFormat == FormatVertexPredictEmbed {
-				return FormatVertexPredictEmbed
-			}
-			return FormatVertexEmbed
+			return FormatVertexPredictEmbed
 		case provider.Bedrock:
 			return FormatBedrockTitanEmbed
 		default:
