@@ -105,9 +105,9 @@ func TestVertexPredictEmbed_CrossFormatToOpenAI(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 
-	out, err := AdaptEmbeddingRequest(reg,
+	out, err := AdaptEmbeddingRequestForProvider(reg,
 		[]byte(`{"model":"text-embedding-3-small","instances":[{"content":"a","task_type":"RETRIEVAL_QUERY"},{"content":"b"}],"parameters":{"outputDimensionality":256}}`),
-		FormatVertexPredictEmbed, FormatOpenAIEmbeddings)
+		FormatVertexPredictEmbed, FormatOpenAIEmbeddings, provider.OpenAI)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"model":"text-embedding-3-small","input":["a","b"],"dimensions":256}`, string(out))
 
