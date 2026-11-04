@@ -37,6 +37,7 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -75,7 +76,7 @@ func MCP(c *container.Container) error {
 		if keyPEM == "" {
 			env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
 			if env == "prod" || env == "production" {
-				resolved, err := infrasts.ResolveSharedSigningKey(context.Background(), cc.RedisClient(), logger)
+				resolved, err := infrasts.ResolveSharedSigningKey(context.Background(), cc.RedisClient(), keyscope.Scope(cfg.Redis.KeyScope), logger)
 				if err != nil {
 					return nil, err
 				}

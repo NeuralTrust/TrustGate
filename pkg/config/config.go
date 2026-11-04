@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
@@ -135,7 +136,8 @@ const (
 	defaultSemanticCacheVectorStore        = "redis"
 	defaultClusterSemanticCacheVectorStore = "in_memory"
 
-	defaultTrustGuardTimeout = 30 * time.Second
+	defaultTrustGuardTimeout   = 30 * time.Second
+	defaultTrustGuardV3Timeout = 5 * time.Second
 
 	defaultFirewallComplexityTimeout       = 30 * time.Second
 	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
@@ -596,6 +598,9 @@ type RedisConfig struct {
 	// TLSCAFile is a PEM bundle that replaces the system roots when verifying
 	// the Redis server certificate.
 	TLSCAFile string
+	// KeyScope namespaces the keys and channels global to this plane, for
+	// planes that share one Redis database. Empty keeps the unscoped names.
+	KeyScope string
 }
 
 type CacheConfig struct {
@@ -763,6 +768,20 @@ type TrustGuardConfig struct {
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
+	V3           TrustGuardV3Config
+}
+
+// TrustGuardV3Config is Guard (TrustGuard v3), which the TrustGuard plugin
+// sends a copy of every evaluation of the listed gateways to. TrustGuard alone
+// decides; Guard's answer is never applied.
+type TrustGuardV3Config struct {
+	BaseURL      string
+	Timeout      time.Duration
+	ClientID     string
+	ClientSecret string
+	// Gateways maps each gateway that sends copies to the Guard integration id
+	// its token names, empty for the policy's collector_id. No entry, no copy.
+	Gateways map[string]string
 }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
@@ -990,6 +1009,7 @@ func getRedisConfig() RedisConfig {
 		AWSServerless:     getEnvBool("REDIS_AWS_SERVERLESS", false),
 		Cluster:           cluster,
 		TLSCAFile:         strings.TrimSpace(getEnv("REDIS_TLS_CA_FILE", "")),
+		KeyScope:          strings.TrimSpace(getEnv("REDIS_KEY_SCOPE", "")),
 	}
 }
 
@@ -1294,7 +1314,29 @@ func getTrustGuardConfig() TrustGuardConfig {
 		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
+		V3: TrustGuardV3Config{
+			BaseURL:      getEnv("TRUSTGUARD_V3_BASE_URL", ""),
+			Timeout:      getEnvDuration("TRUSTGUARD_V3_TIMEOUT", defaultTrustGuardV3Timeout),
+			ClientID:     getEnv("TRUSTGUARD_V3_CLIENT_ID", ""),
+			ClientSecret: getEnv("TRUSTGUARD_V3_CLIENT_SECRET", ""),
+			Gateways:     parseTrustGuardV3Gateways(getEnv("TRUSTGUARD_V3_GATEWAYS", "")),
+		},
 	}
+}
+
+// parseTrustGuardV3Gateways reads TRUSTGUARD_V3_GATEWAYS: a comma list of
+// gateway ids, each optionally followed by =<Guard integration id>.
+func parseTrustGuardV3Gateways(raw string) map[string]string {
+	out := make(map[string]string)
+	for _, entry := range strings.Split(raw, ",") {
+		gateway, integration, _ := strings.Cut(entry, "=")
+		gateway = strings.TrimSpace(gateway)
+		if gateway == "" {
+			continue
+		}
+		out[gateway] = strings.TrimSpace(integration)
+	}
+	return out
 }
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
@@ -1844,6 +1886,9 @@ func (c *Config) validateRedis() error {
 		if c.Redis.TLSInsecureVerify {
 			return fmt.Errorf("%w: REDIS_TLS_CA_FILE and REDIS_TLS_INSECURE_VERIFY are mutually exclusive", errors.ErrInvalidConfig)
 		}
+	}
+	if err := keyscope.Validate(c.Redis.KeyScope); err != nil {
+		return fmt.Errorf("%w: REDIS_KEY_SCOPE: %w", errors.ErrInvalidConfig, err)
 	}
 	if c.Redis.Cluster {
 		if c.Redis.DB != 0 {

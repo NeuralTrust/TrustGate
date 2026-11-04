@@ -506,6 +506,26 @@ func mcpToolName(body []byte) string {
 	return b.Name
 }
 
+// mcpRule resolves the rule for a tools/call. The body carries the exposed
+// name, which holds the server prefix, while operators write the upstream's own
+// name, so a rule applies when it names either one; walking the rules once in
+// order keeps first-match-wins across both spellings. The call is counted and
+// refused under the exposed name: it is the canonical name the client called
+// and unique per server, so two servers' tools of one name never share a budget.
+func mcpRule(rules []ruleConfig, req *infracontext.RequestContext) (string, *ruleConfig, bool) {
+	exposed := mcpToolName(req.Body)
+	if exposed == "" {
+		return "", nil, false
+	}
+	native := strings.TrimSpace(req.MCPTool)
+	for i := range rules {
+		if matchToolPattern(rules[i].Tool, exposed) || (native != "" && matchToolPattern(rules[i].Tool, native)) {
+			return exposed, &rules[i], true
+		}
+	}
+	return exposed, nil, false
+}
+
 func (p *Plugin) mcpPreRequest(
 	ctx context.Context,
 	cfg *config,
@@ -515,12 +535,11 @@ func (p *Plugin) mcpPreRequest(
 	if in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
 	}
-	tool := mcpToolName(in.Request.Body)
+	tool, rule, ok := mcpRule(cfg.Rules, in.Request)
 	if tool == "" {
 		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoTools)
 		return okResult(), nil
 	}
-	rule, ok := matchRule(cfg.Rules, tool)
 	if !ok {
 		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoMatchingRule)
 		return okResult(), nil
@@ -546,11 +565,7 @@ func (p *Plugin) mcpPreResponse(
 	if in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
 	}
-	tool := mcpToolName(in.Request.Body)
-	if tool == "" {
-		return okResult(), nil
-	}
-	rule, ok := matchRule(cfg.Rules, tool)
+	tool, rule, ok := mcpRule(cfg.Rules, in.Request)
 	if !ok {
 		return okResult(), nil
 	}

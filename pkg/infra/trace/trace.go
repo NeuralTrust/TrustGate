@@ -82,6 +82,7 @@ type RequestTrace struct {
 	pending  int64
 	emitOnce sync.Once
 	metaTool atomic.Bool
+	models   atomic.Bool
 
 	mu           sync.Mutex
 	endedAt      time.Time
@@ -145,6 +146,13 @@ func (t *RequestTrace) MarkMetaTool() { t.metaTool.Store(true) }
 
 // IsMetaTool reports whether MarkMetaTool was called.
 func (t *RequestTrace) IsMetaTool() bool { return t.metaTool.Load() }
+
+// MarkModelsListing records that the request listed or described models,
+// answered by the gateway without reaching any provider.
+func (t *RequestTrace) MarkModelsListing() { t.models.Store(true) }
+
+// IsModelsListing reports whether MarkModelsListing was called.
+func (t *RequestTrace) IsModelsListing() bool { return t.models.Load() }
 
 func (t *RequestTrace) Metadata() Metadata {
 	t.mu.Lock()

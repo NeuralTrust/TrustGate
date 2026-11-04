@@ -29,6 +29,8 @@ import (
 
 var t0 = time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 
+const unscopedStreamKey = "{trafficlabels}:stream"
+
 type harness struct {
 	mr     *miniredis.Miniredis
 	client *redis.Client
@@ -66,7 +68,7 @@ func request(gateway, text string) trafficlabel.Request {
 
 func (h *harness) xlen(t *testing.T) int64 {
 	t.Helper()
-	n, err := h.client.XLen(context.Background(), streamKey).Result()
+	n, err := h.client.XLen(context.Background(), unscopedStreamKey).Result()
 	require.NoError(t, err)
 	return n
 }
@@ -124,6 +126,43 @@ func TestStream_OneConsumerPerEntry(t *testing.T) {
 		seen[d.ID] = true
 	}
 	assert.Len(t, seen, 4)
+}
+
+func TestStream_UnscopedKeysAreUnchanged(t *testing.T) {
+	t.Parallel()
+	s := New(nil, Config{})
+	assert.Equal(t, unscopedStreamKey, s.streamKey)
+	assert.Equal(t, "{trafficlabels}:quota:", s.quotaKeyPrefix)
+}
+
+func TestStream_ScopedKeysShareOneHashTag(t *testing.T) {
+	t.Parallel()
+	s := New(nil, Config{KeyScope: "dp-acme"})
+	assert.Equal(t, "{trafficlabels:dp-acme}:stream", s.streamKey)
+	assert.Equal(t, "{trafficlabels:dp-acme}:quota:", s.quotaKeyPrefix)
+}
+
+func TestStream_ScopesDoNotShareEntriesOrQuota(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	a := h.stream(t, "a", Config{KeyScope: "dp-a", GatewayQuotaPerSecond: 1})
+	b := h.stream(t, "b", Config{KeyScope: "dp-b", GatewayQuotaPerSecond: 1})
+	ctx := context.Background()
+
+	require.NoError(t, a.Enqueue(ctx, request("gw-1", "from a")))
+	require.NoError(t, b.Enqueue(ctx, request("gw-1", "from b")), "a quota spent in one scope does not count in another")
+
+	gotA, err := a.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.Len(t, gotA, 1)
+	assert.Equal(t, "trace-from a", gotA[0].Request.TraceID)
+
+	gotB, err := b.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.Len(t, gotB, 1)
+	assert.Equal(t, "trace-from b", gotB[0].Request.TraceID)
+
+	assert.False(t, h.mr.Exists(unscopedStreamKey))
 }
 
 func TestStream_GatewayQuota(t *testing.T) {
@@ -310,7 +349,7 @@ func TestStream_LeaveRemovesAnIdleConsumer(t *testing.T) {
 	require.NoError(t, idle.Leave(ctx))
 	require.NoError(t, holding.Leave(ctx))
 
-	consumers, err := h.client.XInfoConsumers(ctx, streamKey, groupName).Result()
+	consumers, err := h.client.XInfoConsumers(ctx, unscopedStreamKey, groupName).Result()
 	require.NoError(t, err)
 	var names []string
 	for _, c := range consumers {
@@ -340,10 +379,10 @@ func TestStream_InvalidEntry(t *testing.T) {
 	s := h.stream(t, "a", Config{})
 	ctx := context.Background()
 
-	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{fieldRequest: "{not json"}}).Err())
-	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"other": "x"}}).Err())
+	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: unscopedStreamKey, Values: map[string]any{fieldRequest: "{not json"}}).Err())
+	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: unscopedStreamKey, Values: map[string]any{"other": "x"}}).Err())
 	v1 := `{"gateway_id":"gw-1","text":"refund","labels":[{"id":"l-1","name":"Billing","instructions":"refunds"}]}`
-	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{fieldRequest: v1}}).Err())
+	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: unscopedStreamKey, Values: map[string]any{fieldRequest: v1}}).Err())
 
 	got, err := s.Read(ctx, 10, 10*time.Millisecond)
 	require.NoError(t, err)
