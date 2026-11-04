@@ -202,12 +202,12 @@ func newVertexEmbeddingsUpstream(t *testing.T) *fakeUpstream {
 	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.record(r)
 		w.Header().Set("Content-Type", "application/json")
-		if !strings.Contains(r.URL.Path, "embedContent") && !strings.Contains(r.URL.Path, "batchEmbedContents") {
+		if !strings.HasSuffix(r.URL.Path, ":predict") {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = fmt.Fprintf(w, `{"error":{"message":"unexpected path %s"}}`, r.URL.Path)
 			return
 		}
-		_, _ = io.WriteString(w, `{"embedding":{"values":[0.1,0.2,0.3]}}`)
+		_, _ = io.WriteString(w, `{"predictions":[{"embeddings":{"values":[0.1,0.2,0.3],"statistics":{"token_count":1,"truncated":false}}}]}`)
 	}))
 	t.Cleanup(u.server.Close)
 	return u
@@ -223,7 +223,7 @@ func TestVertexProvider_Embeddings(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, "vertex", headers.Get("X-Selected-Provider"))
-	assert.Contains(t, up.LastPath(), "text-embedding-004:embedContent")
+	assert.Contains(t, up.LastPath(), "text-embedding-004:predict")
 	assertOpenAIEmbeddingsResponse(t, body)
 	assert.Equal(t, 1, up.Hits())
 }

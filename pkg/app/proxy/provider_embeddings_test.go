@@ -51,7 +51,7 @@ func TestProviderInvoke_VertexEmbeddingsCrossFormat(t *testing.T) {
 	client := &embeddingsTestClient{
 		embeddingsFn: func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
 			sentBody = body
-			return []byte(`{"embedding":{"values":[0.1,0.2]}}`), nil
+			return []byte(`{"predictions":[{"embeddings":{"values":[0.1,0.2],"statistics":{"token_count":1}}}]}`), nil
 		},
 	}
 
@@ -69,13 +69,8 @@ func TestProviderInvoke_VertexEmbeddingsCrossFormat(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "vertex_embed", req.TargetFormat)
-
-	var vertexReq map[string]any
-	require.NoError(t, json.Unmarshal(sentBody, &vertexReq))
-	content := vertexReq["content"].(map[string]any)
-	parts := content["parts"].([]any)
-	assert.Equal(t, "hello", parts[0].(map[string]any)["text"])
+	assert.Equal(t, "vertex_predict_embed", req.TargetFormat)
+	assert.JSONEq(t, `{"model":"text-embedding-004","instances":[{"content":"hello"}]}`, string(sentBody))
 
 	var openaiResp map[string]any
 	require.NoError(t, json.Unmarshal(resp.Body, &openaiResp))

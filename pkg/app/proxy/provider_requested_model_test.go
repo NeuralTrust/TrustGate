@@ -96,7 +96,7 @@ func TestProviderInvoke_RequestedModelSurvivesOutOfBandTargets(t *testing.T) {
 		{name: "bedrock converse from anthropic", provider: "bedrock", source: "anthropic", fields: chatAnthropic, wantTarget: "bedrock"},
 		{name: "bedrock converse from anthropic stream", provider: "bedrock", source: "anthropic", stream: true, fields: chatAnthropic, wantTarget: "bedrock"},
 		{name: "bedrock titan embeddings", provider: "bedrock", source: string(adapter.FormatOpenAIEmbeddings), capability: "embeddings", fields: embeddings, wantTarget: "bedrock_titan_embed"},
-		{name: "vertex embeddings", provider: "vertex", source: string(adapter.FormatOpenAIEmbeddings), capability: "embeddings", fields: embeddings, wantTarget: "vertex_embed"},
+		{name: "vertex embeddings", provider: "vertex", source: string(adapter.FormatOpenAIEmbeddings), capability: "embeddings", fields: embeddings, wantTarget: "vertex_predict_embed"},
 		{name: "anthropic from openai", provider: "anthropic", source: "openai", fields: chatOpenAI, wantTarget: "anthropic"},
 	}
 

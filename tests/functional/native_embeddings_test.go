@@ -50,7 +50,7 @@ func TestNativeEmbeddings_GeminiPathsAgainstVertex(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "vertex", headers.Get("X-Selected-Provider"))
 		assert.JSONEq(t, `{"embedding":{"values":[0.1,0.2,0.3]}}`, string(body))
-		assert.Contains(t, up.LastPath(), "gemini-embedding-001:embedContent")
+		assert.Contains(t, up.LastPath(), "gemini-embedding-001:predict")
 	})
 
 	t.Run("batchEmbedContents with one request stays a batch", func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestNativeEmbeddings_GeminiPathsAgainstVertex(t *testing.T) {
 		assert.JSONEq(t, `{"embedding":{"values":[0.1,0.2,0.3]}}`, string(body))
 		assert.NotContains(t, up.LastPath(), "/projects/x/")
 		assert.NotContains(t, up.LastPath(), "/locations/y/")
-		assert.Contains(t, up.LastPath(), "gemini-embedding-001:embedContent")
+		assert.Contains(t, up.LastPath(), "gemini-embedding-001:predict")
 	})
 
 	t.Run("countTokens is not served", func(t *testing.T) {
@@ -148,8 +148,7 @@ func TestNativeEmbeddings_OpenAIEmbeddingsUnchanged(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, status, "body: %s", body)
 	assertOpenAIEmbeddingsResponse(t, body)
-	assert.NotContains(t, string(up.LastBody()), "outputDimensionality")
-	assert.NotContains(t, string(up.LastBody()), "taskType")
+	assert.JSONEq(t, `{"instances":[{"content":"hello"}]}`, string(up.LastBody()))
 }
 
 func assertGeminiError(t *testing.T, body []byte, wantStatus string) {
