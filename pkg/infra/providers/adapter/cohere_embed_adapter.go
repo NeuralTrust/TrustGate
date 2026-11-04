@@ -14,13 +14,24 @@
 
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
+)
+
+// CanonicalEmbeddingRequest is the provider-neutral embeddings request.
+// TaskType uses the Gemini vocabulary (RETRIEVAL_QUERY, CLUSTERING, ...),
+// Titles is aligned to Inputs, and Dimensions is the requested output size,
+// zero meaning the model default.
 type CanonicalEmbeddingRequest struct {
-	Model     string   `json:"model,omitempty"`
-	Inputs    []string `json:"inputs,omitempty"`
-	Tokens    [][]int  `json:"tokens,omitempty"`
-	InputType string   `json:"input_type,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Inputs     []string `json:"inputs,omitempty"`
+	Tokens     [][]int  `json:"tokens,omitempty"`
+	InputType  string   `json:"input_type,omitempty"`
+	TaskType   string   `json:"task_type,omitempty"`
+	Titles     []string `json:"titles,omitempty"`
+	Dimensions int      `json:"dimensions,omitempty"`
 }
 
 type CanonicalEmbeddingResponse struct {
@@ -32,8 +43,9 @@ type CanonicalEmbeddingResponse struct {
 type OpenAIEmbeddingsAdapter struct{}
 
 type openAIEmbeddingRequest struct {
-	Model string          `json:"model"`
-	Input json.RawMessage `json:"input"`
+	Model      string          `json:"model"`
+	Input      json.RawMessage `json:"input"`
+	Dimensions int             `json:"dimensions,omitempty"`
 }
 
 type openAIEmbeddingResponse struct {
@@ -74,7 +86,7 @@ func (a *OpenAIEmbeddingsAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	out := openAIEmbeddingRequest{Model: emb.Model, Input: inputRaw}
+	out := openAIEmbeddingRequest{Model: emb.Model, Input: inputRaw, Dimensions: emb.Dimensions}
 	return json.Marshal(out)
 }
 
@@ -172,7 +184,7 @@ func (a *CohereEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error
 	}
 	inputType := emb.InputType
 	if inputType == "" {
-		inputType = "search_document"
+		inputType = cohereInputTypeForTask(emb.TaskType)
 	}
 	out := cohereEmbedRequest{
 		Model:          emb.Model,
@@ -318,7 +330,33 @@ func embeddingResponseFromCanonical(resp *CanonicalResponse) (*CanonicalEmbeddin
 	return &emb, nil
 }
 
+var cohereInputTypes = map[string]string{
+	"RETRIEVAL_QUERY":    "search_query",
+	"RETRIEVAL_DOCUMENT": "search_document",
+	"CLASSIFICATION":     "classification",
+	"CLUSTERING":         "clustering",
+}
+
+const defaultCohereInputType = "search_document"
+
+func cohereInputTypeForTask(taskType string) string {
+	if inputType, ok := cohereInputTypes[taskType]; ok {
+		return inputType
+	}
+	return defaultCohereInputType
+}
+
+// AdaptEmbeddingRequest is AdaptEmbeddingRequestForProvider with no provider
+// name, so an OpenAI-format target never receives "dimensions".
 func AdaptEmbeddingRequest(registry *Registry, body []byte, source, target Format) ([]byte, error) {
+	return AdaptEmbeddingRequestForProvider(registry, body, source, target, "")
+}
+
+// AdaptEmbeddingRequestForProvider converts an embeddings request body between
+// formats. The OpenAI wire format serves several providers and only OpenAI and
+// Azure accept "dimensions", so the requested output dimension is kept only
+// for them; every other field mapping is the target encoder's.
+func AdaptEmbeddingRequestForProvider(registry *Registry, body []byte, source, target Format, providerName string) ([]byte, error) {
 	if source == target {
 		return body, nil
 	}
@@ -334,7 +372,33 @@ func AdaptEmbeddingRequest(registry *Registry, body []byte, source, target Forma
 	if err != nil {
 		return nil, err
 	}
+	if target == FormatOpenAIEmbeddings && !acceptsEmbeddingDimensions(providerName) {
+		if canonical, err = withoutEmbeddingDimensions(canonical); err != nil {
+			return nil, err
+		}
+	}
 	return dst.EncodeRequest(canonical)
+}
+
+func acceptsEmbeddingDimensions(providerName string) bool {
+	return providerName == provider.OpenAI || providerName == provider.Azure
+}
+
+func withoutEmbeddingDimensions(req *CanonicalRequest) (*CanonicalRequest, error) {
+	emb, err := embeddingFromCanonical(req)
+	if err != nil {
+		return nil, err
+	}
+	if emb.Dimensions == 0 {
+		return req, nil
+	}
+	emb.Dimensions = 0
+	raw, err := json.Marshal(emb)
+	if err != nil {
+		return nil, err
+	}
+	req.Metadata["embedding"] = json.RawMessage(raw)
+	return req, nil
 }
 
 func AdaptEmbeddingResponse(registry *Registry, body []byte, source, target Format) ([]byte, error) {

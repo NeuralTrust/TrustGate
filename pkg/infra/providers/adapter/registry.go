@@ -114,7 +114,10 @@ func NewRegistry() *Registry {
 	r.Register(FormatCohereEmbed, &CohereEmbedAdapter{})
 	r.Register(FormatCohereRerank, &CohereRerankAdapter{})
 	r.Register(FormatVertexEmbed, &VertexEmbedAdapter{})
+	r.Register(FormatVertexPredictEmbed, &VertexPredictEmbedAdapter{})
 	r.Register(FormatBedrockTitanEmbed, &BedrockTitanEmbedAdapter{})
+	r.Register(FormatGeminiEmbed, &GeminiEmbedAdapter{})
+	r.Register(FormatGeminiBatchEmbed, &GeminiEmbedAdapter{batch: true})
 	return r
 }
 

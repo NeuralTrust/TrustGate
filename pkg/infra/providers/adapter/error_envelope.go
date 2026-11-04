@@ -163,7 +163,7 @@ func errorDialect(f Format) Format {
 	switch normalizeFormat(f) {
 	case FormatAnthropic:
 		return FormatAnthropic
-	case FormatGemini, FormatVertexEmbed:
+	case FormatGemini, FormatVertexEmbed, FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
 		return FormatGemini
 	case FormatCohere, FormatCohereEmbed, FormatCohereRerank:
 		return FormatCohere
@@ -181,12 +181,24 @@ func OpenAIErrorDialect(format Format) bool {
 	return errorDialect(format) == FormatOpenAI
 }
 
+// gatewayErrorDialect is narrower than errorDialect on purpose: rerank and the
+// other embedding sources have always answered gateway errors in OpenAI's
+// envelope, and only the native Google embeddings routes move to Google's.
+func gatewayErrorDialect(source Format) Format {
+	switch source {
+	case FormatVertexPredictEmbed, FormatGeminiEmbed, FormatGeminiBatchEmbed:
+		return FormatGemini
+	default:
+		return normalizeFormat(source)
+	}
+}
+
 // EncodeErrorBody encodes a gateway-originated error in the client's dialect.
 func EncodeErrorBody(source Format, status int, message string) []byte {
 	if message == "" {
 		message = http.StatusText(status)
 	}
-	switch normalizeFormat(source) {
+	switch gatewayErrorDialect(source) {
 	case FormatAnthropic:
 		out, _ := json.Marshal(anthropicErrorEnvelope{
 			Type: "error",
@@ -399,7 +411,7 @@ func StreamBlockedEvent(source Format, reason, message, direction string) [][]by
 }
 
 func NeedsAdaptedError(source Format) bool {
-	switch normalizeFormat(source) {
+	switch gatewayErrorDialect(source) {
 	case FormatAnthropic, FormatGemini, FormatCohere, FormatBedrock:
 		return true
 	default:
