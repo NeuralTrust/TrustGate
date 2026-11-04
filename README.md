@@ -95,13 +95,31 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
   -d '{"model":"text-embedding-3-small","input":["Hello from TrustGate"]}'
 ```
 
-OpenAI-shaped clients always call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, Mistral, and custom `openai_compatible` registries forward that payload to the upstream embeddings URL. Vertex uses Gemini `:embedContent` / `:batchEmbedContents`, and Bedrock Titan embed uses `InvokeModel` with `{inputText}`. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
+OpenAI-shaped clients call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, Mistral, and custom `openai_compatible` registries forward that payload to the upstream embeddings URL. Upstream, the gateway calls Vertex with `:predict` (`instances[].content`), the only embeddings action Vertex serves for `gemini-embedding-001`, and Bedrock Titan embed with `InvokeModel` and `{inputText}`. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
 
 ```bash
 curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"embed-english-v3.0","input":["Hello from TrustGate"]}'
+```
+
+Clients that use the Google Gen AI SDK can keep its native embeddings calls. The model comes from the path; project and location are ignored, since the upstream URL comes from the registry:
+
+| Path | Body and response |
+|---|---|
+| `POST /{consumer}/v1beta/models/{model}:embedContent` | `{"content":{"parts":[{"text":"…"}]}}` → `{"embedding":{"values":[…]}}` |
+| `POST /{consumer}/v1beta/models/{model}:batchEmbedContents` | `{"requests":[{"content":…}]}` → `{"embeddings":[{"values":[…]}]}`, a batch of one included |
+| `POST /{consumer}/{v1\|v1beta1}/projects/{p}/locations/{l}/publishers/google/models/{model}:embedContent` and `:batchEmbedContents` | Same as above, also in the express form `/{v1\|v1beta1}/publishers/google/models/{model}:…` |
+| `POST /{consumer}/{v1\|v1beta1}/projects/{p}/locations/{l}/publishers/google/models/{model}:predict` (and the express form), for `gemini-embedding-*`, `text-embedding-*` and `text-multilingual-embedding-*` | Vertex text embedding `:predict`, which the SDK sends in Vertex mode: `{"instances":[{"content":"…"}],"parameters":{"outputDimensionality":…}}` → `{"predictions":[{"embeddings":{"values":[…]}}]}`. A Vertex registry receives it as `:predict` unchanged |
+
+Any registry that serves embeddings answers them. The text parts of one `content` become one vector. `taskType`, `title` and `outputDimensionality` reach Vertex; `taskType` maps to Cohere `input_type`; `outputDimensionality` becomes `dimensions` for OpenAI and Azure only; other targets drop them. A batch whose requests use different `taskType` or `outputDimensionality` values, or a non-text part, returns 400. Errors use the Gemini error object, and any other action (`countTokens`, `rawPredict`, …) returns 404.
+
+```bash
+curl -s -X POST "$PROXY/$CON_SLUG/v1beta/models/gemini-embedding-001:batchEmbedContents" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"requests":[{"content":{"parts":[{"text":"Hello from TrustGate"}]},"taskType":"RETRIEVAL_DOCUMENT"}]}'
 ```
 
 OpenAI-shaped clients call `/{consumer}/v1/files` for upload, list, retrieve, delete, and content download. OpenAI, Azure, OpenRouter, xAI, Mistral, and Anthropic registries that expose a Files API are forwarded as-is (Azure uses `{endpoint}/openai/files?api-version=…`; Anthropic uses `https://api.anthropic.com/v1/files` with `x-api-key` and `anthropic-version`). Providers without a Files store are filtered out of the pool. Retrieve, content, and delete then pin by file-id prefix: `file_` stays on Anthropic; any other files-capable provider is treated as OpenAI-compatible (`file-`). A 404 from one store is retried on the remaining backends in that family so a file uploaded to OpenAI is still found if the next request would otherwise land on Mistral. List and upload still load-balance across files-capable registries:

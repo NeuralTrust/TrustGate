@@ -105,9 +105,9 @@ func TestVertexPredictEmbed_CrossFormatToOpenAI(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 
-	out, err := AdaptEmbeddingRequest(reg,
+	out, err := AdaptEmbeddingRequestForProvider(reg,
 		[]byte(`{"model":"text-embedding-3-small","instances":[{"content":"a","task_type":"RETRIEVAL_QUERY"},{"content":"b"}],"parameters":{"outputDimensionality":256}}`),
-		FormatVertexPredictEmbed, FormatOpenAIEmbeddings)
+		FormatVertexPredictEmbed, FormatOpenAIEmbeddings, provider.OpenAI)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"model":"text-embedding-3-small","input":["a","b"],"dimensions":256}`, string(out))
 
@@ -143,8 +143,10 @@ func TestResolveTargetFormatForCapability_VertexPredictEmbed(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, FormatVertexPredictEmbed,
 		ResolveTargetFormatForCapability(provider.Vertex, "embeddings", FormatVertexPredictEmbed, nil))
-	assert.Equal(t, FormatVertexEmbed,
+	assert.Equal(t, FormatVertexPredictEmbed,
 		ResolveTargetFormatForCapability(provider.Vertex, "embeddings", FormatOpenAIEmbeddings, nil))
+	assert.Equal(t, FormatVertexPredictEmbed,
+		ResolveTargetFormatForCapability(provider.Vertex, "embeddings", FormatGeminiBatchEmbed, nil))
 	assert.Equal(t, FormatOpenAIEmbeddings,
 		ResolveTargetFormatForCapability(provider.OpenAI, "embeddings", FormatVertexPredictEmbed, nil))
 	assert.Equal(t, FormatCohereEmbed,
@@ -156,4 +158,27 @@ func TestVertexPredictEmbed_RegisteredAsSourceFormat(t *testing.T) {
 	assert.True(t, SupportedSourceFormat(FormatVertexPredictEmbed))
 	_, err := NewRegistry().GetAdapter(FormatVertexPredictEmbed)
 	require.NoError(t, err)
+}
+
+func TestVertexPredictEmbed_TaskTypeAndTitles(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry()
+
+	out, err := AdaptEmbeddingRequestForProvider(reg,
+		[]byte(`{"model":"embed-v4.0","instances":[{"content":"a","task_type":"RETRIEVAL_QUERY","title":"t"},{"content":"b","taskType":"RETRIEVAL_QUERY"}]}`),
+		FormatVertexPredictEmbed, FormatCohereEmbed, provider.Cohere)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"embed-v4.0","texts":["a","b"],"input_type":"search_query","embedding_types":["float"]}`, string(out))
+
+	out, err = AdaptEmbeddingRequestForProvider(reg,
+		[]byte(`{"model":"embed-v4.0","instances":[{"content":"a","task_type":"RETRIEVAL_QUERY"},{"content":"b","task_type":"CLUSTERING"}]}`),
+		FormatVertexPredictEmbed, FormatCohereEmbed, provider.Cohere)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"input_type":"search_document"`, "instances that disagree carry no task type")
+
+	out, err = AdaptEmbeddingRequestForProvider(reg,
+		[]byte(`{"requests":[{"content":{"parts":[{"text":"a"}]},"taskType":"RETRIEVAL_DOCUMENT","title":"doc"},{"content":{"parts":[{"text":"b"}]},"taskType":"RETRIEVAL_DOCUMENT"}],"model":"gemini-embedding-001"}`),
+		FormatGeminiBatchEmbed, FormatVertexPredictEmbed, provider.Vertex)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"instances":[{"content":"a","task_type":"RETRIEVAL_DOCUMENT","title":"doc"},{"content":"b","task_type":"RETRIEVAL_DOCUMENT"}]}`, string(out))
 }

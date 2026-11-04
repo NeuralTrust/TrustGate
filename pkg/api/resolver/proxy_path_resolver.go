@@ -202,12 +202,12 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	if isModelsPath(rest) {
 		return adapter.FormatOpenAI, CapabilityModels, nil
 	}
-	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
-		return adapter.FormatGemini, CapabilityChat, nil
+	if action, ok := geminiPathAction(rest); ok {
+		return action.format, action.capability, nil
 	}
 	if model, action, ok := vertexModelAction(rest); ok {
-		if _, chat := vertexChatActions[action]; chat {
-			return adapter.FormatGemini, CapabilityChat, nil
+		if found, known := geminiActions[action]; known {
+			return found.format, found.capability, nil
 		}
 		if action == vertexPredictAction && isVertexEmbeddingModel(model) {
 			return adapter.FormatVertexPredictEmbed, CapabilityEmbeddings, nil
@@ -216,9 +216,36 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	return "", "", ErrUnknownProxyPath
 }
 
+type nativeAction struct {
+	format     adapter.Format
+	capability ProxyCapability
+}
+
+// geminiActions are the actions TrustGate serves on both the Gemini and the
+// Vertex model paths. Vertex adds :predict for embedding models; any other
+// action, or none, is an unknown route.
+var geminiActions = map[string]nativeAction{
+	"generateContent":       {adapter.FormatGemini, CapabilityChat},
+	"streamGenerateContent": {adapter.FormatGemini, CapabilityChat},
+	"embedContent":          {adapter.FormatGeminiEmbed, CapabilityEmbeddings},
+	"batchEmbedContents":    {adapter.FormatGeminiBatchEmbed, CapabilityEmbeddings},
+}
+
+func geminiPathAction(rest string) (nativeAction, bool) {
+	segment, ok := strings.CutPrefix(rest, adapter.GeminiModelsRoutePrefix)
+	if !ok {
+		return nativeAction{}, false
+	}
+	model, action := adapter.SplitGeminiModelAction(segment)
+	if model == "" {
+		return nativeAction{}, false
+	}
+	found, known := geminiActions[action]
+	return found, known
+}
+
 var (
 	vertexAPIVersions = map[string]struct{}{"v1": {}, "v1beta1": {}}
-	vertexChatActions = map[string]struct{}{"generateContent": {}, "streamGenerateContent": {}}
 	// vertexEmbeddingModelPrefixes are the Vertex models whose :predict
 	// payload is instances[].content in and predictions[].embeddings out.
 	vertexEmbeddingModelPrefixes = []string{"gemini-embedding-", "text-embedding-", "text-multilingual-embedding-"}
