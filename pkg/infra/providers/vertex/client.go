@@ -36,6 +36,7 @@ const (
 	streamAction     = "streamGenerateContent"
 	embedAction      = "embedContent"
 	batchEmbedAction = "batchEmbedContents"
+	predictAction    = "predict"
 
 	optKeyAction = "action"
 
@@ -139,6 +140,11 @@ func (c *client) Embeddings(
 	if err != nil {
 		return nil, err
 	}
+	// PredictRequest has no model field and Vertex rejects unknown fields;
+	// the model the gateway stamps for routing travels in the URL instead.
+	if embeddingsAction(reqBody) == predictAction {
+		reqBody = adapter.StripModel(reqBody)
+	}
 
 	token, err := c.bearerToken(ctx, config)
 	if err != nil {
@@ -187,9 +193,16 @@ func (c *client) buildEmbeddingsURL(config *providers.Config, reqBody []byte) (s
 
 func embeddingsAction(reqBody []byte) string {
 	var probe struct {
-		Requests json.RawMessage `json:"requests"`
+		Requests  json.RawMessage `json:"requests"`
+		Instances json.RawMessage `json:"instances"`
 	}
-	if json.Unmarshal(reqBody, &probe) == nil && len(probe.Requests) > 0 {
+	if json.Unmarshal(reqBody, &probe) != nil {
+		return embedAction
+	}
+	if len(probe.Instances) > 0 {
+		return predictAction
+	}
+	if len(probe.Requests) > 0 {
 		return batchEmbedAction
 	}
 	return embedAction
