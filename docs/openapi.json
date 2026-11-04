@@ -7942,6 +7942,244 @@
                 }
             }
         },
+        "/{consumer_slug}/v1beta/models/{model}:batchEmbedContents": {
+            "post": {
+                "description": "Accepts the Gemini and Vertex embedContent and batchEmbedContents calls the Google Gen AI SDK sends, on the Gemini path /v1beta/models/{model} and on the Vertex paths /{v1|v1beta1}/projects/{project}/locations/{location}/publishers/google/models/{model} and /{v1|v1beta1}/publishers/google/models/{model}. The model comes from the path; project and location are ignored and the upstream URL comes from the consumer's registry, which can be any provider that serves embeddings. embedContent answers {\"embedding\":{\"values\":[...]}} and batchEmbedContents answers {\"embeddings\":[{\"values\":[...]}]}, a batch of one included. The text parts of one content become one vector. taskType, title and outputDimensionality reach Vertex; taskType maps to Cohere input_type and outputDimensionality to dimensions for OpenAI and Azure; other targets drop them. A batch mixing taskType or outputDimensionality values, or a non-text part, is a 400. Errors use the Gemini error object ({\"error\":{\"code\":...,\"message\":\"...\",\"status\":\"...\"}}). Any other action, such as countTokens, is a 404.",
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Gemini or Vertex embeddings call",
+                "parameters": [
+                    {
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Model ID, such as gemini-embedding-001",
+                        "name": "model",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/Body2"
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/{consumer_slug}/v1beta/models/{model}:embedContent": {
+            "post": {
+                "description": "Accepts the Gemini and Vertex embedContent and batchEmbedContents calls the Google Gen AI SDK sends, on the Gemini path /v1beta/models/{model} and on the Vertex paths /{v1|v1beta1}/projects/{project}/locations/{location}/publishers/google/models/{model} and /{v1|v1beta1}/publishers/google/models/{model}. The model comes from the path; project and location are ignored and the upstream URL comes from the consumer's registry, which can be any provider that serves embeddings. embedContent answers {\"embedding\":{\"values\":[...]}} and batchEmbedContents answers {\"embeddings\":[{\"values\":[...]}]}, a batch of one included. The text parts of one content become one vector. taskType, title and outputDimensionality reach Vertex; taskType maps to Cohere input_type and outputDimensionality to dimensions for OpenAI and Azure; other targets drop them. A batch mixing taskType or outputDimensionality values, or a non-text part, is a 400. Errors use the Gemini error object ({\"error\":{\"code\":...,\"message\":\"...\",\"status\":\"...\"}}). Any other action, such as countTokens, is a 404.",
+                "tags": [
+                    "proxy"
+                ],
+                "summary": "Proxy a native Gemini or Vertex embeddings call",
+                "parameters": [
+                    {
+                        "description": "Consumer slug",
+                        "name": "consumer_slug",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Model ID, such as gemini-embedding-001",
+                        "name": "model",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "API key for inline consumers",
+                        "name": "X-AG-API-Key",
+                        "in": "header",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/Body2"
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/{slug}/connections": {
             "get": {
                 "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that person, under this application. Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Both actors belong to every MCP consumer, so neither form is ever refused for being the wrong one. Authenticated with the consumer's API key.",
@@ -8103,6 +8341,17 @@
                     }
                 },
                 "description": "The Bedrock Runtime request body for the operation",
+                "required": true
+            },
+            "Body2": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "description": "An embedContent or batchEmbedContents request body",
                 "required": true
             },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest": {
