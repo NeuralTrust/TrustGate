@@ -45,7 +45,7 @@ type vertexPredictRequest struct {
 }
 
 type vertexPredictStatistics struct {
-	TokenCount float64 `json:"token_count"`
+	TokenCount int64 `json:"token_count"`
 }
 
 type vertexPredictEmbeddings struct {
@@ -108,14 +108,14 @@ func (a *VertexPredictEmbedAdapter) DecodeResponse(body []byte) (*CanonicalRespo
 		return nil, err
 	}
 	emb := &CanonicalEmbeddingResponse{Embeddings: make([][]float64, 0, len(resp.Predictions))}
-	tokens := 0
+	var tokens int64
 	for _, prediction := range resp.Predictions {
 		emb.Embeddings = append(emb.Embeddings, prediction.Embeddings.Values)
 		if stats := prediction.Embeddings.Statistics; stats != nil {
-			tokens += int(stats.TokenCount)
+			tokens += stats.TokenCount
 		}
 	}
-	emb.Usage = newCanonicalUsage(tokens, 0, tokens)
+	emb.Usage = newCanonicalUsage(int(tokens), 0, int(tokens))
 	raw, err := json.Marshal(emb)
 	if err != nil {
 		return nil, err

@@ -181,6 +181,9 @@ func OpenAIErrorDialect(format Format) bool {
 	return errorDialect(format) == FormatOpenAI
 }
 
+// gatewayErrorDialect is narrower than errorDialect on purpose: rerank and the
+// other embedding sources have always answered gateway errors in OpenAI's
+// envelope, and only the Vertex :predict route moves to Google's.
 func gatewayErrorDialect(source Format) Format {
 	if source == FormatVertexPredictEmbed {
 		return FormatGemini
