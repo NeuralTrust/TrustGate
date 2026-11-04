@@ -233,7 +233,7 @@ var geminiActions = map[string]nativeAction{
 
 func geminiPathAction(rest string) (nativeAction, bool) {
 	segment, ok := strings.CutPrefix(rest, adapter.GeminiModelsRoutePrefix)
-	if !ok || strings.Contains(segment, pathSeparator) {
+	if !ok {
 		return nativeAction{}, false
 	}
 	model, action := adapter.SplitGeminiModelAction(segment)
