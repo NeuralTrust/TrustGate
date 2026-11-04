@@ -48,6 +48,9 @@ const (
 	FormatCohereRerank      Format = "cohere_rerank"
 	FormatVertexEmbed       Format = "vertex_embed"
 	FormatBedrockTitanEmbed Format = "bedrock_titan_embed"
+	// FormatVertexPredictEmbed is the Vertex `:predict` embeddings dialect
+	// (instances[].content in, predictions[].embeddings.values out).
+	FormatVertexPredictEmbed Format = "vertex_predict_embed"
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -191,7 +194,7 @@ func IsChatRequest(capability string, f Format) bool {
 	}
 	switch f {
 	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
-		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed:
+		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed:
 		return false
 	default:
 		return true
@@ -204,7 +207,7 @@ func SupportedSourceFormat(f Format) bool {
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
 		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
 		FormatCohereEmbed, FormatCohereRerank,
-		FormatVertexEmbed, FormatBedrockTitanEmbed:
+		FormatVertexEmbed, FormatBedrockTitanEmbed, FormatVertexPredictEmbed:
 		return true
 	default:
 		return false
@@ -434,6 +437,9 @@ func ResolveTargetFormatForCapability(
 		case provider.Cohere:
 			return FormatCohereEmbed
 		case provider.Vertex:
+			if sourceFormat == FormatVertexPredictEmbed {
+				return FormatVertexPredictEmbed
+			}
 			return FormatVertexEmbed
 		case provider.Bedrock:
 			return FormatBedrockTitanEmbed

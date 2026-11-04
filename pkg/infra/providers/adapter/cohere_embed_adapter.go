@@ -21,6 +21,9 @@ type CanonicalEmbeddingRequest struct {
 	Inputs    []string `json:"inputs,omitempty"`
 	Tokens    [][]int  `json:"tokens,omitempty"`
 	InputType string   `json:"input_type,omitempty"`
+	// Dimensions asks for a truncated output vector; zero keeps the model's
+	// default size. Targets without such a parameter drop it.
+	Dimensions int `json:"dimensions,omitempty"`
 }
 
 type CanonicalEmbeddingResponse struct {
@@ -32,8 +35,9 @@ type CanonicalEmbeddingResponse struct {
 type OpenAIEmbeddingsAdapter struct{}
 
 type openAIEmbeddingRequest struct {
-	Model string          `json:"model"`
-	Input json.RawMessage `json:"input"`
+	Model      string          `json:"model"`
+	Input      json.RawMessage `json:"input"`
+	Dimensions int             `json:"dimensions,omitempty"`
 }
 
 type openAIEmbeddingResponse struct {
@@ -74,7 +78,7 @@ func (a *OpenAIEmbeddingsAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	out := openAIEmbeddingRequest{Model: emb.Model, Input: inputRaw}
+	out := openAIEmbeddingRequest{Model: emb.Model, Input: inputRaw, Dimensions: emb.Dimensions}
 	return json.Marshal(out)
 }
 

@@ -445,3 +445,30 @@ func TestStreamBlockedEvent_NoDirectionLeavesTheEnvelopeUnchanged(t *testing.T) 
 		[]byte(""),
 	}, got)
 }
+
+func TestEncodeErrorBody_VertexPredictEmbedUsesGoogleEnvelope(t *testing.T) {
+	t.Parallel()
+	assert.True(t, NeedsAdaptedError(FormatVertexPredictEmbed))
+	assert.False(t, OpenAIErrorDialect(FormatVertexPredictEmbed))
+
+	raw := EncodeErrorBody(FormatVertexPredictEmbed, http.StatusForbidden, "model not allowed")
+	assert.JSONEq(t, string(EncodeErrorBody(FormatGemini, http.StatusForbidden, "model not allowed")), string(raw))
+
+	var env map[string]any
+	require.NoError(t, json.Unmarshal(raw, &env))
+	errObj := env["error"].(map[string]any)
+	assert.EqualValues(t, http.StatusForbidden, errObj["code"])
+	assert.Equal(t, "PERMISSION_DENIED", errObj["status"])
+}
+
+func TestEncodeErrorBody_OtherEmbeddingSourcesUnchanged(t *testing.T) {
+	t.Parallel()
+	for _, format := range []Format{FormatVertexEmbed, FormatCohereRerank, FormatOpenAIEmbeddings} {
+		assert.False(t, NeedsAdaptedError(format), format)
+		raw := EncodeErrorBody(format, http.StatusForbidden, "denied")
+		var env map[string]any
+		require.NoError(t, json.Unmarshal(raw, &env))
+		errObj := env["error"].(map[string]any)
+		assert.Equal(t, "invalid_request_error", errObj["type"], format)
+	}
+}

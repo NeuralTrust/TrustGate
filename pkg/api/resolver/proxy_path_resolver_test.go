@@ -61,6 +61,12 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/publishers/google/models/gemini-2.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta1/publishers/google/models/gemini-3.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta1/publishers/google/models/gemini-3.5-flash:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1beta1/projects/p/locations/global/publishers/google/models/gemini-embedding-001:predict", "X84Yhsy8", adapter.FormatVertexPredictEmbed, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1/projects/p/locations/us-central1/publishers/google/models/text-embedding-005:predict", "X84Yhsy8", adapter.FormatVertexPredictEmbed, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1/projects/p/locations/us-central1/publishers/google/models/text-multilingual-embedding-002:predict", "X84Yhsy8", adapter.FormatVertexPredictEmbed, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1/publishers/google/models/gemini-embedding-001:predict", "X84Yhsy8", adapter.FormatVertexPredictEmbed, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1beta1/publishers/google/models/text-embedding-005:predict", "X84Yhsy8", adapter.FormatVertexPredictEmbed, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1beta/models/gemini-embedding-001:predict", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
 	for _, tc := range cases {
 		route, err := ResolveProxyPath(tc.path)
@@ -98,6 +104,13 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v1/images/edits/extra",
 		"/X84Yhsy8/v1/images/variations/extra",
 		"/v1/chat/completions",
+		"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-2.5-flash:predict",
+		"/X84Yhsy8/v1/publishers/google/models/gemini-2.5-flash:predict",
+		"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/text-embedding-:predict",
+		"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-embedding-001:embedContent",
+		"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-embedding-001:countTokens",
+		"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-embedding-001",
+		"/X84Yhsy8/v2/projects/p/locations/global/publishers/google/models/gemini-embedding-001:predict",
 	} {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
 			t.Fatalf("ResolveProxyPath(%q) err = %v, want ErrUnknownProxyPath", path, err)
