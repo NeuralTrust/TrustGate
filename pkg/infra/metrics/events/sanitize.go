@@ -17,9 +17,11 @@ package events
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"mime"
 	"mime/multipart"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -35,6 +37,14 @@ const (
 	MaxSanitizedBodyBytes = 1 << 20
 
 	redactedValue = "[REDACTED]"
+
+	// maxJSONStringNesting bounds how many levels of JSON carried in a string
+	// value the redaction parses. A prompt or tool-call arguments are one.
+	maxJSONStringNesting = 4
+
+	// maxEmbeddedJSONScanBytes bounds how many bytes RedactCredentialsInText
+	// reads while it tries brackets as JSON in one text.
+	maxEmbeddedJSONScanBytes = MaxSanitizedBodyBytes
 
 	bearerRedacted = "Bearer " + redactedValue
 	basicRedacted  = "Basic " + redactedValue
@@ -101,7 +111,86 @@ func SanitizeExtras(extras any) any {
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil
 	}
-	return stripCredentialBodyValue(generic)
+	stripped, _ := stripCredentialBodyValue(generic, 0)
+	return stripped
+}
+
+// RedactCredentialsInText redacts the values under credential keys in every
+// JSON object or array text holds, whole or pasted among prose, as a prompt
+// whose parts were joined does. It reads text only until keep runes other than
+// whitespace are out and returns that prefix: a caller that cuts the text
+// there never shows the rest. The brackets tried as JSON read at most
+// maxEmbeddedJSONScanBytes between them, so prose full of brackets stays
+// linear in that budget.
+func RedactCredentialsInText(text string, keep int) string {
+	if redacted, changed := stripCredentialJSONString(text, 0); changed {
+		out, _ := redacted.(string)
+		return out
+	}
+	var b strings.Builder
+	kept, budget := 0, maxEmbeddedJSONScanBytes
+	for i := 0; i < len(text) && kept <= keep; {
+		if c := text[i]; (c == '{' || c == '[') && budget > 0 {
+			value, n, read, ok := redactEmbeddedJSON(text[i:], budget)
+			budget -= read
+			if ok {
+				b.WriteString(value)
+				kept += countNonSpaceRunes(value)
+				i += n
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		b.WriteString(text[i : i+size])
+		if !unicode.IsSpace(r) {
+			kept++
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// redactEmbeddedJSON decodes the JSON value text starts with, reading at most
+// budget bytes, and returns it with its credentials redacted, how many bytes
+// of text it took and how many the decoder read.
+func redactEmbeddedJSON(text string, budget int) (value string, n, read int, ok bool) {
+	src := &countingReader{r: strings.NewReader(text[:min(len(text), budget)])}
+	dec := json.NewDecoder(src)
+	var decoded any
+	if err := dec.Decode(&decoded); err != nil {
+		return "", 0, src.n, false
+	}
+	n = int(dec.InputOffset())
+	stripped, changed := stripCredentialBodyValue(decoded, 1)
+	if !changed {
+		return text[:n], n, src.n, true
+	}
+	out, err := json.Marshal(stripped)
+	if err != nil {
+		return redactedValue, n, src.n, true
+	}
+	return string(out), n, src.n, true
+}
+
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
+func countNonSpaceRunes(s string) int {
+	n := 0
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			n++
+		}
+	}
+	return n
 }
 
 func sanitizeBody(body []byte, headers map[string][]string, maxBytes int) string {
@@ -161,10 +250,10 @@ func stripCredentialJSONBody(body []byte) []byte {
 	if err := json.Unmarshal(body, &generic); err != nil {
 		return body
 	}
-	if !containsCredentialKeys(generic) {
+	stripped, changed := stripCredentialBodyValue(generic, 0)
+	if !changed {
 		return body
 	}
-	stripped := stripCredentialBodyValue(generic)
 	out, err := json.Marshal(stripped)
 	if err != nil {
 		return body
@@ -172,62 +261,107 @@ func stripCredentialJSONBody(body []byte) []byte {
 	return out
 }
 
-func containsCredentialKeys(v any) bool {
+// stripCredentialBodyValue redacts the values under credential keys and
+// reports whether it found any, so a body without credentials is kept byte for
+// byte instead of re-encoded. nesting counts the JSON-in-string levels above v.
+func stripCredentialBodyValue(v any, nesting int) (any, bool) {
 	switch t := v.(type) {
 	case map[string]any:
+		changed := false
 		for key, val := range t {
 			if isCredentialBodyKey(key) {
-				return true
+				t[key] = stripCredentialBodyLeaf(val, nesting)
+				changed = true
+				continue
 			}
-			if containsCredentialKeys(val) {
-				return true
-			}
+			var c bool
+			t[key], c = stripCredentialBodyValue(val, nesting)
+			changed = changed || c
 		}
+		return t, changed
 	case []any:
-		for _, val := range t {
-			if containsCredentialKeys(val) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func stripCredentialBodyValue(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		for key, val := range t {
-			if isCredentialBodyKey(key) {
-				t[key] = stripCredentialBodyLeaf(val)
-			} else {
-				t[key] = stripCredentialBodyValue(val)
-			}
-		}
-		return t
-	case []any:
+		changed := false
 		for i := range t {
-			t[i] = stripCredentialBodyValue(t[i])
+			var c bool
+			t[i], c = stripCredentialBodyValue(t[i], nesting)
+			changed = changed || c
 		}
-		return t
+		return t, changed
+	case string:
+		return stripCredentialJSONString(t, nesting)
 	default:
-		return v
+		return v, false
 	}
 }
 
-func stripCredentialBodyLeaf(v any) any {
+// stripCredentialJSONString redacts credential keys inside a string value that
+// itself holds a JSON object or array, such as a prompt or tool-call
+// arguments. A string that is not JSON, or holds no credential key, is
+// returned as is. Each level re-parses its string, and \u escapes let a level
+// cost only a few more bytes than the one inside it, so a body can stack
+// hundreds of levels per MiB. Past maxJSONStringNesting a string that looks
+// like JSON is redacted whole without parsing it, so the work stays linear in
+// the body size.
+func stripCredentialJSONString(s string, nesting int) (any, bool) {
+	trimmed := strings.TrimSpace(s)
+	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[' && trimmed[0] != '"') {
+		return s, false
+	}
+	if nesting >= maxJSONStringNesting {
+		return redactedValue, true
+	}
+	if trimmed[0] == '"' {
+		// JSON encoded twice, as a tool result marshalled once too often is.
+		var decoded string
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+			return s, false
+		}
+		stripped, changed := stripCredentialJSONString(decoded, nesting+1)
+		if !changed {
+			return s, false
+		}
+		out, err := json.Marshal(stripped)
+		if err != nil {
+			return redactedValue, true
+		}
+		return string(out), true
+	}
+	var inner any
+	if err := json.Unmarshal([]byte(trimmed), &inner); err != nil {
+		return s, false
+	}
+	stripped, changed := stripCredentialBodyValue(inner, nesting+1)
+	if !changed {
+		return s, false
+	}
+	out, err := json.Marshal(stripped)
+	if err != nil {
+		return redactedValue, true
+	}
+	return string(out), true
+}
+
+func stripCredentialBodyLeaf(v any, nesting int) any {
 	switch t := v.(type) {
 	case string:
 		return redactedValue
 	case []any:
 		for i := range t {
-			t[i] = stripCredentialBodyLeaf(t[i])
+			t[i] = stripCredentialBodyLeaf(t[i], nesting)
 		}
 		return t
 	case map[string]any:
-		return stripCredentialBodyValue(t)
+		stripped, _ := stripCredentialBodyValue(t, nesting)
+		return stripped
 	default:
 		return v
 	}
+}
+
+// IsCredentialKey reports whether a JSON body key names a credential that
+// SanitizeBody redacts.
+func IsCredentialKey(key string) bool {
+	return isCredentialBodyKey(key)
 }
 
 func isCredentialBodyKey(key string) bool {

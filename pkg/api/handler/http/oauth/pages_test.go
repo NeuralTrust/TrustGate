@@ -492,6 +492,42 @@ func TestConfigurePage_ASentRequestSaysSoAndStopsAsking(t *testing.T) {
 	}
 }
 
+// A save is a success, so its message must not wear the error style every other
+// flash on these pages uses (ENG-2191: "Saved." rendered red).
+func TestConfigurePage_SavedMessageUsesTheSuccessStyle(t *testing.T) {
+	t.Parallel()
+	for _, pending := range []bool{false, true} {
+		html := renderToString(t, func(c *fiber.Ctx) error {
+			return renderConfigurePage(c, &appoauth.ConfigurePage{
+				Code: "co.tinybird/mcp", ServerName: "Tinybird", Saved: true, Pending: pending,
+			})
+		})
+		if !strings.Contains(html, `<div class="flash ok" role="status">`) {
+			t.Fatalf("saved message (pending=%v) must use the success style: %s", pending, html)
+		}
+	}
+	if !strings.Contains(pageCSS, ".flash.ok{") {
+		t.Fatal("shared page CSS must define the success flash")
+	}
+}
+
+// The personal key page takes the success flash from the shared page CSS, so it
+// keeps its green "copy your key" and "revoked" notices only while it loads it.
+func TestPersonalKeyPage_SuccessNoticesKeepTheSuccessStyle(t *testing.T) {
+	t.Parallel()
+	for _, view := range []*appoauth.PersonalKeyView{{Secret: "tg_secret"}, {Revoked: true}} {
+		html := renderToString(t, func(c *fiber.Ctx) error {
+			return renderPersonalKeyPage(c, view)
+		})
+		if !strings.Contains(html, `<div class="flash ok" role="status">`) {
+			t.Fatalf("success notice must use the success style: %s", html)
+		}
+		if !strings.Contains(html, ".flash.ok{") {
+			t.Fatal("personal key page must load the success flash style")
+		}
+	}
+}
+
 // A configure form is unchanged: it asks for the server's own values and says
 // nothing about requests.
 func TestConfigurePage_StillConfiguresWithoutAskingTheReason(t *testing.T) {

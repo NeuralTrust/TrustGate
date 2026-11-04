@@ -11132,6 +11132,10 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "preview": {
+                    "description": "Preview is the start of the prompt (LLM) or the tool and its first\nargument (MCP). It is body content, so like Body it is exported only on\nthe raw record and cleared from the metadata view.",
+                    "type": "string"
+                },
                 "prompt_tokens": {
                     "type": "integer"
                 },

@@ -292,7 +292,6 @@ const personalKeyCSS = `
 .snip .t{display:table-cell;padding-right:12px;white-space:pre}
 .tk-key{color:#9053ff}.tk-str{color:#009b66}.tk-kw{color:#f58f57}.tk-com{color:var(--fg-muted)}
 .tk-ph{border-radius:3px;padding:0 2px;background:rgb(255 222 19 / .28);color:#7a5c00;font-weight:500}
-.flash.ok{background:var(--badge-green-bg);color:var(--badge-green);border-color:transparent}
 `
 
 var personalKeyPageTmpl = template.Must(template.New("personal-key").Parse(`<!doctype html>

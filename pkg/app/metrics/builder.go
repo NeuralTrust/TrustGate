@@ -400,6 +400,7 @@ func (b *Builder) buildMCP(
 	}
 
 	b.fillRequest(evt, req, nil)
+	evt.Request.Preview = toolCallPreview(mcp, evt.Request.Body)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
 	// Prefer the logical MCP outcome over the wire status when they diverge
@@ -485,6 +486,9 @@ func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContex
 	canonical := b.decodeRequest(req)
 	if canonical == nil {
 		return
+	}
+	if evt.Kind == events.KindLLM {
+		evt.Request.Preview = promptPreview(canonical)
 	}
 	if evt.Request.Model == "" {
 		evt.Request.Model = canonical.Model
