@@ -230,6 +230,12 @@ func stripCredentialBodyLeaf(v any) any {
 	}
 }
 
+// IsCredentialKey reports whether a JSON body key names a credential that
+// SanitizeBody redacts.
+func IsCredentialKey(key string) bool {
+	return isCredentialBodyKey(key)
+}
+
 func isCredentialBodyKey(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
 	if _, ok := credentialBodyKeys[lower]; ok {

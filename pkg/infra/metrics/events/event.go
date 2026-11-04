@@ -202,6 +202,11 @@ type Request struct {
 	PromptTokens   int                 `json:"prompt_tokens,omitempty"`
 	Body           string              `json:"body,omitempty"`
 	Headers        map[string][]string `json:"headers,omitempty"`
+
+	// Preview is the start of the prompt (LLM) or the tool and its first
+	// argument (MCP). It is body content, so like Body it is exported only on
+	// the raw record and cleared from the metadata view.
+	Preview string `json:"preview,omitempty"`
 }
 
 type Response struct {

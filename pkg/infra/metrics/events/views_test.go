@@ -45,6 +45,7 @@ func fullEvent() events.Event {
 			Provider: "openai",
 			Model:    "gpt-4",
 			Body:     "request input body",
+			Preview:  "request input",
 			Headers:  map[string][]string{"X-Trace": {"abc"}},
 		},
 		Response: events.Response{
@@ -68,6 +69,7 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	meta := evt.MetadataView()
 
 	assert.Empty(t, meta.Request.Body)
+	assert.Empty(t, meta.Request.Preview)
 	assert.Nil(t, meta.Response.Body)
 
 	assert.Equal(t, evt.SchemaVersion, meta.SchemaVersion)
@@ -95,6 +97,7 @@ func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	sensible := evt.SensibleView()
 
 	assert.Equal(t, evt.Request.Body, sensible.Request.Body)
+	assert.Equal(t, evt.Request.Preview, sensible.Request.Preview)
 	require.NotNil(t, sensible.Response.Body)
 	assert.Equal(t, *evt.Response.Body, *sensible.Response.Body)
 
