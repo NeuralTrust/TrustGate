@@ -876,13 +876,19 @@ exporter declared under `exporters.raw[]`:
 | Sink | Content |
 |------|---------|
 | PostgreSQL `trustgate_data` | `request_body` + `response_body` only |
-| OTLP (`otlp` under `raw`) | `trustgate.request.body` / `trustgate.response.body` + join keys |
+| OTLP (`otlp` under `raw`) | `trustgate.request.body` / `trustgate.response.body` / `trustgate.request.preview` + join keys |
 | Join keys | `trace_id`, `gateway_id`, `tenant_id`, `occurred_on` |
 
 The raw OTLP record emits `trustgate.schema_version`, `trustgate.trace_id`,
 `trustgate.gateway_id`, `trustgate.tenant_id`, `trustgate.request.body`,
-`trustgate.response.body`, and the retention pair — no other metadata attributes, no
-policy chain. Raw bodies land in their own table, which needs its own expiry to key a
+`trustgate.request.preview`, `trustgate.response.body`, and the retention pair — no other
+metadata attributes, no policy chain.
+
+`trustgate.request.preview` is what the Activity list shows in its Request column: for
+LLM traffic the last user turn, for an MCP `tools/call` the tool and its first string
+argument (`search_issues(login bug)`, credential-named arguments skipped). Whitespace is
+collapsed and it is cut at 200 characters with a trailing `…`. It is body content, so it
+travels on the raw record only and is absent whenever the body is. Raw bodies land in their own table, which needs its own expiry to key a
 TTL on, so retention is deliberately not treated as metadata-only.
 
 ### Retention
