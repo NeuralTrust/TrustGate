@@ -51,6 +51,8 @@ var otherPlanes = map[string]string{
 	"POST /{consumer_slug}/model/{model_id}/converse-stream":             "proxy wildcard",
 	"POST /{consumer_slug}/model/{model_id}/invoke":                      "proxy wildcard",
 	"POST /{consumer_slug}/model/{model_id}/invoke-with-response-stream": "proxy wildcard",
+	"POST /{consumer_slug}/v1beta/models/{model}{embedContent}":          "proxy wildcard",
+	"POST /{consumer_slug}/v1beta/models/{model}{batchEmbedContents}":    "proxy wildcard",
 }
 
 var fiberParam = regexp.MustCompile(`:([A-Za-z_]+)`)

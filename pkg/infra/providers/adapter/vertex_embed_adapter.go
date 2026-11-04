@@ -27,7 +27,10 @@ type vertexEmbedContent struct {
 }
 
 type vertexEmbedRequest struct {
-	Content *vertexEmbedContent `json:"content,omitempty"`
+	Content              *vertexEmbedContent `json:"content,omitempty"`
+	TaskType             string              `json:"taskType,omitempty"`
+	Title                string              `json:"title,omitempty"`
+	OutputDimensionality int                 `json:"outputDimensionality,omitempty"`
 }
 
 type vertexBatchEmbedRequest struct {
@@ -74,13 +77,25 @@ func (a *VertexEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error
 		return nil, err
 	}
 	if len(emb.Inputs) == 1 {
-		return json.Marshal(vertexEmbedRequest{Content: vertexContentFromText(emb.Inputs[0])})
+		return json.Marshal(vertexEmbedRequestAt(emb, 0))
 	}
 	out := vertexBatchEmbedRequest{Requests: make([]vertexEmbedRequest, 0, len(emb.Inputs))}
-	for _, text := range emb.Inputs {
-		out.Requests = append(out.Requests, vertexEmbedRequest{Content: vertexContentFromText(text)})
+	for i := range emb.Inputs {
+		out.Requests = append(out.Requests, vertexEmbedRequestAt(emb, i))
 	}
 	return json.Marshal(out)
+}
+
+func vertexEmbedRequestAt(emb *CanonicalEmbeddingRequest, i int) vertexEmbedRequest {
+	req := vertexEmbedRequest{
+		Content:              vertexContentFromText(emb.Inputs[i]),
+		TaskType:             emb.TaskType,
+		OutputDimensionality: emb.Dimensions,
+	}
+	if i < len(emb.Titles) {
+		req.Title = emb.Titles[i]
+	}
+	return req
 }
 
 func (a *VertexEmbedAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {

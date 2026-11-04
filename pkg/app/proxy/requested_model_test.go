@@ -57,6 +57,15 @@ func TestRequestedModelRef(t *testing.T) {
 			want: "gemini-2.5-flash",
 		},
 		{
+			name: "vertex predict embeddings reads the path",
+			req: &infracontext.RequestContext{
+				SourceFormat: string(adapter.FormatVertexPredictEmbed),
+				Path:         "/support/v1beta1/projects/p/locations/global/publishers/google/models/gemini-embedding-001:predict",
+				Body:         []byte(`{"instances":[{"content":"a"}]}`),
+			},
+			want: "gemini-embedding-001",
+		},
+		{
 			name: "multipart audio body",
 			req: &infracontext.RequestContext{
 				SourceFormat:    string(adapter.FormatOpenAIAudio),

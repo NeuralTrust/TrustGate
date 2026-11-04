@@ -717,7 +717,7 @@ func (p *providerInvoker) adaptRequestBody(
 		if !ok {
 			return nil, fmt.Errorf("embedding adaptation requires concrete adapter registry")
 		}
-		return adapter.AdaptEmbeddingRequest(reg, body, sourceFormat, targetFormat)
+		return adapter.AdaptEmbeddingRequestForProvider(reg, body, sourceFormat, targetFormat, providerName)
 	case capabilityRerank:
 		reg, ok := p.registry.(*adapter.Registry)
 		if !ok {

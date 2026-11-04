@@ -4286,6 +4286,164 @@ paths:
       summary: Proxy chat completion
       tags:
       - proxy
+  /{consumer_slug}/v1beta/models/{model}:batchEmbedContents:
+    post:
+      consumes:
+      - application/json
+      description: Accepts the Gemini and Vertex embedContent and batchEmbedContents
+        calls the Google Gen AI SDK sends, on the Gemini path /v1beta/models/{model}
+        and on the Vertex paths /{v1|v1beta1}/projects/{project}/locations/{location}/publishers/google/models/{model}
+        and /{v1|v1beta1}/publishers/google/models/{model}. The model comes from the
+        path; project and location are ignored and the upstream URL comes from the
+        consumer's registry, which can be any provider that serves embeddings. embedContent
+        answers {"embedding":{"values":[...]}} and batchEmbedContents answers {"embeddings":[{"values":[...]}]},
+        a batch of one included. The text parts of one content become one vector.
+        taskType, title and outputDimensionality reach Vertex; taskType maps to Cohere
+        input_type and outputDimensionality to dimensions for OpenAI and Azure; other
+        targets drop them. A batch mixing taskType or outputDimensionality values,
+        or a non-text part, is a 400. Errors use the Gemini error object ({"error":{"code":...,"message":"...","status":"..."}}).
+        Any other action, such as countTokens, is a 404.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, such as gemini-embedding-001
+        in: path
+        name: model
+        required: true
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: An embedContent or batchEmbedContents request body
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Proxy a native Gemini or Vertex embeddings call
+      tags:
+      - proxy
+  /{consumer_slug}/v1beta/models/{model}:embedContent:
+    post:
+      consumes:
+      - application/json
+      description: Accepts the Gemini and Vertex embedContent and batchEmbedContents
+        calls the Google Gen AI SDK sends, on the Gemini path /v1beta/models/{model}
+        and on the Vertex paths /{v1|v1beta1}/projects/{project}/locations/{location}/publishers/google/models/{model}
+        and /{v1|v1beta1}/publishers/google/models/{model}. The model comes from the
+        path; project and location are ignored and the upstream URL comes from the
+        consumer's registry, which can be any provider that serves embeddings. embedContent
+        answers {"embedding":{"values":[...]}} and batchEmbedContents answers {"embeddings":[{"values":[...]}]},
+        a batch of one included. The text parts of one content become one vector.
+        taskType, title and outputDimensionality reach Vertex; taskType maps to Cohere
+        input_type and outputDimensionality to dimensions for OpenAI and Azure; other
+        targets drop them. A batch mixing taskType or outputDimensionality values,
+        or a non-text part, is a 400. Errors use the Gemini error object ({"error":{"code":...,"message":"...","status":"..."}}).
+        Any other action, such as countTokens, is a 404.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: Model ID, such as gemini-embedding-001
+        in: path
+        name: model
+        required: true
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: An embedContent or batchEmbedContents request body
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Proxy a native Gemini or Vertex embeddings call
+      tags:
+      - proxy
   /{slug}/connections:
     get:
       description: Reports, per connectable server, whether the actor is connected,

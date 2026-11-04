@@ -202,18 +202,53 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	if isModelsPath(rest) {
 		return adapter.FormatOpenAI, CapabilityModels, nil
 	}
-	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
-		return adapter.FormatGemini, CapabilityChat, nil
+	if action, ok := geminiPathAction(rest); ok {
+		return action.format, action.capability, nil
 	}
-	if isVertexGenerateContentPath(rest) {
-		return adapter.FormatGemini, CapabilityChat, nil
+	if model, action, ok := vertexModelAction(rest); ok {
+		if found, known := geminiActions[action]; known {
+			return found.format, found.capability, nil
+		}
+		if action == vertexPredictAction && isVertexEmbeddingModel(model) {
+			return adapter.FormatVertexPredictEmbed, CapabilityEmbeddings, nil
+		}
 	}
 	return "", "", ErrUnknownProxyPath
 }
 
+type nativeAction struct {
+	format     adapter.Format
+	capability ProxyCapability
+}
+
+// geminiActions are the actions TrustGate serves on both the Gemini and the
+// Vertex model paths. Vertex adds :predict for embedding models; any other
+// action, or none, is an unknown route.
+var geminiActions = map[string]nativeAction{
+	"generateContent":       {adapter.FormatGemini, CapabilityChat},
+	"streamGenerateContent": {adapter.FormatGemini, CapabilityChat},
+	"embedContent":          {adapter.FormatGeminiEmbed, CapabilityEmbeddings},
+	"batchEmbedContents":    {adapter.FormatGeminiBatchEmbed, CapabilityEmbeddings},
+}
+
+func geminiPathAction(rest string) (nativeAction, bool) {
+	segment, ok := strings.CutPrefix(rest, adapter.GeminiModelsRoutePrefix)
+	if !ok {
+		return nativeAction{}, false
+	}
+	model, action := adapter.SplitGeminiModelAction(segment)
+	if model == "" {
+		return nativeAction{}, false
+	}
+	found, known := geminiActions[action]
+	return found, known
+}
+
 var (
 	vertexAPIVersions = map[string]struct{}{"v1": {}, "v1beta1": {}}
-	vertexChatActions = map[string]struct{}{"generateContent": {}, "streamGenerateContent": {}}
+	// vertexEmbeddingModelPrefixes are the Vertex models whose :predict
+	// payload is instances[].content in and predictions[].embeddings out.
+	vertexEmbeddingModelPrefixes = []string{"gemini-embedding-", "text-embedding-", "text-multilingual-embedding-"}
 	// vertexPathLayouts are the full regional path and the express-mode path,
 	// which Google SDKs send without project and location when they
 	// authenticate with an API key. The model segment is always the last one.
@@ -223,28 +258,32 @@ var (
 	}
 )
 
-const vertexVersionIndex = 1
+const (
+	vertexVersionIndex  = 1
+	vertexPredictAction = "predict"
+)
 
-// isVertexGenerateContentPath matches
+// vertexModelAction matches
 // /{v1|v1beta1}/projects/*/locations/*/publishers/google/models/{model}:{action}
-// and its express-mode form /{v1|v1beta1}/publishers/google/models/{model}:{action}.
-// Project and location are ignored: the upstream URL comes from the registry.
-func isVertexGenerateContentPath(rest string) bool {
+// and its express-mode form /{v1|v1beta1}/publishers/google/models/{model}:{action},
+// returning the model and the action. Project and location are ignored: the
+// upstream URL comes from the registry.
+func vertexModelAction(rest string) (string, string, bool) {
 	parts := strings.Split(rest, pathSeparator)
 	for _, layout := range vertexPathLayouts {
-		if matchesVertexLayout(parts, layout) {
-			return true
+		if model, action, ok := matchVertexLayout(parts, layout); ok {
+			return model, action, true
 		}
 	}
-	return false
+	return "", "", false
 }
 
-func matchesVertexLayout(parts, layout []string) bool {
+func matchVertexLayout(parts, layout []string) (string, string, bool) {
 	if len(parts) != len(layout) {
-		return false
+		return "", "", false
 	}
 	if _, ok := vertexAPIVersions[parts[vertexVersionIndex]]; !ok {
-		return false
+		return "", "", false
 	}
 	modelIndex := len(layout) - 1
 	for i, want := range layout {
@@ -252,18 +291,26 @@ func matchesVertexLayout(parts, layout []string) bool {
 			continue
 		}
 		if want == "" && i > 0 && parts[i] == "" {
-			return false
+			return "", "", false
 		}
 		if want != "" && parts[i] != want {
-			return false
+			return "", "", false
 		}
 	}
 	model, action := adapter.SplitGeminiModelAction(parts[modelIndex])
-	if model == "" {
-		return false
+	if model == "" || action == "" {
+		return "", "", false
 	}
-	_, ok := vertexChatActions[action]
-	return ok
+	return model, action, true
+}
+
+func isVertexEmbeddingModel(model string) bool {
+	for _, prefix := range vertexEmbeddingModelPrefixes {
+		if strings.HasPrefix(model, prefix) && len(model) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isModelsPath(rest string) bool {
