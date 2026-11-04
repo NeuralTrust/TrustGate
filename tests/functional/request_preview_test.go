@@ -57,3 +57,42 @@ func TestRequestPreview_TravelsOnTheRawRecordOnly(t *testing.T) {
 	assert.False(t, metadataReceiver.contains("trustgate.request.preview"), "the metadata record must not carry the preview")
 	assert.False(t, metadataReceiver.contains("Summarise the attached"), "nor any of the prompt")
 }
+
+// TestRequestPreview_RedactsCredentialsInAJSONPrompt sends a prompt that is a
+// JSON object holding an api_key and checks that neither the stored body nor
+// the preview carries the key in clear.
+func TestRequestPreview_RedactsCredentialsInAJSONPrompt(t *testing.T) {
+	defer Track(t, "RequestPreview")()
+
+	rawReceiver := newOTLPReceiver(t)
+	metadataReceiver := newOTLPReceiver(t)
+	tenant := usageTenantGateway(t, uniqueName("preview-json"), "request-preview-json-marker")
+	base := startStoreProxyPlaneAt(t, GlobalConfig.Server.ProxyPort+requestPreviewProxyPortOffset+1,
+		"TELEMETRY_EXPORTERS_FILE=",
+		"TELEMETRY_EXPORTERS_METADATA="+otlpExporterList("metadata-collector", metadataReceiver.server.URL),
+		"TELEMETRY_EXPORTERS_RAW="+otlpExporterList("raw-collector", rawReceiver.server.URL),
+	)
+	require.True(t, pollProxyServedAt(t, base, tenant.apiKey, tenant.path, "request-preview-json-marker", 30*time.Second),
+		"the proxy plane never served the tenant")
+
+	const secret = "sk-test-FAKE-JSON-PROMPT"
+	status, headers, body := proxyPostAt(t, base, tenant.apiKey, tenant.path, map[string]any{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]string{
+			{"role": "user", "content": `{"api_key":"` + secret + `","note":"preview-json-note"}`},
+		},
+	})
+	require.Equal(t, http.StatusOK, status, "body=%s", body)
+	traceID := headers.Get("X-AG-Trace-Id")
+	require.NotEmpty(t, traceID)
+
+	trace := otlpStringAttr("trustgate.trace_id", traceID)
+	preview := otlpStringAttr("trustgate.request.preview", `{"api_key":"[REDACTED]","note":"preview-json-note"}`)
+	require.Eventually(t, func() bool { return otlpRecordWith(rawReceiver, trace, preview) }, 30*time.Second, 250*time.Millisecond,
+		"the raw record never carried the redacted preview")
+	require.Eventually(t, func() bool { return otlpRecordWith(metadataReceiver, trace) }, 30*time.Second, 250*time.Millisecond,
+		"the metadata record never arrived")
+	assert.False(t, rawReceiver.contains(secret), "the raw record must not carry the api_key in clear")
+	assert.False(t, metadataReceiver.contains(secret), "nor the metadata record")
+	assert.True(t, rawReceiver.contains("preview-json-note"), "the rest of the prompt is kept")
+}
