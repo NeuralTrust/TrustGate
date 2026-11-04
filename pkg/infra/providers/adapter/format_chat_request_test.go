@@ -40,6 +40,7 @@ func TestIsChatRequest_EmptyCapabilityFallsBackToFormat(t *testing.T) {
 		{format: adapter.FormatCohereRerank},
 		{format: adapter.FormatVertexEmbed},
 		{format: adapter.FormatBedrockTitanEmbed},
+		{format: adapter.FormatVertexPredictEmbed},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.format), func(t *testing.T) {

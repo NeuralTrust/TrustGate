@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -77,4 +78,21 @@ func TestEmbeddingFromCanonical_NilRequest(t *testing.T) {
 	emb, err = textEmbeddingFromCanonical(nil)
 	require.NoError(t, err)
 	assert.Equal(t, &CanonicalEmbeddingRequest{}, emb)
+}
+
+func TestOpenAIEmbeddings_EncodeRequestDimensions(t *testing.T) {
+	a := &OpenAIEmbeddingsAdapter{}
+	canonical := func(dims int) *CanonicalRequest {
+		raw, err := json.Marshal(CanonicalEmbeddingRequest{Model: "text-embedding-3-small", Inputs: []string{"a"}, Dimensions: dims})
+		require.NoError(t, err)
+		return &CanonicalRequest{Metadata: map[string]interface{}{"embedding": json.RawMessage(raw)}}
+	}
+
+	out, err := a.EncodeRequest(canonical(256))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"text-embedding-3-small","input":"a","dimensions":256}`, string(out))
+
+	out, err = a.EncodeRequest(canonical(0))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"text-embedding-3-small","input":"a"}`, string(out))
 }
