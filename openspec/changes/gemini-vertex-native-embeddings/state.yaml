@@ -29,3 +29,8 @@ deviations:
 open:
   - DEV check that Vertex upstream accepts :embedContent for gemini-embedding-001 (only a fake covers it)
   - BV (ENG-3023) needs a develop->main promote after merge, with Edu's OK
+rebase_2026-11-04:
+  onto: origin/develop 76ada600 (TrustGate#1263, ENG-3023 Vertex :predict, merged first by Edu's decision)
+  dropped: 71fa5e7f (own :predict); develop's vertex_predict_embed kept (Vertex passthrough with action predict + StripModel, embedding-model prefixes only, so Imagen :predict stays 404)
+  merged: adapter.ModelInPath replaces routing.go modelInPath and includes FormatVertexPredictEmbed; Gemini formats added to gatewayErrorDialect; Vertex paths share geminiActions plus :predict for embedding models
+  behaviour_changes_vs_1263: dimensions only reach OpenAI/Azure on openai_embeddings targets (predict -> Mistral drops it); /v1beta/models/{m}:predict and Vertex :embedContent no longer 404/chat as in 1263's tests
