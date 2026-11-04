@@ -29,7 +29,7 @@ func TestResolveSharedSecretKey_GeneratesAndPersists(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
 
-	first, err := ResolveSharedSecretKey(ctx, rdb, nil)
+	first, err := ResolveSharedSecretKey(ctx, rdb, "", nil)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(first), minSecretLen)
 
@@ -37,7 +37,7 @@ func TestResolveSharedSecretKey_GeneratesAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, stored)
 
-	second, err := ResolveSharedSecretKey(ctx, rdb, nil)
+	second, err := ResolveSharedSecretKey(ctx, rdb, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, first, second, "existing secret must be reused, not regenerated")
 }
@@ -54,7 +54,7 @@ func TestResolveSharedSecretKey_ConcurrentReplicasConverge(t *testing.T) {
 	for i := 0; i < replicas; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			key, err := ResolveSharedSecretKey(ctx, rdb, nil)
+			key, err := ResolveSharedSecretKey(ctx, rdb, "", nil)
 			require.NoError(t, err)
 			results[idx] = key
 		}(i)
@@ -67,7 +67,7 @@ func TestResolveSharedSecretKey_ConcurrentReplicasConverge(t *testing.T) {
 }
 
 func TestResolveSharedSecretKey_NilClient(t *testing.T) {
-	_, err := ResolveSharedSecretKey(context.Background(), nil, nil)
+	_, err := ResolveSharedSecretKey(context.Background(), nil, "", nil)
 	require.Error(t, err)
 }
 
@@ -75,7 +75,7 @@ func TestResolveSharedSecretKey_UsableByCipher(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-	secret, err := ResolveSharedSecretKey(context.Background(), rdb, nil)
+	secret, err := ResolveSharedSecretKey(context.Background(), rdb, "", nil)
 	require.NoError(t, err)
 
 	cipher, err := NewCipher(secret)
@@ -86,4 +86,21 @@ func TestResolveSharedSecretKey_UsableByCipher(t *testing.T) {
 	plain, err := cipher.Decrypt(enc)
 	require.NoError(t, err)
 	require.Equal(t, "vault-material", plain)
+}
+
+func TestResolveSharedSecretKey_ScopesDoNotShareTheSecret(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	a, err := ResolveSharedSecretKey(ctx, rdb, "dp-a", nil)
+	require.NoError(t, err)
+	b, err := ResolveSharedSecretKey(ctx, rdb, "dp-b", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, a, b)
+
+	stored, err := mr.Get("dp-a:" + SharedSecretKeyRedisKey)
+	require.NoError(t, err)
+	require.Equal(t, a, stored)
+	require.False(t, mr.Exists(SharedSecretKeyRedisKey))
 }

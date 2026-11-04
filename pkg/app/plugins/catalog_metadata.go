@@ -308,7 +308,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "tool",
 								Label:       "Tool",
 								Type:        FieldTypeString,
-								Description: "Glob pattern matched against the tool call name (e.g. execute_code*).",
+								Description: "Glob pattern matched against the tool call name (e.g. execute_code*). On MCP it matches the upstream's own tool name or the name the gateway exposes.",
 								Required:    true,
 							},
 							{

@@ -26,16 +26,16 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/trafficlabels"
+	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/redis/go-redis/v9"
 )
 
-// The hash tag keeps the stream and quota keys in one cluster slot for the enqueue script.
 const (
-	streamKey      = "{trafficlabels}:stream"
-	quotaKeyPrefix = "{trafficlabels}:quota:"
-	groupName      = "traffic-labels"
-	fieldRequest   = "req"
+	// keyHashTag keeps the stream and quota keys in one cluster slot for the enqueue script.
+	keyHashTag   = "trafficlabels"
+	groupName    = "traffic-labels"
+	fieldRequest = "req"
 
 	defaultMaxLen      = 100_000
 	defaultRetention   = time.Hour
@@ -65,6 +65,7 @@ type Config struct {
 	MaxLen                int64
 	Retention             time.Duration
 	GatewayQuotaPerSecond int64
+	KeyScope              keyscope.Scope
 }
 
 func (c Config) withDefaults() Config {
@@ -86,22 +87,27 @@ var (
 )
 
 type Stream struct {
-	redis    redis.Cmdable
-	cfg      Config
-	consumer string
-	now      func() time.Time
+	redis          redis.Cmdable
+	cfg            Config
+	streamKey      string
+	quotaKeyPrefix string
+	consumer       string
+	now            func() time.Time
 
 	mu     sync.Mutex
 	cursor string
 }
 
 func New(client redis.Cmdable, cfg Config) *Stream {
+	tag := cfg.KeyScope.HashTag(keyHashTag)
 	return &Stream{
-		redis:    client,
-		cfg:      cfg.withDefaults(),
-		consumer: consumerName(),
-		now:      time.Now,
-		cursor:   claimStart,
+		redis:          client,
+		cfg:            cfg.withDefaults(),
+		streamKey:      tag + ":stream",
+		quotaKeyPrefix: tag + ":quota:",
+		consumer:       consumerName(),
+		now:            time.Now,
+		cursor:         claimStart,
 	}
 }
 
@@ -114,7 +120,7 @@ func consumerName() string {
 }
 
 func (s *Stream) EnsureGroup(ctx context.Context) error {
-	err := s.redis.XGroupCreateMkStream(ctx, streamKey, groupName, "0").Err()
+	err := s.redis.XGroupCreateMkStream(ctx, s.streamKey, groupName, "0").Err()
 	if err != nil && !strings.HasPrefix(err.Error(), busyGroupErrPrefix) {
 		return fmt.Errorf("labelstream: create group: %w", err)
 	}
@@ -128,7 +134,7 @@ func (s *Stream) Enqueue(ctx context.Context, req trafficlabel.Request) error {
 	}
 	minID := strconv.FormatInt(s.now().Add(-s.cfg.Retention).UnixMilli(), 10)
 	added, err := enqueueScript.Run(ctx, s.redis,
-		[]string{streamKey, quotaKeyPrefix + req.GatewayID},
+		[]string{s.streamKey, s.quotaKeyPrefix + req.GatewayID},
 		payload, s.cfg.MaxLen, minID, s.cfg.GatewayQuotaPerSecond, quotaWindow.Milliseconds(),
 	).Int()
 	if err != nil {
@@ -144,7 +150,7 @@ func (s *Stream) Read(ctx context.Context, count int, block time.Duration) ([]tr
 	streams, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    groupName,
 		Consumer: s.consumer,
-		Streams:  []string{streamKey, ">"},
+		Streams:  []string{s.streamKey, ">"},
 		Count:    int64(count),
 		Block:    block,
 	}).Result()
@@ -173,7 +179,7 @@ func (s *Stream) Reclaim(ctx context.Context, minIdle time.Duration, count int) 
 	start := s.cursor
 	s.mu.Unlock()
 	msgs, next, err := s.redis.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream:   streamKey,
+		Stream:   s.streamKey,
 		Group:    groupName,
 		Consumer: s.consumer,
 		MinIdle:  minIdle,
@@ -223,7 +229,7 @@ func (s *Stream) deliveryCounts(ctx context.Context, msgs []redis.XMessage) (map
 	cmds := make([]*redis.XPendingExtCmd, len(msgs))
 	for i, msg := range msgs {
 		cmds[i] = pipe.XPendingExt(ctx, &redis.XPendingExtArgs{
-			Stream: streamKey,
+			Stream: s.streamKey,
 			Group:  groupName,
 			Start:  msg.ID,
 			End:    msg.ID,
@@ -247,7 +253,7 @@ func (s *Stream) Touch(ctx context.Context, ids ...string) error {
 		return nil
 	}
 	err := s.redis.XClaimJustID(ctx, &redis.XClaimArgs{
-		Stream:   streamKey,
+		Stream:   s.streamKey,
 		Group:    groupName,
 		Consumer: s.consumer,
 		MinIdle:  0,
@@ -261,7 +267,7 @@ func (s *Stream) Touch(ctx context.Context, ids ...string) error {
 
 func (s *Stream) Trim(ctx context.Context) error {
 	minID := strconv.FormatInt(s.now().Add(-s.cfg.Retention).UnixMilli(), 10)
-	if err := s.redis.XTrimMinID(ctx, streamKey, minID).Err(); err != nil {
+	if err := s.redis.XTrimMinID(ctx, s.streamKey, minID).Err(); err != nil {
 		return fmt.Errorf("labelstream: trim: %w", err)
 	}
 	return nil
@@ -269,7 +275,7 @@ func (s *Stream) Trim(ctx context.Context) error {
 
 func (s *Stream) Leave(ctx context.Context) error {
 	n, err := s.redis.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream:   streamKey,
+		Stream:   s.streamKey,
 		Group:    groupName,
 		Start:    "-",
 		End:      "+",
@@ -285,7 +291,7 @@ func (s *Stream) Leave(ctx context.Context) error {
 	if len(n) > 0 {
 		return nil
 	}
-	if err := s.redis.XGroupDelConsumer(ctx, streamKey, groupName, s.consumer).Err(); err != nil && !isNoGroup(err) {
+	if err := s.redis.XGroupDelConsumer(ctx, s.streamKey, groupName, s.consumer).Err(); err != nil && !isNoGroup(err) {
 		return fmt.Errorf("labelstream: leave group: %w", err)
 	}
 	return nil
@@ -293,8 +299,8 @@ func (s *Stream) Leave(ctx context.Context) error {
 
 func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
 	pipe := s.redis.Pipeline()
-	lenCmd := pipe.XLen(ctx, streamKey)
-	pendingCmd := pipe.XPending(ctx, streamKey, groupName)
+	lenCmd := pipe.XLen(ctx, s.streamKey)
+	pendingCmd := pipe.XPending(ctx, s.streamKey, groupName)
 	_, _ = pipe.Exec(ctx)
 	length, err = lenCmd.Result()
 	if err != nil {
@@ -315,8 +321,8 @@ func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 		return nil
 	}
 	pipe := s.redis.TxPipeline()
-	pipe.XAck(ctx, streamKey, groupName, ids...)
-	pipe.XDel(ctx, streamKey, ids...)
+	pipe.XAck(ctx, s.streamKey, groupName, ids...)
+	pipe.XDel(ctx, s.streamKey, ids...)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("labelstream: ack: %w", err)
 	}

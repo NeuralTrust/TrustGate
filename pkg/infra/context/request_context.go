@@ -223,6 +223,13 @@ type RequestContext struct {
 	// nothing stops a client from repeating or inventing one, so it may only
 	// suppress a duplicate count, never a charge no other path makes.
 	MCPToolCallID string
+	// MCPServerID is the stored registry a resolved tools/call goes to: the
+	// shelf registry for a Store instance, whose own id is per install. Empty
+	// on any other request.
+	MCPServerID string
+	// MCPServerCode is that registry's MCP catalog code, empty when it was
+	// added by URL rather than from the catalog.
+	MCPServerCode string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

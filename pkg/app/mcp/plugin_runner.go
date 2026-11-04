@@ -403,6 +403,10 @@ func (r *PluginRunner) buildRequestContext(
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
+		reqCtx.MCPServerID = call.Registry.ScopeKey().String()
+		if call.Registry.MCPTarget != nil {
+			reqCtx.MCPServerCode = call.Registry.MCPTarget.Code
+		}
 		reqCtx.MCPTool = call.NativeTool
 		reqCtx.Metadata = map[string]interface{}{
 			infracontext.MetadataMCPTool:         call.NativeTool,

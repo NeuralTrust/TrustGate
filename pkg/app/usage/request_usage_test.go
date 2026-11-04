@@ -84,6 +84,8 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 	t.Parallel()
 	metaTool := mcpTrace(200, 0)
 	metaTool.MarkMetaTool()
+	modelsListing := llmTrace("tenant-1")
+	modelsListing.MarkModelsListing()
 	tests := []struct {
 		name         string
 		rt           *trace.RequestTrace
@@ -108,6 +110,7 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 		{name: "provider refused the request", rt: llmTraceWithOutcomes("terminal"), status: 404},
 		{name: "provider failed on every attempt", rt: llmTraceWithOutcomes("retryable", "retryable"), status: 400},
 		{name: "provider failure recovered by a fallback", rt: llmTraceWithOutcomes("retryable", "success"), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "models listing", rt: modelsListing, status: 200},
 		{name: "no tenant", rt: llmTrace(""), status: 200, wantSkipped: 1},
 		{name: "mcp served", rt: mcpTrace(200, 0), status: 200, wantRecord: true, wantTraceID: "trace-mcp"},
 		{name: "mcp rate limited on http 200", rt: mcpTrace(200, int(appmcp.CodeRateLimited)), status: 200},
