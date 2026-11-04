@@ -390,6 +390,18 @@ func TestEventToRecord_OmitsRetentionWhenUnstamped(t *testing.T) {
 	}
 }
 
+func TestRequestPreview_OnlyOnTheRawRecord(t *testing.T) {
+	evt := fullEvent()
+	evt.Request.Preview = "start of the prompt"
+
+	raw := attrsOf(rawEventToRecord(evt))
+	assert.Equal(t, "start of the prompt", raw["trustgate.request.preview"].AsString())
+
+	metadata := evt.MetadataView()
+	_, leaked := attrsOf(eventToRecord(&metadata))["trustgate.request.preview"]
+	assert.False(t, leaked, "metadata record must not carry the request preview")
+}
+
 // SensibleView whitelists fields by hand, so retention has to be named there or the
 // raw stream silently loses it.
 func TestSensibleView_CarriesRetention(t *testing.T) {

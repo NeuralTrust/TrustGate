@@ -16,6 +16,7 @@ package events
 
 func (e Event) MetadataView() Event {
 	e.Request.Body = ""
+	e.Request.Preview = ""
 	e.Response.Body = nil
 	return e
 }
@@ -28,7 +29,7 @@ func (e Event) SensibleView() Event {
 		TenantID:      e.TenantID,
 		OccurredOn:    e.OccurredOn,
 		Retention:     e.Retention,
-		Request:       Request{Body: e.Request.Body},
+		Request:       Request{Body: e.Request.Body, Preview: e.Request.Preview},
 		Response:      Response{Body: e.Response.Body},
 	}
 }
