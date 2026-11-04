@@ -355,7 +355,7 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	if req.IsBedrockNative() {
 		return req.BedrockNative.ModelID, nil
 	}
-	if modelInPath(req) {
+	if adapter.ModelInPath(adapter.Format(req.SourceFormat)) {
 		return adapter.GeminiModelFromPath(req.Path), nil
 	}
 	if len(req.Body) == 0 {
@@ -402,19 +402,10 @@ func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.In
 		req.Body = adapter.OverrideModel(req.Body, intent.Model)
 		return
 	}
-	// Gemini and Vertex clients send the model in the path, not the body;
-	// stamp it so adapters and the upstream client can resolve it.
-	if intent.IsShortModel() && modelInPath(req) {
+	// Gemini and Vertex clients send the model in the path, not the body; stamp
+	// it so plugins, adapters and the upstream client can resolve it.
+	if intent.IsShortModel() && adapter.ModelInPath(adapter.Format(req.SourceFormat)) {
 		req.Body = adapter.OverrideModel(req.Body, intent.Model)
-	}
-}
-
-func modelInPath(req *infracontext.RequestContext) bool {
-	switch adapter.Format(req.SourceFormat) {
-	case adapter.FormatGemini, adapter.FormatVertexPredictEmbed:
-		return true
-	default:
-		return false
 	}
 }
 

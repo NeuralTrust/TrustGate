@@ -216,6 +216,7 @@ func TestGeminiEmbed_FormatLists(t *testing.T) {
 
 func TestGeminiEmbed_GatewayErrorsUseTheGeminiEnvelope(t *testing.T) {
 	for _, f := range []Format{FormatGeminiEmbed, FormatGeminiBatchEmbed} {
+		assert.True(t, NeedsAdaptedError(f), f)
 		assert.JSONEq(t, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, string(EncodeErrorBody(f, 400, "bad")), f)
 	}
 }
