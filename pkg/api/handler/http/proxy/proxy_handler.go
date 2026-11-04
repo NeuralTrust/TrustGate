@@ -175,6 +175,30 @@ func (h *ForwardedHandler) HandleBedrockNative(c *fiber.Ctx) error {
 	return h.Handle(c)
 }
 
+// HandleGeminiNativeEmbeddings godoc
+// @Summary      Proxy a native Gemini or Vertex embeddings call
+// @Description  Accepts the Gemini and Vertex embedContent and batchEmbedContents calls the Google Gen AI SDK sends, on the Gemini path /v1beta/models/{model} and on the Vertex paths /{v1|v1beta1}/projects/{project}/locations/{location}/publishers/google/models/{model} and /{v1|v1beta1}/publishers/google/models/{model}. The model comes from the path; project and location are ignored and the upstream URL comes from the consumer's registry, which can be any provider that serves embeddings. embedContent answers {"embedding":{"values":[...]}} and batchEmbedContents answers {"embeddings":[{"values":[...]}]}, a batch of one included. The text parts of one content become one vector. taskType, title and outputDimensionality reach Vertex; taskType maps to Cohere input_type and outputDimensionality to dimensions for OpenAI and Azure; other targets drop them. A batch mixing taskType or outputDimensionality values, or a non-text part, is a 400. Errors use the Gemini error object ({"error":{"code":...,"message":"...","status":"..."}}). Any other action, such as countTokens, is a 404.
+// @Tags         proxy
+// @Accept       json
+// @Produce      json
+// @Param        consumer_slug      path   string  true   "Consumer slug"
+// @Param        model              path   string  true   "Model ID, such as gemini-embedding-001"
+// @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
+// @Param        body               body   object  true   "An embedContent or batchEmbedContents request body"
+// @Success      200                {object}  map[string]interface{}
+// @Failure      400                {object}  map[string]interface{}
+// @Failure      401                {object}  map[string]interface{}
+// @Failure      403                {object}  map[string]interface{}
+// @Failure      404                {object}  map[string]interface{}
+// @Failure      429                {object}  map[string]interface{}
+// @Failure      502                {object}  map[string]interface{}
+// @Router       /{consumer_slug}/v1beta/models/{model}:embedContent [post]
+// @Router       /{consumer_slug}/v1beta/models/{model}:batchEmbedContents [post]
+// It exists for the OpenAPI spec: routing goes through Handle.
+func (h *ForwardedHandler) HandleGeminiNativeEmbeddings(c *fiber.Ctx) error {
+	return h.Handle(c)
+}
+
 // Handle godoc
 // @Summary      Proxy chat completion
 // @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….
