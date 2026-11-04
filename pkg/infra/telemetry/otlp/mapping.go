@@ -111,6 +111,7 @@ const (
 	attrRetentionExpiresAt   = "trustgate.retention.expires_at"
 	attrRetentionPlan        = "trustgate.retention.plan"
 	attrRequestBody          = "trustgate.request.body"
+	attrRequestPreview       = "trustgate.request.preview"
 	attrResponseBody         = "trustgate.response.body"
 )
 
@@ -305,6 +306,7 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrRequestBody, evt.Request.Body)
+	appendStr(attrRequestPreview, evt.Request.Preview)
 	if evt.Response.Body != nil {
 		appendStr(attrResponseBody, *evt.Response.Body)
 	}
