@@ -437,6 +437,9 @@ func ResolveTargetFormatForCapability(
 		case provider.Cohere:
 			return FormatCohereEmbed
 		case provider.Vertex:
+			if sourceFormat == FormatVertexPredictEmbed {
+				return FormatVertexPredictEmbed
+			}
 			return FormatVertexEmbed
 		case provider.Bedrock:
 			return FormatBedrockTitanEmbed
