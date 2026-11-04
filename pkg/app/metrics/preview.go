@@ -32,6 +32,8 @@ const (
 
 // promptPreview is the start of the last user turn: in a multi-turn request
 // it is the message this request adds, which is what the Activity list names.
+// JSON in the turn gets the body's credential redaction before it is cut,
+// while it still parses.
 func promptPreview(canonical *adapter.CanonicalRequest) string {
 	if canonical == nil {
 		return ""
@@ -41,7 +43,7 @@ func promptPreview(canonical *adapter.CanonicalRequest) string {
 		if msg.Role != "user" {
 			continue
 		}
-		if text := truncatePreview(msg.Content); text != "" {
+		if text := truncatePreview(events.RedactCredentialsInText(msg.Content, maxPreviewRunes)); text != "" {
 			return text
 		}
 	}
@@ -49,14 +51,15 @@ func promptPreview(canonical *adapter.CanonicalRequest) string {
 }
 
 // toolCallPreview reads the sanitized JSON-RPC body, so a credential the
-// client put in the arguments is already redacted; its key is skipped too.
+// client put in the arguments is already redacted; its key is skipped too,
+// and JSON pasted among the argument's prose is redacted like a prompt.
 func toolCallPreview(mcp *events.MCP, body string) string {
 	if mcp == nil || mcp.Method != mcpToolCallMethod || mcp.Tool == "" {
 		return ""
 	}
 	tool := truncatePreview(mcp.Tool)
 	budget := maxPreviewRunes - utf8.RuneCountInString(tool) - len("()")
-	arg := truncateRunes(firstStringArgument(body), budget)
+	arg := truncateRunes(events.RedactCredentialsInText(firstStringArgument(body), budget), budget)
 	if arg == "" {
 		return tool
 	}

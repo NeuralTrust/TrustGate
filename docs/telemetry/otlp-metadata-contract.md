@@ -886,8 +886,10 @@ metadata attributes, no policy chain.
 
 `trustgate.request.preview` is what the Activity list shows in its Request column: for
 LLM traffic the last user turn, for an MCP `tools/call` the tool and its first string
-argument (`search_issues(login bug)`, credential-named arguments skipped). Whitespace is
-collapsed and it is cut at 200 characters with a trailing `…`. It is body content, so it
+argument (`search_issues(login bug)`, credential-named arguments skipped). A prompt or
+argument that holds JSON gets the same credential redaction as the body
+(`{"api_key":"[REDACTED]"}`) before it is cut. Whitespace is collapsed and it is cut at
+200 characters with a trailing `…`. It is body content, so it
 travels on the raw record only and is absent whenever the body is. Raw bodies land in their own table, which needs its own expiry to key a
 TTL on, so retention is deliberately not treated as metadata-only.
 

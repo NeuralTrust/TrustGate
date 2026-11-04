@@ -99,6 +99,21 @@ func TestBuilder_LLMPreviewIsTheLastUserTurn(t *testing.T) {
 			want: strings.TrimSpace(string([]rune(strings.TrimSpace(long))[:maxPreviewRunes])) + previewEllipsis,
 		},
 		{
+			name: "a JSON prompt has its credentials redacted",
+			body: `{"model":"gpt-4o","messages":[{"role":"user","content":"{\"api_key\":\"sk-test-FAKE\",\"note\":\"QAM-1\"}"}]}`,
+			want: `{"api_key":"[REDACTED]","note":"QAM-1"}`,
+		},
+		{
+			name: "openai content parts with a JSON part",
+			body: `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"see config"},{"type":"text","text":"{\"api_key\":\"sk-test-FAKE\"}"}]}]}`,
+			want: `see config {"api_key":"[REDACTED]"}`,
+		},
+		{
+			name: "anthropic blocks with a JSON block",
+			body: `{"model":"claude-sonnet-5-5","max_tokens":10,"messages":[{"role":"user","content":[{"type":"text","text":"see config"},{"type":"text","text":"{\"api_key\":\"sk-test-FAKE\"}"}]}]}`,
+			want: `see config {"api_key":"[REDACTED]"}`,
+		},
+		{
 			name: "no user turn",
 			body: `{"model":"gpt-4o","messages":[{"role":"system","content":"only system"}]}`,
 			want: "",
@@ -146,6 +161,13 @@ func TestBuilder_MCPPreviewIsToolAndFirstStringArgument(t *testing.T) {
 			tool:   "fetch",
 			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch","arguments":{"api_key":"sk-123","url":"https://example.com"}}}`,
 			want:   "fetch(https://example.com)",
+		},
+		{
+			name:   "credentials inside a JSON argument are redacted",
+			method: "tools/call",
+			tool:   "configure",
+			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"configure","arguments":{"config":"{\"token\":\"FAKE-ARG\",\"env\":\"dev\"}"}}}`,
+			want:   `configure({"env":"dev","token":"[REDACTED]"})`,
 		},
 		{
 			name:   "no arguments names the tool alone",
