@@ -294,3 +294,70 @@ func TestReadBackendError(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, be.StatusCode)
 	assert.Contains(t, string(be.Body), "Quota exceeded")
 }
+
+func TestBuildEmbeddingsURL_PredictInstances(t *testing.T) {
+	c := &client{}
+	regional := &providers.Config{
+		Model:   "gemini-embedding-001",
+		Options: map[string]any{"project": "p", "location": "us-central1"},
+	}
+	url, err := c.buildEmbeddingsURL(regional, []byte(`{"instances":[{"content":"a"}]}`))
+	require.NoError(t, err)
+	assert.Equal(t,
+		"https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/gemini-embedding-001:predict",
+		url,
+	)
+
+	withBase := &providers.Config{
+		Model:   "gemini-embedding-001",
+		Options: map[string]any{"project": "p", "location": "us-central1", "base_url": "http://127.0.0.1:9/v1/"},
+	}
+	url, err = c.buildEmbeddingsURL(withBase, []byte(`{"instances":[{"content":"a"},{"content":"b"}]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:9/v1/gemini-embedding-001:predict", url)
+}
+
+func TestEmbeddings_PredictStripsTheStampedModel(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"predictions":[{"embeddings":{"values":[0.1]}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewVertexClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "tok"},
+		Model:       "gemini-embedding-001",
+		Options:     map[string]any{"project": "p", "location": "us-central1", "base_url": srv.URL},
+	}, []byte(`{"model":"gemini-embedding-001","instances":[{"content":"hi","task_type":"RETRIEVAL_QUERY","title":"t"}],"parameters":{"outputDimensionality":256,"autoTruncate":false}}`))
+	require.NoError(t, err)
+	assert.Equal(t, "/gemini-embedding-001:predict", gotPath)
+	assert.JSONEq(t,
+		`{"instances":[{"content":"hi","task_type":"RETRIEVAL_QUERY","title":"t"}],"parameters":{"outputDimensionality":256,"autoTruncate":false}}`,
+		string(gotBody),
+	)
+	assert.JSONEq(t, `{"predictions":[{"embeddings":{"values":[0.1]}}]}`, string(resp))
+}
+
+func TestEmbeddings_EmbedContentKeepsTheModel(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"embedding":{"values":[0.1]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	body := `{"model":"text-embedding-004","content":{"parts":[{"text":"hi"}]}}`
+	c := NewVertexClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "tok"},
+		Model:       "text-embedding-004",
+		Options:     map[string]any{"project": "p", "location": "us-central1", "base_url": srv.URL},
+	}, []byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, body, string(gotBody))
+}
