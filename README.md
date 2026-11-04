@@ -95,7 +95,7 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
   -d '{"model":"text-embedding-3-small","input":["Hello from TrustGate"]}'
 ```
 
-OpenAI-shaped clients call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, Mistral, and custom `openai_compatible` registries forward that payload to the upstream embeddings URL. Upstream, the gateway calls Vertex with Gemini `:embedContent` / `:batchEmbedContents` and Bedrock Titan embed with `InvokeModel` and `{inputText}`. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
+OpenAI-shaped clients call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, Mistral, and custom `openai_compatible` registries forward that payload to the upstream embeddings URL. Upstream, the gateway calls Vertex with `:predict` (`instances[].content`), the only embeddings action Vertex serves for `gemini-embedding-001`, and Bedrock Titan embed with `InvokeModel` and `{inputText}`. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
 
 ```bash
 curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \

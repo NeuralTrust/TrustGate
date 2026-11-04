@@ -31,7 +31,17 @@ var (
 type VertexPredictEmbedAdapter struct{}
 
 type vertexPredictInstance struct {
-	Content *string `json:"content"`
+	Content       *string `json:"content"`
+	TaskType      string  `json:"task_type,omitempty"`
+	TaskTypeCamel string  `json:"taskType,omitempty"`
+	Title         string  `json:"title,omitempty"`
+}
+
+func (i vertexPredictInstance) taskType() string {
+	if i.TaskType != "" {
+		return i.TaskType
+	}
+	return i.TaskTypeCamel
 }
 
 type vertexPredictParameters struct {
@@ -70,13 +80,20 @@ func (a *VertexPredictEmbedAdapter) DecodeRequest(body []byte) (*CanonicalReques
 		return nil, &RequestDecodeError{Format: FormatVertexPredictEmbed, Cause: errPredictNoInstances}
 	}
 	inputs := make([]string, 0, len(req.Instances))
+	titles := make([]string, 0, len(req.Instances))
+	hasTitle := false
 	for _, instance := range req.Instances {
 		if instance.Content == nil || strings.TrimSpace(*instance.Content) == "" {
 			return nil, &RequestDecodeError{Format: FormatVertexPredictEmbed, Cause: errPredictNoContent}
 		}
 		inputs = append(inputs, *instance.Content)
+		titles = append(titles, instance.Title)
+		hasTitle = hasTitle || instance.Title != ""
 	}
-	emb := &CanonicalEmbeddingRequest{Model: req.Model, Inputs: inputs}
+	emb := &CanonicalEmbeddingRequest{Model: req.Model, Inputs: inputs, TaskType: sharedPredictTaskType(req.Instances)}
+	if hasTitle {
+		emb.Titles = titles
+	}
 	if req.Parameters != nil {
 		emb.Dimensions = req.Parameters.OutputDimensionality
 	}
@@ -87,14 +104,31 @@ func (a *VertexPredictEmbedAdapter) DecodeRequest(body []byte) (*CanonicalReques
 	return &CanonicalRequest{Model: req.Model, Metadata: map[string]interface{}{"embedding": json.RawMessage(raw)}}, nil
 }
 
+// sharedPredictTaskType is the task type every instance asks for. The
+// canonical request holds one, so instances that disagree carry none to a
+// target other than Vertex, which receives the body unchanged.
+func sharedPredictTaskType(instances []vertexPredictInstance) string {
+	taskType := instances[0].taskType()
+	for _, instance := range instances[1:] {
+		if instance.taskType() != taskType {
+			return ""
+		}
+	}
+	return taskType
+}
+
 func (a *VertexPredictEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	emb, err := textEmbeddingFromCanonical(req)
 	if err != nil {
 		return nil, err
 	}
 	out := vertexPredictRequest{Instances: make([]vertexPredictInstance, 0, len(emb.Inputs))}
-	for _, text := range emb.Inputs {
-		out.Instances = append(out.Instances, vertexPredictInstance{Content: &text})
+	for i, text := range emb.Inputs {
+		instance := vertexPredictInstance{Content: &text, TaskType: emb.TaskType}
+		if i < len(emb.Titles) {
+			instance.Title = emb.Titles[i]
+		}
+		out.Instances = append(out.Instances, instance)
 	}
 	if emb.Dimensions > 0 {
 		out.Parameters = &vertexPredictParameters{OutputDimensionality: emb.Dimensions}

@@ -107,8 +107,8 @@ func TestProviderInvoke_GeminiEmbeddingsAcrossTargets(t *testing.T) {
 			provider: "vertex",
 			format:   adapter.FormatGeminiBatchEmbed,
 			body:     geminiBatchOfOne,
-			upstream: `{"embedding":{"values":[0.1,0.2]}}`,
-			wantSent: `{"content":{"parts":[{"text":"hello"}]},"taskType":"RETRIEVAL_QUERY","outputDimensionality":256}`,
+			upstream: `{"predictions":[{"embeddings":{"values":[0.1,0.2]}}]}`,
+			wantSent: `{"instances":[{"content":"hello","task_type":"RETRIEVAL_QUERY"}],"parameters":{"outputDimensionality":256}}`,
 			wantResp: `{"embeddings":[{"values":[0.1,0.2]}]}`,
 		},
 		{
@@ -116,8 +116,8 @@ func TestProviderInvoke_GeminiEmbeddingsAcrossTargets(t *testing.T) {
 			provider: "vertex",
 			format:   adapter.FormatGeminiEmbed,
 			body:     `{"model":"gemini-embedding-001","content":{"parts":[{"text":"hello"}]}}`,
-			upstream: `{"embedding":{"values":[0.1]}}`,
-			wantSent: `{"model":"gemini-embedding-001","content":{"parts":[{"text":"hello"}]}}`,
+			upstream: `{"predictions":[{"embeddings":{"values":[0.1]}}]}`,
+			wantSent: `{"model":"gemini-embedding-001","instances":[{"content":"hello"}]}`,
 			wantResp: `{"embedding":{"values":[0.1]}}`,
 		},
 		{
