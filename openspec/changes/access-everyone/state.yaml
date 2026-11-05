@@ -1,0 +1,9 @@
+change: access-everyone
+linear: ENG-3054
+phases:
+  explore: done
+  propose: done
+  spec: done  # flag = UI only; narrowing Add confirms (2026-11-05)
+  design: done
+  tasks: done  # one PR per repo, size:exception
+  apply: in_progress  # phase 1 (T1) done 2026-11-05
