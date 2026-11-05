@@ -129,6 +129,7 @@ type adminRouterParams struct {
 	StoreRequests  *storehttp.RequestsHandler
 	StoreGrants    *storehttp.GrantsHandler
 	StorePolicies  *storehttp.PoliciesHandler
+	StoreEveryone  *storehttp.EveryoneHandler
 	StorePrincipal *storehttp.PrincipalHandler
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
@@ -219,6 +220,7 @@ func ServerAdmin(c *container.Container) error {
 				StoreRequests:             p.StoreRequests,
 				StoreGrants:               p.StoreGrants,
 				StorePolicies:             p.StorePolicies,
+				StoreEveryone:             p.StoreEveryone,
 				StorePrincipal:            p.StorePrincipal,
 				StoreMaterialize:          p.StoreMaterialize,
 				StoreLLMKey:               p.StoreLLMKey,
