@@ -91,6 +91,29 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storeaccessdomain.EveryoneRepository {
+		return storeaccessrepo.NewEveryoneRepository(conn, appender)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo storeaccessdomain.EveryoneRepository) storeaccessdomain.EveryoneReader { return repo }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		repo storeaccessdomain.EveryoneRepository,
+		registries registrydomain.Repository,
+		catalog appcatalog.MCPServerCatalog,
+		sig snapshotSignalParams,
+	) (appstore.EveryoneService, error) {
+		return appstore.NewEveryoneService(repo, registries, catalog, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(everyone appstore.EveryoneService) *storehttp.EveryoneHandler {
+		return storehttp.NewEveryoneHandler(everyone)
+	}); err != nil {
+		return err
+	}
 	// The control-plane registry materialiser: self-service installs create the
 	// shared registry from the catalog through the same Creator the admin's
 	// connect-from-catalog path uses. On the data plane this port is served by

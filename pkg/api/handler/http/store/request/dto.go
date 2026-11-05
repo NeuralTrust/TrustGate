@@ -27,6 +27,17 @@ type SetPolicy struct {
 	Mode          string `json:"mode"`
 }
 
+type EveryoneGrant struct {
+	CatalogCode string `json:"catalog_code"`
+	RegistryID  string `json:"registry_id"`
+}
+
+type SetEveryone struct {
+	Mode           string          `json:"mode"`
+	Grants         []EveryoneGrant `json:"grants"`
+	ExcludedGroups []string        `json:"excluded_groups"`
+}
+
 type Install struct {
 	PrincipalSub string   `json:"principal_sub"`
 	Code         string   `json:"code"`
