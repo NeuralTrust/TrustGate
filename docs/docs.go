@@ -3912,6 +3912,119 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/everyone": {
+            "get": {
+                "description": "Returns the Store level and servers every group passes on to its members, and the excluded groups. An empty mode means the gateway has none.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Get the MCP Store Everyone access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "description": "Replaces the gateway's Everyone access: mode open or curated (curated needs at least one grant), the servers it grants, and the excluded group keys. An empty mode removes it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Set the MCP Store Everyone access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The Everyone access",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone"
+                        }
+                    },
+                    "204": {
+                        "description": "Everyone access removed"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/grants": {
             "get": {
                 "description": "Returns every access grant on the gateway: per catalog code, optionally narrowed to one configured instance (registry).",
@@ -9720,6 +9833,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.EveryoneGrant": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Install": {
             "type": "object",
             "properties": {
@@ -9757,6 +9881,26 @@ const docTemplate = `{
                     "description": "NeverExpires renews the key with no expiry at all. Not allowed with\nexpires_at.",
                     "type": "boolean",
                     "example": false
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone": {
+            "type": "object",
+            "properties": {
+                "excluded_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "grants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.EveryoneGrant"
+                    }
+                },
+                "mode": {
+                    "type": "string"
                 }
             }
         },
@@ -9829,6 +9973,37 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "requested_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone": {
+            "type": "object",
+            "properties": {
+                "excluded_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "grants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.EveryoneGrant"
+                    }
+                },
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.EveryoneGrant": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "registry_id": {
                     "type": "string"
                 }
             }
