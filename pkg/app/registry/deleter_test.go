@@ -117,3 +117,45 @@ func TestDeleter_Delete_StopsWhenDependentCleanupFails(t *testing.T) {
 	}
 	repo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything, mock.Anything)
 }
+
+type recordingCleaner struct {
+	calls int
+	err   error
+}
+
+func (c *recordingCleaner) DeleteByRegistry(context.Context, ids.GatewayID, ids.RegistryID) error {
+	c.calls++
+	return c.err
+}
+
+func TestDeleter_Delete_AfterDeleteCleanerRunsOnlyOnceTheRegistryIsGone(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.RegistryKind]()
+	gwID := ids.New[ids.GatewayKind]()
+
+	refused := repomocks.NewRepository(t)
+	refused.EXPECT().FindByID(mock.Anything, id).Return(&domain.Registry{ID: id, GatewayID: gwID}, nil).Once()
+	refused.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.PruneReport{}, domain.ErrHasDependents).Once()
+	skipped := &recordingCleaner{}
+	deleter := appregistry.NewDeleter(refused, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil, appregistry.WithAfterDeleteCleaner(skipped))
+	if err := deleter.Delete(context.Background(), gwID, id); !errors.Is(err, domain.ErrHasDependents) {
+		t.Fatalf("err = %v, want the delete error", err)
+	}
+	if skipped.calls != 0 {
+		t.Fatal("a refused delete must leave the after-delete cleanup undone")
+	}
+
+	deleted := repomocks.NewRepository(t)
+	deleted.EXPECT().FindByID(mock.Anything, id).Return(&domain.Registry{ID: id, GatewayID: gwID}, nil).Once()
+	deleted.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.PruneReport{}, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+	failing := &recordingCleaner{err: errors.New("db down")}
+	deleter = appregistry.NewDeleter(deleted, newCacheManager(), publisher, newTestLogger(), nil, appregistry.WithAfterDeleteCleaner(failing))
+	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
+		t.Fatalf("a failed after-delete cleanup must not fail the delete, got %v", err)
+	}
+	if failing.calls != 1 {
+		t.Fatalf("after-delete cleanup ran %d times, want 1", failing.calls)
+	}
+}
