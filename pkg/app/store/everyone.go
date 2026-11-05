@@ -122,3 +122,31 @@ func (s *everyoneService) signal(ctx context.Context) {
 		s.signaler.Signal(ctx)
 	}
 }
+
+// EveryoneRegistryCleaner drops a deleted registry's instance grants from the
+// gateway's Everyone object, so it never names a registry that is gone. When
+// that leaves a curated object without grants, the object is removed.
+type EveryoneRegistryCleaner struct {
+	repo storeaccessdomain.EveryoneRepository
+}
+
+// NewEveryoneRegistryCleaner wires the cleaner over the Everyone repository.
+func NewEveryoneRegistryCleaner(repo storeaccessdomain.EveryoneRepository) *EveryoneRegistryCleaner {
+	return &EveryoneRegistryCleaner{repo: repo}
+}
+
+// DeleteByRegistry removes registryID from the gateway's Everyone grants.
+func (c *EveryoneRegistryCleaner) DeleteByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error {
+	everyone, err := c.repo.GetEveryone(ctx, gatewayID)
+	if err != nil || everyone == nil {
+		return err
+	}
+	pruned, changed := everyone.WithoutRegistry(registryID)
+	if !changed {
+		return nil
+	}
+	if pruned.Validate() != nil {
+		return c.repo.DeleteEveryone(ctx, gatewayID)
+	}
+	return c.repo.UpsertEveryone(ctx, pruned)
+}
