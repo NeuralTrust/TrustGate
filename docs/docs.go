@@ -3959,7 +3959,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Replaces the gateway's Everyone access: mode open or curated (curated needs at least one grant), the servers it grants, and the excluded group keys. An empty mode removes it.",
+                "description": "Replaces the gateway's Everyone access: mode open or curated (curated needs at least one grant), the servers it grants, and the excluded group keys. Mode is required; an empty mode removes it.",
                 "consumes": [
                     "application/json"
                 ],
