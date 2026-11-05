@@ -265,6 +265,8 @@ type Set struct {
 	// instancesByCode lists the instance-level grants of a code, for "is any
 	// instance of this code granted to me" checks.
 	instancesByCode map[string][]*Grant
+	everyone        *Everyone
+	policies        *PolicySet
 }
 
 // Index builds a Set. Empty grants are skipped (granted to nobody = absent).
@@ -288,6 +290,22 @@ func Index(grants []*Grant) *Set {
 	return s
 }
 
+// WithEveryone returns a copy of the set that also grants Everyone's servers to
+// callers who reach it, judged against the gateway's policies. Code and
+// Instance keep returning the explicit grants only.
+func (s *Set) WithEveryone(everyone *Everyone, policies *PolicySet) *Set {
+	if s == nil {
+		s = Index(nil)
+	}
+	out := *s
+	out.everyone, out.policies = everyone, policies
+	return &out
+}
+
+func (s *Set) everyoneReached(groups []string) bool {
+	return s != nil && s.everyone.Reaches(groups, s.policies)
+}
+
 // Code returns the code-level grant, or nil.
 func (s *Set) Code(code string) *Grant {
 	if s == nil {
@@ -307,16 +325,19 @@ func (s *Set) Instance(registryID ids.RegistryID) *Grant {
 // CodeAllows reports whether the principal holds the code-level grant: every
 // instance of the code, and the right to materialise it.
 func (s *Set) CodeAllows(code string, groups []string, subject string) bool {
-	return s.Code(code).Allows(groups, subject)
+	if s.Code(code).Allows(groups, subject) {
+		return true
+	}
+	return s != nil && s.everyone.grantsCode(code) && s.everyoneReached(groups)
 }
 
 // InstanceAllows reports whether the principal may use one specific instance:
 // through the code-level grant or a grant on that instance.
 func (s *Set) InstanceAllows(code string, registryID ids.RegistryID, groups []string, subject string) bool {
-	if s.CodeAllows(code, groups, subject) {
+	if s.CodeAllows(code, groups, subject) || s.Instance(registryID).Allows(groups, subject) {
 		return true
 	}
-	return s.Instance(registryID).Allows(groups, subject)
+	return s != nil && s.everyone.grantsInstance(registryID) && s.everyoneReached(groups)
 }
 
 // AnyInstanceAllows reports whether the principal holds at least one
@@ -330,5 +351,5 @@ func (s *Set) AnyInstanceAllows(code string, groups []string, subject string) bo
 			return true
 		}
 	}
-	return false
+	return s.everyone.grantsAnyInstance(code) && s.everyoneReached(groups)
 }

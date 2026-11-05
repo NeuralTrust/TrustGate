@@ -777,7 +777,7 @@ func (i *installer) decideAmong(
 		if reg == nil {
 			return installDecision{}, fmt.Errorf("%w: %q is not an instance of %q", ErrUnknownInstance, in.RegistryID, code)
 		}
-		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, grantee) {
+		if codeGranted || grants.InstanceAllows(code, reg.ID, in.Groups, grantee) {
 			return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusInstalled}, nil
 		}
 		return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusPendingApproval}, nil
@@ -807,7 +807,7 @@ func (i *installer) decideAmong(
 	if !codeGranted {
 		usable = usable[:0:0]
 		for _, reg := range instances {
-			if grants.Instance(reg.ID).Allows(in.Groups, grantee) {
+			if grants.InstanceAllows(code, reg.ID, in.Groups, grantee) {
 				usable = append(usable, reg)
 			}
 		}
@@ -867,9 +867,21 @@ func (i *installer) grantSet(ctx context.Context, gatewayID ids.GatewayID) (*sto
 	return loadGrantSet(ctx, i.grants, gatewayID)
 }
 
-// loadGrantSet is the shared grant-loading step of the installer, scoper and
-// approver: index the gateway's grants, or an empty set when no reader is wired.
+// loadGrantSet is the shared grant-loading step of the installer, scoper,
+// connect and configure paths: the gateway's grants, plus Everyone's servers
+// when the reader also serves policies and Everyone (see AccessReader).
 func loadGrantSet(ctx context.Context, reader storeaccessdomain.Reader, gatewayID ids.GatewayID) (*storeaccessdomain.Set, error) {
+	set, err := loadPlainGrantSet(ctx, reader, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	return withEveryone(ctx, set, reader, gatewayID), nil
+}
+
+// loadPlainGrantSet indexes the explicit grants only, or an empty set when no
+// reader is wired. The approver uses it: an approval must record an explicit
+// grant even when Everyone already covers the server.
+func loadPlainGrantSet(ctx context.Context, reader storeaccessdomain.Reader, gatewayID ids.GatewayID) (*storeaccessdomain.Set, error) {
 	if reader == nil {
 		return storeaccessdomain.Index(nil), nil
 	}
@@ -878,6 +890,27 @@ func loadGrantSet(ctx context.Context, reader storeaccessdomain.Reader, gatewayI
 		return nil, fmt.Errorf("store: list grants: %w", err)
 	}
 	return storeaccessdomain.Index(grants), nil
+}
+
+// withEveryone adds Everyone to the set when the reader serves it. Without the
+// gateway's policies nobody can be shown to reach Everyone, so a failed policy
+// read leaves the explicit grants only.
+func withEveryone(ctx context.Context, set *storeaccessdomain.Set, reader storeaccessdomain.Reader, gatewayID ids.GatewayID) *storeaccessdomain.Set {
+	everyone := loadEveryone(ctx, reader, gatewayID)
+	if everyone == nil {
+		return set
+	}
+	policyReader, ok := reader.(storeaccessdomain.PolicyReader)
+	if !ok {
+		return set
+	}
+	policies, err := policyReader.ListPoliciesByGateway(ctx, gatewayID)
+	if err != nil {
+		slog.WarnContext(ctx, "store: policy lookup failed; ignoring everyone grants",
+			slog.String("gateway_id", gatewayID.String()), slog.String("error", err.Error()))
+		return set
+	}
+	return set.WithEveryone(everyone, storeaccessdomain.IndexPolicies(policies))
 }
 
 // Instances returns the principal's active instances of a catalog code, oldest

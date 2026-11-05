@@ -403,7 +403,7 @@ func (a *approver) grantRequester(
 	subject string,
 	group string,
 ) error {
-	grants, err := loadGrantSet(ctx, a.grants, gatewayID)
+	grants, err := loadPlainGrantSet(ctx, a.grants, gatewayID)
 	if err != nil {
 		return err
 	}

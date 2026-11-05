@@ -163,6 +163,15 @@ func (s *PolicySet) Mode(subject string, groups []string) string {
 	return best
 }
 
+// GroupMode returns the policy set on one group key, if any.
+func (s *PolicySet) GroupMode(group string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	m, ok := s.groups[strings.TrimSpace(group)]
+	return m, ok
+}
+
 func modeRank(mode string) int {
 	switch mode {
 	case gatewaydomain.StoreModeOpen:
