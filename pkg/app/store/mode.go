@@ -80,11 +80,28 @@ func (r *modeResolver) Resolve(ctx context.Context, query ModeQuery) string {
 				slog.String("gateway_id", query.GatewayID.String()), slog.String("error", err.Error()))
 			return gatewaydomain.StoreModeCurated
 		}
-		if mode := storeaccessdomain.IndexPolicies(policies).Mode(strings.TrimSpace(query.Subject), query.Groups); mode != "" {
-			return mode
-		}
+		everyone := loadEveryone(ctx, r.policies, query.GatewayID)
+		return storeaccessdomain.ResolveLevel(storeaccessdomain.IndexPolicies(policies), everyone,
+			strings.TrimSpace(query.Subject), query.Groups, normalizeMode(query.Fallback))
 	}
 	return normalizeMode(query.Fallback)
+}
+
+// loadEveryone reads the gateway's Everyone object when the reader also serves
+// it. A failed read counts as no Everyone: it only ever adds access, so
+// ignoring it can never widen what a caller gets.
+func loadEveryone(ctx context.Context, reader any, gatewayID ids.GatewayID) *storeaccessdomain.Everyone {
+	everyoneReader, ok := reader.(storeaccessdomain.EveryoneReader)
+	if !ok || everyoneReader == nil {
+		return nil
+	}
+	everyone, err := everyoneReader.GetEveryone(ctx, gatewayID)
+	if err != nil {
+		slog.WarnContext(ctx, "store: everyone lookup failed; ignoring everyone",
+			slog.String("gateway_id", gatewayID.String()), slog.String("error", err.Error()))
+		return nil
+	}
+	return everyone
 }
 
 // ResolveMode resolves a Store mode from explicit identity and gateway inputs.

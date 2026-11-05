@@ -111,6 +111,81 @@ func (e *Everyone) Excludes(group string) bool {
 	return false
 }
 
+// Reaches reports whether a caller with these Store groups receives Everyone:
+// at least one group is not excluded and has no own "none" policy. A group
+// without a policy passes; a caller without groups never reaches it.
+func (e *Everyone) Reaches(groups []string, policies *PolicySet) bool {
+	if e == nil {
+		return false
+	}
+	for _, g := range groups {
+		g = strings.TrimSpace(g)
+		if g == "" || e.Excludes(g) {
+			continue
+		}
+		if mode, ok := policies.GroupMode(g); ok && mode == gatewaydomain.StoreModeNone {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// ResolveLevel decides a caller's Store level. The caller's own policy wins
+// outright. Otherwise the most permissive explicit group policy applies, or the
+// fallback when no group policy names the caller, raised to Everyone's mode
+// when the caller reaches it. Everyone never lowers a level, and with no
+// Everyone object the result is the one without it.
+func ResolveLevel(policies *PolicySet, everyone *Everyone, subject string, groups []string, fallback string) string {
+	if own := policies.Mode(subject, nil); own != "" {
+		return own
+	}
+	level := policies.Mode("", groups)
+	if level == "" {
+		level = fallback
+	}
+	if everyone.Reaches(groups, policies) && modeRank(everyone.Mode) > modeRank(level) {
+		return everyone.Mode
+	}
+	return level
+}
+
+func (e *Everyone) grantsCode(code string) bool {
+	if e == nil {
+		return false
+	}
+	for _, g := range e.Grants {
+		if g.CatalogCode == code && !g.IsInstance() {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Everyone) grantsInstance(registryID ids.RegistryID) bool {
+	if e == nil || registryID.IsNil() {
+		return false
+	}
+	for _, g := range e.Grants {
+		if g.RegistryID == registryID {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Everyone) grantsAnyInstance(code string) bool {
+	if e == nil {
+		return false
+	}
+	for _, g := range e.Grants {
+		if g.CatalogCode == code && g.IsInstance() {
+			return true
+		}
+	}
+	return false
+}
+
 // WithoutRegistry returns a copy without the instance grants on registryID, and
 // whether anything was removed.
 func (e *Everyone) WithoutRegistry(registryID ids.RegistryID) (*Everyone, bool) {
