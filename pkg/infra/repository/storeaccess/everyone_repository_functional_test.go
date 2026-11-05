@@ -157,3 +157,39 @@ func TestEveryoneRepositoryRoundTrip(t *testing.T) {
 		t.Fatalf("an unknown gateway must be a validation error, got %v", err)
 	}
 }
+
+func TestEveryoneRepositoryPruneRegistry(t *testing.T) {
+	ctx, pool := openEveryoneSchema(t)
+	repo := NewEveryoneRepository(&database.Connection{Pool: pool}, nil)
+	gw := insertGateway(t, ctx, pool)
+	reg, other := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+
+	mixed, _ := domain.NewEveryone(gw, "curated", []domain.EveryoneGrant{{CatalogCode: "github"}, {CatalogCode: "snowflake", RegistryID: reg}}, []string{"Contractors"})
+	if err := repo.UpsertEveryone(ctx, mixed); err != nil {
+		t.Fatalf("UpsertEveryone: %v", err)
+	}
+	if err := repo.PruneRegistry(ctx, gw, other); err != nil {
+		t.Fatalf("an unrelated registry: %v", err)
+	}
+	if err := repo.PruneRegistry(ctx, gw, reg); err != nil {
+		t.Fatalf("PruneRegistry: %v", err)
+	}
+	got, _ := repo.GetEveryone(ctx, gw)
+	if got == nil || len(got.Grants) != 1 || got.Grants[0].CatalogCode != "github" || got.ExcludedGroups[0] != "Contractors" {
+		t.Fatalf("only the deleted registry's grant goes, got %+v", got)
+	}
+
+	only, _ := domain.NewEveryone(gw, "curated", []domain.EveryoneGrant{{CatalogCode: "snowflake", RegistryID: reg}}, nil)
+	if err := repo.UpsertEveryone(ctx, only); err != nil {
+		t.Fatalf("UpsertEveryone: %v", err)
+	}
+	if err := repo.PruneRegistry(ctx, gw, reg); err != nil {
+		t.Fatalf("PruneRegistry: %v", err)
+	}
+	if got, _ := repo.GetEveryone(ctx, gw); got != nil {
+		t.Fatalf("a curated object left without grants is removed, got %+v", got)
+	}
+	if err := repo.PruneRegistry(ctx, gw, reg); err != nil {
+		t.Fatalf("a gateway without Everyone is a no-op, got %v", err)
+	}
+}

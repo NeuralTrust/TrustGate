@@ -103,7 +103,7 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 		opts = append(opts, appregistry.WithDependentCleaner(p.Grants))
 	}
 	if p.Everyone != nil {
-		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
+		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
 	}
 	if denier, ok := p.Installs.(installationdomain.PendingDenier); ok {
 		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewDeletedServerRequests(denier, logger)))

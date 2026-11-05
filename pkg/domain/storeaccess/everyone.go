@@ -305,4 +305,8 @@ type EveryoneRepository interface {
 	UpsertEveryone(ctx context.Context, e *Everyone) error
 	// DeleteEveryone removes the gateway's object; missing is not an error.
 	DeleteEveryone(ctx context.Context, gatewayID ids.GatewayID) error
+	// PruneRegistry drops registryID's instance grants from the gateway's
+	// object in one locked read-modify-write, removing the object when it is
+	// left curated without grants.
+	PruneRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error
 }

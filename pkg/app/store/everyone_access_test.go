@@ -119,3 +119,43 @@ func TestInstallEveryoneServerSkipsApproval(t *testing.T) {
 		t.Fatalf("an excluded caller must still ask, got %+v", excluded)
 	}
 }
+
+func TestInstallEveryoneInstanceGrantSkipsApproval(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	granted, other := namedRegistry("github", "granted"), namedRegistry("github", "other")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{granted, other}}
+	everyone, err := storeaccessdomain.NewEveryone(gw, gatewaydomain.StoreModeCurated, []storeaccessdomain.EveryoneGrant{{CatalogCode: "github", RegistryID: granted.ID}}, nil)
+	if err != nil {
+		t.Fatalf("NewEveryone: %v", err)
+	}
+	reader := NewAccessReader(grantsOf(), &fakePolicies{}, &fakeEveryoneReader{item: everyone})
+
+	named := req(gw, "github", "sales")
+	named.RegistryID = granted.ID
+	res, err := newInstallerWithGrants(t, regs, &fakeInstalls{}, reader).Install(context.Background(), named)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Pending || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("the instance Everyone grants must install when named, got %+v", res)
+	}
+
+	installs := &fakeInstalls{}
+	unnamed, err := newInstallerWithGrants(t, regs, installs, reader).Install(context.Background(), req(gw, "github", "sales"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if unnamed.Pending || unnamed.Status != installationdomain.StatusInstalled || len(installs.upserts) != 1 || installs.upserts[0].RegistryID != granted.ID {
+		t.Fatalf("the only usable instance is the one Everyone grants, got %+v / %+v", unnamed, installs.upserts)
+	}
+
+	otherReq := req(gw, "github", "sales")
+	otherReq.RegistryID = other.ID
+	denied, err := newInstallerWithGrants(t, regs, &fakeInstalls{}, reader).Install(context.Background(), otherReq)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !denied.Pending {
+		t.Fatalf("an instance Everyone does not grant still asks, got %+v", denied)
+	}
+}

@@ -39,17 +39,6 @@ type Policies struct {
 	Total int      `json:"total"`
 }
 
-type EveryoneGrant struct {
-	CatalogCode string `json:"catalog_code"`
-	RegistryID  string `json:"registry_id,omitempty"`
-}
-
-type Everyone struct {
-	Mode           string          `json:"mode"`
-	Grants         []EveryoneGrant `json:"grants"`
-	ExcludedGroups []string        `json:"excluded_groups"`
-}
-
 type InstanceChoice struct {
 	RegistryID string `json:"registry_id"`
 	Name       string `json:"name"`

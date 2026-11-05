@@ -56,6 +56,21 @@ func (f *fakeEveryoneRepo) DeleteEveryone(_ context.Context, gw ids.GatewayID) e
 	return nil
 }
 
+func (f *fakeEveryoneRepo) PruneRegistry(ctx context.Context, gw ids.GatewayID, registryID ids.RegistryID) error {
+	e := f.items[gw]
+	if e == nil {
+		return nil
+	}
+	pruned, changed := e.WithoutRegistry(registryID)
+	if !changed {
+		return nil
+	}
+	if pruned.Validate() != nil {
+		return f.DeleteEveryone(ctx, gw)
+	}
+	return f.UpsertEveryone(ctx, pruned)
+}
+
 func newEveryoneServiceT(t *testing.T, repo storeaccessdomain.EveryoneRepository, regs *fakeRegistries, sig *countingSignaler) EveryoneService {
 	t.Helper()
 	svc, err := NewEveryoneService(repo, regs, testCatalog(), sig)
@@ -140,33 +155,5 @@ func TestEveryoneService_RejectsInvalidObjects(t *testing.T) {
 func TestNewEveryoneServiceRejectsNilDeps(t *testing.T) {
 	if _, err := NewEveryoneService(nil, &fakeRegistries{}, testCatalog(), nil); err == nil {
 		t.Fatal("nil repo must error")
-	}
-}
-
-func TestEveryoneRegistryCleaner(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	reg := ids.New[ids.RegistryKind]()
-	withBoth, _ := storeaccessdomain.NewEveryone(gw, "curated", []storeaccessdomain.EveryoneGrant{{CatalogCode: "github"}, {CatalogCode: "snowflake", RegistryID: reg}}, nil)
-	repo := &fakeEveryoneRepo{items: map[ids.GatewayID]*storeaccessdomain.Everyone{gw: withBoth}}
-	cleaner := NewEveryoneRegistryCleaner(repo)
-
-	if err := cleaner.DeleteByRegistry(context.Background(), gw, reg); err != nil {
-		t.Fatalf("DeleteByRegistry: %v", err)
-	}
-	if got := repo.items[gw]; got == nil || len(got.Grants) != 1 || got.Grants[0].CatalogCode != "github" {
-		t.Fatalf("the deleted registry's grant must go and the rest stay, got %+v", got)
-	}
-
-	only, _ := storeaccessdomain.NewEveryone(gw, "curated", []storeaccessdomain.EveryoneGrant{{CatalogCode: "snowflake", RegistryID: reg}}, nil)
-	repo.items[gw] = only
-	if err := cleaner.DeleteByRegistry(context.Background(), gw, reg); err != nil {
-		t.Fatalf("DeleteByRegistry: %v", err)
-	}
-	if _, ok := repo.items[gw]; ok || len(repo.deleted) != 1 {
-		t.Fatalf("a curated object left without grants must be removed, items=%+v deleted=%d", repo.items, len(repo.deleted))
-	}
-
-	if err := cleaner.DeleteByRegistry(context.Background(), ids.New[ids.GatewayKind](), reg); err != nil {
-		t.Fatalf("a gateway without Everyone is a no-op, got %v", err)
 	}
 }

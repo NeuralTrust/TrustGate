@@ -14,9 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Everyone grants a server to every group key whose group passes it on: the
-// key of an excluded group, and a key whose group is on None, see nothing
-// through it. Removing Everyone takes the server away again.
 func TestEveryone_GrantsTheStoreToPassingGroupKeys(t *testing.T) {
 	defer Track(t, "StoreEveryone")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("store-everyone")})

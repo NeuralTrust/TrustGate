@@ -116,6 +116,12 @@ func TestEveryoneHandler_GetEmptyAndSet(t *testing.T) {
 	if resp := put(t, app, base, `{"mode":"curated"}`); resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("curated without grants must be 422, got %d", resp.StatusCode)
 	}
+	if resp := put(t, app, base, `{"grants":[{"catalog_code":"github"}]}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a body without mode must be 422, not a removal, got %d", resp.StatusCode)
+	}
+	if resp := put(t, app, base, `{"modes":"curated"}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a misspelled mode must be 422, got %d", resp.StatusCode)
+	}
 	if resp := put(t, app, base, `{"mode":"curated","grants":[{"catalog_code":"github","registry_id":"nope"}]}`); resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("a bad registry id must be 422, got %d", resp.StatusCode)
 	}
