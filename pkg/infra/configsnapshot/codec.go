@@ -121,6 +121,9 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	if msg.StorePolicies, err = encodeJSON(data.StorePolicies, "store policy", func(_ int, blob []byte) *snapshotpb.StorePolicy { return &snapshotpb.StorePolicy{Json: blob} }); err != nil {
 		return nil, err
 	}
+	if msg.StoreEveryone, err = encodeJSON(data.StoreEveryone, "store everyone", func(_ int, blob []byte) *snapshotpb.StoreEveryone { return &snapshotpb.StoreEveryone{Json: blob} }); err != nil {
+		return nil, err
+	}
 	for i := range data.PlaygroundTokenKeys {
 		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
 			Kid: data.PlaygroundTokenKeys[i].KID,
@@ -226,6 +229,9 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		return readmodel.Data{}, err
 	}
 	if data.StorePolicies, err = decodeJSON[*snapshotpb.StorePolicy, storeaccessdomain.Policy](msg.GetStorePolicies(), "store policy", func(m *snapshotpb.StorePolicy) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
+	}
+	if data.StoreEveryone, err = decodeJSON[*snapshotpb.StoreEveryone, storeaccessdomain.Everyone](msg.GetStoreEveryone(), "store everyone", func(m *snapshotpb.StoreEveryone) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
 	for _, m := range msg.GetPlaygroundTokenKeys() {
