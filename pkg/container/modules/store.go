@@ -53,7 +53,13 @@ func Store(c *container.Container) error {
 	}
 	// The Reader every Store service reads grants through; here the Postgres
 	// repository, on the data plane the snapshot adapter.
-	if err := c.Provide(func(repo storeaccessdomain.Repository) storeaccessdomain.Reader { return repo }); err != nil {
+	if err := c.Provide(func(
+		repo storeaccessdomain.Repository,
+		policies storeaccessdomain.PolicyRepository,
+		everyone storeaccessdomain.EveryoneRepository,
+	) storeaccessdomain.Reader {
+		return appstore.NewAccessReader(repo, policies, everyone)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
@@ -78,7 +84,12 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo storeaccessdomain.PolicyRepository) storeaccessdomain.PolicyReader { return repo }); err != nil {
+	if err := c.Provide(func(
+		repo storeaccessdomain.PolicyRepository,
+		everyone storeaccessdomain.EveryoneRepository,
+	) storeaccessdomain.PolicyReader {
+		return appstore.NewAccessReader(nil, repo, everyone)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo storeaccessdomain.PolicyRepository, sig snapshotSignalParams) (appstore.PolicyService, error) {
