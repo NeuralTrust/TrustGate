@@ -777,7 +777,7 @@ func (i *installer) decideAmong(
 		if reg == nil {
 			return installDecision{}, fmt.Errorf("%w: %q is not an instance of %q", ErrUnknownInstance, in.RegistryID, code)
 		}
-		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, grantee) {
+		if codeGranted || grants.InstanceAllows(code, reg.ID, in.Groups, grantee) {
 			return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusInstalled}, nil
 		}
 		return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusPendingApproval}, nil
@@ -807,7 +807,7 @@ func (i *installer) decideAmong(
 	if !codeGranted {
 		usable = usable[:0:0]
 		for _, reg := range instances {
-			if grants.Instance(reg.ID).Allows(in.Groups, grantee) {
+			if grants.InstanceAllows(code, reg.ID, in.Groups, grantee) {
 				usable = append(usable, reg)
 			}
 		}

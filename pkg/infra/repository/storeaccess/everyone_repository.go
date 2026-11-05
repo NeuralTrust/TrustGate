@@ -116,6 +116,45 @@ func (r *EveryoneRepository) DeleteEveryone(ctx context.Context, gatewayID ids.G
 	})
 }
 
+// PruneRegistry drops registryID's instance grants under a row lock, so a
+// concurrent replace of the object is never overwritten by a stale copy.
+func (r *EveryoneRepository) PruneRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		var (
+			e                domain.Everyone
+			grants, excluded []byte
+		)
+		err := tx.QueryRow(ctx, selectEveryoneColumns+` WHERE gateway_id = $1 FOR UPDATE`, gatewayID).
+			Scan(&e.GatewayID, &e.Mode, &grants, &excluded, &e.CreatedAt, &e.UpdatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return mapEveryonePgError(err)
+		}
+		if err := json.Unmarshal(grants, &e.Grants); err != nil {
+			return fmt.Errorf("store everyone repository: decode grants: %w", err)
+		}
+		if err := json.Unmarshal(excluded, &e.ExcludedGroups); err != nil {
+			return fmt.Errorf("store everyone repository: decode excluded groups: %w", err)
+		}
+		pruned, changed := e.WithoutRegistry(registryID)
+		if !changed {
+			return nil
+		}
+		if pruned.Validate() != nil {
+			_, err := tx.Exec(ctx, `DELETE FROM store_everyone WHERE gateway_id = $1`, gatewayID)
+			return mapEveryonePgError(err)
+		}
+		encoded, err := json.Marshal(nonNilGrants(pruned.Grants))
+		if err != nil {
+			return fmt.Errorf("store everyone repository: encode grants: %w", err)
+		}
+		_, err = tx.Exec(ctx, `UPDATE store_everyone SET grants = $2, updated_at = $3 WHERE gateway_id = $1`, gatewayID, encoded, time.Now().UTC())
+		return mapEveryonePgError(err)
+	})
+}
+
 // ListEveryone pages every gateway's object, ordered by gateway.
 func (r *EveryoneRepository) ListEveryone(ctx context.Context, page, size int) ([]*domain.Everyone, int, error) {
 	if page < 1 {

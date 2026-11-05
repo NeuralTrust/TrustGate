@@ -698,8 +698,6 @@ func (f fakeStoreEveryone) ListEveryone(_ context.Context, page, _ int) ([]*stor
 	return items, len(items), nil
 }
 
-// Everyone rides the snapshot like grants and policies, so a data plane with no
-// database evaluates it too; a scoped snapshot carries its own gateway's only.
 func TestCompilerShipsStoreEveryone(t *testing.T) {
 	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
 	other := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")

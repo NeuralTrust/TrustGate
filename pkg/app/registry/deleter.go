@@ -39,6 +39,17 @@ type DependentCleaner interface {
 
 type DeleterOption func(*deleter)
 
+// WithAfterDeleteCleaner registers a cleanup that runs once the registry row is
+// gone. A failure is logged, not returned: the registry is already deleted, and
+// what the cleaner leaves behind can only name a registry that no longer exists.
+func WithAfterDeleteCleaner(c DependentCleaner) DeleterOption {
+	return func(d *deleter) {
+		if c != nil {
+			d.afterCleaners = append(d.afterCleaners, c)
+		}
+	}
+}
+
 // WithDependentCleaner registers a cleanup that runs before the registry row is
 // removed, each cleaner in its own transaction.
 //
@@ -64,6 +75,9 @@ type deleter struct {
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
 	cleaners    []DependentCleaner
+	// afterCleaners run after the delete commits, so a refused delete leaves
+	// what they clean untouched.
+	afterCleaners []DependentCleaner
 }
 
 func NewDeleter(
@@ -107,6 +121,12 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Re
 		return err
 	}
 	d.logPrunedRouting(ctx, gatewayID, id, report)
+	for _, cleaner := range d.afterCleaners {
+		if err := cleaner.DeleteByRegistry(ctx, gatewayID, id); err != nil && d.logger != nil {
+			d.logger.WarnContext(ctx, "registry delete: cleanup after delete failed",
+				slog.String("gateway_id", gatewayID.String()), slog.String("registry_id", id.String()), slog.String("error", err.Error()))
+		}
+	}
 	d.memoryCache.Delete(id.String())
 	invalidation.Registry(ctx, d.publisher, d.logger, existing.GatewayID, existing.ID)
 	if d.signaler != nil {

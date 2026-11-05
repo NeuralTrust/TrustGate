@@ -61,7 +61,7 @@ func (h *EveryoneHandler) Get(c *fiber.Ctx) error {
 
 // Set godoc
 // @Summary      Set the MCP Store Everyone access
-// @Description  Replaces the gateway's Everyone access: mode open or curated (curated needs at least one grant), the servers it grants, and the excluded group keys. An empty mode removes it.
+// @Description  Replaces the gateway's Everyone access: mode open or curated (curated needs at least one grant), the servers it grants, and the excluded group keys. Mode is required; an empty mode removes it.
 // @Tags         store
 // @Accept       json
 // @Produce      json
@@ -83,6 +83,9 @@ func (h *EveryoneHandler) Set(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
+	if req.Mode == nil {
+		return httpio.WriteError(c, fmt.Errorf("mode is required; an empty mode removes Everyone: %w", commonerrors.ErrValidation))
+	}
 	grants := make([]storeaccessdomain.EveryoneGrant, 0, len(req.Grants))
 	for _, g := range req.Grants {
 		grant := storeaccessdomain.EveryoneGrant{CatalogCode: g.CatalogCode}
@@ -97,7 +100,7 @@ func (h *EveryoneHandler) Set(c *fiber.Ctx) error {
 	}
 	everyone, err := h.everyone.Set(c.UserContext(), appstore.SetEveryoneRequest{
 		GatewayID:      gatewayID,
-		Mode:           req.Mode,
+		Mode:           *req.Mode,
 		Grants:         grants,
 		ExcludedGroups: req.ExcludedGroups,
 	})
