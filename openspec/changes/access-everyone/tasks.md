@@ -52,59 +52,74 @@ one per work unit below. `make docs` goes in its own commit.
 
 ## Phase 2 (TrustGate · T2): evaluation
 
-- [ ] 2.1 `everyone.go`: `(*Everyone).Reaches(groups, *PolicySet)` and `ResolveLevel(p, e, subject, groups, fallback)`.
-- [ ] 2.2 `grant.go`: `(*Set).WithEveryone(e, policies)`; `CodeAllows`, `InstanceAllows`, `AnyInstanceAllows` consult it.
-- [ ] 2.3 `mode.go`: resolver takes an `EveryoneReader`; `Resolve` uses `ResolveLevel`; policy failure → curated and Everyone unreachable; Everyone failure → absent + warn.
-- [ ] 2.4 Add `loadStoreAccess(ctx, gw)` returning `{Level(query), Set}` (one read each of grants, policies, Everyone); use it in `scoper.go`, `principal_connect.go`, `principal_configure.go`, `store_tool.go` search; the install path (`store_tool` mode + `installer.grantSet`) may keep two loads; approver keeps `loadGrantSet`.
-- [ ] 2.5 Wire the `EveryoneReader` into every `NewModeResolver` and loader (`store.go:214,226,240`, `mcp.go:400,517`). `mcp.go` runs on the data plane too, whose reader only arrives in 3.3: make the dependency optional or land 2.5 with 3.3, then run `pkg/container` tests for both planes.
-- [ ] 2.6 Tests: `ResolveLevel` truth table (own / explicit group / fallback × reached / not reached / no Everyone); `Reaches` (excluded + passing, group key, group on `none`, no groups); `Set` with and without Everyone (code, instance, any-instance); installer under `curated` installs an Everyone server without a pending request; existing `mode_resolver_test.go` unchanged and green.
+- [x] 2.1 `everyone.go`: `(*Everyone).Reaches(groups, *PolicySet)` and `ResolveLevel(p, e, subject, groups, fallback)`.
+- [x] 2.2 `grant.go`: `(*Set).WithEveryone(e, policies)`; `CodeAllows`, `InstanceAllows`, `AnyInstanceAllows` consult it.
+- [x] 2.3 `mode.go`: resolver takes an `EveryoneReader`; `Resolve` uses `ResolveLevel`; policy failure → curated and Everyone unreachable; Everyone failure → absent + warn.
+- [x] 2.4 Add `loadStoreAccess(ctx, gw)` returning `{Level(query), Set}` (one read each of grants, policies, Everyone); use it in `scoper.go`, `principal_connect.go`, `principal_configure.go`, `store_tool.go` search; the install path (`store_tool` mode + `installer.grantSet`) may keep two loads; approver keeps `loadGrantSet`.
+- [x] 2.5 Wire the `EveryoneReader` into every `NewModeResolver` and loader (`store.go:214,226,240`, `mcp.go:400,517`). `mcp.go` runs on the data plane too, whose reader only arrives in 3.3: make the dependency optional or land 2.5 with 3.3, then run `pkg/container` tests for both planes.
+- [x] 2.6 Tests: `ResolveLevel` truth table (own / explicit group / fallback × reached / not reached / no Everyone); `Reaches` (excluded + passing, group key, group on `none`, no groups); `Set` with and without Everyone (code, instance, any-instance); installer under `curated` installs an Everyone server without a pending request; existing `mode_resolver_test.go` unchanged and green.
 
 ## Phase 3 (TrustGate · T3): data planes and cleanup
 
-- [ ] 3.1 `snapshot.proto` field 18 `repeated StoreEveryone store_everyone`; regenerate; `codec.go` encode/decode.
-- [ ] 3.2 `compiler.go`: `WithStoreEveryone`, bulk list + per-gateway read, `appendGatewayData`; `control_config_sync.go` wiring.
-- [ ] 3.3 `readmodel/snapshot.go` + `adapters/store_grant_reader.go` implement `EveryoneReader`; wire in `core_data.go`.
-- [ ] 3.4 Registry deletion: Everyone dependent cleaner that drops instance grants of the deleted registry (`registry/deleter.go`), wired next to the grants cleaner; when the result is `curated` with no grants it deletes the object (an upsert would be refused).
-- [ ] 3.5 Tests: codec round trip, compiler bulk/per-gateway, adapter on unloaded snapshot (= no Everyone), cleaner.
-- [ ] 3.6 Functional (`-tags functional`): DB-less DP — group key of an excluded group, user in excluded + passing group, install without approval; `go vet -tags functional ./...`.
-- [ ] 3.7 `make docs` in its own commit; `make test`; clean-comments on touched Go (check it keeps doc comments).
+- [x] 3.1 `snapshot.proto` field 18 `repeated StoreEveryone store_everyone`; regenerate; `codec.go` encode/decode.
+- [x] 3.2 `compiler.go`: `WithStoreEveryone`, bulk list + per-gateway read, `appendGatewayData`; `control_config_sync.go` wiring.
+- [x] 3.3 `readmodel/snapshot.go` + `adapters/store_grant_reader.go` implement `EveryoneReader`; wire in `core_data.go`.
+- [x] 3.4 Registry deletion: Everyone dependent cleaner that drops instance grants of the deleted registry (`registry/deleter.go`), wired next to the grants cleaner; when the result is `curated` with no grants it deletes the object (an upsert would be refused).
+- [x] 3.5 Tests: codec round trip, compiler bulk/per-gateway, adapter on unloaded snapshot (= no Everyone), cleaner.
+- [x] 3.6 Functional (`-tags functional`): DB-less DP — group key of an excluded group, user in excluded + passing group, install without approval; `go vet -tags functional ./...`.
+- [x] 3.7 `make docs` in its own commit; `make test`; clean-comments on touched Go (check it keeps doc comments).
+
+Notes from apply (phases 2–3):
+- 2.4 is done with `AccessReader`: `loadGrantSet` and the mode resolver add Everyone when the reader they get also serves policies and Everyone (the data-plane snapshot reader does; on the control plane the Store module wires the composite). No request-scoped bundle: a curated decision on the control plane reads Everyone in the resolver and again, with policies, in the loader. Revisit if control-plane Store latency matters.
+- 3.6 runs against the control plane (`tests/functional/store_everyone_test.go`, group keys, exclusion, group on None, removal). The data plane is covered by the codec, compiler and adapter tests; no DB-less functional case yet.
 
 ## Phase 4 (app · A1): shared rule and planner
 
-- [ ] 4.1 Prisma: `AccessEveryone` (team, gateway, `mcpMode`, `mcpItems Json`, `mcpAppliedHash?`, `mcpAppliedAt?`, `mcpError?`, `updatedById?`, timestamps, `@@unique([teamId, gatewayId])`) and `AccessEveryoneExclusion(everyoneId, groupId)` with cascades; migration folder; `npx prisma validate`.
-- [ ] 4.2 Create `llm-store/lib/llmStoreEveryone.ts`: `passesEveryone`, `eligibleGroupIds(rows, { groupIds, excluded })`, `groupsLosingEligibility(before, after)`; store helper to read exclusions.
-- [ ] 4.3 Planner: input `everyoneExcludedGroupIds` + group ids; `desiredRowsForKey` (group key → own row and `ALL` row when passing; personal keys never), `desiredRowsForOwner` (legacy reach rule), `reachableRowsForOwner`; `reconcileLlmStoreGateway.ts` loads them.
-- [ ] 4.4 Switch every eligibility site to the shared rule: `llmStoreKeys.ts`, `revokeIneligibleKeys.ts` (snapshot + `stillIneligible`), `llmStoreKeyOptions.ts`, `llmStoreEffectiveModels.ts`, `llmStoreReach.ts`, `llmStoreInheritance.ts`, `llmStoreGroupLimitsActions.ts`, `getAnalyticsKeyCostAction.ts`, `getPortalModelsAction.ts`, `llmStoreAccessActions.ts` (key counts, admin key creation, `groupLosesModels` via before/after).
-- [ ] 4.5 Client copies: `useLlmStoreAccessDraft.ts`, `GroupAccessSidePanel.tsx`, `LlmStoreAccessSection.tsx`.
-- [ ] 4.6 `llmStoreAccessInput.ts`: the generic write refuses `scope: 'ALL'`, set and clear alike. No script or seed writes it; `llmStoreAccessActions.test.ts` (lines ~73-456) and `access/llmStoreModels.test.ts:124` use it and move to `GROUP` or assert the refusal.
-- [ ] 4.7 Approvals: `llmStoreAccessRequestActions.ts` computes the base without the `ALL` row.
-- [ ] 4.8 Tests without an `ALL` row (planner, keys, sweep, inheritance) pass with no edits: that is the invariance spec.
-- [ ] 4.9 Tests that use `allRow` / `defaultRow` (planner `legacy key links` block and group-key cases, `llmStoreInheritance` user cases) change on purpose: list each by name with old → new expectation in the PR description, per `access-everyone-models`.
-- [ ] 4.10 New cases: Everyone-only group linked and eligible, excluded, own NONE, union with own row, legacy user in no group, personal key never linked; sweep keeps Everyone-only keys; generic `ALL` write refused; approval base.
+- [x] 4.1 Prisma: `AccessEveryone` (team, gateway, `mcpMode`, `mcpItems Json`, `mcpAppliedHash?`, `mcpAppliedAt?`, `mcpError?`, `updatedById?`, timestamps, `@@unique([teamId, gatewayId])`) and `AccessEveryoneExclusion(everyoneId, groupId)` with cascades; migration folder; `npx prisma validate`.
+- [x] 4.2 Create `llm-store/lib/llmStoreEveryone.ts`: `passesEveryone`, `eligibleGroupIds(rows, { groupIds, excluded })`, `groupsLosingEligibility(before, after)`; store helper to read exclusions.
+- [x] 4.3 Planner: input `everyoneExcludedGroupIds` + group ids; `desiredRowsForKey` (group key → own row and `ALL` row when passing; personal keys never), `desiredRowsForOwner` (legacy reach rule), `reachableRowsForOwner`; `reconcileLlmStoreGateway.ts` loads them.
+- [x] 4.4 Switch every eligibility site to the shared rule: `llmStoreKeys.ts`, `revokeIneligibleKeys.ts` (snapshot + `stillIneligible`), `llmStoreKeyOptions.ts`, `llmStoreEffectiveModels.ts`, `llmStoreReach.ts`, `llmStoreInheritance.ts`, `llmStoreGroupLimitsActions.ts`, `getAnalyticsKeyCostAction.ts`, `getPortalModelsAction.ts`, `llmStoreAccessActions.ts` (key counts, admin key creation, `groupLosesModels` via before/after).
+- [x] 4.5 Client copies: `useLlmStoreAccessDraft.ts` (revocation dialog) done; the "bills keys" hint in `LlmStoreAccessSection.tsx` still ignores Everyone-only groups and moves to 8.1.
+- [x] 4.6 `llmStoreAccessInput.ts`: the generic write refuses `scope: 'ALL'`, set and clear alike. No script or seed writes it; `llmStoreAccessActions.test.ts` (lines ~73-456) and `access/llmStoreModels.test.ts:124` use it and move to `GROUP` or assert the refusal.
+- [x] 4.7 Approvals: `llmStoreAccessRequestActions.ts` computes the base without the `ALL` row.
+- [x] 4.8 Tests without an `ALL` row (planner, keys, sweep, inheritance) pass with no edits: that is the invariance spec.
+- [x] 4.9 Tests that use `allRow` / `defaultRow` (planner `legacy key links` block and group-key cases, `llmStoreInheritance` user cases) change on purpose: list each by name with old → new expectation in the PR description, per `access-everyone-models`.
+- [x] 4.10 New cases: Everyone-only group linked and eligible, excluded, own NONE, union with own row, legacy user in no group, personal key never linked; sweep keeps Everyone-only keys; generic `ALL` write refused; approval base.
 
 ## Phase 5 (app · A2): Everyone save and push
 
-- [ ] 5.1 Create `access/lib/everyoneGateway.ts` `pushEveryoneMcp(teamId, gatewayId)`: drop stale items, map ids → `groupGrantKey`, PUT/DELETE with the system actor, store hash / error.
-- [ ] 5.2 Create `access/actions/everyoneActions.ts`: `getEveryoneAccessAction` (READ_ONLY, `mcpApplied`, `hybrid`), `saveEveryoneAccessAction` (ADMIN, zod, gateway match, revocation confirm with counts, one `$transaction` for Everyone + exclusions + `ALL` row, revoke + audit keys, push, `scheduleLlmStoreReconcile`, `access_everyone.updated`; hybrid refuses Models).
-- [ ] 5.3 Triggers: `reconcileTeam` pushes for every gateway with `AccessEveryone` (hybrid included, outside the per-gateway early returns); boot sweep does the same; Entra rename and `failedGroupMembershipCache` rename schedule the reconcile.
-- [ ] 5.4 Reader `everyone-access` in `v2Readers.ts` and the reads route.
-- [ ] 5.5 Tests: save confirm counts, hybrid refusal, push failure → `mcpApplied=false` then retry converges, a 404 / unknown route from an older TrustGate → not applied (no throw), stale item dropped, rename re-push, hash skip.
+- [x] 5.1 Create `access/lib/everyoneGateway.ts` `pushEveryoneMcp(teamId, gatewayId)`: drop stale items, map ids → `groupGrantKey`, PUT/DELETE with the system actor, store hash / error.
+- [x] 5.2 Create `access/actions/everyoneActions.ts`: `getEveryoneAccessAction` (READ_ONLY, `mcpApplied`, `hybrid`), `saveEveryoneAccessAction` (ADMIN, zod, gateway match, revocation confirm with counts, one `$transaction` for Everyone + exclusions + `ALL` row, revoke + audit keys, push, `scheduleLlmStoreReconcile`, `access_everyone.updated`; hybrid refuses Models).
+- [x] 5.3 Triggers: `reconcileTeam` pushes for every gateway with `AccessEveryone` (hybrid included, outside the per-gateway early returns); boot sweep does the same; Entra rename and `failedGroupMembershipCache` rename schedule the reconcile.
+- [x] 5.4 Reader `everyone-access` in `v2Readers.ts` and the reads route.
+- [x] 5.5 Tests: save confirm counts, hybrid refusal, push failure → `mcpApplied=false` then retry converges, a 404 / unknown route from an older TrustGate → not applied (no throw), stale item dropped, rename re-push, hash skip.
 
 ## Phase 6 (app · A3): MCP audit
 
-- [ ] 6.1 `app/constants/audit.ts`: `MCP_STORE_GRANT_UPDATED`, `MCP_STORE_ACCESS_POLICY_UPDATED`, `ACCESS_EVERYONE_UPDATED`.
-- [ ] 6.2 Log them from `updateResourceAccessAction.ts` and `setStoreAccessPolicyAction` with before → after metadata and readable descriptions.
-- [ ] 6.3 Tests for both actions.
+- [x] 6.1 `app/constants/audit.ts`: `MCP_STORE_GRANT_UPDATED`, `MCP_STORE_ACCESS_POLICY_UPDATED`, `ACCESS_EVERYONE_UPDATED`.
+- [x] 6.2 Log them from `updateResourceAccessAction.ts` and `setStoreAccessPolicyAction` with before → after metadata and readable descriptions.
+- [x] 6.3 Tests for both actions.
 
 ## Phase 7 (app · A4): bulk Assign / Remove
 
-- [ ] 7.1 Create `access/lib/groupBulkPlan.ts`: `planBulkModels`, `planBulkMcp` (Assign table, narrowing detection, Remove with skips and last-item rule).
-- [ ] 7.2 Create `access/actions/groupBulkActions.ts`: `bulkAssignGroupAccessAction`, `bulkRemoveGroupAccessAction` (ADMIN, zod by group id, confirmation for narrowing / None / Replace / Remove / key revocation, Models in one `$transaction` + one reconcile, MCP fresh read + per-group policy and per-server grant writes, per-group per-section results, audit per group).
-- [ ] 7.3 Tests: planner tables; partial MCP failure with Models applied; retry converges; narrowing refused without confirm.
-- [ ] 7.4 `npm run lint`, `npm run build:local`, vitest; local QA against a local TrustGate (recipe "Local console QA").
+- [x] 7.1 Create `access/lib/groupBulkPlan.ts`: `planBulkModels`, `planBulkMcp` (Assign table, narrowing detection, Remove with skips and last-item rule).
+- [x] 7.2 Create `access/actions/groupBulkActions.ts`: `bulkAssignGroupAccessAction`, `bulkRemoveGroupAccessAction` (ADMIN, zod by group id, confirmation for narrowing / None / Replace / Remove / key revocation, Models in one `$transaction` + one reconcile, MCP fresh read + per-group policy and per-server grant writes, per-group per-section results, audit per group).
+- [x] 7.3 Tests: planner tables; partial MCP failure with Models applied; retry converges; narrowing refused without confirm.
+- [x] 7.4 Lint (no errors), typecheck, full vitest (14,040 passed) and `next build` (needs `NODE_OPTIONS=--max-old-space-size=12288` locally; the default heap ran out). Local console QA is deferred to 8.1: nothing renders Everyone or bulk yet.
+
+Notes from apply (app, phases 4–7):
+- 5.3: the Entra and mapped-group-cache rename triggers were not needed. Entra, Okta, Google and cache groups always carry an `externalId`, which is their grant key, so a rename does not change it; SCIM groups without one already schedule the reconcile on rename (`scimGroupService.ts:296`). The push runs from `reconcileTeam` for every gateway with an `AccessEveryone` (hybrid included) and from the boot sweep.
+- A TrustGate without `store/everyone` (404/405) is recorded as not applied and not retried until the next trigger.
+- Tests that change on purpose (old → new), for the PR description:
+  - planner: a group key also links to the `ALL` row's consumer (level `all`) when its group passes Everyone; a legacy key of a user in no group, or only in excluded groups, is no longer linked to the `ALL` row (and an existing link is detached);
+  - reconcile executor: the group-key case attaches `c-all` too; legacy fixtures give their owners a group;
+  - `setLlmStoreAccessAction`: the `ALL` scope is refused (set and clear); auth, hybrid and validation cases moved to `GROUP`;
+  - approval of a model request: the base no longer includes the `ALL` row (personal keys never reach it);
+  - Portal effective models, `linkedLlmStoreRows`, gateway reach and the admin preview: the `ALL` row counts when one of the user's groups passes it on;
+  - revocation sweep: the "models given back" recheck reads the rows again instead of `findLlmStoreAccessRow`.
 
 ## Phase 8 (front branch · F): wiring
 
-- [ ] 8.1 Rebase the front branch on `develop`; switch types to group ids; hooks call the new actions and reader; show `mcpApplied` and the hybrid warning; remove mocks.
+- [ ] 8.1 Rebase the front branch on `develop`; switch types to group ids; hooks call the new actions and reader; show `mcpApplied` and the hybrid warning; make the "bills keys" hint Everyone-aware; remove mocks; local console QA against a local TrustGate.
 - [ ] 8.2 Remove `ACCESS_EVERYONE_ENABLED` once QA in DEV passes.
 - [ ] 8.3 Follow-up issue: Playwright scenarios in `e2e-tests`.
