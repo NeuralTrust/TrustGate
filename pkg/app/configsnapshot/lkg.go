@@ -387,7 +387,7 @@ func (d *Dispatcher) persist(ctx context.Context, raw []byte, version string, sc
 
 func (d *Dispatcher) persistScope(ctx context.Context, scope string, snap ScopedSnapshot, compiledAt time.Time) error {
 	l := d.lkg
-	payload, err := l.sealer.Seal(scope, snap.Version, snap.Raw)
+	payload, err := l.sealer.Seal(scope, snap.Version, snap.Bytes())
 	if err != nil {
 		return fmt.Errorf("seal: %w", err)
 	}

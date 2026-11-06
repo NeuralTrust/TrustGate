@@ -15,6 +15,7 @@
 package configsnapshot
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -85,6 +86,19 @@ type Dispatcher struct {
 
 	// lkg persists the compiled snapshots; nil when the feature is off.
 	lkg *lkgState
+
+	// lastCatalog and lastScoped hold the previous compile's encoded catalog
+	// and scoped snapshots, so a scope whose bytes did not change keeps its
+	// held slices and version instead of being hashed and held again. Only
+	// the dispatch loop reads or writes them.
+	lastCatalog []byte
+	lastScoped  map[string]ScopedSnapshot
+}
+
+// partsVersioner is implemented by codecs that can version a concatenation
+// of segments without building it.
+type partsVersioner interface {
+	VersionParts(parts ...[]byte) string
 }
 
 // Readiness reports whether the admin has a snapshot to serve: one compiled in
@@ -257,6 +271,9 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		return err
 	}
 	compileDuration := time.Since(compileStart)
+	if compiled.scoped != nil {
+		d.lastCatalog, d.lastScoped = compiled.catalog, compiled.scoped
+	}
 	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
 	// The global snapshot leaves out gateways served by a hybrid data plane, so it
@@ -321,6 +338,7 @@ type compiledSnapshot struct {
 	raw          []byte
 	version      string
 	scoped       map[string]ScopedSnapshot
+	catalog      []byte
 	catalogBytes int
 	scopes       scopeSizes
 	entities     snapshotEntities
@@ -347,23 +365,33 @@ func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
 		// The catalog is usually the bulk of the encoded bytes and identical in
-		// every snapshot, so encode it once and append the bytes per snapshot.
+		// every snapshot, so encode it once and share the bytes across scopes.
 		catalogRaw, eerr := d.codec.Encode(catalog)
 		if eerr != nil {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
+		}
+		catalogUnchanged := d.lastCatalog != nil && bytes.Equal(d.lastCatalog, catalogRaw)
+		if catalogUnchanged {
+			catalogRaw = d.lastCatalog
 		}
 		raw, version, err := d.encodeWithCatalog(global, catalogRaw)
 		if err != nil {
 			return compiledSnapshot{}, err
 		}
-		compiled := compiledSnapshot{raw: raw, version: version, scoped: make(map[string]ScopedSnapshot, len(scopedSnaps)), catalogBytes: len(catalogRaw)}
+		compiled := compiledSnapshot{raw: raw, version: version, scoped: make(map[string]ScopedSnapshot, len(scopedSnaps)), catalog: catalogRaw, catalogBytes: len(catalogRaw)}
 		for scope, snap := range scopedSnaps {
-			scopedRaw, scopedVersion, serr := d.encodeWithCatalog(snap, catalogRaw)
+			tenantRaw, serr := d.codec.Encode(snap)
 			if serr != nil {
-				return compiledSnapshot{}, serr
+				return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode: %w", serr)
 			}
-			compiled.scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
-			compiled.scopes.add(scope, len(scopedRaw))
+			scoped := ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw}
+			if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
+				scoped = prev
+			} else {
+				scoped.Version = d.versionParts(tenantRaw, catalogRaw)
+			}
+			compiled.scoped[scope] = scoped
+			compiled.scopes.add(scope, scoped.Len())
 			compiled.entities.add(snap)
 		}
 		return compiled, nil
@@ -394,6 +422,13 @@ func (d *Dispatcher) encodeWithCatalog(snapshot *readmodel.Snapshot, catalogRaw 
 	raw = append(raw, tenantRaw...)
 	raw = append(raw, catalogRaw...)
 	return raw, d.codec.Version(raw), nil
+}
+
+func (d *Dispatcher) versionParts(parts ...[]byte) string {
+	if v, ok := d.codec.(partsVersioner); ok {
+		return v.VersionParts(parts...)
+	}
+	return d.codec.Version(bytes.Join(parts, nil))
 }
 
 func (d *Dispatcher) encode(snapshot *readmodel.Snapshot) ([]byte, string, error) {

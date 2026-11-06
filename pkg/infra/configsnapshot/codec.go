@@ -75,6 +75,16 @@ func (Codec) Version(raw []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// VersionParts returns the Version of the concatenation of parts without
+// building it.
+func (Codec) VersionParts(parts ...[]byte) string {
+	h := sha256.New()
+	for _, part := range parts {
+		h.Write(part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
 	owners := registryOwners(data.Registries)
