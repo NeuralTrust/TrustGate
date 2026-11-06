@@ -28,11 +28,12 @@ import (
 const maxFragmentsPerRequest = 4096
 
 // LayeredSource serves layered snapshots: the manifest of a scope and the
-// bytes of a fragment by digest. A SnapshotSource that also implements it
-// lets data planes that advertise accepts_layered pull only what they miss.
+// bytes of a fragment that scope's manifest references. A SnapshotSource that
+// also implements it lets data planes that advertise accepts_layered pull only
+// what they miss.
 type LayeredSource interface {
 	ManifestFor(scope string) (configsyncport.Manifest, bool)
-	Fragment(digest [32]byte) ([]byte, bool)
+	FragmentFor(scope string, digest [32]byte) ([]byte, bool)
 }
 
 func (s *Service) layeredSource() LayeredSource {
@@ -81,9 +82,11 @@ func (s *Service) GetManifest(ctx context.Context, req *snapshotpb.GetManifestRe
 }
 
 // GetFragments streams the requested fragments in request order, each in
-// chunks of at most snapshotChunkSize bytes. Every digest is resolved before
-// anything is sent, so an unknown one fails the call with NotFound and the
-// data plane restarts from GetManifest without a partial transfer.
+// chunks of at most snapshotChunkSize bytes. Only digests referenced by the
+// caller's own scope manifest are served. Every digest is resolved before
+// anything is sent, so an unknown one, or one that belongs to another scope,
+// fails the call with NotFound and the data plane restarts from GetManifest
+// without a partial transfer.
 func (s *Service) GetFragments(req *snapshotpb.GetFragmentsRequest, stream snapshotpb.ConfigSync_GetFragmentsServer) error {
 	identity, _ := IdentityFromContext(stream.Context())
 	if s.revoked(identity) {
@@ -93,6 +96,7 @@ func (s *Service) GetFragments(req *snapshotpb.GetFragmentsRequest, stream snaps
 	if source == nil {
 		return status.Error(codes.Unimplemented, "layered snapshots are not served")
 	}
+	scope := ScopeFromContext(stream.Context())
 	digests := req.GetDigests()
 	if len(digests) > maxFragmentsPerRequest {
 		return status.Errorf(codes.InvalidArgument, "at most %d fragments per request", maxFragmentsPerRequest)
@@ -105,7 +109,7 @@ func (s *Service) GetFragments(req *snapshotpb.GetFragmentsRequest, stream snaps
 			return status.Error(codes.InvalidArgument, "fragment digest must be 32 bytes")
 		}
 		copy(digest[:], raw)
-		fragment, ok := source.Fragment(digest)
+		fragment, ok := source.FragmentFor(scope, digest)
 		if !ok {
 			return status.Error(codes.NotFound, "fragment is no longer served")
 		}

@@ -75,9 +75,17 @@ func (g *findingGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewa
 
 type mutableCaps struct {
 	caps []ratelimitdomain.TenantCaps
+	// perRead, when set, answers every read with a fresh value, as a plan
+	// change landing between two reads would.
+	perRead func(read int) []ratelimitdomain.TenantCaps
+	reads   int
 }
 
 func (m *mutableCaps) ListTenantCaps(context.Context) ([]ratelimitdomain.TenantCaps, error) {
+	if m.perRead != nil {
+		m.reads++
+		return m.perRead(m.reads), nil
+	}
 	return m.caps, nil
 }
 
@@ -135,14 +143,15 @@ func (w *world) dispatcher(incremental bool, logs *bytes.Buffer, cfg appsnapshot
 	outbox := &fakeOutbox{}
 	w.outboxes = append(w.outboxes, outbox)
 	holder := appsnapshot.NewHolder()
+	compiler := w.compiler()
 	var opts []appsnapshot.DispatcherOption
 	if incremental {
-		opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments()))
+		opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments(), compiler))
 	}
 	if logs == nil {
 		logs = &bytes.Buffer{}
 	}
-	d := appsnapshot.NewDispatcher(w.compiler(), infrasnapshot.NewCodec(), holder, &fakeBroadcaster{}, outbox,
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, &fakeBroadcaster{}, outbox,
 		slog.New(slog.NewTextHandler(logs, nil)), cfg, opts...)
 	return d, holder
 }
@@ -442,6 +451,67 @@ func TestBackstopCountsDriftAndPublishesTheFullCompile(t *testing.T) {
 	w.requireSameServed(t, "after the backstop", incHolder, fullHolder)
 	counts := driftCounts(t, reader)
 	require.Positive(t, counts["scope_kind=scoped"], "the hosted gateway's own scope drifted too")
+}
+
+func TestBackstopCountsNoDriftWhenOnlyTheSharedInputsMoveBetweenReads(t *testing.T) {
+	reader := installMeter(t, "")
+	w := newWorld(t, 7)
+	for range 3 {
+		id := w.addGateway()
+		w.updateGateway(id, func(g *gatewaydomain.Gateway) { g.Entitlements.DataPlane = "" })
+	}
+	d, _ := w.dispatcher(true, nil, appsnapshot.DispatcherConfig{})
+	ctx := context.Background()
+	require.NoError(t, d.Dispatch(ctx))
+
+	w.caps.perRead = func(read int) []ratelimitdomain.TenantCaps {
+		var caps []ratelimitdomain.TenantCaps
+		for team := range 3 {
+			caps = append(caps, ratelimitdomain.TenantCaps{TenantID: fmt.Sprintf("team-%d", team), Tier: "pro", BurstPerMin: read})
+		}
+		return caps
+	}
+	for range 3 {
+		require.NoError(t, d.DispatchBackstop(ctx))
+	}
+
+	require.Positive(t, w.caps.reads, "the backstops read the tenant caps")
+	require.Empty(t, driftCounts(t, reader), "caps that change between reads are one input to both compiles, not drift")
+}
+
+func TestBackstopCountsNoDriftForALateMarkerCommittedDuringTheComparison(t *testing.T) {
+	reader := installMeter(t, "")
+	w := newWorld(t, 9)
+	dirtyID := w.addGateway()
+	otherID := w.addGateway()
+	for _, id := range []ids.GatewayID{dirtyID, otherID} {
+		w.updateGateway(id, func(g *gatewaydomain.Gateway) { g.Entitlements.DataPlane = "" })
+	}
+	d, _ := w.dispatcher(true, nil, appsnapshot.DispatcherConfig{GapExpiry: time.Millisecond})
+	ctx := context.Background()
+	require.NoError(t, d.Dispatch(ctx))
+	w.markGateway(dirtyID)
+	require.NoError(t, d.Dispatch(ctx), "the cursor starts reading the outbox")
+
+	w.seq++
+	lateSeq := w.seq
+	w.markGateway(dirtyID)
+	require.NoError(t, d.Dispatch(ctx))
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, d.Dispatch(ctx), "the missing seq expires into the late set")
+
+	w.markGateway(dirtyID)
+	w.gateways.hookMu.Lock()
+	w.gateways.onFind = func() {
+		w.updateGateway(otherID, func(g *gatewaydomain.Gateway) { g.Slug = "renamed-by-a-slow-write" })
+		for _, outbox := range w.outboxes {
+			outbox.appendMarkers(configsyncport.Marker{Seq: lateSeq, Kind: configsyncport.MarkerGateway, GatewayID: otherID})
+		}
+	}
+	w.gateways.hookMu.Unlock()
+	require.NoError(t, d.DispatchBackstop(ctx))
+
+	require.Empty(t, driftCounts(t, reader), "a late marker committed between the two compiles is a write in flight, not drift")
 }
 
 func TestIncrementalCompileIsOffByDefault(t *testing.T) {

@@ -67,11 +67,46 @@ type Holder struct {
 	scoped  atomic.Pointer[map[string]ScopedSnapshot]
 
 	layeredMu sync.RWMutex
-	layered   *Layered
-	// previous keeps the fragments of the publish before the current one, so a
-	// data plane that read the previous manifest can still fetch its fragments
-	// while it pulls.
-	previous map[[32]byte][]byte
+	layered   *layeredGeneration
+	// previous keeps the publish before the current one, so a data plane that
+	// read the previous manifest can still fetch its fragments while it pulls.
+	previous *layeredGeneration
+}
+
+// layeredGeneration is one published layered snapshot plus, per scope, the
+// digests its manifest references, so a fragment is served only to a scope
+// whose manifest names it.
+type layeredGeneration struct {
+	snapshot Layered
+	members  map[string]map[[32]byte]struct{}
+}
+
+func newLayeredGeneration(layered Layered) *layeredGeneration {
+	members := make(map[string]map[[32]byte]struct{}, len(layered.Scoped)+1)
+	members[""] = digestSet(layered.Global)
+	for scope, manifest := range layered.Scoped {
+		members[scope] = digestSet(manifest)
+	}
+	return &layeredGeneration{snapshot: layered, members: members}
+}
+
+func digestSet(manifest configsyncport.Manifest) map[[32]byte]struct{} {
+	set := make(map[[32]byte]struct{}, len(manifest.Fragments))
+	for _, ref := range manifest.Fragments {
+		set[ref.Digest] = struct{}{}
+	}
+	return set
+}
+
+func (g *layeredGeneration) fragmentFor(scope string, digest [32]byte) ([]byte, bool) {
+	if g == nil {
+		return nil, false
+	}
+	if _, ok := g.members[scope][digest]; !ok {
+		return nil, false
+	}
+	raw, ok := g.snapshot.Fragments[digest]
+	return raw, ok
 }
 
 func NewHolder() *Holder {
@@ -150,12 +185,13 @@ func (h *Holder) Version() string {
 // SetLayered publishes the manifests and fragments of a layered snapshot. The
 // fragments of the publish it replaces stay readable for one more publish.
 func (h *Holder) SetLayered(layered Layered) {
+	next := newLayeredGeneration(layered)
 	h.layeredMu.Lock()
 	defer h.layeredMu.Unlock()
 	if h.layered != nil {
-		h.previous = h.layered.Fragments
+		h.previous = h.layered
 	}
-	h.layered = &layered
+	h.layered = next
 }
 
 // ClearLayered withdraws the layered snapshot, for a publish that has none: a
@@ -175,22 +211,21 @@ func (h *Holder) ManifestFor(scope string) (configsyncport.Manifest, bool) {
 		return configsyncport.Manifest{}, false
 	}
 	if scope == "" {
-		return h.layered.Global, true
+		return h.layered.snapshot.Global, true
 	}
-	manifest, ok := h.layered.Scoped[scope]
+	manifest, ok := h.layered.snapshot.Scoped[scope]
 	return manifest, ok
 }
 
-// Fragment returns the bytes of the fragment with digest, from the current
-// publish or the one before it.
-func (h *Holder) Fragment(digest [32]byte) ([]byte, bool) {
+// FragmentFor returns the bytes of the fragment with digest when the current
+// or the previous manifest of scope references it. A digest that only another
+// scope's manifest names is reported as absent, exactly like one that aged
+// out, so scopes cannot read each other's fragments.
+func (h *Holder) FragmentFor(scope string, digest [32]byte) ([]byte, bool) {
 	h.layeredMu.RLock()
 	defer h.layeredMu.RUnlock()
-	if h.layered != nil {
-		if raw, ok := h.layered.Fragments[digest]; ok {
-			return raw, true
-		}
+	if raw, ok := h.layered.fragmentFor(scope, digest); ok {
+		return raw, true
 	}
-	raw, ok := h.previous[digest]
-	return raw, ok
+	return h.previous.fragmentFor(scope, digest)
 }

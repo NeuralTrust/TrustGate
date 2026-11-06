@@ -453,6 +453,40 @@ S7 implementation notes:
   applied `m1:` versions; the one single-blob apply came from the LKG test,
   where the admin serves no layered snapshot).
 
+## Review fixes (PR review of the S3–S7 PR)
+
+- [x] R.1 `GetFragments` serves a digest only when the current or previous
+  manifest of the caller's own scope names it (`Holder.FragmentFor`); any other
+  digest answers `NotFound`, like one that aged out.
+- [x] R.2 The data plane cancels the `GetFragments` and `GetSnapshot` streams on
+  every early return.
+- [x] R.3 `.env.example` and `.agents/AGENTS.md` document
+  `CONFIG_SYNC_INCREMENTAL_COMPILE`, `CONFIG_SYNC_OUTBOX_GAP_EXPIRY` and
+  `CONFIG_SYNC_LAYERED_PULL`, the outbox that is no longer drained, layered
+  versions and how to verify a rollout.
+- [x] R.4 The backstop drift check reads the shared inputs once for both
+  compiles and treats a late seq committed during the comparison as unsettled.
+- [x] R.5 A pull restarted after a fragment aged out keeps the fragments it
+  already verified; the fragment cache points into the assembled snapshot.
+- [x] R.6 `bucketCount` depends on the gateway size alone, so replicas with any
+  uptime publish the same manifests.
+- [x] R.7 The cursor does not reset on a prune of seqs it already read, and
+  resets (full compile, `cursor_reset`) when every seq left is below it (a
+  restored or recreated outbox). `ReadSince` also returns the highest seq.
+- [x] R.8 `WithIncrementalCompile` takes its `IncrementalSource` explicitly;
+  `GatewayReader` has `FindByID`; the layered broadcaster is a port
+  (`configsyncport.LayeredBroadcaster`) resolved at construction;
+  compile-while-dirty is reachable only through incremental compile; the
+  catalog/scope reuse is one helper shared by both compile paths.
+- Rollout precondition (unchanged, now in `.env.example` and AGENTS.md): turn
+  incremental compile on only after every admin replica runs this build, in a
+  separate deploy. A replica that predates the cursor deletes markers; a
+  deleted seq above the cursor is awaited as a gap and published at the next
+  backstop, and deleted newest seqs reset the cursor.
+- Not done: splitting the dispatcher's build strategy into its own type. The
+  full and incremental paths already share their helpers; a strategy split is
+  a larger refactor than this review called for.
+
 ## Phase 3 — Close-out
 
 - [ ] 8.1 Feature-wide review over `git diff origin/develop...HEAD`, then
@@ -462,3 +496,17 @@ S7 implementation notes:
   not `encoded_bytes{scoped,total}`.
 - [ ] 8.3 Linear: post a close-out comment on ENG-3112 with the deviations and
   the measured before/after for compile and for write → applied latency.
+
+### Bucket count trade-off (review fixes)
+
+`bucketCount` is a pure function of the gateway size, so every admin replica
+splits identical content into identical buckets and publishes identical
+manifests (a manifest from one replica and fragments from another stay
+compatible behind the load balancer). The cost: a gateway whose size sits
+within one consumer of a `64 KiB × 2ⁿ` boundary while consumers are created
+and deleted re-buckets on each crossing, so those writes refetch the whole
+gateway. The window is about one consumer wide against bands that double in
+size, so it is rare; the hysteresis it replaces made every admin restart
+refetch every large gateway inside its band. Revisit with a deterministic
+band if the `compile` logs show repeated re-bucketing.
+

@@ -36,12 +36,16 @@ const (
 )
 
 // WithIncrementalCompile makes the dispatcher recompile only what the outbox
-// markers name, through encoder, and compile as soon as a change arrives with
-// no debounce. It needs a compiler that is also an IncrementalSource; with any
-// other compiler the option is ignored and every compile stays full.
-func WithIncrementalCompile(encoder FragmentEncoder) DispatcherOption {
+// markers name, reading it from source and encoding it through encoder, and
+// compile as soon as a change arrives with no debounce.
+func WithIncrementalCompile(encoder FragmentEncoder, source IncrementalSource) DispatcherOption {
 	return func(d *Dispatcher) {
-		d.fragmentEncoder = encoder
+		d.incremental = &incrementalState{
+			encoder:  encoder,
+			source:   source,
+			entities: make(map[ids.GatewayID]snapshotEntities),
+		}
+		withCompileWhileDirty()(d)
 	}
 }
 
@@ -75,24 +79,6 @@ func (s *incrementalState) entityTotals() snapshotEntities {
 	return total
 }
 
-func (d *Dispatcher) enableIncremental() {
-	if d.fragmentEncoder == nil {
-		return
-	}
-	source, ok := d.compiler.(IncrementalSource)
-	if !ok {
-		d.logger.Warn("incremental compile needs a compiler that reads gateways on their own; every compile stays full",
-			slog.String("component", component))
-		return
-	}
-	d.incremental = &incrementalState{
-		encoder:  d.fragmentEncoder,
-		source:   source,
-		entities: make(map[ids.GatewayID]snapshotEntities),
-	}
-	d.compileWhileDirty = true
-}
-
 // build produces the snapshot of one cycle. Without incremental compile it is
 // always the full compile. With it, a cycle triggered by a write recompiles
 // only the dirty gateways; boot, a restored snapshot, a marker that names
@@ -111,7 +97,7 @@ func (d *Dispatcher) build(ctx context.Context, reason compileReason, dirty dirt
 		full, reason = true, compileReasonCacheMiss
 	}
 	if !full {
-		compiled, err := d.compileIncremental(ctx, dirty, stages)
+		compiled, err := d.compileIncremental(ctx, dirty, nil, stages)
 		if err == nil {
 			return compiled, compileModeIncremental, reason, nil
 		}
@@ -126,7 +112,7 @@ func (d *Dispatcher) build(ctx context.Context, reason compileReason, dirty dirt
 		compiled, err := d.compileWithDriftCheck(ctx, dirty, next, stages)
 		return compiled, compileModeFull, reason, err
 	}
-	compiled, err := d.compileFullEncoded(ctx, stages)
+	compiled, err := d.compileFullEncoded(ctx, nil, stages)
 	return compiled, compileModeFull, reason, err
 }
 
@@ -141,7 +127,7 @@ type collectedGateway struct {
 // Global membership comes from each gateway as just read, never from what the
 // encoder held, so a gateway that moved to or from a data plane of its own
 // lands in the right flavors.
-func (d *Dispatcher) compileIncremental(ctx context.Context, dirty dirtySet, stages *compileStages) (compiledSnapshot, error) {
+func (d *Dispatcher) compileIncremental(ctx context.Context, dirty dirtySet, shared *SharedInputs, stages *compileStages) (compiledSnapshot, error) {
 	inc := d.incremental
 	readStart := time.Now()
 	reads := make([]collectedGateway, 0, len(dirty.gateways))
@@ -162,7 +148,7 @@ func (d *Dispatcher) compileIncremental(ctx context.Context, dirty dirtySet, sta
 		}
 		catalog = &read
 	}
-	shared, err := inc.source.ListShared(ctx)
+	inputs, err := d.sharedInputs(ctx, shared)
 	stages.since(stageRead, readStart)
 	if err != nil {
 		return compiledSnapshot{}, err
@@ -188,10 +174,19 @@ func (d *Dispatcher) compileIncremental(ctx context.Context, dirty dirtySet, sta
 		}
 	}
 	stages.since(stageEncode, encodeStart)
-	return d.assembleEncoded(shared, stages)
+	return d.assembleEncoded(inputs, stages)
 }
 
-func (d *Dispatcher) compileFullEncoded(ctx context.Context, stages *compileStages) (compiledSnapshot, error) {
+// sharedInputs returns read when the caller already read the shared inputs
+// this cycle, and reads them otherwise.
+func (d *Dispatcher) sharedInputs(ctx context.Context, read *SharedInputs) (SharedInputs, error) {
+	if read != nil {
+		return *read, nil
+	}
+	return d.incremental.source.ListShared(ctx)
+}
+
+func (d *Dispatcher) compileFullEncoded(ctx context.Context, shared *SharedInputs, stages *compileStages) (compiledSnapshot, error) {
 	inc := d.incremental
 	readStart := time.Now()
 	gateways, data, catalog, err := inc.source.CollectAll(ctx)
@@ -199,7 +194,7 @@ func (d *Dispatcher) compileFullEncoded(ctx context.Context, stages *compileStag
 		stages.since(stageRead, readStart)
 		return compiledSnapshot{}, err
 	}
-	shared, err := inc.source.ListShared(ctx)
+	inputs, err := d.sharedInputs(ctx, shared)
 	stages.since(stageRead, readStart)
 	if err != nil {
 		return compiledSnapshot{}, err
@@ -216,7 +211,7 @@ func (d *Dispatcher) compileFullEncoded(ctx context.Context, stages *compileStag
 		entities[id] = entitiesOf(*gwData)
 	}
 	inc.entities = entities
-	compiled, err := d.assembleEncoded(shared, stages)
+	compiled, err := d.assembleEncoded(inputs, stages)
 	if err != nil {
 		return compiledSnapshot{}, err
 	}
@@ -232,11 +227,7 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 		stages.since(stageMerge, mergeStart)
 		return compiledSnapshot{}, err
 	}
-	catalogRaw := assembled.Catalog
-	catalogUnchanged := d.lastCatalog != nil && bytes.Equal(d.lastCatalog, catalogRaw)
-	if catalogUnchanged {
-		catalogRaw = d.lastCatalog
-	}
+	catalogRaw, catalogUnchanged := d.sharedCatalog(assembled.Catalog)
 
 	compiled := compiledSnapshot{
 		scoped:       make(map[string]ScopedSnapshot, len(assembled.Scoped)),
@@ -260,14 +251,7 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 	}
 
 	for scope, tenantRaw := range assembled.Scoped {
-		scoped := ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw}
-		if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
-			scoped = prev
-		} else {
-			hashStart := time.Now()
-			scoped.Version = d.versionParts(tenantRaw, catalogRaw)
-			stages.since(stageHash, hashStart)
-		}
+		scoped := d.scopedSnapshot(scope, tenantRaw, catalogRaw, catalogUnchanged, stages)
 		compiled.scoped[scope] = scoped
 		compiled.scopes.add(scope, scoped.Len())
 	}
@@ -275,12 +259,18 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 }
 
 // compileWithDriftCheck applies this cycle's markers incrementally, then
-// rebuilds everything and publishes the rebuild. The two are compared only
-// when no marker this cycle did not see was committed in between: a write that
-// landed during the comparison would show up as drift that is not.
+// rebuilds everything and publishes the rebuild. Both assemblies share one read
+// of the shared inputs, which change without outbox markers, and the two are
+// compared only when no marker this cycle did not see was committed in
+// between: a write that landed during the comparison would show up as drift
+// that is not.
 func (d *Dispatcher) compileWithDriftCheck(ctx context.Context, dirty dirtySet, next cursorState, stages *compileStages) (compiledSnapshot, error) {
-	incremental, ierr := d.compileIncremental(ctx, dirty, nil)
-	full, err := d.compileFullEncoded(ctx, stages)
+	shared, err := d.incremental.source.ListShared(ctx)
+	if err != nil {
+		return compiledSnapshot{}, err
+	}
+	incremental, ierr := d.compileIncremental(ctx, dirty, &shared, nil)
+	full, err := d.compileFullEncoded(ctx, &shared, stages)
 	if err != nil {
 		return compiledSnapshot{}, err
 	}
@@ -305,7 +295,15 @@ func (d *Dispatcher) outboxSettled(ctx context.Context, next cursorState) bool {
 			return false
 		}
 	}
-	return true
+	if len(next.late) == 0 {
+		return true
+	}
+	late := make([]int64, 0, len(next.late))
+	for seq := range next.late {
+		late = append(late, seq)
+	}
+	committed, err := d.outbox.ReadSeqs(ctx, late)
+	return err == nil && len(committed) == 0
 }
 
 func (d *Dispatcher) recordDrift(ctx context.Context, incremental, full compiledSnapshot) {

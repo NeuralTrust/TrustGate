@@ -92,7 +92,7 @@ func (f *layeredFake) ManifestFor(string) (configsyncport.Manifest, bool) {
 	return f.manifest, f.layered
 }
 
-func (f *layeredFake) Fragment(digest [32]byte) ([]byte, bool) {
+func (f *layeredFake) FragmentFor(_ string, digest [32]byte) ([]byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.gone[digest] > 0 {
@@ -264,6 +264,95 @@ func TestLayeredFetchBatchesMoreFragmentsThanOneCallAllows(t *testing.T) {
 	}
 }
 
+func TestLayeredFetchKeepsVerifiedFragmentsWhenOneAgesOut(t *testing.T) {
+	parts := frags(maxFragmentsPerRequest+10, "k")
+	source := newLayeredFake(parts)
+	source.gone[sha256.Sum256(parts[maxFragmentsPerRequest+5])] = 1
+	client := layeredClient(t, source)
+
+	raw, _, _, err := client.Fetch(context.Background(), "")
+	if err != nil || !bytes.Equal(raw, bytes.Join(parts, nil)) {
+		t.Fatalf("fetch after a fragment aged out: err=%v", err)
+	}
+	firstBatch := int64(len(bytes.Join(parts[:maxFragmentsPerRequest], nil)))
+	if served, _ := source.stats(); served >= 2*firstBatch {
+		t.Fatalf("served %d bytes, want less than %d: the retry must not fetch the first batch again", served, 2*firstBatch)
+	}
+}
+
+func TestLayeredFetchCachesFragmentsInsideTheAssembledSnapshot(t *testing.T) {
+	parts := frags(8, "s")
+	client := layeredClient(t, newLayeredFake(parts))
+
+	raw, _, _, err := client.Fetch(context.Background(), "")
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	offset := 0
+	for _, part := range parts {
+		cached, ok := client.fragments.get(sha256.Sum256(part))
+		if !ok || len(cached) == 0 || &cached[0] != &raw[offset] {
+			t.Fatalf("fragment at offset %d is cached as a separate copy, want a slice of the assembled snapshot", offset)
+		}
+		offset += len(part)
+	}
+}
+
+type abandonedFragmentsServer struct {
+	snapshotpb.UnimplementedConfigSyncServer
+	manifest  *snapshotpb.Manifest
+	bad       []byte
+	cancelled chan struct{}
+}
+
+func (s *abandonedFragmentsServer) GetManifest(context.Context, *snapshotpb.GetManifestRequest) (*snapshotpb.Manifest, error) {
+	return s.manifest, nil
+}
+
+func (s *abandonedFragmentsServer) GetFragments(req *snapshotpb.GetFragmentsRequest, stream snapshotpb.ConfigSync_GetFragmentsServer) error {
+	digest := req.GetDigests()[0]
+	for {
+		if err := stream.Send(&snapshotpb.FragmentChunk{Digest: digest, Data: s.bad, Last: true}); err != nil {
+			close(s.cancelled)
+			return err
+		}
+		select {
+		case <-stream.Context().Done():
+			close(s.cancelled)
+			return stream.Context().Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func TestLayeredFetchEndsTheFragmentStreamWhenItGivesUp(t *testing.T) {
+	good := []byte("the fragment the manifest names")
+	manifest, _ := manifestOf([][]byte{good})
+	refs := make([]*snapshotpb.FragmentRef, len(manifest.Fragments))
+	for i, ref := range manifest.Fragments {
+		refs[i] = &snapshotpb.FragmentRef{Digest: ref.Digest[:], Size: int64(ref.Size)}
+	}
+	server := &abandonedFragmentsServer{
+		manifest:  &snapshotpb.Manifest{Version: manifest.Version, Fragments: refs},
+		bad:       []byte("not the fragment"),
+		cancelled: make(chan struct{}),
+	}
+	lis, _ := newBufServer(t, server)
+	client := dialClient(t, lis, "dp-abandon")
+	client.layered = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, _, _, err := client.Fetch(ctx, ""); !errors.Is(err, configsync.ErrIntegrity) {
+		t.Fatalf("fetch = %v, want ErrIntegrity for a fragment that does not match its digest", err)
+	}
+	select {
+	case <-server.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the server stream is still open after the client gave up on it")
+	}
+}
+
 func TestHelloAdvertisesLayeredOnlyWhenLayeredPullIsOn(t *testing.T) {
 	for _, layered := range []bool{false, true} {
 		server := &helloCapture{hello: make(chan *snapshotpb.Hello, 1)}
@@ -305,8 +394,8 @@ type countingHolder struct {
 	served int64
 }
 
-func (h *countingHolder) Fragment(digest [32]byte) ([]byte, bool) {
-	raw, ok := h.Holder.Fragment(digest)
+func (h *countingHolder) FragmentFor(scope string, digest [32]byte) ([]byte, bool) {
+	raw, ok := h.Holder.FragmentFor(scope, digest)
 	h.mu.Lock()
 	h.served += int64(len(raw))
 	h.mu.Unlock()

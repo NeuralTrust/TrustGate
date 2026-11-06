@@ -125,8 +125,18 @@ func (c *outboxCursor) lateSeqs() []int64 {
 
 // observe folds the markers read this cycle (those above readFrom, and the
 // late ones found again) into the next cursor state and the dirty set they
-// imply. minSeq is the lowest seq left in the outbox, zero when it is empty.
-func (c *outboxCursor) observe(markers, lateFound []configsyncport.Marker, minSeq int64, now time.Time) (cursorState, dirtySet) {
+// imply. bounds are the lowest and highest seq left in the outbox, zero when it
+// is empty.
+func (c *outboxCursor) observe(markers, lateFound []configsyncport.Marker, bounds configsyncport.OutboxBounds, now time.Time) (cursorState, dirtySet) {
+	minSeq := bounds.Min
+	if c.state.initialised && bounds.Max > 0 && bounds.Max < c.state.lowWater {
+		// Every seq left is below what this replica already settled: the
+		// sequence restarted (a restored or recreated table), so markers above
+		// the cursor would never be read again.
+		var dirty dirtySet
+		dirty.forceFull(compileReasonCursorReset)
+		return cursorState{initialised: true, lowWater: minSeq - 1, seen: map[int64]struct{}{}, gaps: map[int64]time.Time{}, late: map[int64]time.Time{}}, dirty
+	}
 	next := c.state.clone()
 	var dirty dirtySet
 
@@ -216,20 +226,21 @@ func (c *outboxCursor) observe(markers, lateFound []configsyncport.Marker, minSe
 }
 
 // pruned reports whether rows this replica never read were removed: the oldest
-// row left is past the next seq it expects, and the seqs in between are not
-// gaps it already knows to be missing.
+// row left is past the next seq it expects, and the seqs in between are
+// neither gaps it already knows to be missing nor markers it already read.
 func (c *outboxCursor) pruned(minSeq int64) bool {
 	if minSeq == 0 || minSeq <= c.state.lowWater+1 {
 		return false
 	}
 	missing := minSeq - c.state.lowWater - 1
-	if missing > int64(len(c.state.gaps)+len(c.state.late)) {
+	if missing > int64(len(c.state.gaps)+len(c.state.late)+len(c.state.seen)) {
 		return true
 	}
 	for seq := c.state.lowWater + 1; seq < minSeq; seq++ {
 		_, gap := c.state.gaps[seq]
 		_, late := c.state.late[seq]
-		if !gap && !late {
+		_, seen := c.state.seen[seq]
+		if !gap && !late && !seen {
 			return true
 		}
 	}

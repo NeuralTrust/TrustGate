@@ -18,8 +18,13 @@ import (
 	"context"
 
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
+// GatewayReader lists every gateway for a full compile and loads one by id
+// for an incremental one. FindByID returns an error matching
+// errors.ErrNotFound for a gateway that no longer exists.
 type GatewayReader interface {
 	List(ctx context.Context, filter gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error)
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
 }

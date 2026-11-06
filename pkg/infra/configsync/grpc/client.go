@@ -179,6 +179,10 @@ func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, 
 }
 
 func (c *Client) fetchSnapshot(ctx context.Context, etag string) ([]byte, string, bool, error) {
+	// An early return must end the server stream, or it stays open until the
+	// worker stops.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID})
 	if err != nil {
 		return nil, "", false, fmt.Errorf("configsync: get snapshot: %w", err)

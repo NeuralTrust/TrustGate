@@ -254,7 +254,7 @@ func ControlConfigSync(c *container.Container) error {
 			}
 		}
 		if cfg.ConfigSync.IncrementalCompile {
-			opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments()))
+			opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments(), compiler))
 		}
 		d := appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
 			Debounce:  cfg.ConfigSync.RecompileDebounce,

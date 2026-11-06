@@ -50,11 +50,16 @@ func (f *fakeLayeredSource) ManifestFor(scope string) (configsyncport.Manifest, 
 	return m, ok
 }
 
-func (f *fakeLayeredSource) Fragment(digest [32]byte) ([]byte, bool) {
+func (f *fakeLayeredSource) FragmentFor(scope string, digest [32]byte) ([]byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	raw, ok := f.fragments[digest]
-	return raw, ok
+	for _, ref := range f.manifests[scope].Fragments {
+		if ref.Digest == digest {
+			raw, ok := f.fragments[digest]
+			return raw, ok
+		}
+	}
+	return nil, false
 }
 
 func newFakeLayeredSource(version string, fragments ...[]byte) *fakeLayeredSource {
@@ -229,11 +234,36 @@ func (r *fragmentRecorder) Send(*snapshotpb.FragmentChunk) error {
 	return nil
 }
 
+func TestService_GetFragmentsServesOnlyTheCallersScope(t *testing.T) {
+	own, other := []byte("own fragment"), []byte("other tenant fragment")
+	src := newFakeLayeredSource("m1:global")
+	ownDigest, otherDigest := sha256.Sum256(own), sha256.Sum256(other)
+	src.fragments[ownDigest], src.fragments[otherDigest] = own, other
+	src.manifests["gw-x"] = configsyncport.Manifest{Version: "m1:x", Fragments: []configsyncport.FragmentRef{{Digest: ownDigest, Size: len(own)}}}
+	src.manifests["gw-y"] = configsyncport.Manifest{Version: "m1:y", Fragments: []configsyncport.FragmentRef{{Digest: otherDigest, Size: len(other)}}}
+	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil)
+
+	fetch := func(scope string, digest [32]byte) error {
+		stream := &fragmentRecorder{ctx: WithScope(context.Background(), scope), onChunk: func(int) {}}
+		return svc.GetFragments(&snapshotpb.GetFragmentsRequest{Digests: [][]byte{digest[:]}}, stream)
+	}
+	if err := fetch("gw-x", ownDigest); err != nil {
+		t.Fatalf("own fragment: %v", err)
+	}
+	if err := fetch("gw-x", otherDigest); status.Code(err) != codes.NotFound {
+		t.Fatalf("another scope's fragment = %v, want NotFound", err)
+	}
+	if err := fetch("", otherDigest); status.Code(err) != codes.NotFound {
+		t.Fatalf("a scoped fragment through the global scope = %v, want NotFound", err)
+	}
+}
+
 func TestService_GetFragmentsStopsWhenTokenIsRevokedMidTransfer(t *testing.T) {
 	gate := appcsr.NewGate(appcsr.ModeEnforce, discardLogger())
 	big := make([]byte, 3*snapshotChunkSize)
 	big[0] = 1
 	src := newFakeLayeredSource("m1:x", big)
+	src.manifests["gw-1"] = src.manifests[""]
 	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger(), gate)
 	id := configsyncrevocation.Identity{Scope: "gw-1", JTI: "old", IssuedAt: 100, Signed: true, InstanceScoped: true}
 	stream := &fragmentRecorder{

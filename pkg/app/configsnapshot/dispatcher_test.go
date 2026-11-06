@@ -52,6 +52,18 @@ func (s *settableGateways) set(items []*gatewaydomain.Gateway) {
 	s.items = items
 }
 
+func (s *settableGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, gw := range s.items {
+		if gw.ID == id {
+			copied := *gw
+			return &copied, nil
+		}
+	}
+	return nil, gatewaydomain.ErrNotFound
+}
+
 func (s *settableGateways) List(_ context.Context, filter gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -159,26 +171,27 @@ func (o *fakeOutbox) sorted() []configsyncport.Marker {
 	return out
 }
 
-func (o *fakeOutbox) ReadSince(_ context.Context, afterSeq int64) ([]configsyncport.Marker, int64, error) {
+func (o *fakeOutbox) ReadSince(_ context.Context, afterSeq int64) ([]configsyncport.Marker, configsyncport.OutboxBounds, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.reads = append(o.reads, afterSeq)
 	if o.readErr != nil {
-		return nil, 0, o.readErr
+		return nil, configsyncport.OutboxBounds{}, o.readErr
 	}
 	var (
 		out    []configsyncport.Marker
-		minSeq int64
+		bounds configsyncport.OutboxBounds
 	)
 	for i, m := range o.sorted() {
 		if i == 0 {
-			minSeq = m.Seq
+			bounds.Min = m.Seq
 		}
+		bounds.Max = m.Seq
 		if m.Seq > afterSeq {
 			out = append(out, m)
 		}
 	}
-	return out, minSeq, nil
+	return out, bounds, nil
 }
 
 func (o *fakeOutbox) ReadSeqs(_ context.Context, seqs []int64) ([]configsyncport.Marker, error) {

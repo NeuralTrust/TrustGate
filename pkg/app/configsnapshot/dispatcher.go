@@ -74,20 +74,22 @@ type Dispatcher struct {
 	codec       configsync.SnapshotCodec[*readmodel.Snapshot]
 	holder      *Holder
 	broadcaster configsyncport.VersionBroadcaster
-	outbox      configsyncport.OutboxRepository
-	logger      *slog.Logger
-	debounce    time.Duration
-	backstop    time.Duration
-	retention   time.Duration
-	maxRows     int
-	trigger     chan struct{}
-	compiled    atomic.Bool
+	// layeredBroadcaster is broadcaster when it can notify layered data planes
+	// of their own version; nil otherwise.
+	layeredBroadcaster configsyncport.LayeredBroadcaster
+	outbox             configsyncport.OutboxRepository
+	logger             *slog.Logger
+	debounce           time.Duration
+	backstop           time.Duration
+	retention          time.Duration
+	maxRows            int
+	trigger            chan struct{}
+	compiled           atomic.Bool
 
 	cursor            *outboxCursor
 	compileWhileDirty bool
 
-	fragmentEncoder FragmentEncoder
-	incremental     *incrementalState
+	incremental *incrementalState
 
 	mu              sync.Mutex
 	publishedGlobal string
@@ -167,17 +169,22 @@ func NewDispatcher(
 		publishedScoped: make(map[string]string),
 		cursor:          newOutboxCursor(cfg.GapExpiry, retention, defaultLateBound),
 	}
+	d.layeredBroadcaster, _ = broadcaster.(configsyncport.LayeredBroadcaster)
 	for _, opt := range opts {
 		opt(d)
 	}
-	d.enableIncremental()
+	if d.incremental != nil && d.layeredBroadcaster == nil {
+		d.logger.Warn("the version broadcaster cannot notify layered data planes; they are sent single-blob versions",
+			slog.String("component", component))
+	}
 	return d
 }
 
-// WithCompileWhileDirty makes Run dispatch on every Signal with no debounce:
+// withCompileWhileDirty makes Run dispatch on every Signal with no debounce:
 // signals that arrive during a compile fold into one follow-up dispatch that
-// starts as soon as the compile ends.
-func WithCompileWhileDirty() DispatcherOption {
+// starts as soon as the compile ends. Only incremental compile turns it on: a
+// full compile per write with no debounce is what it exists to avoid.
+func withCompileWhileDirty() DispatcherOption {
 	return func(d *Dispatcher) {
 		d.compileWhileDirty = true
 	}
@@ -293,7 +300,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	// on the next one, and the cursor advances only once this cycle succeeds.
 	next, dirty, observed := d.observeOutbox(ctx)
 
-	reason = d.compileReason(reason, dirty)
+	reason = d.resolveReason(reason, dirty)
 	stages := newCompileStages()
 	compileStart := time.Now()
 	compiledAt := d.compiledAt()
@@ -377,7 +384,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	return nil
 }
 
-func (d *Dispatcher) compileReason(trigger compileReason, dirty dirtySet) compileReason {
+func (d *Dispatcher) resolveReason(trigger compileReason, dirty dirtySet) compileReason {
 	switch {
 	case !d.compiled.Load() && d.Source() == SourcePersisted:
 		return compileReasonLKGRestore
@@ -395,12 +402,12 @@ func (d *Dispatcher) compileReason(trigger compileReason, dirty dirtySet) compil
 // became visible since. On a read error it observes nothing, and the next
 // cycle reads the same markers again.
 func (d *Dispatcher) observeOutbox(ctx context.Context) (cursorState, dirtySet, bool) {
-	markers, minSeq, err := d.outbox.ReadSince(ctx, d.cursor.readFrom())
+	markers, bounds, err := d.outbox.ReadSince(ctx, d.cursor.readFrom())
 	if err == nil {
 		var lateFound []configsyncport.Marker
 		lateFound, err = d.outbox.ReadSeqs(ctx, d.cursor.lateSeqs())
 		if err == nil {
-			next, dirty := d.cursor.observe(markers, lateFound, minSeq, time.Now())
+			next, dirty := d.cursor.observe(markers, lateFound, bounds, time.Now())
 			return next, dirty, true
 		}
 	}
@@ -455,10 +462,7 @@ func (d *Dispatcher) compile(ctx context.Context, stages *compileStages) (compil
 		if eerr != nil {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
 		}
-		catalogUnchanged := d.lastCatalog != nil && bytes.Equal(d.lastCatalog, catalogRaw)
-		if catalogUnchanged {
-			catalogRaw = d.lastCatalog
-		}
+		catalogRaw, catalogUnchanged := d.sharedCatalog(catalogRaw)
 		raw, version, err := d.encodeWithCatalog(global, catalogRaw, stages)
 		if err != nil {
 			return compiledSnapshot{}, err
@@ -471,14 +475,7 @@ func (d *Dispatcher) compile(ctx context.Context, stages *compileStages) (compil
 			if serr != nil {
 				return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode: %w", serr)
 			}
-			scoped := ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw}
-			if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
-				scoped = prev
-			} else {
-				hashStart := time.Now()
-				scoped.Version = d.versionParts(tenantRaw, catalogRaw)
-				stages.since(stageHash, hashStart)
-			}
+			scoped := d.scopedSnapshot(scope, tenantRaw, catalogRaw, catalogUnchanged, stages)
 			compiled.scoped[scope] = scoped
 			compiled.scopes.add(scope, scoped.Len())
 			compiled.entities.add(snap)
@@ -531,6 +528,29 @@ func (d *Dispatcher) compileAll(ctx context.Context, compiler PartitionedCompile
 	return compiler.CompileAll(ctx)
 }
 
+// sharedCatalog returns the catalog bytes to serve and whether they are the
+// previous compile's: an unchanged catalog keeps the previous slice, so every
+// scope keeps pointing at one copy.
+func (d *Dispatcher) sharedCatalog(raw []byte) ([]byte, bool) {
+	if d.lastCatalog != nil && bytes.Equal(d.lastCatalog, raw) {
+		return d.lastCatalog, true
+	}
+	return raw, false
+}
+
+// scopedSnapshot is the snapshot served to scope. When neither its tenant
+// bytes nor the catalog changed it is the previous compile's, so it is
+// neither hashed nor held again; the full and incremental compiles must agree
+// on this to publish the same versions.
+func (d *Dispatcher) scopedSnapshot(scope string, tenantRaw, catalogRaw []byte, catalogUnchanged bool, stages *compileStages) ScopedSnapshot {
+	if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
+		return prev
+	}
+	hashStart := time.Now()
+	defer stages.since(stageHash, hashStart)
+	return ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw, Version: d.versionParts(tenantRaw, catalogRaw)}
+}
+
 func (d *Dispatcher) versionParts(parts ...[]byte) string {
 	if v, ok := d.codec.(partsVersioner); ok {
 		return v.VersionParts(parts...)
@@ -551,16 +571,9 @@ func (d *Dispatcher) encode(snapshot *readmodel.Snapshot, stages *compileStages)
 	return raw, version, nil
 }
 
-// layeredBroadcaster is implemented by broadcasters that tell each data plane
-// the version matching how it pulls: the manifest version to one that pulls
-// layered snapshots, the single-blob version to any other.
-type layeredBroadcaster interface {
-	BroadcastScopeLayered(scope, version, layeredVersion string)
-}
-
 func (d *Dispatcher) broadcastScope(layered *Layered, scope, version string) {
-	lb, ok := d.broadcaster.(layeredBroadcaster)
-	if !ok || layered == nil {
+	lb := d.layeredBroadcaster
+	if lb == nil || layered == nil {
 		d.broadcaster.BroadcastScope(scope, version)
 		return
 	}
