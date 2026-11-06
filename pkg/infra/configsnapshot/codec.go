@@ -75,6 +75,16 @@ func (Codec) Version(raw []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// VersionParts returns the Version of the concatenation of parts without
+// building it.
+func (Codec) VersionParts(parts ...[]byte) string {
+	h := sha256.New()
+	for _, part := range parts {
+		h.Write(part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
 	owners := registryOwners(data.Registries)
@@ -119,6 +129,9 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		return nil, err
 	}
 	if msg.StorePolicies, err = encodeJSON(data.StorePolicies, "store policy", func(_ int, blob []byte) *snapshotpb.StorePolicy { return &snapshotpb.StorePolicy{Json: blob} }); err != nil {
+		return nil, err
+	}
+	if msg.StoreEveryone, err = encodeJSON(data.StoreEveryone, "store everyone", func(_ int, blob []byte) *snapshotpb.StoreEveryone { return &snapshotpb.StoreEveryone{Json: blob} }); err != nil {
 		return nil, err
 	}
 	for i := range data.PlaygroundTokenKeys {
@@ -226,6 +239,9 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		return readmodel.Data{}, err
 	}
 	if data.StorePolicies, err = decodeJSON[*snapshotpb.StorePolicy, storeaccessdomain.Policy](msg.GetStorePolicies(), "store policy", func(m *snapshotpb.StorePolicy) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
+	}
+	if data.StoreEveryone, err = decodeJSON[*snapshotpb.StoreEveryone, storeaccessdomain.Everyone](msg.GetStoreEveryone(), "store everyone", func(m *snapshotpb.StoreEveryone) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
 	for _, m := range msg.GetPlaygroundTokenKeys() {

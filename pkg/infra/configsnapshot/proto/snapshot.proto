@@ -67,6 +67,10 @@ message Snapshot {
   // keeps the snapshot bytes and version identical to a control plane without
   // the feature.
   bool usage_enforcement = 17;
+  // The Store access every group of a gateway passes on (storeaccess.Everyone
+  // as JSON), at most one per gateway. A data plane built before this field
+  // ignores it and grants nothing through Everyone until it reads the field.
+  repeated StoreEveryone store_everyone = 18;
 }
 
 // KeyGroupBudget is one directory group's budget on a gateway
@@ -120,6 +124,12 @@ message StoreGrant {
 // StorePolicy is one per-principal MCP Store access level on a gateway
 // (storeaccess.Policy as JSON): open | curated | none for a user or a group.
 message StorePolicy {
+  bytes json = 1;
+}
+
+// StoreEveryone is one gateway's Everyone Store access (storeaccess.Everyone
+// as JSON): a level, the servers it grants and the excluded groups.
+message StoreEveryone {
   bytes json = 1;
 }
 

@@ -132,6 +132,9 @@ type AdminRouterDeps struct {
 	// StorePolicies serves the per-principal Store access levels (Access page
 	// All / Selected / None). Present only on the full plane.
 	StorePolicies *storehttp.PoliciesHandler
+	// StoreEveryone serves the Store access every group passes on (Access page
+	// Everyone). Present only on the full plane.
+	StoreEveryone *storehttp.EveryoneHandler
 	// StorePrincipal serves the Portal's admin preview of one user's Store state.
 	StorePrincipal *storehttp.PrincipalHandler
 	// StoreMaterialize puts a self-service catalog server on the shelf on an
@@ -235,7 +238,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -250,6 +253,10 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.StorePolicies != nil {
 			store.Get("/access-policies", r.deps.StorePolicies.List)
 			store.Put("/access-policies", r.deps.StorePolicies.Set)
+		}
+		if r.deps.StoreEveryone != nil {
+			store.Get("/everyone", r.deps.StoreEveryone.Get)
+			store.Put("/everyone", r.deps.StoreEveryone.Set)
 		}
 		if r.deps.StorePrincipal != nil {
 			store.Get("/principal", r.deps.StorePrincipal.Get)

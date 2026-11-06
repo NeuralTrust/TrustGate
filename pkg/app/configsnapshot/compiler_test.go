@@ -32,6 +32,7 @@ import (
 	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 func mustGatewayID(t *testing.T, s string) ids.GatewayID {
@@ -673,6 +674,66 @@ func TestCompilerShipsKeyGroupBudgets(t *testing.T) {
 			}
 			if got := scoped.Data().KeyGroupBudgets; len(got) != 1 || got[0].GatewayID != other {
 				t.Fatalf("a scoped snapshot carries its own gateway's budgets only, got %+v", got)
+			}
+		})
+	}
+}
+
+type fakeStoreEveryone struct {
+	byGateway map[string]*storeaccessdomain.Everyone
+}
+
+func (f fakeStoreEveryone) GetEveryone(_ context.Context, gatewayID ids.GatewayID) (*storeaccessdomain.Everyone, error) {
+	return f.byGateway[gatewayID.String()], nil
+}
+
+func (f fakeStoreEveryone) ListEveryone(_ context.Context, page, _ int) ([]*storeaccessdomain.Everyone, int, error) {
+	if page > 1 {
+		return nil, 0, nil
+	}
+	items := make([]*storeaccessdomain.Everyone, 0, len(f.byGateway))
+	for _, e := range f.byGateway {
+		items = append(items, e)
+	}
+	return items, len(items), nil
+}
+
+func TestCompilerShipsStoreEveryone(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	other := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	everyone := fakeStoreEveryone{byGateway: map[string]*storeaccessdomain.Everyone{
+		gw.String():    {GatewayID: gw, Mode: "curated", Grants: []storeaccessdomain.EveryoneGrant{{CatalogCode: "github"}}},
+		other.String(): {GatewayID: other, Mode: "open", ExcludedGroups: []string{"Contractors"}},
+	}}
+	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
+
+	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {
+		t.Run(name, func(t *testing.T) {
+			compiler := appsnapshot.NewCompiler(
+				fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}, {ID: other}, {ID: corrupt}}},
+				fakeConsumers{}, registries, fakePolicies{}, fakeAuths{}, fakeCatalog{}, nil,
+				appsnapshot.WithStoreEveryone(everyone),
+			)
+			snapshot, err := compiler.Compile(context.Background())
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got := snapshot.StoreEveryoneByGateway(gw); got == nil || got.Mode != "curated" || got.Grants[0].CatalogCode != "github" {
+				t.Fatalf("everyone of %s = %+v", gw, got)
+			}
+			if got := snapshot.Data().StoreEveryone; len(got) != 2 || got[0].GatewayID != gw {
+				t.Fatalf("every gateway's object rides the global snapshot, sorted by gateway, got %+v", got)
+			}
+			if snapshot.StoreEveryoneByGateway(corrupt) != nil {
+				t.Fatal("a gateway without Everyone has none")
+			}
+			scoped, err := compiler.CompileFor(context.Background(), other.String())
+			if err != nil {
+				t.Fatalf("compile for %s: %v", other, err)
+			}
+			if got := scoped.Data().StoreEveryone; len(got) != 1 || got[0].GatewayID != other {
+				t.Fatalf("a scoped snapshot carries its own gateway's object only, got %+v", got)
 			}
 		})
 	}
