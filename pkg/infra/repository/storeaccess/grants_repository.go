@@ -49,16 +49,8 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		if r.outbox == nil {
-			return nil
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Upsert(ctx context.Context, g *domain.Grant) error {
@@ -91,7 +83,7 @@ func (r *Repository) Upsert(ctx context.Context, g *domain.Grant) error {
 			SET groups     = EXCLUDED.groups,
 			    users      = EXCLUDED.users,
 			    updated_at = EXCLUDED.updated_at`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, g.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			g.GatewayID, g.CatalogCode, g.RegistryID, groups, users, created, now,
 		); err != nil {
@@ -105,7 +97,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, code s
 	const query = `
 		DELETE FROM store_grants
 		 WHERE gateway_id = $1 AND catalog_code = $2 AND registry_id = $3`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, gatewayID, code, registryID); err != nil {
 			return mapPgError(err)
 		}
@@ -120,7 +112,7 @@ func (r *Repository) DeleteByRegistry(ctx context.Context, gatewayID ids.Gateway
 	const query = `
 		DELETE FROM store_grants
 		 WHERE gateway_id = $1 AND registry_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, gatewayID, registryID); err != nil {
 			return mapPgError(err)
 		}

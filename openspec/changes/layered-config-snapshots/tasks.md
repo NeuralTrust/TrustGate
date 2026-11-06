@@ -81,19 +81,19 @@ S1 notes (applied):
 
 ### S2: Outbox dirty scope (markers know their gateway)
 
-- [ ] 2.1 Migration `pkg/infra/database/migrations/2026110612xxxx_outbox_dirty_scope.go`:
+- [x] 2.1 Migration `pkg/infra/database/migrations/2026110612xxxx_outbox_dirty_scope.go`:
   `ADD COLUMN gateway_id UUID NULL, ADD COLUMN kind TEXT NULL`, with a down that
   drops both. Register it in the migrations list.
   Verify: `PG_TEST_URL=… go test -tags functional ./pkg/infra/database/migrations/...`.
-- [ ] 2.2 Port `pkg/app/configsyncport/outbox.go`: `MarkerKind` (`gateway`,
+- [x] 2.2 Port `pkg/app/configsyncport/outbox.go`: `MarkerKind` (`gateway`,
   `catalog`, `all`), `Marker`, `ReadSince(ctx, afterSeq) ([]Marker, minSeq, error)`.
   Keep `PendingCount` and `PruneOlderThan`. NULL kind, or `gateway` with a NULL
   id, decodes as `all`.
-- [ ] 2.3 `pkg/infra/repository/outbox/repository.go`: `AppendGatewayTx`,
+- [x] 2.3 `pkg/infra/repository/outbox/repository.go`: `AppendGatewayTx`,
   `AppendCatalogTx`, `AppendTx` writing `kind='all'`, `ReadSince`.
   Verify: functional repository tests for each kind, for NULL-kind rows written
   as an old build would, and for out-of-order seq visibility.
-- [ ] 2.4 Writer sweep: replace `withMarkedTx` with `withGatewayMarkedTx` /
+- [x] 2.4 Writer sweep: replace `withMarkedTx` with `withGatewayMarkedTx` /
   `withMarkedTxFor` in `pkg/infra/repository/{consumer,auth,gateway,policy,registry,catalog,keygroup,storeaccess/*}`,
   `registry/secrets.go:411` and `sessionrevocation/repository.go:66`. Child-id
   methods (`DetachAuth`, `DetachPolicy`, …) resolve the gateway via `RETURNING gateway_id`.
@@ -101,8 +101,30 @@ S1 notes (applied):
   marker per affected gateway, or `all`. Catalog writes emit `catalog`.
   Verify: one table-driven functional test over the writer methods, asserting
   `gateway_id`/`kind` for each (`go test -tags functional -p 1 ./tests/functional/repositories/...`).
-- [ ] 2.5 Leave the dispatcher behavior unchanged in this slice: it still uses
+- [x] 2.5 Leave the dispatcher behavior unchanged in this slice: it still uses
   `Pending`/`DeleteSeqs` through a thin adapter, so S2 deploys alone.
+
+S2 notes (as implemented):
+- Migration `20261106120000_outbox_dirty_scope`; it registers through `init`
+  like every other migration, so there is no list to edit.
+- `OutboxRepository` is unchanged for the dispatcher (`Pending`/`DeleteSeqs`
+  stay on the repository, no adapter needed). `ReadSince` is a separate port,
+  `configsyncport.OutboxMarkerReader`, which S3 folds into `OutboxRepository`.
+  It reads the minimum seq and the markers in one statement.
+- Writers record what they dirtied on an `outbox.Marks`
+  (`outbox.WithMarkedTx` / `WithGatewayMarkedTx`). Recording nothing, or a nil
+  gateway, appends one `all` marker, so an unmigrated writer fails safe.
+- Child-id consumer writes (`AttachRegistry`, `AttachAuth`, `DetachAuth`,
+  `AttachPolicy`, `DetachPolicy`) resolve the gateway with a `SELECT gateway_id`
+  on the consumer in the same transaction rather than `RETURNING`: the link
+  tables carry no gateway column. A consumer that no longer exists falls back
+  to `all`.
+- Session revocations, key group budgets and store grants/policies/Everyone
+  stamp their gateway; tenant caps and revocations are re-read on every cycle
+  (D8), so a gateway marker is enough to start one. Only the D3 kinds exist
+  (`gateway`, `catalog`, `all`); the spec's extra shared kinds were folded into
+  them, and any unknown kind decodes as `all`.
+- A nil appender writes no marker (keygroup and storeaccess already allowed it).
 
 ### S3: Outbox cursor + compile-while-dirty loop
 
@@ -168,6 +190,12 @@ S1 notes (applied):
   Target: one dirty gateway under 10 ms, excluding the DB.
 
 ### S5: Incremental dispatch behind the switch
+
+Review note from S2: a dirty gateway can change which flavor carries it (a
+`DataPlane` entitlement change moves it between the global snapshot and its own
+scope only), and a gateway delete cascades to all of its entities. Both must be
+covered by the mutation-sequence test in 5.x, and the incremental path must
+re-derive global membership from the freshly read gateway, never from the cache.
 
 - [ ] 5.1 `pkg/app/configsnapshot/compiler.go`: export `CollectGateway`,
   `CollectAll` and `ListShared` for the incremental path. Add `FindByID` to the
