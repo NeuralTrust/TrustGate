@@ -902,6 +902,14 @@ func (c *Compiler) collectGatewaysEach(ctx context.Context, gateways []gatewaydo
 }
 
 func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, data *readmodel.Data) error {
+	return c.collectGatewayData(ctx, gatewayID, data, false)
+}
+
+// collectGatewayData loads one gateway's config. strictPolicies reads the
+// gateway's policies with their unreadable-row count and applies the mass-skip
+// breaker to them, for callers that read a gateway on its own without the
+// whole-table check the bulk path runs.
+func (c *Compiler) collectGatewayData(ctx context.Context, gatewayID ids.GatewayID, data *readmodel.Data, strictPolicies bool) error {
 	consumers, err := c.consumers.ListByGateway(ctx, gatewayID)
 	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
 		return fmt.Errorf("configsnapshot: list consumers for gateway %s: %w", gatewayID, err)
@@ -922,9 +930,9 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		c.attachSharedOAuth(&data.Registries[i])
 	}
 
-	policies, err := c.policies.ListByGateway(ctx, gatewayID)
-	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
-		return fmt.Errorf("configsnapshot: list policies for gateway %s: %w", gatewayID, err)
+	policies, err := c.listGatewayPolicies(ctx, gatewayID, strictPolicies)
+	if err != nil {
+		return err
 	}
 	for _, p := range policies {
 		if p == nil {
@@ -985,6 +993,26 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		}
 	}
 	return nil
+}
+
+func (c *Compiler) listGatewayPolicies(ctx context.Context, gatewayID ids.GatewayID, strict bool) ([]*policydomain.Policy, error) {
+	if !strict {
+		policies, err := c.policies.ListByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return nil, fmt.Errorf("configsnapshot: list policies for gateway %s: %w", gatewayID, err)
+		}
+		return policies, nil
+	}
+	policies, total, err := listAllSkipping(ctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
+		return c.policies.List(ctx, policydomain.ListFilter{GatewayID: gatewayID, Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUnreadablePolicies(len(policies), total); err != nil {
+		return nil, err
+	}
+	return policies, nil
 }
 
 // attachSharedOAuth works on the snapshot's own copy of a registry: it swaps in

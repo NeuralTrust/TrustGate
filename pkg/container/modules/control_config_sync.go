@@ -253,11 +253,15 @@ func ControlConfigSync(c *container.Container) error {
 				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge}))
 			}
 		}
+		if cfg.ConfigSync.IncrementalCompile {
+			opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments(), compiler))
+		}
 		d := appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
 			Debounce:  cfg.ConfigSync.RecompileDebounce,
 			Backstop:  cfg.ConfigSync.RecompileBackstop,
 			Retention: cfg.ConfigSync.OutboxRetention,
 			MaxRows:   int(cfg.ConfigSync.OutboxMaxRows),
+			GapExpiry: cfg.ConfigSync.OutboxGapExpiry,
 		}, opts...)
 		if err := appsnapshot.RegisterAdminSnapshotGauges(otel.Meter("trustgate/configsync"), d); err != nil {
 			return nil, err

@@ -53,6 +53,7 @@ Phase 2 adds an opt-in layered protocol on top of the same cache:
 | D11 | New code never calls `DeleteSeqs`, whichever mode is on | Delete only in legacy mode | Flipping the switch is a rolling restart. If legacy replicas still deleted rows, incremental peers would lose markers during that window. |
 | D12 | Phase 2 version = `"m1:" + hex(sha256(digest₁‖…‖digestₙ))` over raw 32-byte fragment digests, in manifest order | `sha256(concat bytes)` | Each fragment is verified by its own digest, so hashing the manifest is equivalent and avoids hashing about 8 MB per apply. The prefix keeps v1 and v2 versions from colliding in logs and acks. |
 | D13 | Phase 2 notices carry the version that matches each connection's capability (hub stores `layered` per conn) | One version for everyone | Old planes compare v1 versions; layered planes compare manifest versions. |
+| D14 | Phase 2 fragments split a gateway into content-stable buckets (`hash(entity key) mod k`, `k` a power of two keeping buckets near 64 KiB) | One fragment per gateway | A gateway that accumulates thousands of automation-created consumers grows to several MiB; with one fragment per gateway every write to it makes every data plane download the whole gateway again. Buckets keep a write to a few KB. |
 
 ## Data Flow
 

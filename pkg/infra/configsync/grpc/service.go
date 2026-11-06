@@ -129,7 +129,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	if !ok {
 		identity = configsyncrevocation.Identity{Scope: scope}
 	}
-	conn := s.hub.register(identity, hello.GetInstanceId())
+	layered := hello.GetAcceptsLayered() && s.layeredSource() != nil
+	conn := s.hub.registerStream(identity, hello.GetInstanceId(), layered)
 	defer s.hub.teardown(conn)
 	// The interceptor admitted this token before the stream registered. A
 	// revocation loaded in between is caught here: the refresher swaps the
@@ -139,8 +140,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		return errInvalidToken
 	}
 
-	if _, version, ok := s.source.SnapshotPartsFor(scope); ok && version != hello.GetLastAppliedVersion() {
-		conn.enqueue(version)
+	if n, ok := s.currentNotice(scope, layered); ok && n.version != hello.GetLastAppliedVersion() {
+		conn.enqueue(n)
 	}
 
 	var usageChanges <-chan struct{}
@@ -187,8 +188,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 				return nil
 			}
 			return err
-		case version := <-conn.notices:
-			notice := &snapshotpb.ServerMessage{Msg: &snapshotpb.ServerMessage_Notice{Notice: &snapshotpb.VersionNotice{Version: version}}}
+		case n := <-conn.notices:
+			notice := &snapshotpb.ServerMessage{Msg: &snapshotpb.ServerMessage_Notice{Notice: &snapshotpb.VersionNotice{Version: n.version, Layered: n.layered}}}
 			if err := stream.Send(notice); err != nil {
 				return err
 			}
