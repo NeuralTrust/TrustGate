@@ -92,6 +92,7 @@ type Dispatcher struct {
 	incremental *incrementalState
 
 	mu              sync.Mutex
+	lastPushed      *Layered
 	publishedGlobal string
 	publishedScoped map[string]string
 
@@ -336,8 +337,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		}
 		if compiled.layered != nil {
 			d.holder.SetLayered(*compiled.layered)
+			d.logPush(d.lastPushed, compiled.layered)
+			d.lastPushed = compiled.layered
 		} else {
 			d.holder.ClearLayered()
+			d.lastPushed = nil
 		}
 		if globalChanged {
 			d.broadcastScope(compiled.layered, "", version)

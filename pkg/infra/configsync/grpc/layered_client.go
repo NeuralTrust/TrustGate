@@ -23,6 +23,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -87,28 +88,35 @@ func (c *Client) Verifies(version string) bool {
 // manifest when a fragment aged out mid-pull, and falls back to the single
 // blob for this call when the control plane serves no layered snapshot or the
 // retry fails the same way.
-func (c *Client) fetchLayeredOrSnapshot(ctx context.Context, etag string) ([]byte, string, bool, error) {
+func (c *Client) fetchLayeredOrSnapshot(ctx context.Context, etag string, started time.Time) ([]byte, string, bool, error) {
+	var stats pullStats
 	for attempt := 0; attempt < 2; attempt++ {
-		raw, version, notModified, err := c.fetchLayered(ctx, etag)
+		raw, version, notModified, err := c.fetchLayered(ctx, etag, &stats)
 		switch {
 		case err == nil:
+			if notModified {
+				c.logUpToDate("layered", version)
+			} else {
+				c.logLayeredPull(version, stats, len(raw), started)
+			}
 			return raw, version, notModified, nil
 		case errors.Is(err, errLayeredUnavailable):
-			return c.fetchSnapshot(ctx, etag)
+			return c.fetchSnapshotLogged(ctx, etag, started, fallbackUnimplemented)
 		case errors.Is(err, errFragmentGone):
+			stats.restarts++
 			continue
 		default:
 			return nil, "", false, err
 		}
 	}
-	return c.fetchSnapshot(ctx, etag)
+	return c.fetchSnapshotLogged(ctx, etag, started, fallbackFragmentGone)
 }
 
 // fetchLayered reads the manifest, fetches the fragments the cache does not
 // hold, verifies each against its digest and the manifest against its
 // version, and returns the fragments concatenated in manifest order. Nothing
 // is returned unless every fragment arrived and verified.
-func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string, bool, error) {
+func (c *Client) fetchLayered(ctx context.Context, etag string, stats *pullStats) ([]byte, string, bool, error) {
 	manifest, err := c.cli.GetManifest(ctx, &snapshotpb.GetManifestRequest{AppliedVersion: etag, InstanceId: c.instanceID})
 	if err != nil {
 		if status.Code(err) == codes.Unimplemented {
@@ -124,6 +132,7 @@ func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string,
 		return nil, "", false, err
 	}
 
+	stats.fragments, stats.alreadyExists = len(refs), 0
 	held := make(map[[32]byte][]byte, len(refs))
 	var missing [][32]byte
 	for _, ref := range refs {
@@ -132,6 +141,8 @@ func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string,
 		}
 		if raw, ok := c.fragments.get(ref.digest); ok {
 			held[ref.digest] = raw
+			stats.alreadyExists++
+			c.logAlreadyExists(ctx, ref.digest, len(raw))
 			continue
 		}
 		held[ref.digest] = nil
@@ -139,7 +150,7 @@ func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string,
 	}
 	for start := 0; start < len(missing); start += maxFragmentsPerRequest {
 		batch := missing[start:min(start+maxFragmentsPerRequest, len(missing))]
-		if err := c.fetchFragments(ctx, batch, held); err != nil {
+		if err := c.fetchFragments(ctx, batch, held, stats); err != nil {
 			if errors.Is(err, errFragmentGone) {
 				c.fragments.keep(held)
 			}
@@ -205,7 +216,7 @@ func verifyManifest(manifest *snapshotpb.Manifest) ([]manifestRef, int64, error)
 	return refs, total, nil
 }
 
-func (c *Client) fetchFragments(ctx context.Context, digests [][32]byte, held map[[32]byte][]byte) error {
+func (c *Client) fetchFragments(ctx context.Context, digests [][32]byte, held map[[32]byte][]byte, stats *pullStats) error {
 	req := &snapshotpb.GetFragmentsRequest{Digests: make([][]byte, len(digests))}
 	wanted := make(map[[32]byte]bool, len(digests))
 	for i := range digests {
@@ -258,6 +269,7 @@ func (c *Client) fetchFragments(ctx context.Context, digests [][32]byte, held ma
 			return fmt.Errorf("%w: fragment %x does not match its digest", configsync.ErrIntegrity, digest[:8])
 		}
 		held[digest] = buf
+		c.logPulledFragment(stats, digest, len(buf))
 		delete(wanted, digest)
 		buf, open = nil, false
 	}
