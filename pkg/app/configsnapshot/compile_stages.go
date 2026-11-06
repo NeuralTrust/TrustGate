@@ -46,6 +46,12 @@ const (
 	compileReasonBoot     compileReason = "boot"
 	compileReasonBackstop compileReason = "backstop"
 	compileReasonSignal   compileReason = "signal"
+	// compileReasonUnnamedMarker is a marker that names no gateway or catalog,
+	// written by an older build or by a write that could not name its scope.
+	compileReasonUnnamedMarker compileReason = "unnamed_marker"
+	// compileReasonCursorReset is a cursor that could no longer trust its
+	// position: rows it never read were pruned, or too many seqs went missing.
+	compileReasonCursorReset compileReason = "cursor_reset"
 )
 
 // A nil *compileStages records nothing, so compile paths can time unconditionally.

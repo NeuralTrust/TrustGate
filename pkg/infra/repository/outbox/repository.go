@@ -121,7 +121,7 @@ func WithGatewayMarkedTx(ctx context.Context, conn *database.Connection, appende
 	})
 }
 
-// poolQuerier is the subset of pgxpool.Pool the drain/prune reads need, kept small to fake in tests.
+// poolQuerier is the subset of pgxpool.Pool the marker reads and the prune need, kept small to fake in tests.
 type poolQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -135,9 +135,8 @@ type Repository struct {
 }
 
 var (
-	_ Appender                          = (*Repository)(nil)
-	_ configsyncport.OutboxRepository   = (*Repository)(nil)
-	_ configsyncport.OutboxMarkerReader = (*Repository)(nil)
+	_ Appender                        = (*Repository)(nil)
+	_ configsyncport.OutboxRepository = (*Repository)(nil)
 )
 
 // NewRepository builds the outbox repository from the shared connection.
@@ -227,51 +226,32 @@ func decodeMarker(seq int64, kind *string, gatewayID *uuid.UUID) configsyncport.
 	return marker
 }
 
-// Pending returns the seqs of every marker currently visible, oldest first. The
-// dispatcher captures this set before compiling so it later drains exactly the
-// markers whose writes are guaranteed to be in the compiled snapshot; a marker that
-// becomes visible afterwards (a lower seq committing after a higher one) is absent
-// from the set and survives to the next cycle.
-func (r *Repository) Pending(ctx context.Context) ([]int64, error) {
-	rows, err := r.pool.Query(ctx, `SELECT seq FROM config_snapshot_outbox ORDER BY seq`)
+// ReadSeqs returns, oldest first, the markers among seqs that are visible now.
+func (r *Repository) ReadSeqs(ctx context.Context, seqs []int64) ([]configsyncport.Marker, error) {
+	if len(seqs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT seq, kind, gateway_id FROM config_snapshot_outbox WHERE seq = ANY($1) ORDER BY seq`, seqs)
 	if err != nil {
-		return nil, fmt.Errorf("outbox: pending: %w", err)
+		return nil, fmt.Errorf("outbox: read seqs: %w", err)
 	}
 	defer rows.Close()
-	var seqs []int64
+	var markers []configsyncport.Marker
 	for rows.Next() {
-		var seq int64
-		if err := rows.Scan(&seq); err != nil {
-			return nil, fmt.Errorf("outbox: scan pending seq: %w", err)
+		var (
+			seq       int64
+			kind      *string
+			gatewayID *uuid.UUID
+		)
+		if err := rows.Scan(&seq, &kind, &gatewayID); err != nil {
+			return nil, fmt.Errorf("outbox: scan marker: %w", err)
 		}
-		seqs = append(seqs, seq)
+		markers = append(markers, decodeMarker(seq, kind, gatewayID))
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("outbox: iterate pending: %w", err)
+		return nil, fmt.Errorf("outbox: iterate markers: %w", err)
 	}
-	return seqs, nil
-}
-
-// PendingCount returns the number of markers currently in the outbox.
-func (r *Repository) PendingCount(ctx context.Context) (int64, error) {
-	var count int64
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM config_snapshot_outbox`).Scan(&count); err != nil {
-		return 0, fmt.Errorf("outbox: pending count: %w", err)
-	}
-	return count, nil
-}
-
-// DeleteSeqs removes exactly the given marker seqs, returning the number deleted. It
-// is a no-op for an empty set.
-func (r *Repository) DeleteSeqs(ctx context.Context, seqs []int64) (int64, error) {
-	if len(seqs) == 0 {
-		return 0, nil
-	}
-	tag, err := r.pool.Exec(ctx, `DELETE FROM config_snapshot_outbox WHERE seq = ANY($1)`, seqs)
-	if err != nil {
-		return 0, fmt.Errorf("outbox: delete seqs: %w", err)
-	}
-	return tag.RowsAffected(), nil
+	return markers, nil
 }
 
 // PruneOlderThan enforces the safety bound so a stuck dispatcher can never grow the

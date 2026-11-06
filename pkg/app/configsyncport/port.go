@@ -38,21 +38,21 @@ type VersionBroadcaster interface {
 	BroadcastScope(scope, version string)
 }
 
-// OutboxRepository is the change-marker outbox as seen by the dispatcher: read the
-// set of markers visible before a compile, drain exactly that set once the snapshot
-// is broadcast, and prune under the safety bound. It carries no pgx types; the
-// in-transaction append lives in the infra Appender the admin repositories consume,
-// so the app layer never imports pgx.
+// OutboxRepository is the change-marker outbox as seen by the dispatcher. Every
+// admin replica reads it through its own cursor and never deletes markers: rows
+// leave only through PruneOlderThan, so one replica's compile cannot hide a
+// marker from another. It carries no pgx types; the in-transaction append lives
+// in the infra Appender the admin repositories consume.
 //
-// Drain works on the observed set rather than a seq range because BIGSERIAL seq is
-// assigned at INSERT, not COMMIT: a lower seq can become visible after a higher one,
-// so a range delete could drop a marker whose write was not yet in the compiled
-// snapshot. Deleting only the observed set lets such a late marker survive to the
-// next cycle.
+// ReadSince returns, oldest first, the markers whose seq is above afterSeq, plus
+// the lowest seq still in the outbox (zero when it is empty) so a reader can
+// tell that rows it never saw were pruned. ReadSeqs returns the markers among
+// seqs that are visible now; a reader uses it for seqs that were missing when it
+// moved past them, because BIGSERIAL seq is assigned at INSERT, not COMMIT, and
+// a lower seq can become visible after a higher one.
 type OutboxRepository interface {
-	Pending(ctx context.Context) (seqs []int64, err error)
-	PendingCount(ctx context.Context) (int64, error)
-	DeleteSeqs(ctx context.Context, seqs []int64) (deleted int64, err error)
+	ReadSince(ctx context.Context, afterSeq int64) (markers []Marker, minSeq int64, err error)
+	ReadSeqs(ctx context.Context, seqs []int64) ([]Marker, error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time, keepMax int) (deleted int64, err error)
 }
 
@@ -75,12 +75,4 @@ type Marker struct {
 	Seq       int64
 	Kind      MarkerKind
 	GatewayID ids.GatewayID
-}
-
-// OutboxMarkerReader reads committed change markers with what they dirtied.
-// ReadSince returns, oldest first, the markers whose seq is above afterSeq,
-// plus the lowest seq still in the outbox (zero when it is empty) so a reader
-// can tell that rows it never saw were pruned.
-type OutboxMarkerReader interface {
-	ReadSince(ctx context.Context, afterSeq int64) (markers []Marker, minSeq int64, err error)
 }
