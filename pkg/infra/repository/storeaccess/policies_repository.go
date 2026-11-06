@@ -45,16 +45,8 @@ func NewPolicyRepository(conn *database.Connection, appender outbox.Appender) *P
 	return &PolicyRepository{conn: conn, outbox: appender}
 }
 
-func (r *PolicyRepository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		if r.outbox == nil {
-			return nil
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *PolicyRepository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *PolicyRepository) UpsertPolicy(ctx context.Context, p *domain.Policy) error {
@@ -73,7 +65,7 @@ func (r *PolicyRepository) UpsertPolicy(ctx context.Context, p *domain.Policy) e
 		ON CONFLICT (gateway_id, principal_type, principal_id) DO UPDATE
 			SET mode       = EXCLUDED.mode,
 			    updated_at = EXCLUDED.updated_at`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, p.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, p.GatewayID, string(p.PrincipalType), p.PrincipalID, p.Mode, created, now); err != nil {
 			return mapPolicyPgError(err)
 		}
@@ -85,7 +77,7 @@ func (r *PolicyRepository) DeletePolicy(ctx context.Context, gatewayID ids.Gatew
 	const query = `
 		DELETE FROM store_access_policies
 		 WHERE gateway_id = $1 AND principal_type = $2 AND principal_id = $3`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, gatewayID, string(principalType), principalID); err != nil {
 			return mapPolicyPgError(err)
 		}

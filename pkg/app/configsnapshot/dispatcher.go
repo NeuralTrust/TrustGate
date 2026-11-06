@@ -199,9 +199,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 	var armed bool
 	var lastDispatch time.Time
-	dispatch := func(failMsg string) {
+	dispatch := func(failMsg string, reason compileReason) {
 		lastDispatch = time.Now()
-		if err := d.dispatch(ctx); err != nil && ctx.Err() == nil {
+		if err := d.dispatch(ctx, reason); err != nil && ctx.Err() == nil {
 			d.logger.Error(failMsg,
 				slog.String("component", component), slog.String("error", err.Error()))
 		}
@@ -222,12 +222,12 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 				armed = true
 				continue
 			}
-			dispatch("dispatch failed")
+			dispatch("dispatch failed", compileReasonSignal)
 		case <-timer.C:
 			armed = false
-			dispatch("dispatch failed")
+			dispatch("dispatch failed", compileReasonSignal)
 		case <-ticker.C:
-			dispatch("backstop dispatch failed")
+			dispatch("backstop dispatch failed", compileReasonBackstop)
 		}
 	}
 }
@@ -237,10 +237,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 // mutually exclusive across cycles, so overlapping callers could drain against
 // different frontiers.
 func (d *Dispatcher) Dispatch(ctx context.Context) error {
-	return d.dispatch(ctx)
+	return d.dispatch(ctx, compileReasonSignal)
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context) error {
+func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	// Prune runs on every cycle, including compile-failure returns, so a persistent
 	// compile outage can never grow the outbox past its retention/row bound.
 	defer func() {
@@ -263,14 +263,20 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		pending = nil
 	}
 
+	if !d.compiled.Load() {
+		reason = compileReasonBoot
+	}
+	stages := newCompileStages()
 	compileStart := time.Now()
 	compiledAt := d.compiledAt()
-	compiled, err := d.compile(ctx)
+	compiled, err := d.compile(ctx, stages)
 	if err != nil {
+		recordCompile(ctx, d.logger, compileModeFull, reason, stages, false)
 		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
+	recordCompile(ctx, d.logger, compileModeFull, reason, stages, true)
 	if compiled.scoped != nil {
 		d.lastCatalog, d.lastScoped = compiled.catalog, compiled.scoped
 	}
@@ -309,6 +315,10 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 			slog.String("component", component),
 			slog.String("version", version),
 			slog.Duration("compile", compileDuration),
+			slog.String("mode", string(compileModeFull)),
+			slog.String("reason", string(reason)),
+			slog.Int("dirty", 0),
+			stages.logAttr(),
 			slog.Int("bytes", len(raw)),
 			slog.Int("scopes", compiled.scopes.count),
 			slog.String("largest_scope", compiled.scopes.largest),
@@ -358,15 +368,17 @@ func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
 	return false
 }
 
-func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
+func (d *Dispatcher) compile(ctx context.Context, stages *compileStages) (compiledSnapshot, error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
-		global, scopedSnaps, catalog, cerr := partitioned.CompileAll(ctx)
+		global, scopedSnaps, catalog, cerr := d.compileAll(ctx, partitioned, stages)
 		if cerr != nil {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
 		// The catalog is usually the bulk of the encoded bytes and identical in
 		// every snapshot, so encode it once and share the bytes across scopes.
+		encodeStart := time.Now()
 		catalogRaw, eerr := d.codec.Encode(catalog)
+		stages.since(stageEncode, encodeStart)
 		if eerr != nil {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
 		}
@@ -374,13 +386,15 @@ func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 		if catalogUnchanged {
 			catalogRaw = d.lastCatalog
 		}
-		raw, version, err := d.encodeWithCatalog(global, catalogRaw)
+		raw, version, err := d.encodeWithCatalog(global, catalogRaw, stages)
 		if err != nil {
 			return compiledSnapshot{}, err
 		}
 		compiled := compiledSnapshot{raw: raw, version: version, scoped: make(map[string]ScopedSnapshot, len(scopedSnaps)), catalog: catalogRaw, catalogBytes: len(catalogRaw)}
 		for scope, snap := range scopedSnaps {
+			encodeStart = time.Now()
 			tenantRaw, serr := d.codec.Encode(snap)
+			stages.since(stageEncode, encodeStart)
 			if serr != nil {
 				return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode: %w", serr)
 			}
@@ -388,7 +402,9 @@ func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 			if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
 				scoped = prev
 			} else {
+				hashStart := time.Now()
 				scoped.Version = d.versionParts(tenantRaw, catalogRaw)
+				stages.since(stageHash, hashStart)
 			}
 			compiled.scoped[scope] = scoped
 			compiled.scopes.add(scope, scoped.Len())
@@ -397,11 +413,13 @@ func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 		return compiled, nil
 	}
 
+	readStart := time.Now()
 	snapshot, cerr := d.compiler.Compile(ctx)
+	stages.since(stageRead, readStart)
 	if cerr != nil {
 		return compiledSnapshot{}, fmt.Errorf("configsnapshot: compile: %w", cerr)
 	}
-	raw, version, err := d.encode(snapshot)
+	raw, version, err := d.encode(snapshot, stages)
 	if err != nil {
 		return compiledSnapshot{}, err
 	}
@@ -413,15 +431,31 @@ func (d *Dispatcher) compile(ctx context.Context) (compiledSnapshot, error) {
 // encodeWithCatalog encodes a tenant-only snapshot and appends the
 // pre-encoded catalog bytes. Protobuf unmarshal merges the concatenation into
 // one full snapshot; the version hashes the exact bytes served.
-func (d *Dispatcher) encodeWithCatalog(snapshot *readmodel.Snapshot, catalogRaw []byte) ([]byte, string, error) {
+func (d *Dispatcher) encodeWithCatalog(snapshot *readmodel.Snapshot, catalogRaw []byte, stages *compileStages) ([]byte, string, error) {
+	encodeStart := time.Now()
 	tenantRaw, err := d.codec.Encode(snapshot)
+	stages.since(stageEncode, encodeStart)
 	if err != nil {
 		return nil, "", fmt.Errorf("configsnapshot: encode: %w", err)
 	}
+	mergeStart := time.Now()
 	raw := make([]byte, 0, len(tenantRaw)+len(catalogRaw))
 	raw = append(raw, tenantRaw...)
 	raw = append(raw, catalogRaw...)
-	return raw, d.codec.Version(raw), nil
+	stages.since(stageMerge, mergeStart)
+	hashStart := time.Now()
+	version := d.codec.Version(raw)
+	stages.since(stageHash, hashStart)
+	return raw, version, nil
+}
+
+func (d *Dispatcher) compileAll(ctx context.Context, compiler PartitionedCompiler, stages *compileStages) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
+	if staged, ok := compiler.(stagedCompiler); ok {
+		return staged.compileAllStaged(ctx, stages)
+	}
+	readStart := time.Now()
+	defer stages.since(stageRead, readStart)
+	return compiler.CompileAll(ctx)
 }
 
 func (d *Dispatcher) versionParts(parts ...[]byte) string {
@@ -431,10 +465,15 @@ func (d *Dispatcher) versionParts(parts ...[]byte) string {
 	return d.codec.Version(bytes.Join(parts, nil))
 }
 
-func (d *Dispatcher) encode(snapshot *readmodel.Snapshot) ([]byte, string, error) {
+func (d *Dispatcher) encode(snapshot *readmodel.Snapshot, stages *compileStages) ([]byte, string, error) {
+	encodeStart := time.Now()
 	raw, err := d.codec.Encode(snapshot)
+	stages.since(stageEncode, encodeStart)
 	if err != nil {
 		return nil, "", fmt.Errorf("configsnapshot: encode: %w", err)
 	}
-	return raw, d.codec.Version(raw), nil
+	hashStart := time.Now()
+	version := d.codec.Version(raw)
+	stages.since(stageHash, hashStart)
+	return raw, version, nil
 }
