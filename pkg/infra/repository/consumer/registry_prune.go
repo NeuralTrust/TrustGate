@@ -35,7 +35,7 @@ func (r *Repository) PruneRegistryReferences(
 	registryID ids.RegistryID,
 ) (registrydomain.PruneReport, error) {
 	var report registrydomain.PruneReport
-	if err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	if err := r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		var err error
 		report, err = r.PruneRegistryReferencesTx(ctx, tx, gatewayID, registryID)
 		return err

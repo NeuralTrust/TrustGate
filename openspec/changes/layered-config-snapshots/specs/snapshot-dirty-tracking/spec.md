@@ -16,18 +16,13 @@ compile, so an unmigrated writer is never missed.
 an additive migration. Every writer that dirties one gateway MUST stamp that
 gateway's id. A writer that only knows a child id (a consumer, auth, policy or
 registry) MUST resolve the owning gateway in the same transaction. A writer
-that changes data shared across gateways MUST stamp a `kind` instead of a
-gateway:
-
-- `catalog`
-- `tenant_caps`
-- `session_revocation`
-- `store`
-- `key_group_budget`
-- `global`
+that changes the shared catalog MUST stamp `kind=catalog`. Shared inputs that
+every compile re-reads (tenant caps, session revocations) only need a marker
+that starts a cycle, so their writers stamp the gateway they belong to. The
+kinds are `gateway`, `catalog` and `all`; an unknown kind reads as `all`.
 
 A writer that affects several gateways MUST stamp one marker per gateway or
-`kind=global`.
+`kind=all`.
 
 #### Scenario: Consumer write names its gateway
 
@@ -39,7 +34,7 @@ A writer that affects several gateways MUST stamp one marker per gateway or
 
 - GIVEN a registry secret is used by gateways G1 and G2
 - WHEN the secret is rotated
-- THEN markers for G1 and G2 commit, or one marker with `kind=global`
+- THEN markers for G1 and G2 commit, or one marker with `kind=all`
 
 #### Scenario: Marker commits with the write
 

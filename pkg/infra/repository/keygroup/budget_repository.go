@@ -49,16 +49,8 @@ func NewBudgetRepository(conn *database.Connection, appender outbox.Appender) *B
 	return &BudgetRepository{conn: conn, outbox: appender}
 }
 
-func (r *BudgetRepository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		if r.outbox == nil {
-			return nil
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *BudgetRepository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *BudgetRepository) Upsert(ctx context.Context, b *domain.Budget) (*domain.Budget, error) {
@@ -80,7 +72,7 @@ func (r *BudgetRepository) Upsert(ctx context.Context, b *domain.Budget) (*domai
 			    updated_at               = EXCLUDED.updated_at
 		RETURNING ` + budgetColumns
 	var stored *domain.Budget
-	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err = r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		var scanErr error
 		stored, scanErr = scanBudget(tx.QueryRow(ctx, query,
 			b.GatewayID, b.GroupID, b.MonthlyLimitUSD, b.MemberMonthlyLimitUSD, overrides, b.Action, b.CreatedAt, b.UpdatedAt,
@@ -98,7 +90,7 @@ func (r *BudgetRepository) Upsert(ctx context.Context, b *domain.Budget) (*domai
 
 func (r *BudgetRepository) Delete(ctx context.Context, gatewayID ids.GatewayID, groupID string) error {
 	const query = `DELETE FROM key_group_budgets WHERE gateway_id = $1 AND group_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, gatewayID, groupID)
 		if err != nil {
 			return mapPgError(err)

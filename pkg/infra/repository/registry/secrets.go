@@ -366,12 +366,15 @@ func (r *Repository) rewriteMCPTarget(
 	id ids.RegistryID,
 	fix func(*domain.MCPTarget) bool,
 ) (encrypted, fixed bool, err error) {
-	const lock = `SELECT mcp_target FROM registries WHERE id = $1 FOR UPDATE`
+	const lock = `SELECT mcp_target, gateway_id FROM registries WHERE id = $1 FOR UPDATE`
 	const update = `UPDATE registries SET mcp_target = $2 WHERE id = $1`
 	err = database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		encrypted, fixed = false, false
-		var raw []byte
-		if err := tx.QueryRow(ctx, lock, id).Scan(&raw); err != nil {
+		var (
+			raw       []byte
+			gatewayID ids.GatewayID
+		)
+		if err := tx.QueryRow(ctx, lock, id).Scan(&raw, &gatewayID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -408,7 +411,7 @@ func (r *Repository) rewriteMCPTarget(
 			return err
 		}
 		if changed {
-			if err := r.outbox.AppendTx(ctx, tx); err != nil {
+			if err := r.outbox.AppendGatewayTx(ctx, tx, gatewayID); err != nil {
 				return err
 			}
 		}
