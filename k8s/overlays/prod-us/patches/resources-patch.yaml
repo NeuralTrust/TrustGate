@@ -7,6 +7,9 @@ spec:
     spec:
       containers:
       - name: admin
+        env:
+        - name: GOMEMLIMIT
+          value: 1536MiB
         # Control plane, not a data path: sized vertically because snapshot
         # compilation is per-replica work that extra pods only duplicate.
         resources:
