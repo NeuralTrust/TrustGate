@@ -420,6 +420,11 @@ type ConfigSyncConfig struct {
 	// compiles as soon as a change arrives, with no debounce. Off keeps the
 	// full compile on every change, and turning it off is the rollback.
 	IncrementalCompile bool
+	// LayeredPull is CONFIG_SYNC_LAYERED_PULL, read by the data plane. When set
+	// it advertises accepts_layered and pulls snapshots as a manifest plus the
+	// fragments it does not hold yet, falling back to the single blob whenever
+	// the control plane does not serve a layered snapshot.
+	LayeredPull bool
 	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
 	// serve them after a restart while compiling fails.
 	AdminLKGEnabled bool
@@ -1415,6 +1420,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		OutboxGapExpiry:      getEnvDuration("CONFIG_SYNC_OUTBOX_GAP_EXPIRY", defaultConfigSyncOutboxGapExpiry),
 		IncrementalCompile:   getEnvBool("CONFIG_SYNC_INCREMENTAL_COMPILE", false),
+		LayeredPull:          getEnvBool("CONFIG_SYNC_LAYERED_PULL", false),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
 		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(

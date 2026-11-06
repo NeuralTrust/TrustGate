@@ -65,6 +65,9 @@ type Client struct {
 
 	heartbeat         *snapshotpb.Heartbeat
 	heartbeatInterval time.Duration
+
+	layered   bool
+	fragments fragmentCache
 }
 
 // UsageSink receives the usage snapshots and changes the control plane
@@ -114,6 +117,7 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 	c := newClient(conn, cfg.InstanceID, logger)
 	c.endpoint = cfg.GRPCEndpoint
 	c.heartbeatInterval = cfg.HeartbeatEvery()
+	c.layered = cfg.LayeredPull
 	return c, nil
 }
 
@@ -164,9 +168,19 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Fetch pulls the current snapshot via GetSnapshot, short-circuiting on
-// not_modified and verifying the reassembled body length against the header.
+// Fetch pulls the current snapshot: as a manifest plus the fragments the data
+// plane does not hold yet when layered pull is on and the control plane serves
+// it, and as one blob via GetSnapshot otherwise.
 func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, error) {
+	if c.layered {
+		return c.fetchLayeredOrSnapshot(ctx, etag)
+	}
+	return c.fetchSnapshot(ctx, etag)
+}
+
+// fetchSnapshot pulls the snapshot via GetSnapshot, short-circuiting on
+// not_modified and verifying the reassembled body length against the header.
+func (c *Client) fetchSnapshot(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID})
 	if err != nil {
 		return nil, "", false, fmt.Errorf("configsync: get snapshot: %w", err)
@@ -317,6 +331,7 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		LastAppliedVersion:  c.lastApplied,
 		AcceptsUsage:        c.acceptsUsage.Load(),
 		AcceptsUsageChanges: c.acceptsUsage.Load(),
+		AcceptsLayered:      c.layered,
 	}}}
 	helloResult := make(chan error, 1)
 	go func() { helloResult <- stream.Send(hello) }()

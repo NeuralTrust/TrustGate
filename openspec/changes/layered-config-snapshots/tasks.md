@@ -401,7 +401,7 @@ S6 implementation notes:
 
 ### S7: Data plane side
 
-- [ ] 7.1 `pkg/runtimeconfig/sync/{worker,configsync}.go` and
+- [x] 7.1 `pkg/runtimeconfig/sync/{worker,configsync}.go` and
   `pkg/infra/configsync/grpc/client.go`:
   - layered fetcher: `GetManifest`, then fetch the missing digests, verify each
     sha256, recompute the manifest version, concatenate, decode, swap, persist
@@ -409,9 +409,9 @@ S6 implementation notes:
   - fragment cache `map[digest][]byte` for the last applied manifest;
   - `Unimplemented` falls back to `GetSnapshot`;
   - a partial fetch is never applied.
-- [ ] 7.2 Config `CONFIG_SYNC_LAYERED_PULL` (data plane, default `false`); send
+- [x] 7.2 Config `CONFIG_SYNC_LAYERED_PULL` (data plane, default `false`); send
   `accepts_layered` in `Hello` only when it is on.
-- [ ] 7.3 Tests:
+- [x] 7.3 Tests:
   - a new client against an old server falls back;
   - a digest mismatch is rejected;
   - `NotFound` restarts from the manifest;
@@ -420,8 +420,38 @@ S6 implementation notes:
     not the gateway;
   - an LKG restart converges.
   - Verify: unit tests with `-race`, plus a functional run with the flag on.
-- [ ] 7.4 Rollout notes: admin image serving both paths first, then data planes
+- [x] 7.4 Rollout notes: admin image serving both paths first, then data planes
   with `CONFIG_SYNC_LAYERED_PULL=true` on DEV, then prod. Rollback means the flag off.
+
+S7 implementation notes:
+
+- The layered pull lives in the gRPC client (`layered_client.go`); the worker
+  keeps one `Fetch` path. A layered version hashes fragment digests, not the
+  assembled bytes, so the client implements `configsync.VerifyingFetcher` and
+  the worker skips its body-hash check only for versions the fetcher verified
+  (`m1:` with layered pull on). Single-blob versions are still checked.
+- Fallback is per call, never sticky: `Unimplemented` on `GetManifest` or
+  `GetFragments` (old admin, incremental compile off, LKG being served) pulls
+  the single blob for that call. `NotFound` restarts from a fresh manifest
+  once; a second `NotFound` pulls the single blob.
+- Missing fragments are fetched in batches of at most 4,096 (the admin's
+  per-call cap). Each fragment is verified against its digest when its last
+  chunk arrives, the manifest against the hash of its digests, every size
+  against the manifest; nothing is returned, and the cache is not touched,
+  unless every fragment verified.
+- The fragment cache holds only the fragments of the last assembled manifest.
+- LKG: the assembled blob is persisted as today. After a restart the store
+  version is the hash of the restored bytes, which never equals a manifest
+  version, so the first converge pulls the full manifest and refills the cache.
+- `CONFIG_SYNC_LAYERED_PULL=false` is set explicitly in the dev, prod and
+  prod-us overlays next to `CONFIG_SYNC_INCREMENTAL_COMPILE=false`.
+- Measured (`TestLayeredFetchOfOneNewConsumerInABigGatewayPullsAFewBuckets`):
+  a hosted gateway with 5,000 consumers and keys is a 3.0 MB first pull in 64
+  fragments; one new consumer and key then pulls about 86 KB (2.9%).
+- Functional `TestDBLessDataPlane_*` / `TestAdminLKG_*`: 7/7 with both flags
+  off, and 7/7 with incremental compile and layered pull on (data planes
+  applied `m1:` versions; the one single-blob apply came from the LKG test,
+  where the admin serves no layered snapshot).
 
 ## Phase 3 — Close-out
 
