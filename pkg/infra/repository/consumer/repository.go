@@ -90,15 +90,36 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(tx pgx.Tx, marks *outbox.Marks) error) error {
+	return outbox.WithMarkedTx(ctx, r.conn, r.outbox, fn)
+}
+
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
+}
+
+// Reads the owning gateway in the same transaction, after fn, so the marker commits with the write.
+func (r *Repository) withConsumerMarkedTx(ctx context.Context, consumerID ids.ConsumerID, fn func(pgx.Tx) error) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx, marks *outbox.Marks) error {
 		if err := fn(tx); err != nil {
 			return err
 		}
-		return r.outbox.AppendTx(ctx, tx)
+		return markConsumerGateway(ctx, tx, marks, consumerID)
 	})
+}
+
+// Leaves marks empty when the consumer is gone; the write then dirties everything.
+func markConsumerGateway(ctx context.Context, tx pgx.Tx, marks *outbox.Marks, consumerID ids.ConsumerID) error {
+	var gatewayID ids.GatewayID
+	err := tx.QueryRow(ctx, `SELECT gateway_id FROM consumers WHERE id = $1`, consumerID).Scan(&gatewayID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("consumer repository: resolve gateway of consumer %s: %w", consumerID, err)
+	}
+	marks.Gateway(gatewayID)
+	return nil
 }
 
 func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
@@ -146,7 +167,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt, labelSetsBytes,
@@ -216,7 +237,7 @@ func (r *Repository) Update(
 		       auth_binding     = $14,
 		       description      = $15
 		 WHERE id = $1 AND gateway_id = $12`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
 		}
@@ -250,7 +271,7 @@ func (r *Repository) UpdateLabelSets(ctx context.Context, c *domain.Consumer) er
 		return fmt.Errorf("consumer repository: marshal label_sets: %w", err)
 	}
 	const query = `UPDATE consumers SET label_sets = $3, updated_at = $4 WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, c.ID, c.GatewayID, labelSetsBytes, c.UpdatedAt)
 		if err != nil {
 			return mapPgError(err)
@@ -383,7 +404,7 @@ func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.Consumer
 		const query = `
 			INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 			ON CONFLICT (consumer_id, registry_id) DO NOTHING`
-		return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 			if _, err := tx.Exec(ctx, query, consumerID, registryID, domain.DefaultRegistryWeight); err != nil {
 				return mapPgError(err)
 			}
@@ -393,7 +414,7 @@ func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.Consumer
 	const query = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, consumerID, registryID, clampRegistryWeight(*weight)); err != nil {
 			return mapPgError(err)
 		}
@@ -433,7 +454,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	checkGateway bool,
 ) (*domain.Consumer, error) {
 	var current *domain.Consumer
-	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err := r.withMarkedTx(ctx, func(tx pgx.Tx, marks *outbox.Marks) error {
 		consumer, err := lockConsumerRoutingReferences(ctx, tx, consumerID)
 		if err != nil {
 			return err
@@ -441,6 +462,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 		if checkGateway && consumer.GatewayID != gatewayID {
 			return domain.ErrNotFound
 		}
+		marks.Gateway(consumer.GatewayID)
 		if consumerReferencesRegistry(consumer, registryID) {
 			return fmt.Errorf("consumer registry %s has dependent routing references: %w", registryID, commonerrors.ErrConflict)
 		}
@@ -463,7 +485,7 @@ func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 			return err
 		}
 	}
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
 			return err
 		}
@@ -495,7 +517,7 @@ func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 
 func (r *Repository) DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
 	const query = `DELETE FROM consumer_auth WHERE consumer_id = $1 AND auth_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
 			return mapPgError(err)
 		}
@@ -517,7 +539,7 @@ func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID
 	const lockConsumer = `SELECT 1 FROM consumers WHERE id = $1 FOR KEY SHARE`
 	const lockPolicy = `SELECT mcp_wide FROM policies WHERE id = $1 FOR SHARE`
 	const query = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, lockConsumer, consumerID); err != nil {
 			return fmt.Errorf("consumer repository: lock consumer: %w", err)
 		}
@@ -538,7 +560,7 @@ func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID
 
 func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
 	const query = `DELETE FROM consumer_policy WHERE consumer_id = $1 AND policy_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, consumerID, policyID); err != nil {
 			return mapPgError(err)
 		}
@@ -548,7 +570,7 @@ func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error {
 	const query = `DELETE FROM consumers WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)

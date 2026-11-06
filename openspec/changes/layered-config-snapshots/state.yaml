@@ -10,3 +10,4 @@ phases:
   apply: in_progress
 apply_slices:
   S1: done
+  S2: done

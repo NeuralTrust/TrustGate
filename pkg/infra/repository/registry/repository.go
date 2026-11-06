@@ -90,15 +90,8 @@ func NewRepository(
 	return r
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
@@ -128,7 +121,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	const query = `
 		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
@@ -172,7 +165,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       pricing          = $11,
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		mcpTargetBytes, err := r.encodeMCPTargetForUpdate(ctx, tx, b.ID, b.GatewayID, b.MCPTarget)
 		if err != nil {
 			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
@@ -235,7 +228,7 @@ func (r *Repository) CompareAndSwapMCPTarget(
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		if err := r.outbox.AppendTx(ctx, tx); err != nil {
+		if err := r.outbox.AppendGatewayTx(ctx, tx, gatewayID); err != nil {
 			return err
 		}
 		applied = true
@@ -263,7 +256,7 @@ func (r *Repository) Delete(
 ) (domain.PruneReport, error) {
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
 	var report domain.PruneReport
-	if err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	if err := r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		for _, hook := range r.deleteHooks {
 			hookReport, err := hook(ctx, tx, gatewayID, id)
 			if err != nil {

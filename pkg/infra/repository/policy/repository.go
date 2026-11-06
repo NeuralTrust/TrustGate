@@ -70,15 +70,8 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
@@ -100,7 +93,7 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	const query = `
 		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, mcp_wide, priority, parallel, settings, stages, created_at, updated_at, description, mode, mcp_scope)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, p.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.MCPWide, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), scopeBytes,
@@ -150,7 +143,7 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope
 		       mcp_scope   = CASE WHEN $14::boolean THEN $13::jsonb ELSE mcp_scope END
 		 WHERE id = $1 AND gateway_id = $12
 		   AND global = $15 AND mcp_wide = $16`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, p.GatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			p.ID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID, scopeBytes,
@@ -229,7 +222,7 @@ func (r *Repository) setPlacementFlag(
 		unchangedSince = readAt
 	}
 	var written domain.Placement
-	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err := r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, query, id, on, gatewayID, unchangedSince).
 			Scan(&written.Global, &written.MCPWide, &written.UpdatedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -254,7 +247,7 @@ func (r *Repository) setPlacementFlag(
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error {
 	const query = `DELETE FROM policies WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
