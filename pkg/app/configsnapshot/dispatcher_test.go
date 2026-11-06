@@ -15,13 +15,18 @@
 package configsnapshot_test
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
+	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -30,6 +35,8 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var errCompile = errors.New("compile failed")
@@ -109,8 +116,9 @@ func (b *fakeBroadcaster) scopedBroadcasted(scope string) []string {
 
 type fakeOutbox struct {
 	mu          sync.Mutex
-	seqs        []int64
-	deletes     []int64
+	markers     []configsyncport.Marker
+	reads       []int64
+	readErr     error
 	pruneCalls  int
 	pruneKeep   int
 	pruneCutoff time.Time
@@ -119,43 +127,73 @@ type fakeOutbox struct {
 func (o *fakeOutbox) setSeqs(seqs ...int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.seqs = append([]int64(nil), seqs...)
+	o.markers = nil
+	for _, seq := range seqs {
+		o.markers = append(o.markers, configsyncport.Marker{Seq: seq, Kind: configsyncport.MarkerAll})
+	}
 }
 
 func (o *fakeOutbox) appendSeqs(seqs ...int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.seqs = append(o.seqs, seqs...)
-}
-
-func (o *fakeOutbox) Pending(context.Context) ([]int64, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]int64(nil), o.seqs...), nil
-}
-
-func (o *fakeOutbox) PendingCount(context.Context) (int64, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return int64(len(o.seqs)), nil
-}
-
-func (o *fakeOutbox) DeleteSeqs(_ context.Context, seqs []int64) (int64, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	drop := make(map[int64]struct{}, len(seqs))
-	for _, s := range seqs {
-		drop[s] = struct{}{}
-		o.deletes = append(o.deletes, s)
+	for _, seq := range seqs {
+		o.markers = append(o.markers, configsyncport.Marker{Seq: seq, Kind: configsyncport.MarkerAll})
 	}
-	kept := o.seqs[:0:0]
-	for _, s := range o.seqs {
-		if _, ok := drop[s]; !ok {
-			kept = append(kept, s)
+}
+
+func (o *fakeOutbox) appendMarkers(markers ...configsyncport.Marker) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.markers = append(o.markers, markers...)
+}
+
+func (o *fakeOutbox) setReadErr(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.readErr = err
+}
+
+func (o *fakeOutbox) sorted() []configsyncport.Marker {
+	out := append([]configsyncport.Marker(nil), o.markers...)
+	slices.SortFunc(out, func(a, b configsyncport.Marker) int { return cmp.Compare(a.Seq, b.Seq) })
+	return out
+}
+
+func (o *fakeOutbox) ReadSince(_ context.Context, afterSeq int64) ([]configsyncport.Marker, int64, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.reads = append(o.reads, afterSeq)
+	if o.readErr != nil {
+		return nil, 0, o.readErr
+	}
+	var (
+		out    []configsyncport.Marker
+		minSeq int64
+	)
+	for i, m := range o.sorted() {
+		if i == 0 {
+			minSeq = m.Seq
+		}
+		if m.Seq > afterSeq {
+			out = append(out, m)
 		}
 	}
-	o.seqs = kept
-	return int64(len(seqs)), nil
+	return out, minSeq, nil
+}
+
+func (o *fakeOutbox) ReadSeqs(_ context.Context, seqs []int64) ([]configsyncport.Marker, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.readErr != nil {
+		return nil, o.readErr
+	}
+	var out []configsyncport.Marker
+	for _, m := range o.sorted() {
+		if slices.Contains(seqs, m.Seq) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 func (o *fakeOutbox) PruneOlderThan(_ context.Context, cutoff time.Time, keepMax int) (int64, error) {
@@ -167,19 +205,19 @@ func (o *fakeOutbox) PruneOlderThan(_ context.Context, cutoff time.Time, keepMax
 	return 0, nil
 }
 
-func (o *fakeOutbox) deletedSeqs() []int64 {
+func (o *fakeOutbox) readFroms() []int64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	out := make([]int64, len(o.deletes))
-	copy(out, o.deletes)
-	return out
+	return append([]int64(nil), o.reads...)
 }
 
 func (o *fakeOutbox) remainingSeqs() []int64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	out := make([]int64, len(o.seqs))
-	copy(out, o.seqs)
+	var out []int64
+	for _, m := range o.sorted() {
+		out = append(out, m.Seq)
+	}
 	return out
 }
 
@@ -232,9 +270,11 @@ func TestDispatch_BroadcastsOnceThenDedupsIdenticalData(t *testing.T) {
 		t.Fatalf("holder must hold the broadcast version, got %q ok=%v", held, ok)
 	}
 
-	deletes := outbox.deletedSeqs()
-	if len(deletes) != 1 || deletes[0] != 5 {
-		t.Fatalf("the first cycle must drain the observed marker 5 and the second must find nothing, got %v", deletes)
+	if remaining := outbox.remainingSeqs(); !slices.Equal(remaining, []int64{5}) {
+		t.Fatalf("the dispatcher must never delete markers, got %v", remaining)
+	}
+	if reads := outbox.readFroms(); !slices.Equal(reads, []int64{0, 5}) {
+		t.Fatalf("the second cycle must read past the marker the first one observed, got reads after %v", reads)
 	}
 }
 
@@ -356,54 +396,130 @@ func TestDispatch_RemovedHybridScopeIsDropped(t *testing.T) {
 	}
 }
 
-func TestDispatch_DrainsPreCompileFrontierSoMidCycleMarkerSurvives(t *testing.T) {
+func TestDispatch_NeverDeletesMarkersAndReadsMidCycleOnesNextCycle(t *testing.T) {
 	t.Parallel()
 	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
 	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
-	holder := appsnapshot.NewHolder()
-	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
 	outbox.setSeqs(1, 2, 3)
-	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() { outbox.appendSeqs(4, 5) }}
-	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
+	appended := false
+	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() {
+		if !appended {
+			appended = true
+			outbox.appendSeqs(4, 5)
+		}
+	}}
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), appsnapshot.NewHolder(), &fakeBroadcaster{}, outbox, nil, appsnapshot.DispatcherConfig{})
 
-	if err := d.Dispatch(context.Background()); err != nil {
-		t.Fatalf("dispatch: %v", err)
+	for i := 0; i < 3; i++ {
+		if err := d.Dispatch(context.Background()); err != nil {
+			t.Fatalf("dispatch %d: %v", i, err)
+		}
 	}
 
-	deletes := outbox.deletedSeqs()
-	if len(deletes) != 3 || deletes[0] != 1 || deletes[1] != 2 || deletes[2] != 3 {
-		t.Fatalf("drain must delete only the set observed before compile, got %v", deletes)
+	if remaining := outbox.remainingSeqs(); !slices.Equal(remaining, []int64{1, 2, 3, 4, 5}) {
+		t.Fatalf("no cycle may delete markers: peers read the same outbox; got %v", remaining)
 	}
-	if remaining := outbox.remainingSeqs(); len(remaining) != 2 || remaining[0] != 4 || remaining[1] != 5 {
-		t.Fatalf("markers that appear mid-compile must survive to the next cycle, got %v", remaining)
+	if reads := outbox.readFroms(); !slices.Equal(reads, []int64{0, 3, 5}) {
+		t.Fatalf("markers that appear mid-compile must be read by the next cycle only, got reads after %v", reads)
 	}
 }
 
-func TestDispatch_DrainKeepsLowerSeqCommittedAfterObserve(t *testing.T) {
+func TestDispatch_LowerSeqCommittedAfterObserveIsReadNextCycle(t *testing.T) {
 	t.Parallel()
 	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
 	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
-	holder := appsnapshot.NewHolder()
+	outbox := &fakeOutbox{}
+	// Seq 100 is still in flight when the first cycle reads 99 and 101: seq is
+	// assigned at INSERT, so a lower seq can commit after a higher one.
+	outbox.setSeqs(99, 101)
+	appended := false
+	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() {
+		if !appended {
+			appended = true
+			outbox.appendSeqs(100)
+		}
+	}}
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), appsnapshot.NewHolder(), &fakeBroadcaster{}, outbox, nil, appsnapshot.DispatcherConfig{})
+
+	for i := 0; i < 3; i++ {
+		if err := d.Dispatch(context.Background()); err != nil {
+			t.Fatalf("dispatch %d: %v", i, err)
+		}
+	}
+
+	if reads := outbox.readFroms(); !slices.Equal(reads, []int64{0, 99, 101}) {
+		t.Fatalf("the cursor must hold below the missing seq 100 until it is read, then move past it; got reads after %v", reads)
+	}
+}
+
+func TestDispatch_FailedCompileDoesNotAdvanceTheCursor(t *testing.T) {
+	t.Parallel()
+	outbox := &fakeOutbox{}
+	outbox.setSeqs(7)
+	d := appsnapshot.NewDispatcher(failingCompiler{err: errCompile}, infrasnapshot.NewCodec(), appsnapshot.NewHolder(), &fakeBroadcaster{}, outbox, nil, appsnapshot.DispatcherConfig{})
+
+	for i := 0; i < 2; i++ {
+		if err := d.Dispatch(context.Background()); err == nil {
+			t.Fatalf("dispatch %d must surface the compile failure", i)
+		}
+	}
+	if reads := outbox.readFroms(); !slices.Equal(reads, []int64{0, 0}) {
+		t.Fatalf("a failed cycle must re-read the same markers, got reads after %v", reads)
+	}
+}
+
+func TestDispatch_OutboxReadFailureStillCompiles(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
 	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
-	// A higher seq (101) is visible before compile; a lower seq (100) becomes visible
-	// only after Pending is observed, modelling BIGSERIAL assigned at INSERT while its
-	// transaction commits after a higher seq. A range delete up to 101 would drop 100.
-	outbox.setSeqs(101)
-	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() { outbox.appendSeqs(100) }}
-	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
+	outbox.setSeqs(3)
+	outbox.setReadErr(errors.New("outbox down"))
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), appsnapshot.NewHolder(), broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
 
 	if err := d.Dispatch(context.Background()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
+	if len(broadcaster.broadcasted()) != 1 {
+		t.Fatal("an outbox read failure must not block the compile")
+	}
+	outbox.setReadErr(nil)
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch after recovery: %v", err)
+	}
+	if reads := outbox.readFroms(); !slices.Equal(reads, []int64{0, 0}) {
+		t.Fatalf("after a failed read the next cycle must read from the same position, got reads after %v", reads)
+	}
+}
 
-	if deletes := outbox.deletedSeqs(); len(deletes) != 1 || deletes[0] != 101 {
-		t.Fatalf("drain must delete only the observed seq 101, got %v", deletes)
-	}
-	if remaining := outbox.remainingSeqs(); len(remaining) != 1 || remaining[0] != 100 {
-		t.Fatalf("a lower seq committing after the observe must survive the drain, got %v", remaining)
-	}
+func TestDispatch_LogsWhatTheObservedMarkersDirtied(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwB := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	outbox := &fakeOutbox{}
+	outbox.appendMarkers(configsyncport.Marker{Seq: 1, Kind: configsyncport.MarkerGateway, GatewayID: gwA})
+	var logs bytes.Buffer
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), appsnapshot.NewHolder(), &fakeBroadcaster{}, outbox,
+		slog.New(slog.NewTextHandler(&logs, nil)), appsnapshot.DispatcherConfig{})
+	require.NoError(t, d.Dispatch(context.Background()))
+
+	logs.Reset()
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA, Slug: "renamed"}, {ID: gwB}})
+	outbox.appendMarkers(
+		configsyncport.Marker{Seq: 2, Kind: configsyncport.MarkerGateway, GatewayID: gwA},
+		configsyncport.Marker{Seq: 3, Kind: configsyncport.MarkerGateway, GatewayID: gwB},
+	)
+	require.NoError(t, d.Dispatch(context.Background()))
+	assert.Contains(t, logs.String(), "reason=signal dirty=2")
+
+	logs.Reset()
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}})
+	outbox.appendMarkers(configsyncport.Marker{Seq: 4, Kind: configsyncport.MarkerAll})
+	require.NoError(t, d.Dispatch(context.Background()))
+	assert.Contains(t, logs.String(), "reason=unnamed_marker dirty=0")
 }
 
 func TestDispatch_PrunesUnderSafetyBound(t *testing.T) {
@@ -452,14 +568,13 @@ func TestDispatch_PrunesEvenWhenCompileFails(t *testing.T) {
 	}
 }
 
-func TestRun_BootWithPendingMarkersTriggersDispatch(t *testing.T) {
+func TestRun_BootTriggersDispatch(t *testing.T) {
 	t.Parallel()
 	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
 	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
 	holder := appsnapshot.NewHolder()
 	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
-	outbox.setSeqs(1)
 	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil,
 		appsnapshot.DispatcherConfig{Debounce: 20 * time.Millisecond, Backstop: time.Hour})
 
@@ -601,6 +716,92 @@ func TestRun_ConcurrentSignalAndBackstopStayRaceFree(t *testing.T) {
 	if _, _, ok := holder.Snapshot(); !ok {
 		t.Fatal("the dispatcher must have held a snapshot after concurrent signals")
 	}
+}
+
+type blockingCompiler struct {
+	inner    appsnapshot.SnapshotCompiler
+	started  chan struct{}
+	release  chan struct{}
+	mu       sync.Mutex
+	compiles int
+}
+
+func (b *blockingCompiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
+	b.mu.Lock()
+	b.compiles++
+	first := b.compiles == 1
+	b.mu.Unlock()
+	if first {
+		close(b.started)
+		<-b.release
+	}
+	return b.inner.Compile(ctx)
+}
+
+func (b *blockingCompiler) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.compiles
+}
+
+func TestRun_CompileWhileDirtyFoldsSignalsDuringACompileIntoOneFollowUp(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	compiler := &blockingCompiler{
+		inner:   newDispatchCompiler(&settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	// An hour of debounce would hold any follow-up for an hour in legacy mode.
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), appsnapshot.NewHolder(), &fakeBroadcaster{}, &fakeOutbox{}, nil,
+		appsnapshot.DispatcherConfig{Debounce: time.Hour, Backstop: time.Hour}, appsnapshot.WithCompileWhileDirty())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = d.Run(ctx)
+		close(done)
+	}()
+
+	<-compiler.started
+	for i := 0; i < 10; i++ {
+		d.Signal()
+	}
+	close(compiler.release)
+
+	waitFor(t, func() bool { return compiler.count() == 2 }, 2*time.Second)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if got := compiler.count(); got != 2 {
+		t.Fatalf("a burst of signals during a compile must fold into exactly one follow-up with no wait, got %d compiles", got)
+	}
+}
+
+func TestRun_CompileWhileDirtyDispatchesEverySignalWhenIdle(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwB := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	broadcaster := &fakeBroadcaster{}
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), appsnapshot.NewHolder(), broadcaster, &fakeOutbox{}, nil,
+		appsnapshot.DispatcherConfig{Debounce: time.Hour, Backstop: time.Hour}, appsnapshot.WithCompileWhileDirty())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = d.Run(ctx)
+		close(done)
+	}()
+
+	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 1 }, 2*time.Second)
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}, {ID: gwB}})
+	d.Signal()
+	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 2 }, 2*time.Second)
+
+	cancel()
+	<-done
 }
 
 func waitFor(t *testing.T, cond func() bool, timeout time.Duration) {

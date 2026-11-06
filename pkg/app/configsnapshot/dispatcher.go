@@ -53,19 +53,22 @@ type PartitionedCompiler interface {
 	CompileAll(ctx context.Context) (global *readmodel.Snapshot, scoped map[string]*readmodel.Snapshot, catalog *readmodel.Snapshot, err error)
 }
 
-// DispatcherConfig tunes the debounce/backstop cadence and the outbox safety bound.
+// DispatcherConfig tunes the debounce/backstop cadence, the outbox safety bound
+// and how long the outbox cursor waits for a missing seq.
 type DispatcherConfig struct {
 	Debounce  time.Duration
 	Backstop  time.Duration
 	Retention time.Duration
 	MaxRows   int
+	GapExpiry time.Duration
 }
 
 // Dispatcher compiles the config snapshot, holds it for the gRPC server to serve,
-// broadcasts the new version to connected data planes, and drains the
-// change-marker outbox that survives a control-plane restart. A committed admin
-// write leaves a durable marker; the dispatcher folds every marker visible before
-// the compile into one recompile and drains exactly that observed set.
+// broadcasts the new version to connected data planes, and reads the
+// change-marker outbox through its own cursor. A committed admin write leaves a
+// durable marker; every replica observes the markers visible before a compile
+// and never deletes them, so one replica's compile cannot hide a change from
+// another. Markers leave the outbox only through the retention prune.
 type Dispatcher struct {
 	compiler    SnapshotCompiler
 	codec       configsync.SnapshotCodec[*readmodel.Snapshot]
@@ -79,6 +82,9 @@ type Dispatcher struct {
 	maxRows     int
 	trigger     chan struct{}
 	compiled    atomic.Bool
+
+	cursor            *outboxCursor
+	compileWhileDirty bool
 
 	mu              sync.Mutex
 	publishedGlobal string
@@ -156,11 +162,21 @@ func NewDispatcher(
 		maxRows:         maxRows,
 		trigger:         make(chan struct{}, 1),
 		publishedScoped: make(map[string]string),
+		cursor:          newOutboxCursor(cfg.GapExpiry, retention, defaultLateBound),
 	}
 	for _, opt := range opts {
 		opt(d)
 	}
 	return d
+}
+
+// WithCompileWhileDirty makes Run dispatch on every Signal with no debounce:
+// signals that arrive during a compile fold into one follow-up dispatch that
+// starts as soon as the compile ends.
+func WithCompileWhileDirty() DispatcherOption {
+	return func(d *Dispatcher) {
+		d.compileWhileDirty = true
+	}
 }
 
 // Signal requests a dispatch after an admin write: immediate when the loop is
@@ -172,20 +188,16 @@ func (d *Dispatcher) Signal() {
 	}
 }
 
-// Run drives the dispatch loop until ctx is cancelled: an immediate dispatch on
-// the first Signal after a quiet period so a single admin write (a new consumer,
-// key, …) reaches data planes without sitting out the debounce, a trailing
-// debounced dispatch that folds the rest of a Signal burst, a jittered backstop
-// dispatch, and an initial catch-up when the outbox holds markers left by a
-// write that committed before a prior restart.
+// Run drives the dispatch loop until ctx is cancelled, starting with a compile
+// so a restarted replica catches up on writes it missed. By default it
+// dispatches on the first Signal after a quiet period, so a single admin write
+// reaches data planes without sitting out the debounce, and folds the rest of
+// a Signal burst into one trailing debounced dispatch. With compile-while-dirty
+// it dispatches on every Signal with no timer. Both run a backstop dispatch.
 func (d *Dispatcher) Run(ctx context.Context) error {
-	if pending, err := d.outbox.PendingCount(ctx); err != nil {
-		if ctx.Err() == nil {
-			d.logger.Warn("outbox pending count failed at boot",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
-	} else if pending > 0 {
-		d.Signal()
+	d.Signal()
+	if d.compileWhileDirty {
+		return d.runCompileWhileDirty(ctx)
 	}
 
 	timer := time.NewTimer(d.debounce)
@@ -232,10 +244,32 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
+// runCompileWhileDirty dispatches as soon as a Signal arrives. The trigger holds
+// one pending Signal, so every Signal received during a compile folds into one
+// follow-up dispatch that starts as soon as the current one ends.
+func (d *Dispatcher) runCompileWhileDirty(ctx context.Context) error {
+	ticker := time.NewTicker(d.backstop)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-d.trigger:
+			if err := d.dispatch(ctx, compileReasonSignal); err != nil && ctx.Err() == nil {
+				d.logger.Error("dispatch failed",
+					slog.String("component", component), slog.String("error", err.Error()))
+			}
+		case <-ticker.C:
+			if err := d.dispatch(ctx, compileReasonBackstop); err != nil && ctx.Err() == nil {
+				d.logger.Error("backstop dispatch failed",
+					slog.String("component", component), slog.String("error", err.Error()))
+			}
+		}
+	}
+}
+
 // Dispatch runs one dispatch cycle synchronously. It must not run concurrently
-// with Run or another Dispatch: the outbox frontier (MaxSeq/DeleteUpTo) is not
-// mutually exclusive across cycles, so overlapping callers could drain against
-// different frontiers.
+// with Run or another Dispatch: the outbox cursor belongs to the dispatch loop.
 func (d *Dispatcher) Dispatch(ctx context.Context) error {
 	return d.dispatch(ctx, compileReasonSignal)
 }
@@ -250,21 +284,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		}
 	}()
 
-	// Capture the set of markers visible before compiling. Draining exactly this set
-	// (rather than a seq range) guarantees a marker that becomes visible mid-cycle —
-	// including a lower seq that commits after a higher one, since seq is assigned at
-	// INSERT not COMMIT — survives to trigger the next dispatch.
-	pending, err := d.outbox.Pending(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			d.logger.Warn("outbox pending read failed; skipping drain this cycle",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
-		pending = nil
-	}
+	// Observe the markers visible before compiling: their writes are committed,
+	// so the compile sees them. A marker that becomes visible mid-cycle is read
+	// on the next one, and the cursor advances only once this cycle succeeds.
+	next, dirty, observed := d.observeOutbox(ctx)
 
-	if !d.compiled.Load() {
+	switch {
+	case !d.compiled.Load():
 		reason = compileReasonBoot
+	case dirty.full:
+		reason = dirty.fullReason
 	}
 	stages := newCompileStages()
 	compileStart := time.Now()
@@ -317,7 +346,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 			slog.Duration("compile", compileDuration),
 			slog.String("mode", string(compileModeFull)),
 			slog.String("reason", string(reason)),
-			slog.Int("dirty", 0),
+			slog.Int("dirty", len(dirty.gateways)),
 			stages.logAttr(),
 			slog.Int("bytes", len(raw)),
 			slog.Int("scopes", compiled.scopes.count),
@@ -335,13 +364,30 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	d.compiled.Store(true)
 	d.persist(ctx, raw, version, scoped, compiledAt)
 
-	if len(pending) > 0 {
-		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {
-			d.logger.Warn("outbox drain failed",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
+	if observed {
+		d.cursor.commit(next)
 	}
 	return nil
+}
+
+// observeOutbox reads the markers above the cursor and the expired gaps that
+// became visible since. On a read error it observes nothing, and the next
+// cycle reads the same markers again.
+func (d *Dispatcher) observeOutbox(ctx context.Context) (cursorState, dirtySet, bool) {
+	markers, minSeq, err := d.outbox.ReadSince(ctx, d.cursor.readFrom())
+	if err == nil {
+		var lateFound []configsyncport.Marker
+		lateFound, err = d.outbox.ReadSeqs(ctx, d.cursor.lateSeqs())
+		if err == nil {
+			next, dirty := d.cursor.observe(markers, lateFound, minSeq, time.Now())
+			return next, dirty, true
+		}
+	}
+	if ctx.Err() == nil {
+		d.logger.Warn("outbox read failed; the markers are read again next cycle",
+			slog.String("component", component), slog.String("error", err.Error()))
+	}
+	return cursorState{}, dirtySet{}, false
 }
 
 type compiledSnapshot struct {
