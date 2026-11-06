@@ -30,6 +30,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -155,6 +157,64 @@ func TestClient_FetchReassemblesSegmentedSnapshot(t *testing.T) {
 		if version != "v-seg" || !bytes.Equal(got, raw) {
 			t.Fatalf("split at %v: version %q, body len %d, want v-seg and the concatenated %d bytes", splitAt, version, len(got), len(raw))
 		}
+	}
+}
+
+type compressionRecorder struct {
+	mu          sync.Mutex
+	compression string
+}
+
+func (r *compressionRecorder) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+func (r *compressionRecorder) HandleRPC(_ context.Context, s stats.RPCStats) {
+	if h, ok := s.(*stats.InHeader); ok && h.Client {
+		r.mu.Lock()
+		r.compression = h.Compression
+		r.mu.Unlock()
+	}
+}
+
+func (r *compressionRecorder) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (r *compressionRecorder) HandleConn(context.Context, stats.ConnStats) {}
+
+func (r *compressionRecorder) get() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.compression
+}
+
+func TestService_GetSnapshotIsGzippedForAClientThatAcceptsIt(t *testing.T) {
+	src := &fakeSource{}
+	raw := bytes.Repeat([]byte("compressible snapshot "), snapshotChunkSize/8)
+	src.set(raw, "v-gz")
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
+	recorder := &compressionRecorder{}
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(recorder),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	client := newClient(conn, "dp-1", discardLogger())
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, version, _, err := client.Fetch(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if compression := recorder.get(); compression != gzip.Name {
+		t.Fatalf("snapshot stream compression = %q, want %q", compression, gzip.Name)
+	}
+	if version != "v-gz" || !bytes.Equal(got, raw) {
+		t.Fatalf("decompressed body differs: version %q, len %d != %d", version, len(got), len(raw))
 	}
 }
 
