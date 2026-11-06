@@ -65,6 +65,8 @@ func TestMarksAppendWhatTheWriteRecorded(t *testing.T) {
 		{name: "catalog", record: func(m *Marks) { m.Catalog() }, want: []configsyncport.Marker{catalog}},
 		{name: "catalog and a gateway", record: func(m *Marks) { m.Catalog(); m.Gateway(gwA) }, want: []configsyncport.Marker{catalog, gatewayMarker(gwA)}},
 		{name: "all wins over anything named", record: func(m *Marks) { m.Gateway(gwA); m.All() }, want: []configsyncport.Marker{all}},
+		{name: "an unchanged write appends nothing", record: func(m *Marks) { m.Unchanged() }, want: nil},
+		{name: "a named gateway wins over unchanged", record: func(m *Marks) { m.Unchanged(); m.Gateway(gwA) }, want: []configsyncport.Marker{gatewayMarker(gwA)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

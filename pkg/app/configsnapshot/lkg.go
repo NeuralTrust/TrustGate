@@ -67,6 +67,11 @@ type LKGConfig struct {
 	MaxAge time.Duration
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// PersistInterval is the shortest time between two writes of the persisted
+	// snapshot. A compile inside the interval leaves its snapshot pending, and
+	// the dispatch loop writes the latest pending one once the interval has
+	// passed. Zero writes after every compile.
+	PersistInterval time.Duration
 }
 
 // DispatcherOption customises a Dispatcher.
@@ -80,7 +85,7 @@ func WithLKG(store LKGStore, sealer LKGSealer, cfg LKGConfig) DispatcherOption {
 		if store == nil || sealer == nil {
 			return
 		}
-		l := &lkgState{store: store, sealer: sealer, maxAge: cfg.MaxAge, now: cfg.Now, persisted: map[string]string{}}
+		l := &lkgState{store: store, sealer: sealer, maxAge: cfg.MaxAge, now: cfg.Now, persistInterval: cfg.PersistInterval, persisted: map[string]string{}}
 		if l.maxAge <= 0 {
 			l.maxAge = DefaultLKGMaxAge
 		}
@@ -89,6 +94,13 @@ func WithLKG(store LKGStore, sealer LKGSealer, cfg LKGConfig) DispatcherOption {
 		}
 		d.lkg = l
 	}
+}
+
+type pendingLKG struct {
+	raw        []byte
+	version    string
+	scoped     map[string]ScopedSnapshot
+	compiledAt time.Time
 }
 
 type lkgState struct {
@@ -101,6 +113,14 @@ type lkgState struct {
 	// dispatch loop touches it, and dispatch is serial by contract.
 	persisted map[string]string
 	lastTouch time.Time
+
+	// persistInterval, lastPersist and pending throttle the writes. Every admin
+	// replica persists the same snapshots, and each write can be megabytes of
+	// WAL, so under a sustained write load persisting after every compile
+	// stalls commits for every admin write. Only the dispatch loop touches them.
+	persistInterval time.Duration
+	lastPersist     time.Time
+	pending         *pendingLKG
 
 	source   atomic.Int32
 	servedAt atomic.Int64 // unix nanos when the served snapshot was compiled
@@ -327,6 +347,12 @@ func (d *Dispatcher) persist(ctx context.Context, raw []byte, version string, sc
 	if l == nil {
 		return
 	}
+	if l.persistInterval > 0 && !l.lastPersist.IsZero() && compiledAt.Sub(l.lastPersist) < l.persistInterval {
+		l.pending = &pendingLKG{raw: raw, version: version, scoped: scoped, compiledAt: compiledAt}
+		return
+	}
+	l.pending = nil
+	l.lastPersist = compiledAt
 	ctx, cancel := context.WithTimeout(ctx, lkgOpTimeout)
 	defer cancel()
 
@@ -412,4 +438,28 @@ func (d *Dispatcher) persistScope(ctx context.Context, scope string, snap Scoped
 		l.persisted[scope] = snap.Version
 	}
 	return nil
+}
+
+// flushPendingLKG writes the snapshot a throttled persist left pending, once the
+// persist interval has passed. The dispatch loop calls it on its own ticker so
+// the last compile of a burst is persisted even when no further compile runs.
+func (d *Dispatcher) flushPendingLKG(ctx context.Context) {
+	l := d.lkg
+	if l == nil || l.pending == nil || l.now().Sub(l.lastPersist) < l.persistInterval {
+		return
+	}
+	p := l.pending
+	l.lastPersist = time.Time{}
+	d.persist(ctx, p.raw, p.version, p.scoped, p.compiledAt)
+}
+
+// lkgFlushTicks returns the channel the dispatch loop flushes pending
+// persisted snapshots on, and a stop function. It is nil when writes are not
+// throttled.
+func (d *Dispatcher) lkgFlushTicks() (<-chan time.Time, func()) {
+	if d.lkg == nil || d.lkg.persistInterval <= 0 {
+		return nil, func() {}
+	}
+	t := time.NewTicker(d.lkg.persistInterval)
+	return t.C, t.Stop
 }

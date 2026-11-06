@@ -149,7 +149,7 @@ func (r *Repository) ListProviders(ctx context.Context) ([]domain.Provider, erro
 		SELECT id, code, display_name, wire_format, source, metadata, created_at, updated_at
 		  FROM providers_catalog
 		 ORDER BY code`
-	rows, err := r.conn.Pool.Query(ctx, query)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode 
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE ($1 = '' OR p.code = $1)
 		 ORDER BY m.release_date DESC NULLS LAST, p.code, m.slug`
-	rows, err := r.conn.Pool.Query(ctx, query, providerCode)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, providerCode)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (r *Repository) FindModel(ctx context.Context, providerCode, slug string) (
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE p.code = $1 AND m.slug = $2`
-	rows, err := r.conn.Pool.Query(ctx, query, providerCode, slug)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, providerCode, slug)
 	if err != nil {
 		return nil, err
 	}

@@ -52,9 +52,21 @@ type findingGateways struct {
 	*settableGateways
 	hookMu sync.Mutex
 	onFind func()
+	// onRead, when set, sees the context of every gateway read.
+	onRead func(context.Context)
 }
 
-func (g *findingGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+func (g *findingGateways) List(ctx context.Context, filter gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error) {
+	if g.onRead != nil {
+		g.onRead(ctx)
+	}
+	return g.settableGateways.List(ctx, filter)
+}
+
+func (g *findingGateways) FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	if g.onRead != nil {
+		g.onRead(ctx)
+	}
 	g.hookMu.Lock()
 	hook := g.onFind
 	g.onFind = nil
@@ -101,6 +113,7 @@ type world struct {
 	revocations *revocationsReader
 	catalog     *mutableCatalog
 	outboxes    []*fakeOutbox
+	options     []appsnapshot.CompilerOption
 	seq         int64
 	serial      int
 	everSeen    map[string]struct{}
@@ -124,6 +137,12 @@ func newWorld(t testing.TB, seed uint64) *world {
 }
 
 func (w *world) compiler() *appsnapshot.Compiler {
+	options := append([]appsnapshot.CompilerOption{
+		appsnapshot.WithTenantCaps(w.caps),
+		appsnapshot.WithSessionRevocations(w.revocations, time.Hour),
+		appsnapshot.WithPlaygroundTokenKeys([]readmodel.VerificationKey{{KID: "k1", PEM: "a"}}),
+		appsnapshot.WithUsageEnforcement(true),
+	}, w.options...)
 	return appsnapshot.NewCompiler(
 		w.gateways,
 		fakeConsumers{byGateway: w.consumers},
@@ -132,10 +151,7 @@ func (w *world) compiler() *appsnapshot.Compiler {
 		fakeAuths{byGateway: w.auths},
 		w.catalog,
 		nil,
-		appsnapshot.WithTenantCaps(w.caps),
-		appsnapshot.WithSessionRevocations(w.revocations, time.Hour),
-		appsnapshot.WithPlaygroundTokenKeys([]readmodel.VerificationKey{{KID: "k1", PEM: "a"}}),
-		appsnapshot.WithUsageEnforcement(true),
+		options...,
 	)
 }
 
@@ -590,4 +606,43 @@ func BenchmarkDispatchFullCompileManyGateways(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+type snapshotKey struct{}
+
+// spyReader stands in for a database snapshot: it marks the context of every
+// consistent read so a reader can tell whether it runs inside one.
+type spyReader struct{ reads int }
+
+func (s *spyReader) ReadConsistent(ctx context.Context, fn func(context.Context) error) error {
+	if ctx.Value(snapshotKey{}) != nil {
+		return fn(ctx)
+	}
+	s.reads++
+	return fn(context.WithValue(ctx, snapshotKey{}, s.reads))
+}
+
+func TestEveryCompileReadsOneDatabaseSnapshot(t *testing.T) {
+	w := newWorld(t, 7)
+	spy := &spyReader{}
+	w.options = append(w.options, appsnapshot.WithConsistentReads(spy))
+	var outside int
+	w.gateways.onRead = func(ctx context.Context) {
+		if ctx.Value(snapshotKey{}) == nil {
+			outside++
+		}
+	}
+	for i := 0; i < 3; i++ {
+		w.addGateway()
+	}
+	d, _ := w.dispatcher(true, nil, appsnapshot.DispatcherConfig{})
+	ctx := context.Background()
+
+	require.NoError(t, d.Dispatch(ctx))
+	w.markGateway(w.gatewayList()[0].ID)
+	require.NoError(t, d.Dispatch(ctx))
+	require.NoError(t, d.DispatchBackstop(ctx))
+
+	require.Zero(t, outside, "every gateway read of a compile must run inside its database snapshot")
+	require.GreaterOrEqual(t, spy.reads, 3, "boot, incremental and backstop compiles each open one snapshot")
 }

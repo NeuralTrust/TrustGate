@@ -131,25 +131,31 @@ type collectedGateway struct {
 func (d *Dispatcher) compileIncremental(ctx context.Context, dirty dirtySet, shared *SharedInputs, stages *compileStages) (compiledSnapshot, error) {
 	inc := d.incremental
 	readStart := time.Now()
-	reads := make([]collectedGateway, 0, len(dirty.gateways))
-	for id := range dirty.gateways {
-		gateway, data, err := inc.source.CollectGateway(ctx, id)
-		if err != nil {
-			stages.since(stageRead, readStart)
-			return compiledSnapshot{}, err
+	var (
+		reads   []collectedGateway
+		catalog *readmodel.Data
+		inputs  SharedInputs
+	)
+	err := inc.source.ReadConsistent(ctx, func(ctx context.Context) error {
+		reads = make([]collectedGateway, 0, len(dirty.gateways))
+		for id := range dirty.gateways {
+			gateway, data, err := inc.source.CollectGateway(ctx, id)
+			if err != nil {
+				return err
+			}
+			reads = append(reads, collectedGateway{id: id, gateway: gateway, data: data})
 		}
-		reads = append(reads, collectedGateway{id: id, gateway: gateway, data: data})
-	}
-	var catalog *readmodel.Data
-	if dirty.catalog {
-		read, err := inc.source.CollectCatalog(ctx)
-		if err != nil {
-			stages.since(stageRead, readStart)
-			return compiledSnapshot{}, err
+		if dirty.catalog {
+			read, err := inc.source.CollectCatalog(ctx)
+			if err != nil {
+				return err
+			}
+			catalog = &read
 		}
-		catalog = &read
-	}
-	inputs, err := d.sharedInputs(ctx, shared)
+		var err error
+		inputs, err = d.sharedInputs(ctx, shared)
+		return err
+	})
 	stages.since(stageRead, readStart)
 	if err != nil {
 		return compiledSnapshot{}, err
@@ -263,7 +269,16 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 // compared only when no marker this cycle did not see was committed in
 // between: a write that landed during the comparison would show up as drift
 // that is not.
-func (d *Dispatcher) compileWithDriftCheck(ctx context.Context, dirty dirtySet, next cursorState, stages *compileStages) (compiledSnapshot, error) {
+func (d *Dispatcher) compileWithDriftCheck(ctx context.Context, dirty dirtySet, next cursorState, stages *compileStages) (compiled compiledSnapshot, err error) {
+	err = d.incremental.source.ReadConsistent(ctx, func(ctx context.Context) error {
+		var cerr error
+		compiled, cerr = d.compileWithDriftCheckRead(ctx, dirty, next, stages)
+		return cerr
+	})
+	return compiled, err
+}
+
+func (d *Dispatcher) compileWithDriftCheckRead(ctx context.Context, dirty dirtySet, next cursorState, stages *compileStages) (compiledSnapshot, error) {
 	shared, err := d.incremental.source.ListShared(ctx)
 	if err != nil {
 		return compiledSnapshot{}, err

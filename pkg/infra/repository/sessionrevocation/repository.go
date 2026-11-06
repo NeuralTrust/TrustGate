@@ -72,7 +72,7 @@ func (r *Repository) ListActive(ctx context.Context, since time.Time) ([]domain.
 	if r.conn == nil || r.conn.Pool == nil {
 		return nil, fmt.Errorf("session revocations: nil connection")
 	}
-	rows, err := r.conn.Pool.Query(ctx, `
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, `
 		SELECT gateway_id::text, org, subject, revoked_at
 		FROM session_revocations
 		WHERE revoked_at > $1`, since.UTC())

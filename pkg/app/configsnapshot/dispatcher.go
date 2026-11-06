@@ -220,6 +220,8 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 	ticker := time.NewTicker(d.backstop)
 	defer ticker.Stop()
+	flush, stopFlush := d.lkgFlushTicks()
+	defer stopFlush()
 
 	var armed bool
 	var lastDispatch time.Time
@@ -252,6 +254,8 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			dispatch("dispatch failed", compileReasonSignal)
 		case <-ticker.C:
 			dispatch("backstop dispatch failed", compileReasonBackstop)
+		case <-flush:
+			d.flushPendingLKG(ctx)
 		}
 	}
 }
@@ -262,6 +266,8 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 func (d *Dispatcher) runCompileWhileDirty(ctx context.Context) error {
 	ticker := time.NewTicker(d.backstop)
 	defer ticker.Stop()
+	flush, stopFlush := d.lkgFlushTicks()
+	defer stopFlush()
 	for {
 		select {
 		case <-ctx.Done():
@@ -276,6 +282,8 @@ func (d *Dispatcher) runCompileWhileDirty(ctx context.Context) error {
 				d.logger.Error("backstop dispatch failed",
 					slog.String("component", component), slog.String("error", err.Error()))
 			}
+		case <-flush:
+			d.flushPendingLKG(ctx)
 		}
 	}
 }

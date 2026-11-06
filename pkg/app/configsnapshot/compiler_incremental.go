@@ -40,13 +40,25 @@ type IncrementalSource interface {
 	CollectCatalog(ctx context.Context) (readmodel.Data, error)
 	// ListShared reads the inputs every snapshot flavor is stamped with.
 	ListShared(ctx context.Context) (SharedInputs, error)
+	// ReadConsistent runs fn so the reads above made with its context all see
+	// the database as of one instant.
+	ReadConsistent(ctx context.Context, fn func(context.Context) error) error
 }
 
 var _ IncrementalSource = (*Compiler)(nil)
 
 // CollectAll reads every gateway's configuration and the catalog, with the
 // same bulk read and corrupt-row fallback as CompileAll.
-func (c *Compiler) CollectAll(ctx context.Context) ([]gatewaydomain.Gateway, map[ids.GatewayID]*readmodel.Data, readmodel.Data, error) {
+func (c *Compiler) CollectAll(ctx context.Context) (gateways []gatewaydomain.Gateway, data map[ids.GatewayID]*readmodel.Data, catalog readmodel.Data, err error) {
+	err = c.ReadConsistent(ctx, func(ctx context.Context) error {
+		var cerr error
+		gateways, data, catalog, cerr = c.collectAll(ctx)
+		return cerr
+	})
+	return gateways, data, catalog, err
+}
+
+func (c *Compiler) collectAll(ctx context.Context) ([]gatewaydomain.Gateway, map[ids.GatewayID]*readmodel.Data, readmodel.Data, error) {
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
 		return nil, nil, readmodel.Data{}, err
