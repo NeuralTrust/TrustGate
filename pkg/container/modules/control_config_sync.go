@@ -258,6 +258,7 @@ func ControlConfigSync(c *container.Container) error {
 			Backstop:  cfg.ConfigSync.RecompileBackstop,
 			Retention: cfg.ConfigSync.OutboxRetention,
 			MaxRows:   int(cfg.ConfigSync.OutboxMaxRows),
+			GapExpiry: cfg.ConfigSync.OutboxGapExpiry,
 		}, opts...)
 		if err := appsnapshot.RegisterAdminSnapshotGauges(otel.Meter("trustgate/configsync"), d); err != nil {
 			return nil, err

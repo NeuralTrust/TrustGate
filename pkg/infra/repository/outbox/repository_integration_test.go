@@ -82,6 +82,15 @@ func setupRepository(t *testing.T) (*database.Connection, *Repository) {
 	return conn, NewRepository(conn)
 }
 
+func countMarkers(t *testing.T, conn *database.Connection) int64 {
+	t.Helper()
+	var count int64
+	if err := conn.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM config_snapshot_outbox`).Scan(&count); err != nil {
+		t.Fatalf("count markers: %v", err)
+	}
+	return count
+}
+
 func envOr(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
@@ -99,10 +108,7 @@ func TestIntegration_AppendTxCommitsMarker(t *testing.T) {
 		t.Fatalf("AppendTx (commit): %v", err)
 	}
 
-	count, err := repo.PendingCount(ctx)
-	if err != nil {
-		t.Fatalf("PendingCount: %v", err)
-	}
+	count := countMarkers(t, conn)
 	if count != 1 {
 		t.Fatalf("committed AppendTx must leave one marker, got %d", count)
 	}
@@ -123,96 +129,9 @@ func TestIntegration_AppendTxRollbackDropsMarker(t *testing.T) {
 		t.Fatal("WithTx must surface the forced rollback error")
 	}
 
-	count, err := repo.PendingCount(ctx)
-	if err != nil {
-		t.Fatalf("PendingCount: %v", err)
-	}
+	count := countMarkers(t, conn)
 	if count != 0 {
 		t.Fatalf("rolled-back AppendTx must leave no marker, got %d", count)
-	}
-}
-
-func TestIntegration_PendingAndDeleteSeqs(t *testing.T) {
-	conn, repo := setupRepository(t)
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) }); err != nil {
-			t.Fatalf("AppendTx %d: %v", i, err)
-		}
-	}
-
-	observed, err := repo.Pending(ctx)
-	if err != nil {
-		t.Fatalf("Pending: %v", err)
-	}
-	if len(observed) != 3 {
-		t.Fatalf("Pending must return the three committed markers, got %d", len(observed))
-	}
-
-	// A marker inserted after the observe must survive draining the observed set.
-	if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) }); err != nil {
-		t.Fatalf("AppendTx (post-observe): %v", err)
-	}
-
-	deleted, err := repo.DeleteSeqs(ctx, observed)
-	if err != nil {
-		t.Fatalf("DeleteSeqs: %v", err)
-	}
-	if deleted != 3 {
-		t.Fatalf("DeleteSeqs must delete exactly the three observed markers, got %d", deleted)
-	}
-	count, err := repo.PendingCount(ctx)
-	if err != nil {
-		t.Fatalf("PendingCount: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("the post-observe marker must survive the drain, got %d remaining", count)
-	}
-}
-
-func TestIntegration_DeleteSeqsKeepsLowerSeqCommittedAfterObserve(t *testing.T) {
-	conn, repo := setupRepository(t)
-	ctx := context.Background()
-
-	// Transaction A appends first, so it holds the lower seq, but does not commit yet.
-	txA, err := conn.Pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin txA: %v", err)
-	}
-	defer func() { _ = txA.Rollback(ctx) }()
-	if err := repo.AppendTx(ctx, txA); err != nil {
-		t.Fatalf("AppendTx (A): %v", err)
-	}
-
-	// Transaction B appends and commits, taking a higher seq that is visible first.
-	if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) }); err != nil {
-		t.Fatalf("AppendTx (B): %v", err)
-	}
-
-	// The dispatcher observes only B's marker while A is still in flight.
-	observed, err := repo.Pending(ctx)
-	if err != nil {
-		t.Fatalf("Pending: %v", err)
-	}
-	if len(observed) != 1 {
-		t.Fatalf("only the committed marker must be visible while A is in flight, got %d", len(observed))
-	}
-
-	// A commits after the observe, so its lower seq becomes visible only now.
-	if err := txA.Commit(ctx); err != nil {
-		t.Fatalf("commit txA: %v", err)
-	}
-
-	if _, err := repo.DeleteSeqs(ctx, observed); err != nil {
-		t.Fatalf("DeleteSeqs: %v", err)
-	}
-	count, err := repo.PendingCount(ctx)
-	if err != nil {
-		t.Fatalf("PendingCount: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("A's lower seq committed after the observe must survive the drain (a seq-range delete would drop it), got %d remaining", count)
 	}
 }
 
@@ -235,10 +154,7 @@ func TestIntegration_PruneOlderThanEnforcesRowBound(t *testing.T) {
 	if deleted != 3 {
 		t.Fatalf("PruneOlderThan must delete the three oldest markers beyond the keepMax bound, got %d", deleted)
 	}
-	count, err := repo.PendingCount(ctx)
-	if err != nil {
-		t.Fatalf("PendingCount: %v", err)
-	}
+	count := countMarkers(t, conn)
 	if count != 2 {
 		t.Fatalf("the newest keepMax markers must survive the row bound, got %d", count)
 	}
@@ -367,5 +283,51 @@ func TestIntegration_ReadSinceReportsPrunedRows(t *testing.T) {
 	}
 	if len(rest) != 0 || minSeq != markers[2].Seq {
 		t.Fatalf("after the prune minSeq = %d (want %d) and no newer markers, got %+v", minSeq, markers[2].Seq, rest)
+	}
+}
+
+func TestIntegration_ReadSeqsReturnsOnlyVisibleRequestedMarkers(t *testing.T) {
+	conn, repo := setupRepository(t)
+	ctx := context.Background()
+	gw := ids.New[ids.GatewayKind]()
+
+	txLate, err := conn.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin late tx: %v", err)
+	}
+	defer func() { _ = txLate.Rollback(ctx) }()
+	if err := repo.AppendGatewayTx(ctx, txLate, gw); err != nil {
+		t.Fatalf("append late: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendCatalogTx(ctx, tx) }); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	visible, _, err := repo.ReadSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("ReadSince: %v", err)
+	}
+	if len(visible) != 2 {
+		t.Fatalf("only the two committed markers must be visible, got %+v", visible)
+	}
+	lateSeq := visible[0].Seq - 1
+
+	if got, err := repo.ReadSeqs(ctx, []int64{lateSeq}); err != nil || len(got) != 0 {
+		t.Fatalf("an uncommitted seq must not be returned, got %+v err=%v", got, err)
+	}
+	if err := txLate.Commit(ctx); err != nil {
+		t.Fatalf("commit late tx: %v", err)
+	}
+
+	got, err := repo.ReadSeqs(ctx, []int64{visible[1].Seq, lateSeq, visible[1].Seq + 1000})
+	if err != nil {
+		t.Fatalf("ReadSeqs: %v", err)
+	}
+	if len(got) != 2 || got[0].Seq != lateSeq || got[0].Kind != configsyncport.MarkerGateway || got[0].GatewayID != gw || got[1].Seq != visible[1].Seq {
+		t.Fatalf("ReadSeqs must return the requested visible markers oldest first, decoded, got %+v", got)
+	}
+	if got, err := repo.ReadSeqs(ctx, nil); err != nil || got != nil {
+		t.Fatalf("an empty request reads nothing, got %+v err=%v", got, err)
 	}
 }
