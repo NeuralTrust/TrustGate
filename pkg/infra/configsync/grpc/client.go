@@ -172,10 +172,26 @@ func (c *Client) Close() error {
 // plane does not hold yet when layered pull is on and the control plane serves
 // it, and as one blob via GetSnapshot otherwise.
 func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, error) {
+	started := time.Now()
 	if c.layered {
-		return c.fetchLayeredOrSnapshot(ctx, etag)
+		return c.fetchLayeredOrSnapshot(ctx, etag, started)
 	}
-	return c.fetchSnapshot(ctx, etag)
+	return c.fetchSnapshotLogged(ctx, etag, started, "")
+}
+
+// fetchSnapshotLogged pulls the single blob and logs the pull; fallbackReason
+// names why a layered pull gave way to it, when one did.
+func (c *Client) fetchSnapshotLogged(ctx context.Context, etag string, started time.Time, fallbackReason string) ([]byte, string, bool, error) {
+	raw, version, notModified, err := c.fetchSnapshot(ctx, etag)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if notModified {
+		c.logUpToDate("full", version)
+	} else {
+		c.logFullPull(version, len(raw), started, fallbackReason)
+	}
+	return raw, version, notModified, nil
 }
 
 func (c *Client) fetchSnapshot(ctx context.Context, etag string) ([]byte, string, bool, error) {

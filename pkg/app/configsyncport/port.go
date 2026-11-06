@@ -16,6 +16,7 @@ package configsyncport
 
 import (
 	"context"
+	"encoding/hex"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -99,6 +100,12 @@ type Marker struct {
 type FragmentRef struct {
 	Digest [32]byte
 	Size   int
+}
+
+// ShortDigest is the first 12 hex characters of a fragment digest, the short
+// form logs use to name a fragment.
+func ShortDigest(digest [32]byte) string {
+	return hex.EncodeToString(digest[:6])
 }
 
 // Manifest is a layered snapshot: the fragments whose concatenation, in order,
