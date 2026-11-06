@@ -26,6 +26,16 @@ type ConfigFetcher interface {
 	Fetch(ctx context.Context, etag string) (raw []byte, version string, notModified bool, err error)
 }
 
+// VerifyingFetcher is a ConfigFetcher that verifies some bodies against their
+// version itself. A layered snapshot's version hashes the digests of its
+// fragments, not the assembled bytes, so the codec cannot recompute it from
+// the body; the fetcher checks every fragment digest and the manifest version
+// before returning the body instead.
+type VerifyingFetcher interface {
+	ConfigFetcher
+	Verifies(version string) bool
+}
+
 type ConfigStore[T any] interface {
 	Load() (*Versioned[T], bool)
 	Swap(v *Versioned[T])
