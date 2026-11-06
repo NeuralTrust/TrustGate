@@ -274,7 +274,7 @@ and calls `modules.All(plane, dbless)`:
 - **Full / control set** (`admin`, `run`, or any flag-off plane): Postgres graph
   (`Core`, `Gateway`, `Registry`, `Consumer`, `Catalog`, `Store`, `Auth`,
   `Policy`, `MCPVaultPostgres`, …) **+** `ControlConfigSync` (compiler, holder,
-  debounced recompiler, gRPC hub, authed gRPC listener).
+  dispatcher, gRPC hub, authed gRPC listener).
 - **DB-less DP set** (`(proxy|mcp) && dbless`): `CoreData` (config / logger /
   redis / crypto + snapshot-adapter bindings; `provideNilConnection` for
   `optional:"true"` consumers), `Cache`, `Plugins`, `Proxy`, `MCP` (with
@@ -285,10 +285,42 @@ and calls `modules.All(plane, dbless)`:
 **Transport is gRPC**, not HTTP. The control plane serves `ConfigSync`
 (`GetSnapshot` bulk transfer + long-lived bidi `Sync` for version notices/acks)
 on `CONFIG_SYNC_GRPC_LISTEN_ADDR` (default `:8083`), authenticated with
-`CONFIG_SYNC_TOKEN`. The data plane dials `CONFIG_SYNC_GRPC_ENDPOINT`. Version is
-the hex SHA-256 of the deterministic protobuf bytes; identical config recompiles
-to the identical version and publishes no new notice. Admin writes `Signal` a
-debounced recompile (`CONFIG_SYNC_RECOMPILE_DEBOUNCE`).
+`CONFIG_SYNC_TOKEN`. The data plane dials `CONFIG_SYNC_GRPC_ENDPOINT`. The
+single-blob version is the hex SHA-256 of the deterministic protobuf bytes;
+identical config recompiles to the identical version and publishes no new
+notice.
+
+**Outbox.** Every admin write commits a marker in `config_snapshot_outbox`
+naming the gateway it changed (or the catalog, or `all`). Each admin replica
+reads markers through its own cursor and never deletes them; rows leave only
+through `CONFIG_SYNC_OUTBOX_RETENTION` / `CONFIG_SYNC_OUTBOX_MAX_ROWS`. A missing
+seq is awaited for `CONFIG_SYNC_OUTBOX_GAP_EXPIRY`, then re-read every cycle.
+
+**Compile.** With `CONFIG_SYNC_INCREMENTAL_COMPILE=false` every write triggers a
+debounced full compile (`CONFIG_SYNC_RECOMPILE_DEBOUNCE`). With it on, the admin
+recompiles only the gateways the markers name, as soon as a write arrives and
+with no debounce, and the output is byte-identical to a full compile. Boot, a
+restored LKG snapshot, an `all` marker, a cursor reset and the backstop
+(`CONFIG_SYNC_RECOMPILE_BACKSTOP`) run a full compile; the backstop also
+compares it with the incremental state and counts differences in
+`trustgate.configsnapshot.drift`. Turn incremental compile on only after every
+admin replica runs a build with the outbox cursor, in a separate deploy: an
+older replica still deletes markers its peers need.
+
+**Layered pull.** With incremental compile on, the admin also publishes a
+manifest per scope: the ordered SHA-256 digests of fragments (gateways split
+into ~64 KiB buckets, plus the shared and catalog fragments). Its version is
+`m1:` + the hex SHA-256 of the digests. A data plane with
+`CONFIG_SYNC_LAYERED_PULL=true` sends `accepts_layered` in `Hello`, calls
+`GetManifest`, fetches only the missing fragments with `GetFragments` (served
+only when the caller's own scope manifest names them), verifies each digest and
+applies the assembled snapshot only when everything verified. `Unimplemented`
+or a fragment that aged out twice falls back to `GetSnapshot` for that call.
+
+**Verify** a rollout with the `published config snapshot` log fields `mode`,
+`reason`, `dirty` and `compile`, the `compile_stage_duration` histogram and the
+`drift` counter. `encoded_bytes{flavour=scoped,stat=total}` counts bytes served,
+not bytes held, so it does not move with these changes.
 
 **Env (flag ON):** proxy/mcp do **not** need `DB_*`. `Validate()` requires the
 `CONFIG_SYNC_*` set below; **`REDIS_HOST` stays required**.
@@ -317,7 +349,11 @@ Proto: `pkg/infra/configsnapshot/proto/snapshot.proto` — regenerate with
 | `CONFIG_SYNC_LKG_PATH` | encrypted LKG file path | `/var/lib/trustgate/snapshot.lkg` |
 | `CONFIG_SYNC_LKG_KEY` | AES-256 key, base64 → 32 bytes | `""` |
 | `CONFIG_SYNC_POLL_INTERVAL` | backstop re-pull interval | `5m` |
-| `CONFIG_SYNC_RECOMPILE_DEBOUNCE` | CP recompile debounce | `250ms` |
+| `CONFIG_SYNC_RECOMPILE_DEBOUNCE` | CP recompile debounce (full-compile mode only) | `250ms` |
+| `CONFIG_SYNC_OUTBOX_GAP_EXPIRY` | CP: how long the outbox cursor waits for a missing seq | `30s` |
+| `CONFIG_SYNC_ADMIN_LKG_PERSIST_INTERVAL` | CP: shortest time between two writes of the persisted snapshot | `30s` |
+| `CONFIG_SYNC_INCREMENTAL_COMPILE` | CP: recompile only what admin writes touched, no debounce; publishes layered snapshots | `false` |
+| `CONFIG_SYNC_LAYERED_PULL` | DP: pull a manifest plus only the missing fragments | `false` |
 | `CONFIG_SYNC_INSTANCE_ID` | fleet-visibility id | `HOSTNAME` |
 | `CONFIG_SYNC_HEARTBEAT_INTERVAL` | DP heartbeat on the Sync stream; CP `last_seen` refresh of held streams | `30s` |
 | `INSTANCE_REGION` / `INSTANCE_DEPLOYMENT_TYPE` | reported in the DP heartbeat (`saas` \| `self-hosted`) | `""` / `self-hosted` |

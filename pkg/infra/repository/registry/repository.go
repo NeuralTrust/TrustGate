@@ -90,15 +90,8 @@ func NewRepository(
 	return r
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
@@ -128,7 +121,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	const query = `
 		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
@@ -172,7 +165,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       pricing          = $11,
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		mcpTargetBytes, err := r.encodeMCPTargetForUpdate(ctx, tx, b.ID, b.GatewayID, b.MCPTarget)
 		if err != nil {
 			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
@@ -235,7 +228,7 @@ func (r *Repository) CompareAndSwapMCPTarget(
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		if err := r.outbox.AppendTx(ctx, tx); err != nil {
+		if err := r.outbox.AppendGatewayTx(ctx, tx, gatewayID); err != nil {
 			return err
 		}
 		applied = true
@@ -263,7 +256,7 @@ func (r *Repository) Delete(
 ) (domain.PruneReport, error) {
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
 	var report domain.PruneReport
-	if err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	if err := r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		for _, hook := range r.deleteHooks {
 			hookReport, err := hook(ctx, tx, gatewayID, id)
 			if err != nil {
@@ -290,7 +283,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.R
 		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
 		  FROM registries
 		 WHERE id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	b, err := r.scanRegistry(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -310,7 +303,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(registryIDs))
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(registryIDs))
 	if err != nil {
 		return nil, fmt.Errorf("registry repository: find by ids: %w", err)
 	}
@@ -348,7 +341,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("registry repository: count: %w", err)
 	}
 
@@ -359,7 +352,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
 		 ORDER BY created_at DESC, id
 		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("registry repository: list: %w", err)
 	}

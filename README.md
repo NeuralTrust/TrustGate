@@ -551,6 +551,17 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 - [Twitter](https://twitter.com/neuraltrust)
 - [Blog](https://neuraltrust.ai/en/resources/blog)
 
+---
+
+## Funding
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/funding/eic-funded-by-eu-white.png">
+  <img src="assets/funding/eic-funded-by-eu.png" alt="European Innovation Council. Funded by the European Union" width="480">
+</picture>
+
+Funded by the European Union. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or the European Innovation Council and SMEs Executive Agency (EISMEA). Neither the European Union nor the granting authority can be held responsible for them.
+
 <div align="center">
 Made with care by <a href="https://neuraltrust.ai">NeuralTrust</a>
 </div>

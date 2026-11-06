@@ -177,8 +177,10 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 	if version == "" {
 		return fmt.Errorf("%w: snapshot response has no version", ErrIntegrity)
 	}
-	if computed := w.codec.Version(raw); version != computed {
-		return fmt.Errorf("%w: etag %q != body sha256 %q", ErrIntegrity, version, computed)
+	if !w.fetcherVerifies(version) {
+		if computed := w.codec.Version(raw); version != computed {
+			return fmt.Errorf("%w: etag %q != body sha256 %q", ErrIntegrity, version, computed)
+		}
 	}
 	snapshot, err := w.codec.Decode(raw)
 	if err != nil {
@@ -202,6 +204,11 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 			slog.String("error", err.Error()))
 	}
 	return nil
+}
+
+func (w *Worker[T]) fetcherVerifies(version string) bool {
+	verifier, ok := w.fetcher.(VerifyingFetcher)
+	return ok && verifier.Verifies(version)
 }
 
 func (w *Worker[T]) restoreLKG() {

@@ -54,22 +54,19 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(tx pgx.Tx, marks *outbox.Marks) error) error {
+	return outbox.WithMarkedTx(ctx, r.conn, r.outbox, fn)
+}
+
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, g.ID, func(tx pgx.Tx) error {
 		return insertGatewayTx(ctx, tx, g)
 	})
 }
@@ -82,7 +79,7 @@ func (r *Repository) SaveWithTenantCap(ctx context.Context, g *domain.Gateway, t
 	if tenantID == "" || maxInstances <= 0 {
 		return r.Save(ctx, g)
 	}
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, g.ID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
 			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
 		}
@@ -180,7 +177,7 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		       updated_at     = $10,
 		       traffic_labeling = $11
 		 WHERE id = $1`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, g.ID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt, labelingBytes,
 		)
@@ -224,7 +221,7 @@ func (r *Repository) RestampEntitlementsByTenantID(
 		RETURNING id, slug`
 	limits, hasLimits := e.ResolveLimits()
 	var stamped []domain.RestampedGateway
-	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx, marks *outbox.Marks) error {
 		rows, err := tx.Query(ctx, query, tenantID, entitlementsBytes)
 		if err != nil {
 			return mapPgError(err)
@@ -237,6 +234,7 @@ func (r *Repository) RestampEntitlementsByTenantID(
 				return mapPgError(err)
 			}
 			stamped = append(stamped, touched)
+			marks.Gateway(touched.ID)
 		}
 		if err := rows.Err(); err != nil {
 			return mapPgError(err)
@@ -300,7 +298,7 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 		       updated_at     = $10,
 		       traffic_labeling = $11
 		 WHERE id = $1`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, g.ID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
 			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
 		}
@@ -348,7 +346,7 @@ var cascadeLockStatements = []string{
 
 func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 	const deleteGateway = `DELETE FROM gateways WHERE id = $1`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, id, func(tx pgx.Tx) error {
 		for _, stmt := range cascadeLockStatements {
 			if _, err := tx.Exec(ctx, stmt, id); err != nil {
 				return fmt.Errorf("gateway repository: lock dependents: %w", err)
@@ -375,7 +373,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -391,7 +389,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
-	row := r.conn.Pool.QueryRow(ctx, query, host)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, host)
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -407,7 +405,7 @@ func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gatew
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE slug = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, domain.NormalizeSlug(slug))
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -433,7 +431,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: count: %w", err)
 	}
 
@@ -444,7 +442,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
 		 ORDER BY created_at DESC, id
 		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: list: %w", err)
 	}
@@ -467,7 +465,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 func (r *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
 	const query = `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`
 	var count int
-	if err := r.conn.Pool.QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
 		return 0, fmt.Errorf("gateway repository: count by tenant: %w", err)
 	}
 	return count, nil
