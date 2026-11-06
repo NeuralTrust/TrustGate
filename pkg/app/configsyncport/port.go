@@ -76,3 +76,18 @@ type Marker struct {
 	Kind      MarkerKind
 	GatewayID ids.GatewayID
 }
+
+// FragmentRef names one fragment of a layered snapshot by the SHA-256 of its
+// bytes.
+type FragmentRef struct {
+	Digest [32]byte
+	Size   int
+}
+
+// Manifest is a layered snapshot: the fragments whose concatenation, in order,
+// decodes to the same configuration as the single-blob snapshot, and the
+// version that names that list.
+type Manifest struct {
+	Version   string
+	Fragments []FragmentRef
+}

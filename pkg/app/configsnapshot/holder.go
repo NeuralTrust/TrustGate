@@ -14,7 +14,12 @@
 
 package configsnapshot
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+)
 
 type snapshotState struct {
 	raw     []byte
@@ -60,6 +65,13 @@ func (s ScopedSnapshot) Bytes() []byte {
 type Holder struct {
 	current atomic.Pointer[snapshotState]
 	scoped  atomic.Pointer[map[string]ScopedSnapshot]
+
+	layeredMu sync.RWMutex
+	layered   *Layered
+	// previous keeps the fragments of the publish before the current one, so a
+	// data plane that read the previous manifest can still fetch its fragments
+	// while it pulls.
+	previous map[[32]byte][]byte
 }
 
 func NewHolder() *Holder {
@@ -133,4 +145,52 @@ func (h *Holder) Version() string {
 		return ""
 	}
 	return state.version
+}
+
+// SetLayered publishes the manifests and fragments of a layered snapshot. The
+// fragments of the publish it replaces stay readable for one more publish.
+func (h *Holder) SetLayered(layered Layered) {
+	h.layeredMu.Lock()
+	defer h.layeredMu.Unlock()
+	if h.layered != nil {
+		h.previous = h.layered.Fragments
+	}
+	h.layered = &layered
+}
+
+// ClearLayered withdraws the layered snapshot, for a publish that has none: a
+// data plane then falls back to the single-blob snapshot.
+func (h *Holder) ClearLayered() {
+	h.layeredMu.Lock()
+	defer h.layeredMu.Unlock()
+	h.layered, h.previous = nil, nil
+}
+
+// ManifestFor returns the layered manifest served to scope; an empty scope is
+// the global snapshot. ok is false when no layered snapshot is published.
+func (h *Holder) ManifestFor(scope string) (configsyncport.Manifest, bool) {
+	h.layeredMu.RLock()
+	defer h.layeredMu.RUnlock()
+	if h.layered == nil {
+		return configsyncport.Manifest{}, false
+	}
+	if scope == "" {
+		return h.layered.Global, true
+	}
+	manifest, ok := h.layered.Scoped[scope]
+	return manifest, ok
+}
+
+// Fragment returns the bytes of the fragment with digest, from the current
+// publish or the one before it.
+func (h *Holder) Fragment(digest [32]byte) ([]byte, bool) {
+	h.layeredMu.RLock()
+	defer h.layeredMu.RUnlock()
+	if h.layered != nil {
+		if raw, ok := h.layered.Fragments[digest]; ok {
+			return raw, true
+		}
+	}
+	raw, ok := h.previous[digest]
+	return raw, ok
 }

@@ -89,16 +89,21 @@ type gatewayFragment struct {
 	slots       [slotCount][]element
 	scoped      []byte
 	scopedStamp []byte
+	k           int
+	buckets     []bucket
+	shared      sharedPart
 }
 
 // Fragments is the FragmentEncoder over the snapshot proto. It is not safe for
 // concurrent use.
 type Fragments struct {
-	gateways    map[string]*gatewayFragment
-	catalog     []byte
-	global      []byte
-	globalStamp []byte
-	globalDirty bool
+	gateways      map[string]*gatewayFragment
+	catalog       []byte
+	catalogDigest [32]byte
+	global        []byte
+	globalStamp   []byte
+	globalShared  sharedPart
+	globalDirty   bool
 }
 
 var _ appsnapshot.FragmentEncoder = (*Fragments)(nil)
@@ -114,8 +119,13 @@ func (f *Fragments) Put(gateway gatewaydomain.Gateway, data readmodel.Data) erro
 	if err != nil {
 		return err
 	}
-	if previous, ok := f.gateways[fragment.id]; ok && previous.hosted {
+	previous, ok := f.gateways[fragment.id]
+	if ok && previous.hosted {
 		f.globalDirty = true
+	}
+	bucketize(fragment, previous)
+	if ok && fragment.tenant == previous.tenant {
+		fragment.shared = previous.shared
 	}
 	if fragment.hosted {
 		f.globalDirty = true
@@ -144,6 +154,7 @@ func (f *Fragments) PutCatalog(catalog readmodel.Data) error {
 	}
 	if f.catalog == nil || !bytes.Equal(f.catalog, raw) {
 		f.catalog = raw
+		f.catalogDigest = digestOf(raw)
 	}
 	return nil
 }
@@ -163,9 +174,14 @@ func (f *Fragments) Rebuild(gateways []gatewaydomain.Gateway, data map[ids.Gatew
 		if err != nil {
 			return err
 		}
-		if previous, ok := f.gateways[fragment.id]; ok {
+		previous, ok := f.gateways[fragment.id]
+		if ok {
 			fragment.scoped, fragment.scopedStamp = reuseScoped(previous, fragment)
+			if fragment.tenant == previous.tenant {
+				fragment.shared = previous.shared
+			}
 		}
+		bucketize(fragment, previous)
 		next[fragment.id] = fragment
 	}
 	if skipped > 0 && skipped == len(gateways) {
@@ -225,10 +241,12 @@ func (f *Fragments) Assemble(shared appsnapshot.SharedInputs) (appsnapshot.Assem
 		if err != nil {
 			return appsnapshot.Assembled{}, err
 		}
-		if key := stamp.key(); fragment.scoped == nil || !bytes.Equal(fragment.scopedStamp, key) {
+		key := stamp.key()
+		if fragment.scoped == nil || !bytes.Equal(fragment.scopedStamp, key) {
 			fragment.scoped = assemble([]*gatewayFragment{fragment}, stamp)
 			fragment.scopedStamp = key
 		}
+		fragment.shared.update(stamp, key)
 		scoped[fragment.id] = fragment.scoped
 	}
 
@@ -236,16 +254,18 @@ func (f *Fragments) Assemble(shared appsnapshot.SharedInputs) (appsnapshot.Assem
 	if err != nil {
 		return appsnapshot.Assembled{}, err
 	}
-	if key := globalStamp.key(); f.globalDirty || f.global == nil || !bytes.Equal(f.globalStamp, key) {
+	globalKey := globalStamp.key()
+	if f.globalDirty || f.global == nil || !bytes.Equal(f.globalStamp, globalKey) {
 		f.global = assemble(hosted, globalStamp)
-		f.globalStamp = key
+		f.globalStamp = globalKey
 		f.globalDirty = false
 	}
+	f.globalShared.update(globalStamp, globalKey)
 	catalog := f.catalog
 	if catalog == nil {
 		catalog = []byte{}
 	}
-	return appsnapshot.Assembled{Global: f.global, Scoped: scoped, Catalog: catalog}, nil
+	return appsnapshot.Assembled{Global: f.global, Scoped: scoped, Catalog: catalog, Layered: f.layered(ordered, hosted)}, nil
 }
 
 type stamp [slotCount][]byte

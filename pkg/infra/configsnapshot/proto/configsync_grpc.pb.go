@@ -33,8 +33,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ConfigSync_Sync_FullMethodName        = "/snapshotpb.ConfigSync/Sync"
-	ConfigSync_GetSnapshot_FullMethodName = "/snapshotpb.ConfigSync/GetSnapshot"
+	ConfigSync_Sync_FullMethodName         = "/snapshotpb.ConfigSync/Sync"
+	ConfigSync_GetSnapshot_FullMethodName  = "/snapshotpb.ConfigSync/GetSnapshot"
+	ConfigSync_GetManifest_FullMethodName  = "/snapshotpb.ConfigSync/GetManifest"
+	ConfigSync_GetFragments_FullMethodName = "/snapshotpb.ConfigSync/GetFragments"
 )
 
 // ConfigSyncClient is the client API for ConfigSync service.
@@ -52,6 +54,15 @@ type ConfigSyncClient interface {
 	// first message is a SnapshotHeader; when the applied version already matches the
 	// header carries not_modified=true and no data chunks follow.
 	GetSnapshot(ctx context.Context, in *GetSnapshotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SnapshotChunk], error)
+	// GetManifest returns the ordered fragment digests of the caller's snapshot.
+	// A data plane that already holds most fragments then fetches only the ones it
+	// is missing with GetFragments. Concatenating the fragments in manifest order
+	// gives a snapshot that decodes to the same configuration as GetSnapshot.
+	GetManifest(ctx context.Context, in *GetManifestRequest, opts ...grpc.CallOption) (*Manifest, error)
+	// GetFragments streams the requested fragments as chunks. An unknown digest
+	// fails the call with NOT_FOUND; the data plane then starts again from
+	// GetManifest.
+	GetFragments(ctx context.Context, in *GetFragmentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FragmentChunk], error)
 }
 
 type configSyncClient struct {
@@ -94,6 +105,35 @@ func (c *configSyncClient) GetSnapshot(ctx context.Context, in *GetSnapshotReque
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ConfigSync_GetSnapshotClient = grpc.ServerStreamingClient[SnapshotChunk]
 
+func (c *configSyncClient) GetManifest(ctx context.Context, in *GetManifestRequest, opts ...grpc.CallOption) (*Manifest, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Manifest)
+	err := c.cc.Invoke(ctx, ConfigSync_GetManifest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *configSyncClient) GetFragments(ctx context.Context, in *GetFragmentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FragmentChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ConfigSync_ServiceDesc.Streams[2], ConfigSync_GetFragments_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetFragmentsRequest, FragmentChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ConfigSync_GetFragmentsClient = grpc.ServerStreamingClient[FragmentChunk]
+
 // ConfigSyncServer is the server API for ConfigSync service.
 // All implementations must embed UnimplementedConfigSyncServer
 // for forward compatibility.
@@ -109,6 +149,15 @@ type ConfigSyncServer interface {
 	// first message is a SnapshotHeader; when the applied version already matches the
 	// header carries not_modified=true and no data chunks follow.
 	GetSnapshot(*GetSnapshotRequest, grpc.ServerStreamingServer[SnapshotChunk]) error
+	// GetManifest returns the ordered fragment digests of the caller's snapshot.
+	// A data plane that already holds most fragments then fetches only the ones it
+	// is missing with GetFragments. Concatenating the fragments in manifest order
+	// gives a snapshot that decodes to the same configuration as GetSnapshot.
+	GetManifest(context.Context, *GetManifestRequest) (*Manifest, error)
+	// GetFragments streams the requested fragments as chunks. An unknown digest
+	// fails the call with NOT_FOUND; the data plane then starts again from
+	// GetManifest.
+	GetFragments(*GetFragmentsRequest, grpc.ServerStreamingServer[FragmentChunk]) error
 	mustEmbedUnimplementedConfigSyncServer()
 }
 
@@ -124,6 +173,12 @@ func (UnimplementedConfigSyncServer) Sync(grpc.BidiStreamingServer[ClientMessage
 }
 func (UnimplementedConfigSyncServer) GetSnapshot(*GetSnapshotRequest, grpc.ServerStreamingServer[SnapshotChunk]) error {
 	return status.Error(codes.Unimplemented, "method GetSnapshot not implemented")
+}
+func (UnimplementedConfigSyncServer) GetManifest(context.Context, *GetManifestRequest) (*Manifest, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetManifest not implemented")
+}
+func (UnimplementedConfigSyncServer) GetFragments(*GetFragmentsRequest, grpc.ServerStreamingServer[FragmentChunk]) error {
+	return status.Error(codes.Unimplemented, "method GetFragments not implemented")
 }
 func (UnimplementedConfigSyncServer) mustEmbedUnimplementedConfigSyncServer() {}
 func (UnimplementedConfigSyncServer) testEmbeddedByValue()                    {}
@@ -164,13 +219,47 @@ func _ConfigSync_GetSnapshot_Handler(srv interface{}, stream grpc.ServerStream) 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ConfigSync_GetSnapshotServer = grpc.ServerStreamingServer[SnapshotChunk]
 
+func _ConfigSync_GetManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetManifestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigSyncServer).GetManifest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigSync_GetManifest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigSyncServer).GetManifest(ctx, req.(*GetManifestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConfigSync_GetFragments_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetFragmentsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ConfigSyncServer).GetFragments(m, &grpc.GenericServerStream[GetFragmentsRequest, FragmentChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ConfigSync_GetFragmentsServer = grpc.ServerStreamingServer[FragmentChunk]
+
 // ConfigSync_ServiceDesc is the grpc.ServiceDesc for ConfigSync service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ConfigSync_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "snapshotpb.ConfigSync",
 	HandlerType: (*ConfigSyncServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetManifest",
+			Handler:    _ConfigSync_GetManifest_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Sync",
@@ -181,6 +270,11 @@ var ConfigSync_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "GetSnapshot",
 			Handler:       _ConfigSync_GetSnapshot_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "GetFragments",
+			Handler:       _ConfigSync_GetFragments_Handler,
 			ServerStreams: true,
 		},
 	},
