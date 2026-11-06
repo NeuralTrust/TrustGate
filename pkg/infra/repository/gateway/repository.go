@@ -373,7 +373,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -389,7 +389,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
-	row := r.conn.Pool.QueryRow(ctx, query, host)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, host)
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -405,7 +405,7 @@ func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gatew
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, traffic_labeling
 		  FROM gateways
 		 WHERE slug = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, domain.NormalizeSlug(slug))
 	g, err := scanGateway(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -431,7 +431,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: count: %w", err)
 	}
 
@@ -442,7 +442,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
 		 ORDER BY created_at DESC, id
 		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: list: %w", err)
 	}
@@ -465,7 +465,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 func (r *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
 	const query = `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`
 	var count int
-	if err := r.conn.Pool.QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
 		return 0, fmt.Errorf("gateway repository: count by tenant: %w", err)
 	}
 	return count, nil

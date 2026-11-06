@@ -100,7 +100,7 @@ func (r *PolicyRepository) ListPolicies(ctx context.Context, page, size int) ([]
 		size = 100
 	}
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM store_access_policies`).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, `SELECT COUNT(*) FROM store_access_policies`).Scan(&total); err != nil {
 		return nil, 0, mapPolicyPgError(err)
 	}
 	const query = selectPolicyColumns + `
@@ -114,7 +114,7 @@ func (r *PolicyRepository) ListPolicies(ctx context.Context, page, size int) ([]
 }
 
 func (r *PolicyRepository) queryPolicies(ctx context.Context, query string, args ...any) ([]*domain.Policy, error) {
-	rows, err := r.conn.Pool.Query(ctx, query, args...)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, mapPolicyPgError(err)
 	}

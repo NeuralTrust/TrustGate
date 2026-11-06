@@ -156,7 +156,7 @@ func (r *EveryoneRepository) ListEveryone(ctx context.Context, page, size int) (
 		size = 100
 	}
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM store_everyone`).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, `SELECT COUNT(*) FROM store_everyone`).Scan(&total); err != nil {
 		return nil, 0, mapEveryonePgError(err)
 	}
 	items, err := r.queryEveryone(ctx, selectEveryoneColumns+` ORDER BY gateway_id LIMIT $1 OFFSET $2`, size, (page-1)*size)
@@ -167,7 +167,7 @@ func (r *EveryoneRepository) ListEveryone(ctx context.Context, page, size int) (
 }
 
 func (r *EveryoneRepository) queryEveryone(ctx context.Context, query string, args ...any) ([]*domain.Everyone, error) {
-	rows, err := r.conn.Pool.Query(ctx, query, args...)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, mapEveryonePgError(err)
 	}

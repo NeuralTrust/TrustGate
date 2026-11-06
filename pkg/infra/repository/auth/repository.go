@@ -290,7 +290,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 		SELECT ` + authColumns + `
 		  FROM auths
 		 WHERE id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -308,7 +308,7 @@ func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*dom
 		 WHERE key_hash = $1
 		   AND type = 'api_key'
 		   AND enabled = TRUE`
-	row := r.conn.Pool.QueryRow(ctx, query, keyHash)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, keyHash)
 	a, err := r.scanAuth(ctx, row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -331,7 +331,7 @@ func (r *Repository) FindByOwnerAndGroup(ctx context.Context, gatewayID ids.Gate
 		 WHERE gateway_id = $1
 		   AND owner_id = $2
 		   AND COALESCE(group_id, '') = $3`
-	a, err := r.scanAuth(ctx, r.conn.Pool.QueryRow(ctx, query, gatewayID, ownerID, groupID))
+	a, err := r.scanAuth(ctx, database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, gatewayID, ownerID, groupID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -351,7 +351,7 @@ func (r *Repository) ListByOwner(ctx context.Context, gatewayID ids.GatewayID, o
 		 WHERE gateway_id = $1
 		   AND owner_id = $2
 		 ORDER BY created_at DESC, id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, ownerID)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: list by owner: %w", err)
 	}
@@ -380,7 +380,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(authIDs))
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(authIDs))
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: find by ids: %w", err)
 	}
@@ -414,7 +414,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 		 WHERE enabled = TRUE
 		   AND type = ANY($1::text[])
 		 ORDER BY created_at`
-	rows, err := r.conn.Pool.Query(ctx, query, typeNames)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, typeNames)
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: find enabled by types: %w", err)
 	}
@@ -447,7 +447,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 		   AND enabled = TRUE
 		   AND owner_id IS NULL
 		 ORDER BY created_at DESC, id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, storedTypeNames(authType))
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID, storedTypeNames(authType))
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: list enabled by gateway and type: %w", err)
 	}
@@ -486,7 +486,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	typeParam := storedTypeNames(filter.Type)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
 		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("auth repository: count: %w", err)
 	}
@@ -503,7 +503,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($7::boolean IS NOT TRUE OR owner_id IS NOT NULL)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
 		 LIMIT $8 OFFSET $9`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled,
 		filter.ExcludeOwned, filter.OwnerID, filter.OnlyOwned, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("auth repository: list: %w", err)
