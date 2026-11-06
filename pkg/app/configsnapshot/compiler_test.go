@@ -58,6 +58,18 @@ type fakeGateways struct {
 	err   error
 }
 
+func (f fakeGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	for _, gw := range f.items {
+		if gw.ID == id {
+			return gw, nil
+		}
+	}
+	return nil, gatewaydomain.ErrNotFound
+}
+
 func (f fakeGateways) List(_ context.Context, filter gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error) {
 	if f.err != nil {
 		return nil, 0, f.err

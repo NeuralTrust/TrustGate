@@ -128,7 +128,7 @@ S2 notes (as implemented):
 
 ### S3: Outbox cursor + compile-while-dirty loop
 
-- [ ] 3.1 `pkg/app/configsnapshot/cursor.go`: `lowWater`, `seen`, `gaps` with
+- [x] 3.1 `pkg/app/configsnapshot/cursor.go`: `lowWater`, `seen`, `gaps` with
   first-seen time, `Observe(markers, minSeq) dirtySet`, prune guard (forces a
   full compile when rows were pruned before this replica read them), and
   `Commit` only after a successful publish. Add config `CONFIG_SYNC_OUTBOX_GAP_EXPIRY`
@@ -137,7 +137,7 @@ S2 notes (as implemented):
   rollback, a marker that commits after its gap expired is processed on the
   next cycle (late set, no backstop wait), late set over its bound → full,
   prune past cursor → immediate full, NULL kind → full, failed cycle re-reads.
-- [ ] 3.2 `dispatcher.go`: replace `Pending` + `DeleteSeqs` with the cursor. No
+- [x] 3.2 `dispatcher.go`: replace `Pending` + `DeleteSeqs` with the cursor. No
   code path deletes markers any more (D11); rows age out via `PruneOlderThan`.
   Remove the S2 adapter. This changes behavior even with the switch off: the
   outbox is no longer drained and grows to the retention/row bound, and the
@@ -147,21 +147,50 @@ S2 notes (as implemented):
   Rollout rule: the incremental switch is turned on in an environment only in a
   separate deploy, after every admin replica runs the S3 build, so no old
   replica can delete markers the new ones still need.
-- [ ] 3.3 `Dispatcher.Run`: in incremental mode, compile immediately on a
+- [x] 3.3 `Dispatcher.Run`: in incremental mode, compile immediately on a
   signal; signals during a compile fold into exactly one follow-up compile with
   no timer. Legacy mode keeps today's leading-edge plus 250 ms debounce. The
   backstop tick is unchanged. The legacy compile is still the one that runs.
   Verify: `dispatcher_test.go` checks that a signal during a compile gives one
   follow-up with no wait, that a burst of N signals gives at most 2 compiles,
   and runs with `-race`.
-- [ ] 3.4 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` stay green,
+- [x] 3.4 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` stay green,
   and markers are no longer deleted per cycle.
   Verify: `go test -tags functional -count=1 -run 'TestDBLessDataPlane_|TestAdminLKG_' ./tests/functional/`
   with an isolated `.env.functional` (ports 8190+).
 
+S3 implementation notes:
+
+- The port `OutboxRepository` is now `ReadSince`, `ReadSeqs` and
+  `PruneOlderThan`; `Pending`, `PendingCount` and `DeleteSeqs` are gone from the
+  port and the repository, and the separate `OutboxMarkerReader` from S2 is
+  folded in. `ReadSeqs` re-reads the expired gaps (`late`) with `seq = ANY($1)`.
+- The cursor (`cursor.go`) is pure: `observe` returns the next state and the
+  dirty set, and the dispatcher adopts it with `commit` only after a cycle
+  that compiled. A failed compile or a failed outbox read leaves it unchanged,
+  so the next cycle reads the same markers.
+- The late set is bounded at 1024 seqs (`defaultLateBound`, not configurable)
+  and its entries age out after the outbox retention. Overflow and a prune
+  past the cursor both force a full compile with reason `cursor_reset`; a
+  marker without a kind forces reason `unnamed_marker`.
+- First read: the cursor starts at the oldest row then in the outbox. A seq
+  below it that was still in flight at start-up is not awaited; that cycle is
+  a full compile and the backstop covers the in-flight write. In practice the
+  outbox keeps 24 h of markers now, so in-flight seqs sit above the oldest row.
+- `Run` signals itself at start (the boot `PendingCount` check is gone), and
+  `WithCompileWhileDirty()` selects the no-timer loop. It is not wired yet; S5
+  turns it on with the incremental switch. The legacy debounce stays the
+  active behavior.
+- The S3 compile is still the full one. The dirty set only feeds the log
+  (`reason`, `dirty` = dirty gateway count) until S5 consumes it.
+- 3.4: the functional suite passes. That markers are no longer deleted is
+  covered by the dispatcher unit tests (`TestDispatch_NeverDeletesMarkers…`);
+  no code path calls a delete other than the retention prune.
+
+
 ### S4: Fragment encoder (byte-identical assembly)
 
-- [ ] 4.1 `pkg/infra/configsnapshot/codec.go`: factor the per-element builders
+- [x] 4.1 `pkg/infra/configsnapshot/codec.go`: factor the per-element builders
   out of `toProto` (consumers, registries, policies, auths, … and JSON-wrapped
   entities), so the legacy encode and the fragment path share them.
   Before refactoring, freeze today's encoder as a test-only oracle
@@ -171,23 +200,65 @@ S2 notes (as implemented):
   the shared builders, so "byte-identical to today" is proven, not just
   "incremental equals full".
   Verify: existing `codec_*_test.go` stay green and the golden versions match.
-- [ ] 4.2 Port `pkg/app/configsnapshot/fragment_port.go`: `FragmentEncoder`,
+- [x] 4.2 Port `pkg/app/configsnapshot/fragment_port.go`: `FragmentEncoder`,
   `SharedInputs`, `Assembled` (design § Interfaces).
-- [ ] 4.3 `pkg/infra/configsnapshot/fragments.go`:
+- [x] 4.3 `pkg/infra/configsnapshot/fragments.go`:
   - `element{key, bytes}` and per-gateway `runs[field]`;
   - `Put`, which encodes, runs admission (`admitConsumers` / `validateConsumerSmartRouting` per gateway, D9) and replaces the gateway's runs;
   - `Delete`, `PutCatalog` and `Rebuild`;
   - `Assemble`: a k-way merge in `sortData` comparator order per field, in field-number order, stamping the shared inputs (caps per tenant, revocations, playground keys, usage) and reusing unchanged scoped tenant slices (#1273).
-- [ ] 4.4 Byte-identity property test `fragments_identity_test.go`: seeded
+- [x] 4.4 Byte-identity property test `fragments_identity_test.go`: seeded
   random data covering hosted and own-plane gateways, every entity kind,
   smart-routing consumers that pass and fail admission, empty `key_hash`, usage
   on and off, caps and revocations. Assert `Assemble` equals the frozen
   oracle from 4.1 (and the live `CompileAll` + `Encode`) for the global
   snapshot and every scope (bytes and versions). Spec `snapshot-fragment-compile` "byte-identical" scenarios.
   Verify: `go test -race ./pkg/infra/configsnapshot/ -run Identity -count=20`.
-- [ ] 4.5 Benchmark in `fragments_bench_test.go`: 600 gateways, one dirty
+- [x] 4.5 Benchmark in `fragments_bench_test.go`: 600 gateways, one dirty
   gateway (`Put` + `Assemble`), catalog dirty, full `Rebuild`, with `ReportAllocs`.
   Target: one dirty gateway under 10 ms, excluding the DB.
+
+S4 implementation notes:
+
+- No refactor of `toProto`. `Fragments.Put` runs the unchanged `toProto` on one
+  gateway's data and marshals every element on its own as a one-element
+  `Snapshot`, which yields exactly the element's tag, length and payload. The
+  encoder therefore shares the production code path by construction, and
+  `codec.go` has no diff. The frozen oracle still guards it.
+- Oracle: `legacy_encode_test.go` is a verbatim copy of today's `toProto`,
+  admission helpers (minus the log line and metric) and the compiler's
+  `sortData`, `stampTenantCaps`, `stampSessionRevocations`,
+  `appendGatewayData` and `mergeCatalog`, plus `legacyCompile`, which replays
+  `CompileAll`'s assembly and the dispatcher's encode. Golden versions for a
+  fixed fixture are pinned in `codec_oracle_test.go`, and
+  `TestCodecMatchesTheFrozenEncoder` keeps the live codec equal to the copy.
+- Property tests (`fragments_identity_test.go`, seeded worlds plus a
+  time-based base seed that is logged): `Rebuild`, and 40-step mutation
+  sequences (gateways added, deleted, flipped hosted ↔ hybrid/dedicated,
+  turned corrupt, entities added and removed, shared inputs and catalog
+  changed) are compared after every step against `legacyCompile`, bytes and
+  versions, global and every scope. A generator-coverage test checks the
+  worlds hold admitted and quarantined smart routing, own-plane gateways,
+  key-less auths and usage on and off. Mutating the merge order, the per-run
+  sort or the hosted flag makes the identity tests fail.
+- Live check: `pkg/app/configsnapshot/fragments_live_test.go` feeds the
+  encoder what the real `Compiler.CompileAll` collected (fakes, with caps,
+  revocations, budgets, Everyone, playground keys, usage) and compares with
+  `Codec.Encode` of each flavor.
+- Shared fields (10, 14, 15, 17) are stamped per flavor at `Assemble`; tenant
+  caps are filtered to the flavor's tenants and revocations to its gateways,
+  as the compiler does. A scoped or global part whose elements and stamp did
+  not change keeps its previous slice, and an unchanged catalog keeps its
+  slice.
+- Admission runs once per `Put` instead of once per flavor per compile, so the
+  `routing.quarantined` counter counts a quarantined consumer once per
+  re-encode rather than once in the global and once in its scope.
+- `pkg/infra/configsnapshot` now imports the app port package for
+  `FragmentEncoder`, `SharedInputs` and `Assembled` (infra implements an app
+  port; app does not import infra).
+- Benchmark (600 gateways, ~3,000 catalog models, no DB, Apple M-series):
+  one dirty gateway `Put` + `Assemble` 0.85 ms / 1.9 MB; catalog dirty 2.5 ms;
+  full `Rebuild` + `Assemble` 10.4 ms; frozen full compile 12.6 ms / 23.9 MB.
 
 ### S5: Incremental dispatch behind the switch
 
@@ -197,34 +268,70 @@ scope only), and a gateway delete cascades to all of its entities. Both must be
 covered by the mutation-sequence test in 5.x, and the incremental path must
 re-derive global membership from the freshly read gateway, never from the cache.
 
-- [ ] 5.1 `pkg/app/configsnapshot/compiler.go`: export `CollectGateway`,
+- [x] 5.1 `pkg/app/configsnapshot/compiler.go`: export `CollectGateway`,
   `CollectAll` and `ListShared` for the incremental path. Add `FindByID` to the
   `GatewayReader` port (`gateway_reader.go`); the repository already has it.
-- [ ] 5.2 `pkg/app/configsnapshot/incremental.go`: from the dirty set, call
+- [x] 5.2 `pkg/app/configsnapshot/incremental.go`: from the dirty set, call
   `CollectGateway` → `Put` for each dirty gateway, `Delete` for removed ones,
   `PutCatalog` on a catalog marker, then re-read the shared inputs each cycle
   (D8) and `Assemble`. Fall back to a full compile on `all`, at boot, after LKG
   restore, on the prune guard and on cache-integrity errors.
-- [ ] 5.3 Backstop (5 min) in incremental mode: run a full `Rebuild`, compare it
+- [x] 5.3 Backstop (5 min) in incremental mode: run a full `Rebuild`, compare it
   against the incremental state, count `trustgate.configsnapshot.drift{scope_kind}`
   only when the max seq did not move during the compare, then publish the full
   result.
-- [ ] 5.4 Config `CONFIG_SYNC_INCREMENTAL_COMPILE` (default `false`) in
+- [x] 5.4 Config `CONFIG_SYNC_INCREMENTAL_COMPILE` (default `false`) in
   `pkg/config/config.go`; wiring in `pkg/container/modules/control_config_sync.go`.
   Add explicit `false` to `k8s/overlays/{dev,prod,prod-us}/config.env`.
-- [ ] 5.5 Mutation-sequence test `incremental_test.go`: random add, update and
+- [x] 5.5 Mutation-sequence test `incremental_test.go`: random add, update and
   delete of every entity; a gateway flipping between hosted and dedicated;
   gateway delete; catalog change; caps and revocation changes. After each step,
   the incremental output must equal a fresh full compile.
   Verify: `go test -race ./pkg/app/configsnapshot/ -run Incremental -count=10`.
-- [ ] 5.6 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` with the
+- [x] 5.6 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` with the
   switch off and on, plus a new test that a write reaches the data plane with
   `mode=incremental` in the publish log.
   Verify: the functional suite twice, once with `CONFIG_SYNC_INCREMENTAL_COMPILE=true`
   in the isolated `.env.functional`.
-- [ ] 5.7 Rollout notes in the PR: image A with the switch off and stage timings
+- [x] 5.7 Rollout notes in the PR: image A with the switch off and stage timings
   measured in production, then DEV on (drift = 0 for days), then each production region in turn.
   Rollback means switching it off.
+
+S5 implementation notes:
+
+- 5.1: the compiler implements a new `IncrementalSource` port
+  (`compiler_incremental.go`: `CollectAll`, `CollectGateway`, `CollectCatalog`,
+  `ListShared`) instead of exporting the private collectors. `FindByID` is an
+  optional `GatewayFinder` interface rather than a new method on
+  `GatewayReader`, so the existing reader fakes keep compiling; the gateway
+  repository implements it, and a reader without it falls back to the listing.
+  `CollectGateway` reads the gateway's policies through `List` with their total
+  and applies the unreadable-row breaker per gateway, since the whole-table
+  check of the bulk path does not run.
+- 5.2: `incremental.go`. Any failure of an incremental cycle (a read error, a
+  corrupt gateway, an encode error) falls back to a full compile in the same
+  cycle with reason `cache_miss`, as does a cycle whose outbox read failed. A
+  gateway that no longer exists is deleted from the encoder. In incremental mode
+  the full compile also goes through the encoder (`Rebuild` + `Assemble`), so
+  there is one assembly path; with the switch off the legacy compile is
+  untouched.
+- 5.3: the backstop applies the cycle's markers incrementally, rebuilds, and
+  counts `trustgate.configsnapshot.drift{scope_kind=global|scoped}` only when
+  no marker the cycle did not see is in the outbox afterwards, then publishes
+  the full result.
+- 5.4: write-triggered compiles with the switch off now log reason
+  `switch_off` (was `signal`); the S1 and S3 log/metric tests were updated.
+- 5.5: `incremental_test.go` drives two real dispatchers (incremental and
+  full) over 5 seeds x 60 random writes, including data plane flips, gateway
+  deletes, catalog changes, caps changes with no marker, revocations and `all`
+  markers, plus a write that lands mid-compile and a backstop drift test.
+  Injecting a dropped `Delete` or dropped tenant caps makes it fail.
+- 5.6: no new functional test asserts the log line, because the main admin
+  runs at `LOG_LEVEL=WARN`. The suite passed with the switch off and on, and a
+  run at INFO with a 3s backstop showed 27 `mode=incremental` cycles and no
+  drift. The functional catalog seed (`seedCatalogModels`) wrote the catalog
+  with raw SQL and no marker, which an incremental compile cannot see; it now
+  leaves a `catalog` marker like the repository does.
 
 ## Phase 2 — Manifest and fragment pull
 
@@ -232,32 +339,69 @@ Phase 2 starts only after Phase 1 runs in prod with the switch on.
 
 ### S6: Admin side
 
-- [ ] 6.1 `pkg/infra/configsnapshot/proto/configsync.proto`: `Hello.accepts_layered`,
+- [x] 6.1 `pkg/infra/configsnapshot/proto/configsync.proto`: `Hello.accepts_layered`,
   `VersionNotice.layered`, `GetManifest` and `GetFragments` with their messages
   (design § Phase 2 proto). Regenerate with `make proto`.
-- [ ] 6.2 Fragments and manifests:
-  - gateway fragment = that gateway's elements;
+- [x] 6.2 Fragments and manifests:
+  - gateway fragments: a gateway's elements split into content-stable buckets,
+    not one fragment per gateway (D14). Element goes to bucket
+    `hash(entity key) mod k`, with `k` a power of two chosen so a bucket stays
+    around 64 KiB (`k = 1` for small gateways). A write that adds a consumer
+    changes only the few buckets its elements hash to, so a data plane
+    downloads KBs, not the whole gateway. `k` changes only when the gateway
+    doubles or halves in size. Decode order is free (the v2 layout needs no
+    byte identity with v1: `readmodel.Build` re-sorts, the other indexes are
+    keyed by unique ids), which 6.4 asserts;
   - shared fragment per scope = caps, revocations and keys of its tenants;
   - catalog fragment = the #1273 catalog bytes;
   - manifest order: gateways by id, then shared, then catalog;
   - version `m1:` + sha256 over the digests (D12).
   - Code: `pkg/infra/configsnapshot/fragments.go`, `pkg/app/configsnapshot/holder.go`
     (manifests per scope; fragment store keeping one extra generation of grace).
-- [ ] 6.3 `pkg/infra/configsync/grpc/{service,hub}.go`:
+- [x] 6.3 `pkg/infra/configsync/grpc/{service,hub}.go`:
   - store `layered` per connection from `Hello`;
   - Sync notices carry the version that matches each plane's capability (D13);
   - `GetManifest` with `not_modified`;
   - `GetFragments` with 1 MiB chunks, `maxSnapshotBytes`, per-chunk revocation, gzip and `NotFound` for unknown digests.
-- [ ] 6.4 Tests:
+- [x] 6.4 Tests:
   - decoding the concatenated layered fragments gives a read model equal to the v1 decode;
   - an old client against the new server keeps v1 versions and `GetSnapshot`;
   - notices per capability;
   - `NotFound` once a digest has left the store.
   - Verify: `go test -race ./pkg/infra/configsync/... ./pkg/app/configsnapshot/...`.
 
+S6 implementation notes:
+
+- Proto regenerated with `make proto` (buf v1.50.0). Only `configsync.pb.go` and
+  `configsync_grpc.pb.go` are kept; the version-header churn buf wrote into
+  the other generated files was reverted.
+- Buckets (D14): `pkg/infra/configsnapshot/layered.go`. `k` keeps its value
+  while buckets stay between 32 and 128 KiB (hysteresis), so one write never
+  reshuffles a gateway. A bucket whose elements did not change keeps its bytes
+  and digest across `Put` and `Rebuild`, so nothing is re-hashed. The shared
+  part (fields 10, 14, 15, 17) is one fragment per flavor; a gateway's own
+  session revocations live there, not in its buckets, because they are stamped
+  per flavor.
+- Measured: a hosted gateway with 5,000 consumers and 5,000 keys is 129
+  fragments, 4.4 MB; adding one consumer and one key changes 2 fragments,
+  about 68 KB (1.6%).
+- Layered snapshots exist only on compiles through the fragment encoder
+  (`CONFIG_SYNC_INCREMENTAL_COMPILE=true`). With the switch off, or while a
+  restored LKG snapshot is served, `GetManifest` and `GetFragments` answer
+  `Unimplemented`, and layered data planes are notified of single-blob
+  versions (`VersionNotice.layered=false`), so they fall back to `GetSnapshot`.
+- The holder publishes the layered snapshot together with the single blob, only
+  when the single-blob versions moved, and keeps the previous publish's
+  fragments for one more publish.
+- `GetFragments` resolves every digest before sending, so `NotFound` never
+  leaves a partial transfer; it bounds a call to 4,096 fragments and
+  `maxSnapshotBytes`.
+- Broadcasts go through `BroadcastScopeLayered` when the broadcaster implements
+  it (the hub does); the port is unchanged.
+
 ### S7: Data plane side
 
-- [ ] 7.1 `pkg/runtimeconfig/sync/{worker,configsync}.go` and
+- [x] 7.1 `pkg/runtimeconfig/sync/{worker,configsync}.go` and
   `pkg/infra/configsync/grpc/client.go`:
   - layered fetcher: `GetManifest`, then fetch the missing digests, verify each
     sha256, recompute the manifest version, concatenate, decode, swap, persist
@@ -265,17 +409,83 @@ Phase 2 starts only after Phase 1 runs in prod with the switch on.
   - fragment cache `map[digest][]byte` for the last applied manifest;
   - `Unimplemented` falls back to `GetSnapshot`;
   - a partial fetch is never applied.
-- [ ] 7.2 Config `CONFIG_SYNC_LAYERED_PULL` (data plane, default `false`); send
+- [x] 7.2 Config `CONFIG_SYNC_LAYERED_PULL` (data plane, default `false`); send
   `accepts_layered` in `Hello` only when it is on.
-- [ ] 7.3 Tests:
+- [x] 7.3 Tests:
   - a new client against an old server falls back;
   - a digest mismatch is rejected;
   - `NotFound` restarts from the manifest;
-  - only the missing fragments are fetched (count the RPC bytes);
+  - only the missing fragments are fetched (count the RPC bytes); adding one
+    consumer to a gateway with thousands of consumers fetches a few buckets,
+    not the gateway;
   - an LKG restart converges.
   - Verify: unit tests with `-race`, plus a functional run with the flag on.
-- [ ] 7.4 Rollout notes: admin image serving both paths first, then data planes
+- [x] 7.4 Rollout notes: admin image serving both paths first, then data planes
   with `CONFIG_SYNC_LAYERED_PULL=true` on DEV, then prod. Rollback means the flag off.
+
+S7 implementation notes:
+
+- The layered pull lives in the gRPC client (`layered_client.go`); the worker
+  keeps one `Fetch` path. A layered version hashes fragment digests, not the
+  assembled bytes, so the client implements `configsync.VerifyingFetcher` and
+  the worker skips its body-hash check only for versions the fetcher verified
+  (`m1:` with layered pull on). Single-blob versions are still checked.
+- Fallback is per call, never sticky: `Unimplemented` on `GetManifest` or
+  `GetFragments` (old admin, incremental compile off, LKG being served) pulls
+  the single blob for that call. `NotFound` restarts from a fresh manifest
+  once; a second `NotFound` pulls the single blob.
+- Missing fragments are fetched in batches of at most 4,096 (the admin's
+  per-call cap). Each fragment is verified against its digest when its last
+  chunk arrives, the manifest against the hash of its digests, every size
+  against the manifest; nothing is returned, and the cache is not touched,
+  unless every fragment verified.
+- The fragment cache holds only the fragments of the last assembled manifest.
+- LKG: the assembled blob is persisted as today. After a restart the store
+  version is the hash of the restored bytes, which never equals a manifest
+  version, so the first converge pulls the full manifest and refills the cache.
+- `CONFIG_SYNC_LAYERED_PULL=false` is set explicitly in the dev, prod and
+  prod-us overlays next to `CONFIG_SYNC_INCREMENTAL_COMPILE=false`.
+- Measured (`TestLayeredFetchOfOneNewConsumerInABigGatewayPullsAFewBuckets`):
+  a hosted gateway with 5,000 consumers and keys is a 3.0 MB first pull in 64
+  fragments; one new consumer and key then pulls about 86 KB (2.9%).
+- Functional `TestDBLessDataPlane_*` / `TestAdminLKG_*`: 7/7 with both flags
+  off, and 7/7 with incremental compile and layered pull on (data planes
+  applied `m1:` versions; the one single-blob apply came from the LKG test,
+  where the admin serves no layered snapshot).
+
+## Review fixes (PR review of the S3–S7 PR)
+
+- [x] R.1 `GetFragments` serves a digest only when the current or previous
+  manifest of the caller's own scope names it (`Holder.FragmentFor`); any other
+  digest answers `NotFound`, like one that aged out.
+- [x] R.2 The data plane cancels the `GetFragments` and `GetSnapshot` streams on
+  every early return.
+- [x] R.3 `.env.example` and `.agents/AGENTS.md` document
+  `CONFIG_SYNC_INCREMENTAL_COMPILE`, `CONFIG_SYNC_OUTBOX_GAP_EXPIRY` and
+  `CONFIG_SYNC_LAYERED_PULL`, the outbox that is no longer drained, layered
+  versions and how to verify a rollout.
+- [x] R.4 The backstop drift check reads the shared inputs once for both
+  compiles and treats a late seq committed during the comparison as unsettled.
+- [x] R.5 A pull restarted after a fragment aged out keeps the fragments it
+  already verified; the fragment cache points into the assembled snapshot.
+- [x] R.6 `bucketCount` depends on the gateway size alone, so replicas with any
+  uptime publish the same manifests.
+- [x] R.7 The cursor does not reset on a prune of seqs it already read, and
+  resets (full compile, `cursor_reset`) when every seq left is below it (a
+  restored or recreated outbox). `ReadSince` also returns the highest seq.
+- [x] R.8 `WithIncrementalCompile` takes its `IncrementalSource` explicitly;
+  `GatewayReader` has `FindByID`; the layered broadcaster is a port
+  (`configsyncport.LayeredBroadcaster`) resolved at construction;
+  compile-while-dirty is reachable only through incremental compile; the
+  catalog/scope reuse is one helper shared by both compile paths.
+- Rollout precondition (unchanged, now in `.env.example` and AGENTS.md): turn
+  incremental compile on only after every admin replica runs this build, in a
+  separate deploy. A replica that predates the cursor deletes markers; a
+  deleted seq above the cursor is awaited as a gap and published at the next
+  backstop, and deleted newest seqs reset the cursor.
+- Not done: splitting the dispatcher's build strategy into its own type. The
+  full and incremental paths already share their helpers; a strategy split is
+  a larger refactor than this review called for.
 
 ## Phase 3 — Close-out
 
@@ -286,3 +496,17 @@ Phase 2 starts only after Phase 1 runs in prod with the switch on.
   not `encoded_bytes{scoped,total}`.
 - [ ] 8.3 Linear: post a close-out comment on ENG-3112 with the deviations and
   the measured before/after for compile and for write → applied latency.
+
+### Bucket count trade-off (review fixes)
+
+`bucketCount` is a pure function of the gateway size, so every admin replica
+splits identical content into identical buckets and publishes identical
+manifests (a manifest from one replica and fragments from another stay
+compatible behind the load balancer). The cost: a gateway whose size sits
+within one consumer of a `64 KiB × 2ⁿ` boundary while consumers are created
+and deleted re-buckets on each crossing, so those writes refetch the whole
+gateway. The window is about one consumer wide against bands that double in
+size, so it is rare; the hysteresis it replaces made every admin restart
+refetch every large gateway inside its band. Revisit with a deterministic
+band if the `compile` logs show repeated re-bucketing.
+

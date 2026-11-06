@@ -53,32 +53,43 @@ type PartitionedCompiler interface {
 	CompileAll(ctx context.Context) (global *readmodel.Snapshot, scoped map[string]*readmodel.Snapshot, catalog *readmodel.Snapshot, err error)
 }
 
-// DispatcherConfig tunes the debounce/backstop cadence and the outbox safety bound.
+// DispatcherConfig tunes the debounce/backstop cadence, the outbox safety bound
+// and how long the outbox cursor waits for a missing seq.
 type DispatcherConfig struct {
 	Debounce  time.Duration
 	Backstop  time.Duration
 	Retention time.Duration
 	MaxRows   int
+	GapExpiry time.Duration
 }
 
 // Dispatcher compiles the config snapshot, holds it for the gRPC server to serve,
-// broadcasts the new version to connected data planes, and drains the
-// change-marker outbox that survives a control-plane restart. A committed admin
-// write leaves a durable marker; the dispatcher folds every marker visible before
-// the compile into one recompile and drains exactly that observed set.
+// broadcasts the new version to connected data planes, and reads the
+// change-marker outbox through its own cursor. A committed admin write leaves a
+// durable marker; every replica observes the markers visible before a compile
+// and never deletes them, so one replica's compile cannot hide a change from
+// another. Markers leave the outbox only through the retention prune.
 type Dispatcher struct {
 	compiler    SnapshotCompiler
 	codec       configsync.SnapshotCodec[*readmodel.Snapshot]
 	holder      *Holder
 	broadcaster configsyncport.VersionBroadcaster
-	outbox      configsyncport.OutboxRepository
-	logger      *slog.Logger
-	debounce    time.Duration
-	backstop    time.Duration
-	retention   time.Duration
-	maxRows     int
-	trigger     chan struct{}
-	compiled    atomic.Bool
+	// layeredBroadcaster is broadcaster when it can notify layered data planes
+	// of their own version; nil otherwise.
+	layeredBroadcaster configsyncport.LayeredBroadcaster
+	outbox             configsyncport.OutboxRepository
+	logger             *slog.Logger
+	debounce           time.Duration
+	backstop           time.Duration
+	retention          time.Duration
+	maxRows            int
+	trigger            chan struct{}
+	compiled           atomic.Bool
+
+	cursor            *outboxCursor
+	compileWhileDirty bool
+
+	incremental *incrementalState
 
 	mu              sync.Mutex
 	publishedGlobal string
@@ -156,11 +167,27 @@ func NewDispatcher(
 		maxRows:         maxRows,
 		trigger:         make(chan struct{}, 1),
 		publishedScoped: make(map[string]string),
+		cursor:          newOutboxCursor(cfg.GapExpiry, retention, defaultLateBound),
 	}
+	d.layeredBroadcaster, _ = broadcaster.(configsyncport.LayeredBroadcaster)
 	for _, opt := range opts {
 		opt(d)
 	}
+	if d.incremental != nil && d.layeredBroadcaster == nil {
+		d.logger.Warn("the version broadcaster cannot notify layered data planes; they are sent single-blob versions",
+			slog.String("component", component))
+	}
 	return d
+}
+
+// withCompileWhileDirty makes Run dispatch on every Signal with no debounce:
+// signals that arrive during a compile fold into one follow-up dispatch that
+// starts as soon as the compile ends. Only incremental compile turns it on: a
+// full compile per write with no debounce is what it exists to avoid.
+func withCompileWhileDirty() DispatcherOption {
+	return func(d *Dispatcher) {
+		d.compileWhileDirty = true
+	}
 }
 
 // Signal requests a dispatch after an admin write: immediate when the loop is
@@ -172,20 +199,16 @@ func (d *Dispatcher) Signal() {
 	}
 }
 
-// Run drives the dispatch loop until ctx is cancelled: an immediate dispatch on
-// the first Signal after a quiet period so a single admin write (a new consumer,
-// key, …) reaches data planes without sitting out the debounce, a trailing
-// debounced dispatch that folds the rest of a Signal burst, a jittered backstop
-// dispatch, and an initial catch-up when the outbox holds markers left by a
-// write that committed before a prior restart.
+// Run drives the dispatch loop until ctx is cancelled, starting with a compile
+// so a restarted replica catches up on writes it missed. By default it
+// dispatches on the first Signal after a quiet period, so a single admin write
+// reaches data planes without sitting out the debounce, and folds the rest of
+// a Signal burst into one trailing debounced dispatch. With compile-while-dirty
+// it dispatches on every Signal with no timer. Both run a backstop dispatch.
 func (d *Dispatcher) Run(ctx context.Context) error {
-	if pending, err := d.outbox.PendingCount(ctx); err != nil {
-		if ctx.Err() == nil {
-			d.logger.Warn("outbox pending count failed at boot",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
-	} else if pending > 0 {
-		d.Signal()
+	d.Signal()
+	if d.compileWhileDirty {
+		return d.runCompileWhileDirty(ctx)
 	}
 
 	timer := time.NewTimer(d.debounce)
@@ -232,10 +255,32 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
+// runCompileWhileDirty dispatches as soon as a Signal arrives. The trigger holds
+// one pending Signal, so every Signal received during a compile folds into one
+// follow-up dispatch that starts as soon as the current one ends.
+func (d *Dispatcher) runCompileWhileDirty(ctx context.Context) error {
+	ticker := time.NewTicker(d.backstop)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-d.trigger:
+			if err := d.dispatch(ctx, compileReasonSignal); err != nil && ctx.Err() == nil {
+				d.logger.Error("dispatch failed",
+					slog.String("component", component), slog.String("error", err.Error()))
+			}
+		case <-ticker.C:
+			if err := d.dispatch(ctx, compileReasonBackstop); err != nil && ctx.Err() == nil {
+				d.logger.Error("backstop dispatch failed",
+					slog.String("component", component), slog.String("error", err.Error()))
+			}
+		}
+	}
+}
+
 // Dispatch runs one dispatch cycle synchronously. It must not run concurrently
-// with Run or another Dispatch: the outbox frontier (MaxSeq/DeleteUpTo) is not
-// mutually exclusive across cycles, so overlapping callers could drain against
-// different frontiers.
+// with Run or another Dispatch: the outbox cursor belongs to the dispatch loop.
 func (d *Dispatcher) Dispatch(ctx context.Context) error {
 	return d.dispatch(ctx, compileReasonSignal)
 }
@@ -250,35 +295,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		}
 	}()
 
-	// Capture the set of markers visible before compiling. Draining exactly this set
-	// (rather than a seq range) guarantees a marker that becomes visible mid-cycle —
-	// including a lower seq that commits after a higher one, since seq is assigned at
-	// INSERT not COMMIT — survives to trigger the next dispatch.
-	pending, err := d.outbox.Pending(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			d.logger.Warn("outbox pending read failed; skipping drain this cycle",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
-		pending = nil
-	}
+	// Observe the markers visible before compiling: their writes are committed,
+	// so the compile sees them. A marker that becomes visible mid-cycle is read
+	// on the next one, and the cursor advances only once this cycle succeeds.
+	next, dirty, observed := d.observeOutbox(ctx)
 
-	if !d.compiled.Load() {
-		reason = compileReasonBoot
-	}
+	reason = d.resolveReason(reason, dirty)
 	stages := newCompileStages()
 	compileStart := time.Now()
 	compiledAt := d.compiledAt()
-	compiled, err := d.compile(ctx, stages)
+	compiled, mode, reason, err := d.build(ctx, reason, dirty, next, observed, stages)
 	if err != nil {
-		recordCompile(ctx, d.logger, compileModeFull, reason, stages, false)
+		recordCompile(ctx, d.logger, mode, reason, stages, false)
 		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
-	recordCompile(ctx, d.logger, compileModeFull, reason, stages, true)
+	recordCompile(ctx, d.logger, mode, reason, stages, true)
 	if compiled.scoped != nil {
 		d.lastCatalog, d.lastScoped = compiled.catalog, compiled.scoped
+	}
+	if d.incremental != nil {
+		d.incremental.remember(compiled)
 	}
 	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
@@ -296,13 +334,18 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		} else {
 			d.holder.Set(raw, version)
 		}
+		if compiled.layered != nil {
+			d.holder.SetLayered(*compiled.layered)
+		} else {
+			d.holder.ClearLayered()
+		}
 		if globalChanged {
-			d.broadcaster.BroadcastScope("", version)
+			d.broadcastScope(compiled.layered, "", version)
 			d.publishedGlobal = version
 		}
 		for scope, snap := range scoped {
 			if d.publishedScoped[scope] != snap.Version {
-				d.broadcaster.BroadcastScope(scope, snap.Version)
+				d.broadcastScope(compiled.layered, scope, snap.Version)
 				d.publishedScoped[scope] = snap.Version
 			}
 		}
@@ -315,9 +358,9 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 			slog.String("component", component),
 			slog.String("version", version),
 			slog.Duration("compile", compileDuration),
-			slog.String("mode", string(compileModeFull)),
+			slog.String("mode", string(mode)),
 			slog.String("reason", string(reason)),
-			slog.Int("dirty", 0),
+			slog.Int("dirty", len(dirty.gateways)),
 			stages.logAttr(),
 			slog.Int("bytes", len(raw)),
 			slog.Int("scopes", compiled.scopes.count),
@@ -335,13 +378,44 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	d.compiled.Store(true)
 	d.persist(ctx, raw, version, scoped, compiledAt)
 
-	if len(pending) > 0 {
-		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {
-			d.logger.Warn("outbox drain failed",
-				slog.String("component", component), slog.String("error", err.Error()))
-		}
+	if observed {
+		d.cursor.commit(next)
 	}
 	return nil
+}
+
+func (d *Dispatcher) resolveReason(trigger compileReason, dirty dirtySet) compileReason {
+	switch {
+	case !d.compiled.Load() && d.Source() == SourcePersisted:
+		return compileReasonLKGRestore
+	case !d.compiled.Load():
+		return compileReasonBoot
+	case dirty.full:
+		return dirty.fullReason
+	case trigger == compileReasonSignal && d.incremental == nil:
+		return compileReasonSwitchOff
+	}
+	return trigger
+}
+
+// observeOutbox reads the markers above the cursor and the expired gaps that
+// became visible since. On a read error it observes nothing, and the next
+// cycle reads the same markers again.
+func (d *Dispatcher) observeOutbox(ctx context.Context) (cursorState, dirtySet, bool) {
+	markers, bounds, err := d.outbox.ReadSince(ctx, d.cursor.readFrom())
+	if err == nil {
+		var lateFound []configsyncport.Marker
+		lateFound, err = d.outbox.ReadSeqs(ctx, d.cursor.lateSeqs())
+		if err == nil {
+			next, dirty := d.cursor.observe(markers, lateFound, bounds, time.Now())
+			return next, dirty, true
+		}
+	}
+	if ctx.Err() == nil {
+		d.logger.Warn("outbox read failed; the markers are read again next cycle",
+			slog.String("component", component), slog.String("error", err.Error()))
+	}
+	return cursorState{}, dirtySet{}, false
 }
 
 type compiledSnapshot struct {
@@ -350,8 +424,14 @@ type compiledSnapshot struct {
 	scoped       map[string]ScopedSnapshot
 	catalog      []byte
 	catalogBytes int
-	scopes       scopeSizes
-	entities     snapshotEntities
+	// globalTenant is the global snapshot without the catalog, set by the
+	// incremental path so an unchanged one can be recognised next cycle.
+	globalTenant []byte
+	// layered is set only by the fragment encoder; without it data planes
+	// that pull layered snapshots fall back to the single blob.
+	layered  *Layered
+	scopes   scopeSizes
+	entities snapshotEntities
 }
 
 func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
@@ -382,10 +462,7 @@ func (d *Dispatcher) compile(ctx context.Context, stages *compileStages) (compil
 		if eerr != nil {
 			return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
 		}
-		catalogUnchanged := d.lastCatalog != nil && bytes.Equal(d.lastCatalog, catalogRaw)
-		if catalogUnchanged {
-			catalogRaw = d.lastCatalog
-		}
+		catalogRaw, catalogUnchanged := d.sharedCatalog(catalogRaw)
 		raw, version, err := d.encodeWithCatalog(global, catalogRaw, stages)
 		if err != nil {
 			return compiledSnapshot{}, err
@@ -398,14 +475,7 @@ func (d *Dispatcher) compile(ctx context.Context, stages *compileStages) (compil
 			if serr != nil {
 				return compiledSnapshot{}, fmt.Errorf("configsnapshot: encode: %w", serr)
 			}
-			scoped := ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw}
-			if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
-				scoped = prev
-			} else {
-				hashStart := time.Now()
-				scoped.Version = d.versionParts(tenantRaw, catalogRaw)
-				stages.since(stageHash, hashStart)
-			}
+			scoped := d.scopedSnapshot(scope, tenantRaw, catalogRaw, catalogUnchanged, stages)
 			compiled.scoped[scope] = scoped
 			compiled.scopes.add(scope, scoped.Len())
 			compiled.entities.add(snap)
@@ -458,6 +528,29 @@ func (d *Dispatcher) compileAll(ctx context.Context, compiler PartitionedCompile
 	return compiler.CompileAll(ctx)
 }
 
+// sharedCatalog returns the catalog bytes to serve and whether they are the
+// previous compile's: an unchanged catalog keeps the previous slice, so every
+// scope keeps pointing at one copy.
+func (d *Dispatcher) sharedCatalog(raw []byte) ([]byte, bool) {
+	if d.lastCatalog != nil && bytes.Equal(d.lastCatalog, raw) {
+		return d.lastCatalog, true
+	}
+	return raw, false
+}
+
+// scopedSnapshot is the snapshot served to scope. When neither its tenant
+// bytes nor the catalog changed it is the previous compile's, so it is
+// neither hashed nor held again; the full and incremental compiles must agree
+// on this to publish the same versions.
+func (d *Dispatcher) scopedSnapshot(scope string, tenantRaw, catalogRaw []byte, catalogUnchanged bool, stages *compileStages) ScopedSnapshot {
+	if prev, ok := d.lastScoped[scope]; ok && catalogUnchanged && prev.Catalog != nil && bytes.Equal(prev.Raw, tenantRaw) {
+		return prev
+	}
+	hashStart := time.Now()
+	defer stages.since(stageHash, hashStart)
+	return ScopedSnapshot{Raw: tenantRaw, Catalog: catalogRaw, Version: d.versionParts(tenantRaw, catalogRaw)}
+}
+
 func (d *Dispatcher) versionParts(parts ...[]byte) string {
 	if v, ok := d.codec.(partsVersioner); ok {
 		return v.VersionParts(parts...)
@@ -476,4 +569,17 @@ func (d *Dispatcher) encode(snapshot *readmodel.Snapshot, stages *compileStages)
 	version := d.codec.Version(raw)
 	stages.since(stageHash, hashStart)
 	return raw, version, nil
+}
+
+func (d *Dispatcher) broadcastScope(layered *Layered, scope, version string) {
+	lb := d.layeredBroadcaster
+	if lb == nil || layered == nil {
+		d.broadcaster.BroadcastScope(scope, version)
+		return
+	}
+	manifest := layered.Global
+	if scope != "" {
+		manifest = layered.Scoped[scope]
+	}
+	lb.BroadcastScopeLayered(scope, version, manifest.Version)
 }

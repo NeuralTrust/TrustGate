@@ -38,22 +38,39 @@ type VersionBroadcaster interface {
 	BroadcastScope(scope, version string)
 }
 
-// OutboxRepository is the change-marker outbox as seen by the dispatcher: read the
-// set of markers visible before a compile, drain exactly that set once the snapshot
-// is broadcast, and prune under the safety bound. It carries no pgx types; the
-// in-transaction append lives in the infra Appender the admin repositories consume,
-// so the app layer never imports pgx.
+// LayeredBroadcaster is a VersionBroadcaster that also tells each data plane
+// the version matching how it pulls: layeredVersion to one that pulls layered
+// snapshots, version to any other. An empty layeredVersion notifies every
+// connection of version.
+type LayeredBroadcaster interface {
+	VersionBroadcaster
+	BroadcastScopeLayered(scope, version, layeredVersion string)
+}
+
+// OutboxRepository is the change-marker outbox as seen by the dispatcher. Every
+// admin replica reads it through its own cursor and never deletes markers: rows
+// leave only through PruneOlderThan, so one replica's compile cannot hide a
+// marker from another. It carries no pgx types; the in-transaction append lives
+// in the infra Appender the admin repositories consume.
 //
-// Drain works on the observed set rather than a seq range because BIGSERIAL seq is
-// assigned at INSERT, not COMMIT: a lower seq can become visible after a higher one,
-// so a range delete could drop a marker whose write was not yet in the compiled
-// snapshot. Deleting only the observed set lets such a late marker survive to the
-// next cycle.
+// ReadSince returns, oldest first, the markers whose seq is above afterSeq, plus
+// the lowest and highest seq still in the outbox (zero when it is empty), so a
+// reader can tell that rows it never saw were pruned, or that the sequence
+// restarted below what it already read. ReadSeqs returns the markers among
+// seqs that are visible now; a reader uses it for seqs that were missing when it
+// moved past them, because BIGSERIAL seq is assigned at INSERT, not COMMIT, and
+// a lower seq can become visible after a higher one.
 type OutboxRepository interface {
-	Pending(ctx context.Context) (seqs []int64, err error)
-	PendingCount(ctx context.Context) (int64, error)
-	DeleteSeqs(ctx context.Context, seqs []int64) (deleted int64, err error)
+	ReadSince(ctx context.Context, afterSeq int64) (markers []Marker, bounds OutboxBounds, err error)
+	ReadSeqs(ctx context.Context, seqs []int64) ([]Marker, error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time, keepMax int) (deleted int64, err error)
+}
+
+// OutboxBounds are the lowest and highest seq in the outbox, zero when it is
+// empty.
+type OutboxBounds struct {
+	Min int64
+	Max int64
 }
 
 // MarkerKind names what an outbox marker dirtied.
@@ -77,10 +94,17 @@ type Marker struct {
 	GatewayID ids.GatewayID
 }
 
-// OutboxMarkerReader reads committed change markers with what they dirtied.
-// ReadSince returns, oldest first, the markers whose seq is above afterSeq,
-// plus the lowest seq still in the outbox (zero when it is empty) so a reader
-// can tell that rows it never saw were pruned.
-type OutboxMarkerReader interface {
-	ReadSince(ctx context.Context, afterSeq int64) (markers []Marker, minSeq int64, err error)
+// FragmentRef names one fragment of a layered snapshot by the SHA-256 of its
+// bytes.
+type FragmentRef struct {
+	Digest [32]byte
+	Size   int
+}
+
+// Manifest is a layered snapshot: the fragments whose concatenation, in order,
+// decodes to the same configuration as the single-blob snapshot, and the
+// version that names that list.
+type Manifest struct {
+	Version   string
+	Fragments []FragmentRef
 }
