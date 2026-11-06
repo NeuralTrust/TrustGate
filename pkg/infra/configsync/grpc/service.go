@@ -15,14 +15,18 @@
 package grpc
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/configsyncrevocation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
 )
 
@@ -229,6 +233,7 @@ func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapsho
 		header := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Header{Header: &snapshotpb.SnapshotHeader{Version: version, NotModified: true}}}
 		return stream.Send(header)
 	}
+	s.compressSnapshot(stream.Context())
 	var total int64
 	for _, part := range parts {
 		total += int64(len(part))
@@ -257,3 +262,16 @@ func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapsho
 	return nil
 }
 
+// compressSnapshot gzips the snapshot stream when the data plane advertises
+// gzip. The data plane never compresses its own requests, so a data plane and
+// a control plane of different versions keep working in either rollout order.
+func (s *Service) compressSnapshot(ctx context.Context) {
+	supported, err := grpc.ClientSupportedCompressors(ctx)
+	if err != nil || !slices.Contains(supported, gzip.Name) {
+		return
+	}
+	if err := grpc.SetSendCompressor(ctx, gzip.Name); err != nil {
+		s.logger.Warn("snapshot stream sent uncompressed",
+			slog.String("error", err.Error()))
+	}
+}
