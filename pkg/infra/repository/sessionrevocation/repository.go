@@ -63,7 +63,7 @@ func (r *Repository) Upsert(ctx context.Context, gatewayID, org, subject string,
 		if r.outbox == nil {
 			return fmt.Errorf("session revocations: snapshot outbox is not configured")
 		}
-		return r.outbox.AppendTx(ctx, tx)
+		return r.outbox.AppendGatewayTx(ctx, tx, id)
 	})
 }
 

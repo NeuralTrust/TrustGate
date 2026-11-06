@@ -309,12 +309,19 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 // once and appends the encoded bytes to every snapshot it publishes, instead
 // of re-encoding the same catalog per gateway on every compile.
 func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
+	return c.compileAllStaged(ctx, nil)
+}
+
+func (c *Compiler) compileAllStaged(ctx context.Context, stages *compileStages) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
+	readStart := time.Now()
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
+		stages.since(stageRead, readStart)
 		return nil, nil, nil, err
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
+	stages.since(stageRead, readStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -356,9 +363,11 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 
 	// Plan caps follow the gateways in each flavor: the global snapshot carries
 	// the tenants of the gateways it carries, and a scoped one only its own.
+	sharedStart := time.Now()
 	caps := c.listTenantCaps(ctx)
 	stampTenantCaps(&global, caps)
 	revocations, err := c.listSessionRevocations(ctx)
+	stages.since(stageRead, sharedStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -370,10 +379,14 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		bucket.UsageEnforcement = c.usageEnforcement
 	}
 
+	catalogStart := time.Now()
 	cat, err := c.collectCatalogData(ctx)
+	stages.since(stageRead, catalogStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	buildStart := time.Now()
+	defer stages.since(stageBuild, buildStart)
 	catData := readmodel.Data{}
 	mergeCatalog(&catData, cat)
 	sortData(&catData)

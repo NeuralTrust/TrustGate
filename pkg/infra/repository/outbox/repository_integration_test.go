@@ -23,7 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	// Register the outbox migration (and the rest of the schema) with the database registry.
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
@@ -254,3 +256,116 @@ func TestIntegration_PruneOlderThanEnforcesRowBound(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+func TestIntegration_ReadSinceDecodesWhatEachMarkerDirtied(t *testing.T) {
+	conn, repo := setupRepository(t)
+	ctx := context.Background()
+	gw := ids.New[ids.GatewayKind]()
+
+	appends := []func(pgx.Tx) error{
+		func(tx pgx.Tx) error { return repo.AppendGatewayTx(ctx, tx, gw) },
+		func(tx pgx.Tx) error { return repo.AppendCatalogTx(ctx, tx) },
+		func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) },
+		func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `INSERT INTO config_snapshot_outbox DEFAULT VALUES`)
+			return err
+		},
+	}
+	for i, appendFn := range appends {
+		if err := database.WithTx(ctx, conn, appendFn); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	markers, minSeq, err := repo.ReadSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("ReadSince: %v", err)
+	}
+	wantKinds := []configsyncport.MarkerKind{configsyncport.MarkerGateway, configsyncport.MarkerCatalog, configsyncport.MarkerAll, configsyncport.MarkerAll}
+	if len(markers) != len(wantKinds) {
+		t.Fatalf("ReadSince returned %d markers, want %d", len(markers), len(wantKinds))
+	}
+	for i, want := range wantKinds {
+		if markers[i].Kind != want {
+			t.Fatalf("marker %d kind = %q, want %q", i, markers[i].Kind, want)
+		}
+	}
+	if markers[0].GatewayID != gw {
+		t.Fatalf("gateway marker names %s, want %s", markers[0].GatewayID, gw)
+	}
+	if minSeq != markers[0].Seq {
+		t.Fatalf("minSeq = %d, want the oldest seq %d", minSeq, markers[0].Seq)
+	}
+
+	after, _, err := repo.ReadSince(ctx, markers[1].Seq)
+	if err != nil {
+		t.Fatalf("ReadSince after: %v", err)
+	}
+	if len(after) != 2 || after[0].Seq != markers[2].Seq {
+		t.Fatalf("ReadSince must return only markers above afterSeq, got %+v", after)
+	}
+}
+
+func TestIntegration_ReadSinceSeesALowerSeqThatCommitsLater(t *testing.T) {
+	conn, repo := setupRepository(t)
+	ctx := context.Background()
+
+	txA, err := conn.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin txA: %v", err)
+	}
+	defer func() { _ = txA.Rollback(ctx) }()
+	if err := repo.AppendGatewayTx(ctx, txA, ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("append A: %v", err)
+	}
+	if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendCatalogTx(ctx, tx) }); err != nil {
+		t.Fatalf("append B: %v", err)
+	}
+
+	visible, _, err := repo.ReadSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("ReadSince: %v", err)
+	}
+	if len(visible) != 1 || visible[0].Kind != configsyncport.MarkerCatalog {
+		t.Fatalf("only B must be visible while A is in flight, got %+v", visible)
+	}
+
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatalf("commit txA: %v", err)
+	}
+	later, _, err := repo.ReadSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("ReadSince after commit: %v", err)
+	}
+	if len(later) != 2 || later[0].Kind != configsyncport.MarkerGateway || later[0].Seq >= visible[0].Seq {
+		t.Fatalf("A's lower seq must become visible after it commits, got %+v", later)
+	}
+}
+
+func TestIntegration_ReadSinceReportsPrunedRows(t *testing.T) {
+	conn, repo := setupRepository(t)
+	ctx := context.Background()
+
+	if _, minSeq, err := repo.ReadSince(ctx, 0); err != nil || minSeq != 0 {
+		t.Fatalf("empty outbox: minSeq = %d, err = %v; want 0", minSeq, err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) }); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	markers, _, err := repo.ReadSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("ReadSince: %v", err)
+	}
+	if _, err := repo.PruneOlderThan(ctx, time.Now().Add(-time.Hour), 1); err != nil {
+		t.Fatalf("PruneOlderThan: %v", err)
+	}
+	rest, minSeq, err := repo.ReadSince(ctx, markers[2].Seq)
+	if err != nil {
+		t.Fatalf("ReadSince after prune: %v", err)
+	}
+	if len(rest) != 0 || minSeq != markers[2].Seq {
+		t.Fatalf("after the prune minSeq = %d (want %d) and no newer markers, got %+v", minSeq, markers[2].Seq, rest)
+	}
+}
