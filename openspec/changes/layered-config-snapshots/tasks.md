@@ -128,7 +128,7 @@ S2 notes (as implemented):
 
 ### S3: Outbox cursor + compile-while-dirty loop
 
-- [ ] 3.1 `pkg/app/configsnapshot/cursor.go`: `lowWater`, `seen`, `gaps` with
+- [x] 3.1 `pkg/app/configsnapshot/cursor.go`: `lowWater`, `seen`, `gaps` with
   first-seen time, `Observe(markers, minSeq) dirtySet`, prune guard (forces a
   full compile when rows were pruned before this replica read them), and
   `Commit` only after a successful publish. Add config `CONFIG_SYNC_OUTBOX_GAP_EXPIRY`
@@ -137,7 +137,7 @@ S2 notes (as implemented):
   rollback, a marker that commits after its gap expired is processed on the
   next cycle (late set, no backstop wait), late set over its bound → full,
   prune past cursor → immediate full, NULL kind → full, failed cycle re-reads.
-- [ ] 3.2 `dispatcher.go`: replace `Pending` + `DeleteSeqs` with the cursor. No
+- [x] 3.2 `dispatcher.go`: replace `Pending` + `DeleteSeqs` with the cursor. No
   code path deletes markers any more (D11); rows age out via `PruneOlderThan`.
   Remove the S2 adapter. This changes behavior even with the switch off: the
   outbox is no longer drained and grows to the retention/row bound, and the
@@ -147,17 +147,46 @@ S2 notes (as implemented):
   Rollout rule: the incremental switch is turned on in an environment only in a
   separate deploy, after every admin replica runs the S3 build, so no old
   replica can delete markers the new ones still need.
-- [ ] 3.3 `Dispatcher.Run`: in incremental mode, compile immediately on a
+- [x] 3.3 `Dispatcher.Run`: in incremental mode, compile immediately on a
   signal; signals during a compile fold into exactly one follow-up compile with
   no timer. Legacy mode keeps today's leading-edge plus 250 ms debounce. The
   backstop tick is unchanged. The legacy compile is still the one that runs.
   Verify: `dispatcher_test.go` checks that a signal during a compile gives one
   follow-up with no wait, that a burst of N signals gives at most 2 compiles,
   and runs with `-race`.
-- [ ] 3.4 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` stay green,
+- [x] 3.4 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` stay green,
   and markers are no longer deleted per cycle.
   Verify: `go test -tags functional -count=1 -run 'TestDBLessDataPlane_|TestAdminLKG_' ./tests/functional/`
   with an isolated `.env.functional` (ports 8190+).
+
+S3 implementation notes:
+
+- The port `OutboxRepository` is now `ReadSince`, `ReadSeqs` and
+  `PruneOlderThan`; `Pending`, `PendingCount` and `DeleteSeqs` are gone from the
+  port and the repository, and the separate `OutboxMarkerReader` from S2 is
+  folded in. `ReadSeqs` re-reads the expired gaps (`late`) with `seq = ANY($1)`.
+- The cursor (`cursor.go`) is pure: `observe` returns the next state and the
+  dirty set, and the dispatcher adopts it with `commit` only after a cycle
+  that compiled. A failed compile or a failed outbox read leaves it unchanged,
+  so the next cycle reads the same markers.
+- The late set is bounded at 1024 seqs (`defaultLateBound`, not configurable)
+  and its entries age out after the outbox retention. Overflow and a prune
+  past the cursor both force a full compile with reason `cursor_reset`; a
+  marker without a kind forces reason `unnamed_marker`.
+- First read: the cursor starts at the oldest row then in the outbox. A seq
+  below it that was still in flight at start-up is not awaited; that cycle is
+  a full compile and the backstop covers the in-flight write. In practice the
+  outbox keeps 24 h of markers now, so in-flight seqs sit above the oldest row.
+- `Run` signals itself at start (the boot `PendingCount` check is gone), and
+  `WithCompileWhileDirty()` selects the no-timer loop. It is not wired yet; S5
+  turns it on with the incremental switch. The legacy debounce stays the
+  active behavior.
+- The S3 compile is still the full one. The dirty set only feeds the log
+  (`reason`, `dirty` = dirty gateway count) until S5 consumes it.
+- 3.4: the functional suite passes. That markers are no longer deleted is
+  covered by the dispatcher unit tests (`TestDispatch_NeverDeletesMarkers…`);
+  no code path calls a delete other than the retention prune.
+
 
 ### S4: Fragment encoder (byte-identical assembly)
 
