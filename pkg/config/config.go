@@ -170,19 +170,20 @@ const (
 	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
 	// message limit and the data plane's default Sync receive limit: the usage
 	// list goes from one to the other in a single message.
-	defaultGRPCMaxMessageBytes                    = 64 << 20
-	defaultConfigSyncGRPCMinBackoff               = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff               = 30 * time.Second
-	defaultConfigSyncOutboxRetention              = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows          int64 = 10000
-	defaultConfigSyncOutboxGapExpiry              = 30 * time.Second
-	defaultConfigSyncAdminLKGMaxAge               = 7 * 24 * time.Hour
-	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
-	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
-	minConfigSyncTokenRevocationRefresh           = time.Second
-	defaultConfigSyncHeartbeatInterval            = 30 * time.Second
-	minConfigSyncHeartbeatInterval                = time.Second
-	defaultInstanceDeploymentType                 = InstanceDeploymentSelfHosted
+	defaultGRPCMaxMessageBytes                     = 64 << 20
+	defaultConfigSyncGRPCMinBackoff                = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff                = 30 * time.Second
+	defaultConfigSyncOutboxRetention               = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows           int64 = 10000
+	defaultConfigSyncOutboxGapExpiry               = 30 * time.Second
+	defaultConfigSyncAdminLKGMaxAge                = 7 * 24 * time.Hour
+	defaultConfigSyncAdminLKGPersistInterval       = 30 * time.Second
+	defaultConfigSyncTokenRevocationMode           = ConfigSyncTokenRevocationShadow
+	defaultConfigSyncTokenRevocationRefresh        = 30 * time.Second
+	minConfigSyncTokenRevocationRefresh            = time.Second
+	defaultConfigSyncHeartbeatInterval             = 30 * time.Second
+	minConfigSyncHeartbeatInterval                 = time.Second
+	defaultInstanceDeploymentType                  = InstanceDeploymentSelfHosted
 
 	configSyncKeyBytes = 32
 
@@ -430,6 +431,9 @@ type ConfigSyncConfig struct {
 	AdminLKGEnabled bool
 	// AdminLKGMaxAge refuses a persisted snapshot older than this.
 	AdminLKGMaxAge time.Duration
+	// AdminLKGPersistInterval is the shortest time between two writes of the
+	// persisted snapshot; compiles in between leave the latest one pending.
+	AdminLKGPersistInterval time.Duration
 	// TokenRevocationMode decides what the control plane does with a revoked
 	// config-sync token: off, shadow or enforce.
 	TokenRevocationMode string
@@ -1390,39 +1394,40 @@ func getModelArmorConfig() ModelArmorConfig {
 
 func getConfigSyncConfig() ConfigSyncConfig {
 	return ConfigSyncConfig{
-		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
-		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
-		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
-		AuthMode:             normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
-		JWTSecret:            getEnv("CONFIG_SYNC_JWT_SECRET", ""),
-		JWTSecretPrevious:    getEnv("CONFIG_SYNC_JWT_SECRET_PREVIOUS", ""),
-		JWTIssuer:            getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
-		JWTAudience:          getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
-		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
-		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
-		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
-		RecompileDebounce:    getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
-		RecompileBackstop:    getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
-		InstanceID:           resolveConfigSyncInstanceID(),
-		GRPCEndpoint:         getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
-		GRPCListenAddr:       getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
-		TLSCAPath:            getEnv("CONFIG_SYNC_TLS_CA", ""),
-		TLSServerName:        getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
-		TLSInsecure:          getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
-		GRPCTLSCertPath:      getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
-		GRPCTLSKeyPath:       getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
-		GRPCKeepaliveTime:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
-		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
-		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
-		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
-		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
-		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
-		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
-		OutboxGapExpiry:      getEnvDuration("CONFIG_SYNC_OUTBOX_GAP_EXPIRY", defaultConfigSyncOutboxGapExpiry),
-		IncrementalCompile:   getEnvBool("CONFIG_SYNC_INCREMENTAL_COMPILE", false),
-		LayeredPull:          getEnvBool("CONFIG_SYNC_LAYERED_PULL", false),
-		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
-		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		DataPlaneEnabled:        getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
+		Token:                   getEnv("CONFIG_SYNC_TOKEN", ""),
+		TokenPrevious:           getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
+		AuthMode:                normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
+		JWTSecret:               getEnv("CONFIG_SYNC_JWT_SECRET", ""),
+		JWTSecretPrevious:       getEnv("CONFIG_SYNC_JWT_SECRET_PREVIOUS", ""),
+		JWTIssuer:               getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
+		JWTAudience:             getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
+		LKGPath:                 getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
+		LKGKey:                  getEnv("CONFIG_SYNC_LKG_KEY", ""),
+		PollInterval:            getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
+		RecompileDebounce:       getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		RecompileBackstop:       getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
+		InstanceID:              resolveConfigSyncInstanceID(),
+		GRPCEndpoint:            getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
+		GRPCListenAddr:          getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
+		TLSCAPath:               getEnv("CONFIG_SYNC_TLS_CA", ""),
+		TLSServerName:           getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
+		TLSInsecure:             getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
+		GRPCTLSCertPath:         getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
+		GRPCTLSKeyPath:          getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
+		GRPCKeepaliveTime:       getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
+		GRPCKeepaliveTimeout:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
+		GRPCMinBackoff:          getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
+		GRPCMaxBackoff:          getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
+		GRPCMaxRecvBytes:        getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
+		OutboxRetention:         getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
+		OutboxMaxRows:           getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+		OutboxGapExpiry:         getEnvDuration("CONFIG_SYNC_OUTBOX_GAP_EXPIRY", defaultConfigSyncOutboxGapExpiry),
+		IncrementalCompile:      getEnvBool("CONFIG_SYNC_INCREMENTAL_COMPILE", false),
+		LayeredPull:             getEnvBool("CONFIG_SYNC_LAYERED_PULL", false),
+		AdminLKGEnabled:         getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
+		AdminLKGMaxAge:          getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		AdminLKGPersistInterval: getEnvDuration("CONFIG_SYNC_ADMIN_LKG_PERSIST_INTERVAL", defaultConfigSyncAdminLKGPersistInterval),
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
 			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
 		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
