@@ -38,9 +38,6 @@ import (
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 )
 
-// layeredFake serves a single blob and, when layered is set, a manifest of
-// fragments. It counts the fragment bytes it serves and can drop fragments to
-// simulate ones that aged out of the control plane's store.
 type layeredFake struct {
 	mu         sync.Mutex
 	blob       []byte
@@ -302,8 +299,6 @@ func (s *helloCapture) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	return stream.Context().Err()
 }
 
-// countingHolder counts the fragment bytes the control plane serves from a
-// real holder.
 type countingHolder struct {
 	*appsnapshot.Holder
 	mu     sync.Mutex

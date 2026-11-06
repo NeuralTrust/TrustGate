@@ -148,8 +148,6 @@ type manifestRef struct {
 	size   int
 }
 
-// verifyManifest checks the manifest's shape and that its version is the hash
-// of its digests, and returns the references and the assembled size.
 func verifyManifest(manifest *snapshotpb.Manifest) ([]manifestRef, int64, error) {
 	version := manifest.GetVersion()
 	if !strings.HasPrefix(version, layeredVersionPrefix) {
@@ -181,8 +179,6 @@ func verifyManifest(manifest *snapshotpb.Manifest) ([]manifestRef, int64, error)
 	return refs, total, nil
 }
 
-// fetchFragments streams the fragments named by digests into held, verifying
-// each against its digest once its last chunk arrives.
 func (c *Client) fetchFragments(ctx context.Context, digests [][32]byte, held map[[32]byte][]byte) error {
 	req := &snapshotpb.GetFragmentsRequest{Digests: make([][]byte, len(digests))}
 	wanted := make(map[[32]byte]bool, len(digests))

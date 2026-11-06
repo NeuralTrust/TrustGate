@@ -178,8 +178,6 @@ func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, 
 	return c.fetchSnapshot(ctx, etag)
 }
 
-// fetchSnapshot pulls the snapshot via GetSnapshot, short-circuiting on
-// not_modified and verifying the reassembled body length against the header.
 func (c *Client) fetchSnapshot(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID})
 	if err != nil {
