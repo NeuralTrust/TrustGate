@@ -15,6 +15,7 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
 )
 
@@ -75,6 +77,35 @@ func TestServer_AuthorizedGetSnapshot(t *testing.T) {
 	}
 	if _, err := stream.Recv(); err != nil {
 		t.Fatalf("recv header: %v", err)
+	}
+}
+
+func TestServer_GetSnapshotIsGzippedThroughTheServerStack(t *testing.T) {
+	src := &fakeSource{}
+	raw := bytes.Repeat([]byte("compressible snapshot "), snapshotChunkSize/8)
+	src.set(raw, "v-gz")
+	srv := startServer(t, "tok", src)
+	recorder := &compressionRecorder{}
+	conn, err := grpc.NewClient(srv.lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(bearerPerRPCCredentials{token: "tok"}),
+		grpc.WithStatsHandler(recorder),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	client := newClient(conn, "dp-1", discardLogger())
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, _, _, err := client.Fetch(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if compression := recorder.get(); compression != gzip.Name {
+		t.Fatalf("snapshot stream compression = %q, want %q", compression, gzip.Name)
+	}
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("decompressed body differs: len %d != %d", len(got), len(raw))
 	}
 }
 

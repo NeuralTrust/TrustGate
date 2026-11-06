@@ -30,6 +30,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -43,14 +45,28 @@ var (
 type fakeSource struct {
 	mu      sync.Mutex
 	raw     []byte
+	splitAt []int
 	version string
 	ok      bool
 }
 
-func (f *fakeSource) SnapshotFor(string) ([]byte, string, bool) {
+func (f *fakeSource) SnapshotPartsFor(string) ([][]byte, string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.raw, f.version, f.ok
+	return f.parts(), f.version, f.ok
+}
+
+func (f *fakeSource) parts() [][]byte {
+	if len(f.splitAt) == 0 {
+		return [][]byte{f.raw}
+	}
+	var parts [][]byte
+	start := 0
+	for _, at := range f.splitAt {
+		parts = append(parts, f.raw[start:at])
+		start = at
+	}
+	return append(parts, f.raw[start:])
 }
 
 func (f *fakeSource) set(raw []byte, version string) {
@@ -117,6 +133,89 @@ func eventually(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+func TestClient_FetchReassemblesSegmentedSnapshot(t *testing.T) {
+	raw := bytes.Repeat([]byte("abcdefg"), (2*snapshotChunkSize)/7+5)
+	splits := [][]int{
+		{3},
+		{snapshotChunkSize + 1},
+		{snapshotChunkSize},
+		{1, snapshotChunkSize + 7},
+	}
+	for _, splitAt := range splits {
+		src := &fakeSource{}
+		src.set(raw, "v-seg")
+		src.splitAt = splitAt
+		lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
+		client := dialClient(t, lis, "dp-1")
+
+		got, version, _, err := client.Fetch(context.Background(), "")
+		if err != nil {
+			t.Fatalf("Fetch split at %v: %v", splitAt, err)
+		}
+		if version != "v-seg" || !bytes.Equal(got, raw) {
+			t.Fatalf("split at %v: version %q, body len %d, want v-seg and the concatenated %d bytes", splitAt, version, len(got), len(raw))
+		}
+	}
+}
+
+type compressionRecorder struct {
+	mu          sync.Mutex
+	compression string
+}
+
+func (r *compressionRecorder) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+func (r *compressionRecorder) HandleRPC(_ context.Context, s stats.RPCStats) {
+	if h, ok := s.(*stats.InHeader); ok && h.Client {
+		r.mu.Lock()
+		r.compression = h.Compression
+		r.mu.Unlock()
+	}
+}
+
+func (r *compressionRecorder) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (r *compressionRecorder) HandleConn(context.Context, stats.ConnStats) {}
+
+func (r *compressionRecorder) get() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.compression
+}
+
+func TestService_GetSnapshotIsGzippedForAClientThatAcceptsIt(t *testing.T) {
+	src := &fakeSource{}
+	raw := bytes.Repeat([]byte("compressible snapshot "), snapshotChunkSize/8)
+	src.set(raw, "v-gz")
+	lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
+	recorder := &compressionRecorder{}
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(recorder),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	client := newClient(conn, "dp-1", discardLogger())
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, version, _, err := client.Fetch(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if compression := recorder.get(); compression != gzip.Name {
+		t.Fatalf("snapshot stream compression = %q, want %q", compression, gzip.Name)
+	}
+	if version != "v-gz" || !bytes.Equal(got, raw) {
+		t.Fatalf("decompressed body differs: version %q, len %d != %d", version, len(got), len(raw))
+	}
 }
 
 func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {

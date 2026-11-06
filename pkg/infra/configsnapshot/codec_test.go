@@ -85,6 +85,21 @@ func TestVersionContentAddressed(t *testing.T) {
 	assert.NotEqual(t, version, codec.Version(rawChanged), "a change yields a new version")
 }
 
+func TestVersionPartsMatchesVersionOfConcatenation(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	cases := [][][]byte{
+		nil,
+		{[]byte("whole")},
+		{[]byte("tenant"), []byte("catalog")},
+		{{}, []byte("catalog")},
+		{[]byte("a"), {}, []byte("bc")},
+	}
+	for _, parts := range cases {
+		assert.Equal(t, codec.Version(bytes.Join(parts, nil)), codec.VersionParts(parts...), "parts %q", parts)
+	}
+}
+
 func TestEmptySnapshotRoundTrip(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()
