@@ -109,13 +109,11 @@ func TestOutboxMarkers_WritersNameWhatTheyDirty(t *testing.T) {
 			want: func() []configsyncport.Marker { return []configsyncport.Marker{gatewayMarker(gwID)} },
 		},
 		{
-			name: "a write for a consumer that does not exist dirties everything",
+			name: "unlinking from a consumer that no longer exists leaves no marker",
 			write: func(t *testing.T) {
 				require.NoError(t, f.repo.DetachAuth(ctx, ids.New[ids.ConsumerKind](), ids.New[ids.AuthKind]()))
 			},
-			want: func() []configsyncport.Marker {
-				return []configsyncport.Marker{{Kind: configsyncport.MarkerAll}}
-			},
+			want: func() []configsyncport.Marker { return []configsyncport.Marker{} },
 		},
 		{
 			name: "consumer delete names its gateway",

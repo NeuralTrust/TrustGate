@@ -108,11 +108,14 @@ func (r *Repository) withConsumerMarkedTx(ctx context.Context, consumerID ids.Co
 	})
 }
 
-// Leaves marks empty when the consumer is gone; the write then dirties everything.
+// Marks the consumer's gateway, or nothing when the consumer is gone.
 func markConsumerGateway(ctx context.Context, tx pgx.Tx, marks *outbox.Marks, consumerID ids.ConsumerID) error {
 	var gatewayID ids.GatewayID
 	err := tx.QueryRow(ctx, `SELECT gateway_id FROM consumers WHERE id = $1`, consumerID).Scan(&gatewayID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// The consumer is gone and its links went with it, so the write changed
+		// nothing; the delete that removed it already marked its gateway.
+		marks.Unchanged()
 		return nil
 	}
 	if err != nil {
