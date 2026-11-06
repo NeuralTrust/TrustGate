@@ -21,24 +21,33 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// outboxLockTimeout bounds how long the ALTER waits for its lock. Every admin
+// write inserts into the outbox, so an ALTER queued behind a long write would
+// in turn queue every later write; failing fast lets the rollout retry.
+const outboxLockTimeout = `SET LOCAL lock_timeout = '5s';`
+
 // Nullable: pre-existing markers with no kind read as dirtying everything.
 func init() {
 	database.RegisterMigration(database.Migration{
 		ID:   "20261106120000_outbox_dirty_scope",
 		Name: "config snapshot outbox markers name what they dirty",
-		Up: func(ctx context.Context, tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE config_snapshot_outbox
-					ADD COLUMN IF NOT EXISTS gateway_id UUID NULL,
-					ADD COLUMN IF NOT EXISTS kind TEXT NULL;`)
-			return err
-		},
-		Down: func(ctx context.Context, tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE config_snapshot_outbox
-					DROP COLUMN IF EXISTS kind,
-					DROP COLUMN IF EXISTS gateway_id;`)
-			return err
-		},
+		Up:   upOutboxDirtyScope,
+		Down: downOutboxDirtyScope,
 	})
+}
+
+func upOutboxDirtyScope(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, outboxLockTimeout+`
+		ALTER TABLE config_snapshot_outbox
+			ADD COLUMN IF NOT EXISTS gateway_id UUID NULL,
+			ADD COLUMN IF NOT EXISTS kind TEXT NULL;`)
+	return err
+}
+
+func downOutboxDirtyScope(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, outboxLockTimeout+`
+		ALTER TABLE config_snapshot_outbox
+			DROP COLUMN IF EXISTS kind,
+			DROP COLUMN IF EXISTS gateway_id;`)
+	return err
 }
