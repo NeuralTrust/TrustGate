@@ -513,7 +513,7 @@ func TestDispatch_LogsWhatTheObservedMarkersDirtied(t *testing.T) {
 		configsyncport.Marker{Seq: 3, Kind: configsyncport.MarkerGateway, GatewayID: gwB},
 	)
 	require.NoError(t, d.Dispatch(context.Background()))
-	assert.Contains(t, logs.String(), "reason=signal dirty=2")
+	assert.Contains(t, logs.String(), "reason=switch_off dirty=2")
 
 	logs.Reset()
 	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}})

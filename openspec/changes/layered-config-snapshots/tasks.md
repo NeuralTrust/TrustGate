@@ -268,34 +268,70 @@ scope only), and a gateway delete cascades to all of its entities. Both must be
 covered by the mutation-sequence test in 5.x, and the incremental path must
 re-derive global membership from the freshly read gateway, never from the cache.
 
-- [ ] 5.1 `pkg/app/configsnapshot/compiler.go`: export `CollectGateway`,
+- [x] 5.1 `pkg/app/configsnapshot/compiler.go`: export `CollectGateway`,
   `CollectAll` and `ListShared` for the incremental path. Add `FindByID` to the
   `GatewayReader` port (`gateway_reader.go`); the repository already has it.
-- [ ] 5.2 `pkg/app/configsnapshot/incremental.go`: from the dirty set, call
+- [x] 5.2 `pkg/app/configsnapshot/incremental.go`: from the dirty set, call
   `CollectGateway` → `Put` for each dirty gateway, `Delete` for removed ones,
   `PutCatalog` on a catalog marker, then re-read the shared inputs each cycle
   (D8) and `Assemble`. Fall back to a full compile on `all`, at boot, after LKG
   restore, on the prune guard and on cache-integrity errors.
-- [ ] 5.3 Backstop (5 min) in incremental mode: run a full `Rebuild`, compare it
+- [x] 5.3 Backstop (5 min) in incremental mode: run a full `Rebuild`, compare it
   against the incremental state, count `trustgate.configsnapshot.drift{scope_kind}`
   only when the max seq did not move during the compare, then publish the full
   result.
-- [ ] 5.4 Config `CONFIG_SYNC_INCREMENTAL_COMPILE` (default `false`) in
+- [x] 5.4 Config `CONFIG_SYNC_INCREMENTAL_COMPILE` (default `false`) in
   `pkg/config/config.go`; wiring in `pkg/container/modules/control_config_sync.go`.
   Add explicit `false` to `k8s/overlays/{dev,prod,prod-us}/config.env`.
-- [ ] 5.5 Mutation-sequence test `incremental_test.go`: random add, update and
+- [x] 5.5 Mutation-sequence test `incremental_test.go`: random add, update and
   delete of every entity; a gateway flipping between hosted and dedicated;
   gateway delete; catalog change; caps and revocation changes. After each step,
   the incremental output must equal a fresh full compile.
   Verify: `go test -race ./pkg/app/configsnapshot/ -run Incremental -count=10`.
-- [ ] 5.6 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` with the
+- [x] 5.6 Functional: `TestDBLessDataPlane_*` and `TestAdminLKG_*` with the
   switch off and on, plus a new test that a write reaches the data plane with
   `mode=incremental` in the publish log.
   Verify: the functional suite twice, once with `CONFIG_SYNC_INCREMENTAL_COMPILE=true`
   in the isolated `.env.functional`.
-- [ ] 5.7 Rollout notes in the PR: image A with the switch off and stage timings
+- [x] 5.7 Rollout notes in the PR: image A with the switch off and stage timings
   measured in production, then DEV on (drift = 0 for days), then each production region in turn.
   Rollback means switching it off.
+
+S5 implementation notes:
+
+- 5.1: the compiler implements a new `IncrementalSource` port
+  (`compiler_incremental.go`: `CollectAll`, `CollectGateway`, `CollectCatalog`,
+  `ListShared`) instead of exporting the private collectors. `FindByID` is an
+  optional `GatewayFinder` interface rather than a new method on
+  `GatewayReader`, so the existing reader fakes keep compiling; the gateway
+  repository implements it, and a reader without it falls back to the listing.
+  `CollectGateway` reads the gateway's policies through `List` with their total
+  and applies the unreadable-row breaker per gateway, since the whole-table
+  check of the bulk path does not run.
+- 5.2: `incremental.go`. Any failure of an incremental cycle (a read error, a
+  corrupt gateway, an encode error) falls back to a full compile in the same
+  cycle with reason `cache_miss`, as does a cycle whose outbox read failed. A
+  gateway that no longer exists is deleted from the encoder. In incremental mode
+  the full compile also goes through the encoder (`Rebuild` + `Assemble`), so
+  there is one assembly path; with the switch off the legacy compile is
+  untouched.
+- 5.3: the backstop applies the cycle's markers incrementally, rebuilds, and
+  counts `trustgate.configsnapshot.drift{scope_kind=global|scoped}` only when
+  no marker the cycle did not see is in the outbox afterwards, then publishes
+  the full result.
+- 5.4: write-triggered compiles with the switch off now log reason
+  `switch_off` (was `signal`); the S1 and S3 log/metric tests were updated.
+- 5.5: `incremental_test.go` drives two real dispatchers (incremental and
+  full) over 5 seeds x 60 random writes, including data plane flips, gateway
+  deletes, catalog changes, caps changes with no marker, revocations and `all`
+  markers, plus a write that lands mid-compile and a backstop drift test.
+  Injecting a dropped `Delete` or dropped tenant caps makes it fail.
+- 5.6: no new functional test asserts the log line, because the main admin
+  runs at `LOG_LEVEL=WARN`. The suite passed with the switch off and on, and a
+  run at INFO with a 3s backstop showed 27 `mode=incremental` cycles and no
+  drift. The functional catalog seed (`seedCatalogModels`) wrote the catalog
+  with raw SQL and no marker, which an incremental compile cannot see; it now
+  leaves a `catalog` marker like the repository does.
 
 ## Phase 2 — Manifest and fragment pull
 
