@@ -190,7 +190,7 @@ S3 implementation notes:
 
 ### S4: Fragment encoder (byte-identical assembly)
 
-- [ ] 4.1 `pkg/infra/configsnapshot/codec.go`: factor the per-element builders
+- [x] 4.1 `pkg/infra/configsnapshot/codec.go`: factor the per-element builders
   out of `toProto` (consumers, registries, policies, auths, … and JSON-wrapped
   entities), so the legacy encode and the fragment path share them.
   Before refactoring, freeze today's encoder as a test-only oracle
@@ -200,23 +200,65 @@ S3 implementation notes:
   the shared builders, so "byte-identical to today" is proven, not just
   "incremental equals full".
   Verify: existing `codec_*_test.go` stay green and the golden versions match.
-- [ ] 4.2 Port `pkg/app/configsnapshot/fragment_port.go`: `FragmentEncoder`,
+- [x] 4.2 Port `pkg/app/configsnapshot/fragment_port.go`: `FragmentEncoder`,
   `SharedInputs`, `Assembled` (design § Interfaces).
-- [ ] 4.3 `pkg/infra/configsnapshot/fragments.go`:
+- [x] 4.3 `pkg/infra/configsnapshot/fragments.go`:
   - `element{key, bytes}` and per-gateway `runs[field]`;
   - `Put`, which encodes, runs admission (`admitConsumers` / `validateConsumerSmartRouting` per gateway, D9) and replaces the gateway's runs;
   - `Delete`, `PutCatalog` and `Rebuild`;
   - `Assemble`: a k-way merge in `sortData` comparator order per field, in field-number order, stamping the shared inputs (caps per tenant, revocations, playground keys, usage) and reusing unchanged scoped tenant slices (#1273).
-- [ ] 4.4 Byte-identity property test `fragments_identity_test.go`: seeded
+- [x] 4.4 Byte-identity property test `fragments_identity_test.go`: seeded
   random data covering hosted and own-plane gateways, every entity kind,
   smart-routing consumers that pass and fail admission, empty `key_hash`, usage
   on and off, caps and revocations. Assert `Assemble` equals the frozen
   oracle from 4.1 (and the live `CompileAll` + `Encode`) for the global
   snapshot and every scope (bytes and versions). Spec `snapshot-fragment-compile` "byte-identical" scenarios.
   Verify: `go test -race ./pkg/infra/configsnapshot/ -run Identity -count=20`.
-- [ ] 4.5 Benchmark in `fragments_bench_test.go`: 600 gateways, one dirty
+- [x] 4.5 Benchmark in `fragments_bench_test.go`: 600 gateways, one dirty
   gateway (`Put` + `Assemble`), catalog dirty, full `Rebuild`, with `ReportAllocs`.
   Target: one dirty gateway under 10 ms, excluding the DB.
+
+S4 implementation notes:
+
+- No refactor of `toProto`. `Fragments.Put` runs the unchanged `toProto` on one
+  gateway's data and marshals every element on its own as a one-element
+  `Snapshot`, which yields exactly the element's tag, length and payload. The
+  encoder therefore shares the production code path by construction, and
+  `codec.go` has no diff. The frozen oracle still guards it.
+- Oracle: `legacy_encode_test.go` is a verbatim copy of today's `toProto`,
+  admission helpers (minus the log line and metric) and the compiler's
+  `sortData`, `stampTenantCaps`, `stampSessionRevocations`,
+  `appendGatewayData` and `mergeCatalog`, plus `legacyCompile`, which replays
+  `CompileAll`'s assembly and the dispatcher's encode. Golden versions for a
+  fixed fixture are pinned in `codec_oracle_test.go`, and
+  `TestCodecMatchesTheFrozenEncoder` keeps the live codec equal to the copy.
+- Property tests (`fragments_identity_test.go`, seeded worlds plus a
+  time-based base seed that is logged): `Rebuild`, and 40-step mutation
+  sequences (gateways added, deleted, flipped hosted ↔ hybrid/dedicated,
+  turned corrupt, entities added and removed, shared inputs and catalog
+  changed) are compared after every step against `legacyCompile`, bytes and
+  versions, global and every scope. A generator-coverage test checks the
+  worlds hold admitted and quarantined smart routing, own-plane gateways,
+  key-less auths and usage on and off. Mutating the merge order, the per-run
+  sort or the hosted flag makes the identity tests fail.
+- Live check: `pkg/app/configsnapshot/fragments_live_test.go` feeds the
+  encoder what the real `Compiler.CompileAll` collected (fakes, with caps,
+  revocations, budgets, Everyone, playground keys, usage) and compares with
+  `Codec.Encode` of each flavor.
+- Shared fields (10, 14, 15, 17) are stamped per flavor at `Assemble`; tenant
+  caps are filtered to the flavor's tenants and revocations to its gateways,
+  as the compiler does. A scoped or global part whose elements and stamp did
+  not change keeps its previous slice, and an unchanged catalog keeps its
+  slice.
+- Admission runs once per `Put` instead of once per flavor per compile, so the
+  `routing.quarantined` counter counts a quarantined consumer once per
+  re-encode rather than once in the global and once in its scope.
+- `pkg/infra/configsnapshot` now imports the app port package for
+  `FragmentEncoder`, `SharedInputs` and `Assembled` (infra implements an app
+  port; app does not import infra).
+- Benchmark (600 gateways, ~3,000 catalog models, no DB, Apple M-series):
+  one dirty gateway `Put` + `Assemble` 0.85 ms / 1.9 MB; catalog dirty 2.5 ms;
+  full `Rebuild` + `Assemble` 10.4 ms; frozen full compile 12.6 ms / 23.9 MB.
 
 ### S5: Incremental dispatch behind the switch
 
