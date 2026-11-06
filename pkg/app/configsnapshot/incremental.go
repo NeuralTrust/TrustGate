@@ -244,6 +244,7 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 		catalogBytes: len(catalogRaw),
 		globalTenant: assembled.Global,
 		entities:     inc.entityTotals(),
+		layered:      &assembled.Layered,
 	}
 	if catalogUnchanged && inc.lastGlobalTenant != nil && bytes.Equal(inc.lastGlobalTenant, assembled.Global) {
 		compiled.raw, compiled.version = inc.lastGlobalRaw, inc.lastGlobalVersion

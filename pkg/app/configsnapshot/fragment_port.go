@@ -15,6 +15,7 @@
 package configsnapshot
 
 import (
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
@@ -59,4 +60,14 @@ type Assembled struct {
 	Global  []byte
 	Scoped  map[string][]byte
 	Catalog []byte
+	Layered Layered
+}
+
+// Layered is the same assembly as fragments for data planes that pull only
+// the fragments they miss: one manifest for the global snapshot, one per
+// gateway scope, and the bytes of every fragment they reference.
+type Layered struct {
+	Global    configsyncport.Manifest
+	Scoped    map[string]configsyncport.Manifest
+	Fragments map[[32]byte][]byte
 }

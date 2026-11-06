@@ -339,28 +339,65 @@ Phase 2 starts only after Phase 1 runs in prod with the switch on.
 
 ### S6: Admin side
 
-- [ ] 6.1 `pkg/infra/configsnapshot/proto/configsync.proto`: `Hello.accepts_layered`,
+- [x] 6.1 `pkg/infra/configsnapshot/proto/configsync.proto`: `Hello.accepts_layered`,
   `VersionNotice.layered`, `GetManifest` and `GetFragments` with their messages
   (design § Phase 2 proto). Regenerate with `make proto`.
-- [ ] 6.2 Fragments and manifests:
-  - gateway fragment = that gateway's elements;
+- [x] 6.2 Fragments and manifests:
+  - gateway fragments: a gateway's elements split into content-stable buckets,
+    not one fragment per gateway (D14). Element goes to bucket
+    `hash(entity key) mod k`, with `k` a power of two chosen so a bucket stays
+    around 64 KiB (`k = 1` for small gateways). A write that adds a consumer
+    changes only the few buckets its elements hash to, so a data plane
+    downloads KBs, not the whole gateway. `k` changes only when the gateway
+    doubles or halves in size. Decode order is free (the v2 layout needs no
+    byte identity with v1: `readmodel.Build` re-sorts, the other indexes are
+    keyed by unique ids), which 6.4 asserts;
   - shared fragment per scope = caps, revocations and keys of its tenants;
   - catalog fragment = the #1273 catalog bytes;
   - manifest order: gateways by id, then shared, then catalog;
   - version `m1:` + sha256 over the digests (D12).
   - Code: `pkg/infra/configsnapshot/fragments.go`, `pkg/app/configsnapshot/holder.go`
     (manifests per scope; fragment store keeping one extra generation of grace).
-- [ ] 6.3 `pkg/infra/configsync/grpc/{service,hub}.go`:
+- [x] 6.3 `pkg/infra/configsync/grpc/{service,hub}.go`:
   - store `layered` per connection from `Hello`;
   - Sync notices carry the version that matches each plane's capability (D13);
   - `GetManifest` with `not_modified`;
   - `GetFragments` with 1 MiB chunks, `maxSnapshotBytes`, per-chunk revocation, gzip and `NotFound` for unknown digests.
-- [ ] 6.4 Tests:
+- [x] 6.4 Tests:
   - decoding the concatenated layered fragments gives a read model equal to the v1 decode;
   - an old client against the new server keeps v1 versions and `GetSnapshot`;
   - notices per capability;
   - `NotFound` once a digest has left the store.
   - Verify: `go test -race ./pkg/infra/configsync/... ./pkg/app/configsnapshot/...`.
+
+S6 implementation notes:
+
+- Proto regenerated with `make proto` (buf v1.50.0). Only `configsync.pb.go` and
+  `configsync_grpc.pb.go` are kept; the version-header churn buf wrote into
+  the other generated files was reverted.
+- Buckets (D14): `pkg/infra/configsnapshot/layered.go`. `k` keeps its value
+  while buckets stay between 32 and 128 KiB (hysteresis), so one write never
+  reshuffles a gateway. A bucket whose elements did not change keeps its bytes
+  and digest across `Put` and `Rebuild`, so nothing is re-hashed. The shared
+  part (fields 10, 14, 15, 17) is one fragment per flavor; a gateway's own
+  session revocations live there, not in its buckets, because they are stamped
+  per flavor.
+- Measured: a hosted gateway with 5,000 consumers and 5,000 keys is 129
+  fragments, 4.4 MB; adding one consumer and one key changes 2 fragments,
+  about 68 KB (1.6%).
+- Layered snapshots exist only on compiles through the fragment encoder
+  (`CONFIG_SYNC_INCREMENTAL_COMPILE=true`). With the switch off, or while a
+  restored LKG snapshot is served, `GetManifest` and `GetFragments` answer
+  `Unimplemented`, and layered data planes are notified of single-blob
+  versions (`VersionNotice.layered=false`), so they fall back to `GetSnapshot`.
+- The holder publishes the layered snapshot together with the single blob, only
+  when the single-blob versions moved, and keeps the previous publish's
+  fragments for one more publish.
+- `GetFragments` resolves every digest before sending, so `NotFound` never
+  leaves a partial transfer; it bounds a call to 4,096 fragments and
+  `maxSnapshotBytes`.
+- Broadcasts go through `BroadcastScopeLayered` when the broadcaster implements
+  it (the hub does); the port is unchanged.
 
 ### S7: Data plane side
 
@@ -378,7 +415,9 @@ Phase 2 starts only after Phase 1 runs in prod with the switch on.
   - a new client against an old server falls back;
   - a digest mismatch is rejected;
   - `NotFound` restarts from the manifest;
-  - only the missing fragments are fetched (count the RPC bytes);
+  - only the missing fragments are fetched (count the RPC bytes); adding one
+    consumer to a gateway with thousands of consumers fetches a few buckets,
+    not the gateway;
   - an LKG restart converges.
   - Verify: unit tests with `-race`, plus a functional run with the flag on.
 - [ ] 7.4 Rollout notes: admin image serving both paths first, then data planes

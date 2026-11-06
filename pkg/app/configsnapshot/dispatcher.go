@@ -327,13 +327,18 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		} else {
 			d.holder.Set(raw, version)
 		}
+		if compiled.layered != nil {
+			d.holder.SetLayered(*compiled.layered)
+		} else {
+			d.holder.ClearLayered()
+		}
 		if globalChanged {
-			d.broadcaster.BroadcastScope("", version)
+			d.broadcastScope(compiled.layered, "", version)
 			d.publishedGlobal = version
 		}
 		for scope, snap := range scoped {
 			if d.publishedScoped[scope] != snap.Version {
-				d.broadcaster.BroadcastScope(scope, snap.Version)
+				d.broadcastScope(compiled.layered, scope, snap.Version)
 				d.publishedScoped[scope] = snap.Version
 			}
 		}
@@ -415,8 +420,11 @@ type compiledSnapshot struct {
 	// globalTenant is the global snapshot without the catalog, set by the
 	// incremental path so an unchanged one can be recognised next cycle.
 	globalTenant []byte
-	scopes       scopeSizes
-	entities     snapshotEntities
+	// layered is set only by the fragment encoder; without it data planes
+	// that pull layered snapshots fall back to the single blob.
+	layered  *Layered
+	scopes   scopeSizes
+	entities snapshotEntities
 }
 
 func (d *Dispatcher) scopesChanged(scoped map[string]ScopedSnapshot) bool {
@@ -541,4 +549,24 @@ func (d *Dispatcher) encode(snapshot *readmodel.Snapshot, stages *compileStages)
 	version := d.codec.Version(raw)
 	stages.since(stageHash, hashStart)
 	return raw, version, nil
+}
+
+// layeredBroadcaster is implemented by broadcasters that tell each data plane
+// the version matching how it pulls: the manifest version to one that pulls
+// layered snapshots, the single-blob version to any other.
+type layeredBroadcaster interface {
+	BroadcastScopeLayered(scope, version, layeredVersion string)
+}
+
+func (d *Dispatcher) broadcastScope(layered *Layered, scope, version string) {
+	lb, ok := d.broadcaster.(layeredBroadcaster)
+	if !ok || layered == nil {
+		d.broadcaster.BroadcastScope(scope, version)
+		return
+	}
+	manifest := layered.Global
+	if scope != "" {
+		manifest = layered.Scoped[scope]
+	}
+	lb.BroadcastScopeLayered(scope, version, manifest.Version)
 }
