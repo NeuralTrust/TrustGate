@@ -43,14 +43,28 @@ var (
 type fakeSource struct {
 	mu      sync.Mutex
 	raw     []byte
+	splitAt []int
 	version string
 	ok      bool
 }
 
-func (f *fakeSource) SnapshotFor(string) ([]byte, string, bool) {
+func (f *fakeSource) SnapshotPartsFor(string) ([][]byte, string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.raw, f.version, f.ok
+	return f.parts(), f.version, f.ok
+}
+
+func (f *fakeSource) parts() [][]byte {
+	if len(f.splitAt) == 0 {
+		return [][]byte{f.raw}
+	}
+	var parts [][]byte
+	start := 0
+	for _, at := range f.splitAt {
+		parts = append(parts, f.raw[start:at])
+		start = at
+	}
+	return append(parts, f.raw[start:])
 }
 
 func (f *fakeSource) set(raw []byte, version string) {
@@ -117,6 +131,31 @@ func eventually(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+func TestClient_FetchReassemblesSegmentedSnapshot(t *testing.T) {
+	raw := bytes.Repeat([]byte("abcdefg"), (2*snapshotChunkSize)/7+5)
+	splits := [][]int{
+		{3},
+		{snapshotChunkSize + 1},
+		{snapshotChunkSize},
+		{1, snapshotChunkSize + 7},
+	}
+	for _, splitAt := range splits {
+		src := &fakeSource{}
+		src.set(raw, "v-seg")
+		src.splitAt = splitAt
+		lis, _ := newBufServer(t, NewService(NewHub(discardLogger(), nil), src, discardLogger(), nil))
+		client := dialClient(t, lis, "dp-1")
+
+		got, version, _, err := client.Fetch(context.Background(), "")
+		if err != nil {
+			t.Fatalf("Fetch split at %v: %v", splitAt, err)
+		}
+		if version != "v-seg" || !bytes.Equal(got, raw) {
+			t.Fatalf("split at %v: version %q, body len %d, want v-seg and the concatenated %d bytes", splitAt, version, len(got), len(raw))
+		}
+	}
 }
 
 func TestClient_FetchReassemblesMultipleChunks(t *testing.T) {

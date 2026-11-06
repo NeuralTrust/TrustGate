@@ -36,8 +36,11 @@ const (
 	defaultHelloTimeout = 10 * time.Second
 )
 
+// SnapshotSource serves the encoded snapshot of a scope as segments whose
+// concatenation is the snapshot, so a source can share segments across
+// scopes without copying them per request.
 type SnapshotSource interface {
-	SnapshotFor(scope string) (raw []byte, version string, ok bool)
+	SnapshotPartsFor(scope string) (parts [][]byte, version string, ok bool)
 }
 
 // Service implements the ConfigSync gRPC server: the bidi Sync control channel
@@ -132,7 +135,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		return errInvalidToken
 	}
 
-	if _, version, ok := s.source.SnapshotFor(scope); ok && version != hello.GetLastAppliedVersion() {
+	if _, version, ok := s.source.SnapshotPartsFor(scope); ok && version != hello.GetLastAppliedVersion() {
 		conn.enqueue(version)
 	}
 
@@ -218,7 +221,7 @@ func sendUsage(stream snapshotpb.ConfigSync_SyncServer, msgs []*snapshotpb.Serve
 func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapshotpb.ConfigSync_GetSnapshotServer) error {
 	scope := ScopeFromContext(stream.Context())
 	identity, _ := IdentityFromContext(stream.Context())
-	raw, version, ok := s.source.SnapshotFor(scope)
+	parts, version, ok := s.source.SnapshotPartsFor(scope)
 	if !ok {
 		return status.Error(codes.Unavailable, "no snapshot available yet")
 	}
@@ -226,24 +229,31 @@ func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapsho
 		header := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Header{Header: &snapshotpb.SnapshotHeader{Version: version, NotModified: true}}}
 		return stream.Send(header)
 	}
-	if int64(len(raw)) > maxSnapshotBytes {
+	var total int64
+	for _, part := range parts {
+		total += int64(len(part))
+	}
+	if total > maxSnapshotBytes {
 		return status.Errorf(codes.ResourceExhausted, "snapshot exceeds %d bytes", maxSnapshotBytes)
 	}
-	header := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Header{Header: &snapshotpb.SnapshotHeader{Version: version, TotalBytes: int64(len(raw))}}}
+	header := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Header{Header: &snapshotpb.SnapshotHeader{Version: version, TotalBytes: total}}}
 	if err := stream.Send(header); err != nil {
 		return err
 	}
-	for offset := 0; offset < len(raw); offset += snapshotChunkSize {
-		// GetSnapshot streams are not registered in the hub, so a revocation
-		// loaded mid-transfer is enforced here, before the next chunk.
-		if s.revoked(identity) {
-			return errInvalidToken
-		}
-		end := min(offset+snapshotChunkSize, len(raw))
-		chunk := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Data{Data: raw[offset:end]}}
-		if err := stream.Send(chunk); err != nil {
-			return err
+	for _, part := range parts {
+		for offset := 0; offset < len(part); offset += snapshotChunkSize {
+			// GetSnapshot streams are not registered in the hub, so a revocation
+			// loaded mid-transfer is enforced here, before the next chunk.
+			if s.revoked(identity) {
+				return errInvalidToken
+			}
+			end := min(offset+snapshotChunkSize, len(part))
+			chunk := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Data{Data: part[offset:end]}}
+			if err := stream.Send(chunk); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
+
