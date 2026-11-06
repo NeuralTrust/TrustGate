@@ -70,15 +70,8 @@ func NewRepository(conn *database.Connection, appender outbox.Appender, opts ...
 	return r
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
@@ -100,7 +93,7 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	const query = `
 		INSERT INTO auths (` + authColumns + `)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, a.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
 			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
@@ -129,7 +122,7 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       expires_at = $9,
 		       updated_at = $10
 		 WHERE id = $1 AND gateway_id = $11`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, a.GatewayID, func(tx pgx.Tx) error {
 		configBytes, err := r.encodeConfigForUpdate(ctx, tx, a.ID, a.GatewayID, a.Config)
 		if err != nil {
 			return fmt.Errorf("auth repository: marshal config: %w", err)
@@ -164,7 +157,7 @@ func (r *Repository) UpdateBudget(ctx context.Context, a *domain.Auth) (*domain.
 		 WHERE id = $1 AND gateway_id = $2
 		RETURNING ` + authColumns
 	var stored *domain.Auth
-	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err = r.withGatewayMarkedTx(ctx, a.GatewayID, func(tx pgx.Tx) error {
 		var scanErr error
 		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, budget, a.UpdatedAt))
 		if errors.Is(scanErr, pgx.ErrNoRows) {
@@ -200,7 +193,7 @@ func (r *Repository) UpdateOwner(ctx context.Context, a *domain.Auth) (*domain.A
 		 WHERE id = $1 AND gateway_id = $2
 		RETURNING ` + authColumns
 	var stored *domain.Auth
-	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err = r.withGatewayMarkedTx(ctx, a.GatewayID, func(tx pgx.Tx) error {
 		var scanErr error
 		stored, scanErr = r.scanAuth(ctx, tx.QueryRow(ctx, query, a.ID, a.GatewayID, ownerGroups, a.UpdatedAt,
 			nullableString(a.OwnerEmail), nullableString(a.GroupName)))
@@ -231,7 +224,7 @@ func (r *Repository) RotateKey(ctx context.Context, a *domain.Auth, previousHash
 		       updated_at = $7
 		 WHERE id = $1 AND gateway_id = $2 AND key_hash IS NOT DISTINCT FROM $8`
 	const exists = `SELECT EXISTS (SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, a.GatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
 			a.ExpiresAt, a.UpdatedAt, nullableString(previousHash),
@@ -255,7 +248,7 @@ func (r *Repository) RotateKey(ctx context.Context, a *domain.Auth, previousHash
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
 	const query = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
@@ -274,7 +267,7 @@ func (r *Repository) DeleteOwned(ctx context.Context, gatewayID ids.GatewayID, i
 	const lock = `SELECT 1 FROM auths WHERE id = $1 AND gateway_id = $2 AND owner_id IS NOT NULL FOR UPDATE`
 	const unlink = `DELETE FROM consumer_auth WHERE auth_id = $1`
 	const remove = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		var found int
 		if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&found); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

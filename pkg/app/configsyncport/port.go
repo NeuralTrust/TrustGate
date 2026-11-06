@@ -17,6 +17,8 @@ package configsyncport
 import (
 	"context"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type SnapshotSignaler interface {
@@ -52,4 +54,33 @@ type OutboxRepository interface {
 	PendingCount(ctx context.Context) (int64, error)
 	DeleteSeqs(ctx context.Context, seqs []int64) (deleted int64, err error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time, keepMax int) (deleted int64, err error)
+}
+
+// MarkerKind names what an outbox marker dirtied.
+type MarkerKind string
+
+const (
+	// MarkerGateway dirties the configuration of one gateway.
+	MarkerGateway MarkerKind = "gateway"
+	// MarkerCatalog dirties the shared provider and model catalog.
+	MarkerCatalog MarkerKind = "catalog"
+	// MarkerAll dirties everything and forces a full compile. Markers written
+	// before the outbox carried a kind read as MarkerAll.
+	MarkerAll MarkerKind = "all"
+)
+
+// Marker is one committed change marker and what it dirtied. GatewayID is set
+// only when Kind is MarkerGateway.
+type Marker struct {
+	Seq       int64
+	Kind      MarkerKind
+	GatewayID ids.GatewayID
+}
+
+// OutboxMarkerReader reads committed change markers with what they dirtied.
+// ReadSince returns, oldest first, the markers whose seq is above afterSeq,
+// plus the lowest seq still in the outbox (zero when it is empty) so a reader
+// can tell that rows it never saw were pruned.
+type OutboxMarkerReader interface {
+	ReadSince(ctx context.Context, afterSeq int64) (markers []Marker, minSeq int64, err error)
 }
