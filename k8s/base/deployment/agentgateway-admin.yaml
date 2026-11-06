@@ -76,8 +76,21 @@ spec:
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
-      securityContext: {}
+        # Writable scratch space, since the root filesystem is read-only.
+        - name: tmp
+          mountPath: /tmp
+        # Same hardening as the neuraltrust-platform agentgateway chart.
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
+      - name: tmp
+        emptyDir: {}
       - name: agentgateway-secrets
         csi:
           driver: secrets-store-gke.csi.k8s.io
