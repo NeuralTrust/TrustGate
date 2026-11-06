@@ -1,0 +1,12 @@
+change: layered-config-snapshots
+linear: ENG-3112
+parent: ENG-3111
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: in_progress
+apply_slices:
+  S1: done

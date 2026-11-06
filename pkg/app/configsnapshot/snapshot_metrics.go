@@ -25,13 +25,19 @@ import (
 )
 
 const (
-	snapshotMeterName  = "trustgate/configsnapshot"
-	encodedBytesMetric = "trustgate.configsnapshot.encoded_bytes"
-	scopesMetric       = "trustgate.configsnapshot.scopes"
-	entitiesMetric     = "trustgate.configsnapshot.entities"
-	flavourAttr        = "flavour"
-	statAttr           = "stat"
-	kindAttr           = "kind"
+	snapshotMeterName   = "trustgate/configsnapshot"
+	encodedBytesMetric  = "trustgate.configsnapshot.encoded_bytes"
+	scopesMetric        = "trustgate.configsnapshot.scopes"
+	entitiesMetric      = "trustgate.configsnapshot.entities"
+	stageDurationMetric = "trustgate.configsnapshot.compile_stage_duration"
+	compilesMetric      = "trustgate.configsnapshot.compiles"
+	stageAttr           = "stage"
+	modeAttr            = "mode"
+	reasonAttr          = "reason"
+	outcomeAttr         = "outcome"
+	flavourAttr         = "flavour"
+	statAttr            = "stat"
+	kindAttr            = "kind"
 )
 
 var (
@@ -96,6 +102,38 @@ func recordSnapshotPublish(ctx context.Context, logger *slog.Logger, compiled co
 	if gauge, ok := snapshotGauge(meter, logger, entitiesMetric, "{entity}", "entities in the last published config snapshot, per kind, every gateway counted once"); ok {
 		recordEntityCounts(ctx, gauge, compiled.entities)
 	}
+}
+
+func recordCompile(ctx context.Context, logger *slog.Logger, mode compileMode, reason compileReason, stages *compileStages, ok bool) {
+	outcome := "ok"
+	if !ok {
+		outcome = "failed"
+	}
+	meter := otel.Meter(snapshotMeterName)
+	if counter, err := meter.Int64Counter(compilesMetric, metric.WithUnit("{compile}"), metric.WithDescription("config snapshot compiles by mode, full-compile reason and outcome")); err != nil {
+		warnInstrument(logger, compilesMetric, err)
+	} else {
+		counter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String(modeAttr, string(mode)),
+			attribute.String(reasonAttr, string(reason)),
+			attribute.String(outcomeAttr, outcome)))
+	}
+	histogram, err := meter.Float64Histogram(stageDurationMetric, metric.WithUnit("s"), metric.WithDescription("time spent in each stage of a config snapshot compile"))
+	if err != nil {
+		warnInstrument(logger, stageDurationMetric, err)
+		return
+	}
+	for _, stage := range stages.ran() {
+		histogram.Record(ctx, stages.durations[stage].Seconds(), metric.WithAttributes(
+			attribute.String(stageAttr, string(stage)),
+			attribute.String(modeAttr, string(mode)),
+			attribute.String(outcomeAttr, outcome)))
+	}
+}
+
+func warnInstrument(logger *slog.Logger, name string, err error) {
+	logger.Warn("failed to create config snapshot instrument",
+		slog.String("component", component), slog.String("instrument", name), slog.String("error", err.Error()))
 }
 
 func snapshotGauge(meter metric.Meter, logger *slog.Logger, name, unit, description string) (metric.Int64Gauge, bool) {
