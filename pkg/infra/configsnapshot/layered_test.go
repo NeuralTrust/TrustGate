@@ -251,23 +251,54 @@ func TestLayeredUnchangedGatewaysKeepTheirFragments(t *testing.T) {
 	}
 }
 
-func TestBucketCountKeepsItsSizeUntilBucketsDoubleOrHalve(t *testing.T) {
+func TestBucketCountDependsOnlyOnSize(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		size, previous, want int
+		size, want int
 	}{
-		{size: 0, previous: 0, want: 1},
-		{size: targetBucketBytes, previous: 0, want: 1},
-		{size: targetBucketBytes + 1, previous: 0, want: 2},
-		{size: 10 * targetBucketBytes, previous: 0, want: 16},
-		{size: 2 * targetBucketBytes, previous: 1, want: 1},
-		{size: 2*targetBucketBytes + 1, previous: 1, want: 2},
-		{size: 20 * targetBucketBytes, previous: 16, want: 16},
-		{size: 7 * targetBucketBytes, previous: 16, want: 8},
+		{size: 0, want: 1},
+		{size: targetBucketBytes, want: 1},
+		{size: targetBucketBytes + 1, want: 2},
+		{size: 2 * targetBucketBytes, want: 2},
+		{size: 2*targetBucketBytes + 2, want: 4},
+		{size: 10 * targetBucketBytes, want: 16},
 	}
 	for _, c := range cases {
-		if got := bucketCount(c.size, c.previous); got != c.want {
-			t.Fatalf("bucketCount(%d, %d) = %d, want %d", c.size, c.previous, got, c.want)
+		if got := bucketCount(c.size); got != c.want {
+			t.Fatalf("bucketCount(%d) = %d, want %d", c.size, got, c.want)
+		}
+	}
+}
+
+func TestLayeredReplicasWithDifferentHistoriesPublishTheSameManifests(t *testing.T) {
+	t.Parallel()
+	w, gw := bigGatewayWorld(60)
+	longRunning := NewFragments()
+	w.rebuild(t, longRunning)
+	for i := 0; i < 60; i++ {
+		data := w.in.data[gw]
+		w.addConsumer(gw, data)
+		if err := longRunning.Put(w.in.gateways[0], *data); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+	}
+	restarted := NewFragments()
+	w.rebuild(t, restarted)
+
+	a, err := longRunning.Assemble(w.shared())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	b, err := restarted.Assemble(w.shared())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if a.Layered.Global.Version != b.Layered.Global.Version {
+		t.Fatal("a long-running encoder and a freshly rebuilt one publish different global manifests for the same configuration")
+	}
+	for scope, m := range a.Layered.Scoped {
+		if b.Layered.Scoped[scope].Version != m.Version {
+			t.Fatalf("scope %s: manifests differ between replicas with different histories", scope)
 		}
 	}
 }

@@ -49,12 +49,12 @@ func TestHolderServesTheFragmentsOfOnePreviousPublish(t *testing.T) {
 	h.SetLayered(layeredOf(1))
 	h.SetLayered(layeredOf(2))
 	for _, d := range []byte{1, 2} {
-		if _, ok := h.Fragment([32]byte{d}); !ok {
+		if _, ok := h.FragmentFor("", [32]byte{d}); !ok {
 			t.Fatalf("fragment %d must still be served one publish later", d)
 		}
 	}
 	h.SetLayered(layeredOf(3))
-	if _, ok := h.Fragment([32]byte{1}); ok {
+	if _, ok := h.FragmentFor("", [32]byte{1}); ok {
 		t.Fatal("a fragment two publishes old must no longer be served")
 	}
 	if m, ok := h.ManifestFor(""); !ok || m.Version != layeredOf(3).Global.Version {
@@ -64,9 +64,55 @@ func TestHolderServesTheFragmentsOfOnePreviousPublish(t *testing.T) {
 	if _, ok := h.ManifestFor(""); ok {
 		t.Fatal("a cleared holder must have no layered manifest")
 	}
-	if _, ok := h.Fragment([32]byte{3}); ok {
+	if _, ok := h.FragmentFor("", [32]byte{3}); ok {
 		t.Fatal("a cleared holder must serve no fragment")
 	}
+}
+
+func TestHolderServesAFragmentOnlyToScopesWhoseManifestNamesIt(t *testing.T) {
+	t.Parallel()
+	own := [32]byte{10}
+	other := [32]byte{20}
+	shared := [32]byte{30}
+	manifest := func(digests ...[32]byte) configsyncport.Manifest {
+		m := configsyncport.Manifest{Version: "m1:x"}
+		for _, d := range digests {
+			m.Fragments = append(m.Fragments, configsyncport.FragmentRef{Digest: d, Size: 1})
+		}
+		return m
+	}
+	h := appsnapshot.NewHolder()
+	h.SetLayered(appsnapshot.Layered{
+		Global: manifest(shared),
+		Scoped: map[string]configsyncport.Manifest{
+			"x": manifest(own, shared),
+			"y": manifest(other, shared),
+		},
+		Fragments: map[[32]byte][]byte{own: {1}, other: {2}, shared: {3}},
+	})
+
+	for _, tc := range []struct {
+		scope  string
+		digest [32]byte
+		want   bool
+	}{
+		{"x", own, true},
+		{"x", shared, true},
+		{"x", other, false},
+		{"y", own, false},
+		{"", shared, true},
+		{"", own, false},
+		{"unknown", shared, false},
+	} {
+		_, ok := h.FragmentFor(tc.scope, tc.digest)
+		require.Equal(t, tc.want, ok, "scope %q digest %x", tc.scope, tc.digest[0])
+	}
+
+	h.SetLayered(appsnapshot.Layered{Scoped: map[string]configsyncport.Manifest{}, Fragments: map[[32]byte][]byte{}})
+	_, ok := h.FragmentFor("x", own)
+	require.True(t, ok, "the previous manifest of a scope still serves its fragments")
+	_, ok = h.FragmentFor("x", other)
+	require.False(t, ok, "the previous generation keeps the same scope boundaries")
 }
 
 type layeredBroadcast struct {
@@ -105,9 +151,10 @@ func TestIncrementalDispatchPublishesLayeredManifestsAndNotifiesBoth(t *testing.
 	w.outboxes = append(w.outboxes, outbox)
 	holder := appsnapshot.NewHolder()
 	broadcaster := &recordingLayeredBroadcaster{}
-	d := appsnapshot.NewDispatcher(w.compiler(), infrasnapshot.NewCodec(), holder, broadcaster, outbox,
+	compiler := w.compiler()
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, broadcaster, outbox,
 		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), appsnapshot.DispatcherConfig{},
-		appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments()))
+		appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments(), compiler))
 	ctx := context.Background()
 
 	check := func(label string) {
@@ -116,7 +163,7 @@ func TestIncrementalDispatchPublishesLayeredManifestsAndNotifiesBoth(t *testing.
 		require.True(t, ok, "%s: a compile through the fragment encoder publishes a layered manifest", label)
 		require.True(t, strings.HasPrefix(global.Version, infrasnapshot.LayeredVersionPrefix), label)
 		for _, ref := range global.Fragments {
-			_, ok := holder.Fragment(ref.Digest)
+			_, ok := holder.FragmentFor("", ref.Digest)
 			require.True(t, ok, "%s: every fragment of the manifest is served", label)
 		}
 		event, ok := broadcaster.last("")

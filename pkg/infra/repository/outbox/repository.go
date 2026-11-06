@@ -170,24 +170,24 @@ func (r *Repository) append(ctx context.Context, tx pgx.Tx, kind configsyncport.
 }
 
 // ReadSince returns, oldest first, every visible marker whose seq is above
-// afterSeq, decoded into what it dirtied, plus the lowest seq left in the
-// outbox (zero when it is empty).
-func (r *Repository) ReadSince(ctx context.Context, afterSeq int64) ([]configsyncport.Marker, int64, error) {
+// afterSeq, decoded into what it dirtied, plus the lowest and highest seq left
+// in the outbox (zero when it is empty).
+func (r *Repository) ReadSince(ctx context.Context, afterSeq int64) ([]configsyncport.Marker, configsyncport.OutboxBounds, error) {
 	// One statement so the minimum and the markers share a snapshot; a prune cannot slip between.
 	const query = `
-		WITH bounds AS (SELECT COALESCE(MIN(seq), 0) AS min_seq FROM config_snapshot_outbox)
-		SELECT bounds.min_seq, o.seq, o.kind, o.gateway_id
+		WITH bounds AS (SELECT COALESCE(MIN(seq), 0) AS min_seq, COALESCE(MAX(seq), 0) AS max_seq FROM config_snapshot_outbox)
+		SELECT bounds.min_seq, bounds.max_seq, o.seq, o.kind, o.gateway_id
 		FROM bounds
 		LEFT JOIN config_snapshot_outbox o ON o.seq > $1
 		ORDER BY o.seq`
 	rows, err := r.pool.Query(ctx, query, afterSeq)
 	if err != nil {
-		return nil, 0, fmt.Errorf("outbox: read since %d: %w", afterSeq, err)
+		return nil, configsyncport.OutboxBounds{}, fmt.Errorf("outbox: read since %d: %w", afterSeq, err)
 	}
 	defer rows.Close()
 	var (
 		markers []configsyncport.Marker
-		minSeq  int64
+		bounds  configsyncport.OutboxBounds
 	)
 	for rows.Next() {
 		var (
@@ -195,8 +195,8 @@ func (r *Repository) ReadSince(ctx context.Context, afterSeq int64) ([]configsyn
 			kind      *string
 			gatewayID *uuid.UUID
 		)
-		if err := rows.Scan(&minSeq, &seq, &kind, &gatewayID); err != nil {
-			return nil, 0, fmt.Errorf("outbox: scan marker: %w", err)
+		if err := rows.Scan(&bounds.Min, &bounds.Max, &seq, &kind, &gatewayID); err != nil {
+			return nil, configsyncport.OutboxBounds{}, fmt.Errorf("outbox: scan marker: %w", err)
 		}
 		if seq == nil {
 			continue
@@ -204,9 +204,9 @@ func (r *Repository) ReadSince(ctx context.Context, afterSeq int64) ([]configsyn
 		markers = append(markers, decodeMarker(*seq, kind, gatewayID))
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("outbox: iterate markers: %w", err)
+		return nil, configsyncport.OutboxBounds{}, fmt.Errorf("outbox: iterate markers: %w", err)
 	}
-	return markers, minSeq, nil
+	return markers, bounds, nil
 }
 
 func decodeMarker(seq int64, kind *string, gatewayID *uuid.UUID) configsyncport.Marker {

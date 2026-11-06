@@ -42,12 +42,6 @@ type IncrementalSource interface {
 	ListShared(ctx context.Context) (SharedInputs, error)
 }
 
-// GatewayFinder is implemented by gateway readers that load one gateway by id.
-// Without it, CollectGateway finds the gateway in the full listing.
-type GatewayFinder interface {
-	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
-}
-
 var _ IncrementalSource = (*Compiler)(nil)
 
 // CollectAll reads every gateway's configuration and the catalog, with the
@@ -112,24 +106,12 @@ func (c *Compiler) ListShared(ctx context.Context) (SharedInputs, error) {
 }
 
 func (c *Compiler) findGateway(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
-	if finder, ok := c.gateways.(GatewayFinder); ok {
-		gateway, err := finder.FindByID(ctx, id)
-		if errors.Is(err, commonerrors.ErrNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: find gateway %s: %w", id, err)
-		}
-		return gateway, nil
+	gateway, err := c.gateways.FindByID(ctx, id)
+	if errors.Is(err, commonerrors.ErrNotFound) {
+		return nil, nil
 	}
-	gateways, err := c.listGateways(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("configsnapshot: find gateway %s: %w", id, err)
 	}
-	for i := range gateways {
-		if gateways[i].ID == id {
-			return &gateways[i], nil
-		}
-	}
-	return nil, nil
+	return gateway, nil
 }

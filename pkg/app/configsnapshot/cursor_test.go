@@ -47,13 +47,14 @@ func cycle(c *outboxCursor, rows []configsyncport.Marker, now time.Time) dirtySe
 	var (
 		since  []configsyncport.Marker
 		late   []configsyncport.Marker
-		minSeq int64
+		bounds configsyncport.OutboxBounds
 	)
 	lateSeqs := c.lateSeqs()
 	for i, m := range sorted {
 		if i == 0 {
-			minSeq = m.Seq
+			bounds.Min = m.Seq
 		}
+		bounds.Max = m.Seq
 		if m.Seq > c.readFrom() {
 			since = append(since, m)
 		}
@@ -61,7 +62,7 @@ func cycle(c *outboxCursor, rows []configsyncport.Marker, now time.Time) dirtySe
 			late = append(late, m)
 		}
 	}
-	next, dirty := c.observe(since, late, minSeq, now)
+	next, dirty := c.observe(since, late, bounds, now)
 	c.commit(next)
 	return dirty
 }
@@ -216,11 +217,34 @@ func TestCursor_AnUncommittedCycleReadsTheSameMarkersAgain(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	rows := []configsyncport.Marker{allMarker(1), gatewayMarker(2, gw)}
 
-	_, dirty := c.observe([]configsyncport.Marker{gatewayMarker(2, gw)}, nil, 1, cursorEpoch.Add(time.Second))
+	_, dirty := c.observe([]configsyncport.Marker{gatewayMarker(2, gw)}, nil, configsyncport.OutboxBounds{Min: 1, Max: 2}, cursorEpoch.Add(time.Second))
 	require.Equal(t, 1, dirty.markers)
 	assert.Equal(t, int64(1), c.readFrom(), "observe alone must not move the cursor")
 
 	dirty = cycle(c, rows, cursorEpoch.Add(2*time.Second))
 	assert.Equal(t, 1, dirty.markers)
 	assert.Contains(t, dirty.gateways, gw)
+}
+
+func TestCursor_PruneOfRowsAlreadyReadAboveAnOpenGapIsNotAReset(t *testing.T) {
+	c := newOutboxCursor(time.Minute, time.Hour, 10)
+	gw := ids.New[ids.GatewayKind]()
+	cycle(c, []configsyncport.Marker{allMarker(1), gatewayMarker(3, gw), gatewayMarker(4, gw)}, cursorEpoch)
+	require.Equal(t, int64(1), c.readFrom(), "seq 2 is still awaited, so the cursor stays below it")
+
+	dirty := cycle(c, []configsyncport.Marker{gatewayMarker(4, gw)}, cursorEpoch.Add(time.Second))
+
+	assert.False(t, dirty.full, "seq 2 is a known gap and seq 3 was already read, so the prune lost nothing")
+}
+
+func TestCursor_SequenceRestartBelowTheCursorForcesAFullCompile(t *testing.T) {
+	c := newOutboxCursor(time.Minute, time.Hour, 10)
+	cycle(c, []configsyncport.Marker{allMarker(1), allMarker(2), allMarker(3), allMarker(4), allMarker(5)}, cursorEpoch)
+	require.Equal(t, int64(5), c.readFrom())
+
+	dirty := cycle(c, []configsyncport.Marker{allMarker(1), allMarker(2)}, cursorEpoch.Add(time.Second))
+
+	assert.True(t, dirty.full)
+	assert.Equal(t, compileReasonCursorReset, dirty.fullReason, "every seq left is below the cursor, so the sequence restarted")
+	assert.Equal(t, int64(0), c.readFrom(), "the cursor restarts from the oldest row left")
 }

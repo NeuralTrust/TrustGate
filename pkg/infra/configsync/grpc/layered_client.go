@@ -60,6 +60,22 @@ func (f *fragmentCache) replace(fragments map[[32]byte][]byte) {
 	f.fragments = fragments
 }
 
+// keep adds verified fragments to the cache without dropping what it holds,
+// so a pull restarted after a fragment aged out fetches only the rest. The
+// next replace bounds the cache to one manifest again.
+func (f *fragmentCache) keep(fragments map[[32]byte][]byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fragments == nil {
+		f.fragments = make(map[[32]byte][]byte, len(fragments))
+	}
+	for digest, raw := range fragments {
+		if raw != nil {
+			f.fragments[digest] = raw
+		}
+	}
+}
+
 // Verifies reports whether Fetch already verified a body returned under
 // version: layered versions are checked fragment by fragment, so the worker
 // cannot and need not recompute them from the assembled bytes.
@@ -124,11 +140,15 @@ func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string,
 	for start := 0; start < len(missing); start += maxFragmentsPerRequest {
 		batch := missing[start:min(start+maxFragmentsPerRequest, len(missing))]
 		if err := c.fetchFragments(ctx, batch, held); err != nil {
+			if errors.Is(err, errFragmentGone) {
+				c.fragments.keep(held)
+			}
 			return nil, "", false, err
 		}
 	}
 
 	buf := make([]byte, 0, total)
+	cached := make(map[[32]byte][]byte, len(held))
 	for _, ref := range refs {
 		raw := held[ref.digest]
 		if raw == nil && ref.size > 0 {
@@ -137,9 +157,15 @@ func (c *Client) fetchLayered(ctx context.Context, etag string) ([]byte, string,
 		if len(raw) != ref.size {
 			return nil, "", false, fmt.Errorf("%w: fragment %x is %d bytes, manifest says %d", configsync.ErrIntegrity, ref.digest[:8], len(raw), ref.size)
 		}
+		start := len(buf)
 		buf = append(buf, raw...)
+		if _, ok := cached[ref.digest]; !ok {
+			// The cache points into the assembled snapshot, which is never
+			// modified once returned, so the bytes are held once, not twice.
+			cached[ref.digest] = buf[start:len(buf):len(buf)]
+		}
 	}
-	c.fragments.replace(held)
+	c.fragments.replace(cached)
 	return buf, manifest.GetVersion(), false, nil
 }
 
@@ -186,6 +212,10 @@ func (c *Client) fetchFragments(ctx context.Context, digests [][32]byte, held ma
 		req.Digests[i] = digests[i][:]
 		wanted[digests[i]] = true
 	}
+	// An early return must end the server stream, or it stays open until the
+	// worker stops.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stream, err := c.cli.GetFragments(ctx, req)
 	if err != nil {
 		return fragmentsErr(err)

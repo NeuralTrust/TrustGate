@@ -193,7 +193,7 @@ func TestIntegration_ReadSinceDecodesWhatEachMarkerDirtied(t *testing.T) {
 		}
 	}
 
-	markers, minSeq, err := repo.ReadSince(ctx, 0)
+	markers, bounds, err := repo.ReadSince(ctx, 0)
 	if err != nil {
 		t.Fatalf("ReadSince: %v", err)
 	}
@@ -209,8 +209,8 @@ func TestIntegration_ReadSinceDecodesWhatEachMarkerDirtied(t *testing.T) {
 	if markers[0].GatewayID != gw {
 		t.Fatalf("gateway marker names %s, want %s", markers[0].GatewayID, gw)
 	}
-	if minSeq != markers[0].Seq {
-		t.Fatalf("minSeq = %d, want the oldest seq %d", minSeq, markers[0].Seq)
+	if bounds.Min != markers[0].Seq || bounds.Max != markers[len(markers)-1].Seq {
+		t.Fatalf("bounds = %+v, want the oldest seq %d and the newest %d", bounds, markers[0].Seq, markers[len(markers)-1].Seq)
 	}
 
 	after, _, err := repo.ReadSince(ctx, markers[1].Seq)
@@ -262,8 +262,8 @@ func TestIntegration_ReadSinceReportsPrunedRows(t *testing.T) {
 	conn, repo := setupRepository(t)
 	ctx := context.Background()
 
-	if _, minSeq, err := repo.ReadSince(ctx, 0); err != nil || minSeq != 0 {
-		t.Fatalf("empty outbox: minSeq = %d, err = %v; want 0", minSeq, err)
+	if _, bounds, err := repo.ReadSince(ctx, 0); err != nil || bounds != (configsyncport.OutboxBounds{}) {
+		t.Fatalf("empty outbox: bounds = %+v, err = %v; want zero", bounds, err)
 	}
 	for i := 0; i < 3; i++ {
 		if err := database.WithTx(ctx, conn, func(tx pgx.Tx) error { return repo.AppendTx(ctx, tx) }); err != nil {
@@ -277,12 +277,12 @@ func TestIntegration_ReadSinceReportsPrunedRows(t *testing.T) {
 	if _, err := repo.PruneOlderThan(ctx, time.Now().Add(-time.Hour), 1); err != nil {
 		t.Fatalf("PruneOlderThan: %v", err)
 	}
-	rest, minSeq, err := repo.ReadSince(ctx, markers[2].Seq)
+	rest, bounds, err := repo.ReadSince(ctx, markers[2].Seq)
 	if err != nil {
 		t.Fatalf("ReadSince after prune: %v", err)
 	}
-	if len(rest) != 0 || minSeq != markers[2].Seq {
-		t.Fatalf("after the prune minSeq = %d (want %d) and no newer markers, got %+v", minSeq, markers[2].Seq, rest)
+	if len(rest) != 0 || bounds.Min != markers[2].Seq || bounds.Max != markers[2].Seq {
+		t.Fatalf("after the prune bounds = %+v (want %d..%d) and no newer markers, got %+v", bounds, markers[2].Seq, markers[2].Seq, rest)
 	}
 }
 

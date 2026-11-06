@@ -77,17 +77,12 @@ func digestOf(raw []byte) [32]byte {
 	return sha256.Sum256(raw)
 }
 
-// bucketCount keeps the previous bucket count while each bucket stays between
-// half and twice the target, so a gateway that grows by one consumer does not
-// reshuffle every bucket; past that it picks the smallest power of two that
-// brings buckets under the target.
-func bucketCount(size, previous int) int {
-	if previous > 0 {
-		per := size / previous
-		if per <= 2*targetBucketBytes && (previous == 1 || per >= targetBucketBytes/2) {
-			return previous
-		}
-	}
+// bucketCount is the smallest power of two that brings buckets under the
+// target. It depends on the gateway's size alone, so every admin replica splits
+// the same configuration into the same buckets and publishes the same manifest,
+// whatever its uptime; one write moves it only when the size crosses a power of
+// two of the target.
+func bucketCount(size int) int {
 	k := 1
 	for size/k > targetBucketBytes {
 		k *= 2
@@ -114,11 +109,7 @@ func bucketize(fragment, previous *gatewayFragment) {
 			size += len(e.bytes)
 		}
 	}
-	prevK := 0
-	if previous != nil {
-		prevK = previous.k
-	}
-	k := bucketCount(size, prevK)
+	k := bucketCount(size)
 	grouped := make([][]element, k)
 	for _, s := range gatewaySlots {
 		for _, e := range fragment.slots[s] {
