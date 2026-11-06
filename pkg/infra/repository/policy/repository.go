@@ -263,7 +263,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.PolicyID) (*domain.Pol
 	query := policySelectColumns + `
 		  FROM policies p
 		 WHERE p.id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	p, err := scanPolicy(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -282,7 +282,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 		  FROM policies p
 		 WHERE p.gateway_id = $1
 		   AND p.id = ANY($2::uuid[])`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(policyIDs))
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(policyIDs))
 	if err != nil {
 		return nil, fmt.Errorf("policy repository: find by ids: %w", err)
 	}
@@ -307,7 +307,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 		  FROM policies p
 		 WHERE p.gateway_id = $1
 		 ORDER BY p.priority, p.created_at, p.id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID())
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID())
 	if err != nil {
 		return nil, fmt.Errorf("policy repository: list by gateway: %w", err)
 	}
@@ -354,7 +354,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	registryParam := nullableRegistryID(filter.RegistryID)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(
 		ctx,
 		countQuery,
 		gatewayParam,
@@ -380,7 +380,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($8::text IS NULL OR ` + fmt.Sprintf(mcpScopeReferencesRegistry, 8) + `)
 		 ORDER BY ` + policyOrderBy(filter.Sort) + `
 		 LIMIT $9 OFFSET $10`
-	rows, err := r.conn.Pool.Query(
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(
 		ctx,
 		listQuery,
 		gatewayParam,

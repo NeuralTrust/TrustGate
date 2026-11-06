@@ -23,3 +23,8 @@ var WithCompileWhileDirty = withCompileWhileDirty
 func (d *Dispatcher) DispatchBackstop(ctx context.Context) error {
 	return d.dispatch(ctx, compileReasonBackstop)
 }
+
+// FlushPendingLKG runs the dispatch loop's pending-persist flush.
+func (d *Dispatcher) FlushPendingLKG(ctx context.Context) {
+	d.flushPendingLKG(ctx)
+}

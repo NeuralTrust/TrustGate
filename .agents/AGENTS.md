@@ -351,6 +351,7 @@ Proto: `pkg/infra/configsnapshot/proto/snapshot.proto` — regenerate with
 | `CONFIG_SYNC_POLL_INTERVAL` | backstop re-pull interval | `5m` |
 | `CONFIG_SYNC_RECOMPILE_DEBOUNCE` | CP recompile debounce (full-compile mode only) | `250ms` |
 | `CONFIG_SYNC_OUTBOX_GAP_EXPIRY` | CP: how long the outbox cursor waits for a missing seq | `30s` |
+| `CONFIG_SYNC_ADMIN_LKG_PERSIST_INTERVAL` | CP: shortest time between two writes of the persisted snapshot | `30s` |
 | `CONFIG_SYNC_INCREMENTAL_COMPILE` | CP: recompile only what admin writes touched, no debounce; publishes layered snapshots | `false` |
 | `CONFIG_SYNC_LAYERED_PULL` | DP: pull a manifest plus only the missing fragments | `false` |
 | `CONFIG_SYNC_INSTANCE_ID` | fleet-visibility id | `HOSTNAME` |

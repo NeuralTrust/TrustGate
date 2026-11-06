@@ -119,7 +119,7 @@ func (r *BudgetRepository) List(ctx context.Context, page, size int) ([]*domain.
 		size = 100
 	}
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM key_group_budgets`).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, `SELECT COUNT(*) FROM key_group_budgets`).Scan(&total); err != nil {
 		return nil, 0, mapPgError(err)
 	}
 	const query = `
@@ -135,7 +135,7 @@ func (r *BudgetRepository) List(ctx context.Context, page, size int) ([]*domain.
 }
 
 func (r *BudgetRepository) query(ctx context.Context, query string, args ...any) ([]*domain.Budget, error) {
-	rows, err := r.conn.Pool.Query(ctx, query, args...)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, mapPgError(err)
 	}

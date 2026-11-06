@@ -47,9 +47,10 @@ type Appender interface {
 // single marker that dirties everything: a writer that cannot name its scope
 // always triggers a full compile.
 type Marks struct {
-	all      bool
-	catalog  bool
-	gateways []ids.GatewayID
+	all       bool
+	catalog   bool
+	unchanged bool
+	gateways  []ids.GatewayID
 }
 
 // Gateway records that the write dirtied gatewayID.
@@ -76,8 +77,18 @@ func (m *Marks) All() {
 	m.all = true
 }
 
+// Unchanged records that the write changed no configuration, so no marker is
+// needed unless something else was recorded. It is for writes that were a
+// no-op, such as unlinking from a consumer that no longer exists.
+func (m *Marks) Unchanged() {
+	m.unchanged = true
+}
+
 func (m *Marks) appendTo(ctx context.Context, tx pgx.Tx, appender Appender) error {
 	if appender == nil {
+		return nil
+	}
+	if !m.all && !m.catalog && len(m.gateways) == 0 && m.unchanged {
 		return nil
 	}
 	if m.all || (!m.catalog && len(m.gateways) == 0) {
