@@ -17,8 +17,8 @@ package configsnapshot
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -242,17 +242,7 @@ func (d *Dispatcher) assembleEncoded(shared SharedInputs, stages *compileStages)
 		compiled.raw, compiled.version = inc.lastGlobalRaw, inc.lastGlobalVersion
 		stages.since(stageMerge, mergeStart)
 	} else {
-		globalLen := len(assembled.Global)
-		catalogLen := len(catalogRaw)
-		maxInt := int(^uint(0) >> 1)
-		if globalLen > maxInt-catalogLen {
-			stages.since(stageMerge, mergeStart)
-			return compiledSnapshot{}, fmt.Errorf("configsnapshot: assembled payload too large")
-		}
-		rawCap := globalLen + catalogLen
-		raw := make([]byte, 0, rawCap)
-		raw = append(raw, assembled.Global...)
-		raw = append(raw, catalogRaw...)
+		raw := slices.Concat(assembled.Global, catalogRaw)
 		stages.since(stageMerge, mergeStart)
 		hashStart := time.Now()
 		compiled.raw, compiled.version = raw, d.codec.Version(raw)
