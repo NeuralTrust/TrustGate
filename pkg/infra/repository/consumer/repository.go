@@ -588,7 +588,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
 	query := consumerSelectFrom + `
 		 WHERE c.id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	c, err := scanConsumer(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -603,7 +603,7 @@ func (r *Repository) FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*d
 	const query = `SELECT id, gateway_id, type, audience, active FROM consumers WHERE id = $1`
 	c := &domain.Consumer{}
 	var consumerType, audience string
-	if err := r.conn.Pool.QueryRow(ctx, query, id).Scan(&c.ID, &c.GatewayID, &consumerType, &audience, &c.Active); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id).Scan(&c.ID, &c.GatewayID, &consumerType, &audience, &c.Active); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
@@ -620,7 +620,7 @@ func (r *Repository) FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*d
 
 func (r *Repository) ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]ids.ConsumerID, error) {
 	const query = `SELECT consumer_id FROM consumer_auth WHERE auth_id = $1 ORDER BY consumer_id`
-	rows, err := r.conn.Pool.Query(ctx, query, authID)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, authID)
 	if err != nil {
 		return nil, fmt.Errorf("consumer repository: list ids by auth: %w", err)
 	}
@@ -635,7 +635,7 @@ func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain
 	query := consumerSelectFrom + `
 		 WHERE c.slug = $1
 		   AND c.active = TRUE`
-	row := r.conn.Pool.QueryRow(ctx, query, strings.TrimSpace(slug))
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, strings.TrimSpace(slug))
 	c, err := scanConsumer(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -664,7 +664,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($5::uuid IS NULL OR EXISTS (
 		         SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $5))`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("consumer repository: count: %w", err)
 	}
 
@@ -677,7 +677,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		         SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $5))
 		 ORDER BY ` + consumerOrderBy(filter.Sort) + `
 		 LIMIT $6 OFFSET $7`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam, page.Size, offset)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("consumer repository: list: %w", err)
 	}
@@ -701,7 +701,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	query := consumerSelectFrom + `
 		 WHERE c.gateway_id = $1
 		 ORDER BY c.created_at DESC, c.id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("consumer repository: list by gateway: %w", err)
 	}
@@ -725,7 +725,7 @@ func (r *Repository) ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*do
 	query := consumerSelectFrom + `
 		 WHERE EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
 		 ORDER BY c.created_at DESC, c.id`
-	rows, err := r.conn.Pool.Query(ctx, query, authID)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, authID)
 	if err != nil {
 		return nil, fmt.Errorf("consumer repository: list by auth: %w", err)
 	}

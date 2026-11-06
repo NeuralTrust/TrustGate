@@ -20,6 +20,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -58,7 +59,7 @@ func seedTenantCaps(ctx context.Context, tx pgx.Tx, tenantID, tier string, l rat
 // GetTenantCaps returns the tenant's plan caps, or commonerrors.ErrNotFound when
 // none were ever stamped for it.
 func (r *Repository) GetTenantCaps(ctx context.Context, tenantID string) (*ratelimitdomain.TenantCaps, error) {
-	row := r.conn.Pool.QueryRow(ctx,
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx,
 		`SELECT `+tenantCapsColumns+` FROM tenant_entitlements WHERE tenant_id = $1`, tenantID)
 	var c ratelimitdomain.TenantCaps
 	if err := row.Scan(&c.TenantID, &c.Tier, &c.BurstPerMin, &c.QuotaPerMonth, &c.MaxInstances); err != nil {
@@ -72,7 +73,7 @@ func (r *Repository) GetTenantCaps(ctx context.Context, tenantID string) (*ratel
 
 // ListTenantCaps returns every tenant's caps.
 func (r *Repository) ListTenantCaps(ctx context.Context) ([]ratelimitdomain.TenantCaps, error) {
-	rows, err := r.conn.Pool.Query(ctx,
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx,
 		`SELECT `+tenantCapsColumns+` FROM tenant_entitlements ORDER BY tenant_id`)
 	if err != nil {
 		return nil, mapPgError(err)

@@ -354,7 +354,7 @@ func (r *Repository) RewriteMCPTargets(
 
 func (r *Repository) mcpTargetIDs(ctx context.Context) ([]ids.RegistryID, error) {
 	const query = `SELECT id FROM registries WHERE mcp_target IS NOT NULL ORDER BY id`
-	rows, err := r.conn.Pool.Query(ctx, query)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("registry repository: list mcp targets: %w", err)
 	}
