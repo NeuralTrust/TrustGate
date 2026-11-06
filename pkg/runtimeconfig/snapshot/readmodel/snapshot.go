@@ -55,6 +55,7 @@ type Data struct {
 	CatalogModels       []CatalogModel
 	StoreGrants         []storeaccessdomain.Grant
 	StorePolicies       []storeaccessdomain.Policy
+	StoreEveryone       []storeaccessdomain.Everyone
 	PlaygroundTokenKeys []VerificationKey
 	// TenantCaps are the plan caps of the tenants the gateways above belong to.
 	// A scoped snapshot carries only its own tenant.
@@ -117,6 +118,7 @@ type Snapshot struct {
 
 	storeGrantsByGateway   map[ids.GatewayID][]*storeaccessdomain.Grant
 	storePoliciesByGateway map[ids.GatewayID][]*storeaccessdomain.Policy
+	storeEveryoneByGateway map[ids.GatewayID]*storeaccessdomain.Everyone
 
 	tenantCaps       map[string]*ratelimitdomain.TenantCaps
 	sessionRevokedAt map[sessionRevocationKey]time.Time
@@ -158,6 +160,7 @@ func Build(data Data) *Snapshot {
 		catalogAll:             make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
 		storeGrantsByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.Grant),
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
+		storeEveryoneByGateway: make(map[ids.GatewayID]*storeaccessdomain.Everyone),
 		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
 		sessionRevokedAt:       make(map[sessionRevocationKey]time.Time, len(data.SessionRevocations)),
 
@@ -209,6 +212,15 @@ func (s *Snapshot) buildStoreGrants() {
 		p := &s.data.StorePolicies[i]
 		s.storePoliciesByGateway[p.GatewayID] = append(s.storePoliciesByGateway[p.GatewayID], p)
 	}
+	for i := range s.data.StoreEveryone {
+		e := &s.data.StoreEveryone[i]
+		s.storeEveryoneByGateway[e.GatewayID] = e
+	}
+}
+
+// StoreEveryoneByGateway returns a gateway's Everyone Store access, or nil.
+func (s *Snapshot) StoreEveryoneByGateway(gatewayID ids.GatewayID) *storeaccessdomain.Everyone {
+	return s.storeEveryoneByGateway[gatewayID]
 }
 
 // StorePoliciesByGateway returns a gateway's per-principal Store access

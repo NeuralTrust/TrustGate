@@ -85,6 +85,21 @@ func TestVersionContentAddressed(t *testing.T) {
 	assert.NotEqual(t, version, codec.Version(rawChanged), "a change yields a new version")
 }
 
+func TestVersionPartsMatchesVersionOfConcatenation(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	cases := [][][]byte{
+		nil,
+		{[]byte("whole")},
+		{[]byte("tenant"), []byte("catalog")},
+		{{}, []byte("catalog")},
+		{[]byte("a"), {}, []byte("bc")},
+	}
+	for _, parts := range cases {
+		assert.Equal(t, codec.Version(bytes.Join(parts, nil)), codec.VersionParts(parts...), "parts %q", parts)
+	}
+}
+
 func TestEmptySnapshotRoundTrip(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()
@@ -393,6 +408,41 @@ func TestCodecRoundTripsGroupKey(t *testing.T) {
 	reraw, err := codec.Encode(snap)
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}
+
+func TestCodecRoundTripsStoreEveryone(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	everyone, err := storeaccessdomain.NewEveryone(gw, "curated",
+		[]storeaccessdomain.EveryoneGrant{{CatalogCode: "github"}, {CatalogCode: "snowflake", RegistryID: reg}},
+		[]string{"Contractors"})
+	require.NoError(t, err)
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "everyone", StoreEveryone: []storeaccessdomain.Everyone{*everyone}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.StoreEveryoneByGateway(gw)
+	require.NotNil(t, got)
+	assert.Equal(t, "curated", got.Mode)
+	require.Len(t, got.Grants, 2)
+	assert.True(t, got.Grants[0].RegistryID.IsNil(), "code-level grant stays code-level")
+	assert.Equal(t, reg, got.Grants[1].RegistryID)
+	assert.Equal(t, []string{"Contractors"}, got.ExcludedGroups)
+	assert.Nil(t, snap.StoreEveryoneByGateway(ids.New[ids.GatewayKind]()))
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+
+	empty, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "everyone"}))
+	require.NoError(t, err)
+	without, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "everyone", StoreEveryone: nil}))
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(empty, without), "no Everyone keeps the snapshot bytes unchanged")
 }
 
 func TestCodecRoundTripsKeyGroupBudgets(t *testing.T) {

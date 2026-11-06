@@ -35,6 +35,20 @@ func NewStoreGrantReader(store configsync.ConfigStore[*readmodel.Snapshot]) doma
 	return &storeGrantReader{store: store}
 }
 
+// GetEveryone returns the gateway's Everyone object; an unloaded snapshot
+// yields none, so nothing is granted through Everyone.
+func (r *storeGrantReader) GetEveryone(_ context.Context, gatewayID ids.GatewayID) (*domain.Everyone, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	everyone := snap.StoreEveryoneByGateway(gatewayID)
+	if everyone == nil {
+		return nil, nil
+	}
+	return cloneJSON(everyone)
+}
+
 // NewStorePolicyReader wires the snapshot-backed policy reader.
 func NewStorePolicyReader(store configsync.ConfigStore[*readmodel.Snapshot]) domain.PolicyReader {
 	return &storeGrantReader{store: store}

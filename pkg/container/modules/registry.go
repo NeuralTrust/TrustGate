@@ -92,14 +92,18 @@ func provideRegistryRepository(c *container.Container) error {
 // pending requests for a deleted custom server.
 type registryDeleterCleaners struct {
 	dig.In
-	Grants   storeaccessdomain.Repository  `optional:"true"`
-	Installs installationdomain.Repository `optional:"true"`
+	Grants   storeaccessdomain.Repository         `optional:"true"`
+	Everyone storeaccessdomain.EveryoneRepository `optional:"true"`
+	Installs installationdomain.Repository        `optional:"true"`
 }
 
 func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.DeleterOption {
 	var opts []appregistry.DeleterOption
 	if p.Grants != nil {
 		opts = append(opts, appregistry.WithDependentCleaner(p.Grants))
+	}
+	if p.Everyone != nil {
+		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
 	}
 	if denier, ok := p.Installs.(installationdomain.PendingDenier); ok {
 		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewDeletedServerRequests(denier, logger)))

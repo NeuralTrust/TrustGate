@@ -1021,11 +1021,11 @@ func (t *storeTool) loadStoreAccess(ctx context.Context, rc *appconsumer.Routabl
 	if rc == nil || rc.Consumer == nil || t.grants == nil {
 		return nil, nil
 	}
-	grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID)
+	grants, err := appstore.LoadGrantSet(ctx, t.grants, rc.Consumer.GatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: list Store grants: %w", ErrStoreToolUnavailable, err)
 	}
-	return &storeAccessIndex{grants: storeaccessdomain.Index(grants)}, nil
+	return &storeAccessIndex{grants: grants}, nil
 }
 
 // effectiveStoreMode is the Store mode that applies to the calling principal on

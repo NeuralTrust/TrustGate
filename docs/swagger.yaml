@@ -2216,6 +2216,13 @@ definitions:
       principal_sub:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.EveryoneGrant:
+    properties:
+      catalog_code:
+        type: string
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Install:
     properties:
       code:
@@ -2249,6 +2256,19 @@ definitions:
           expires_at.
         example: false
         type: boolean
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone:
+    properties:
+      excluded_groups:
+        items:
+          type: string
+        type: array
+      grants:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.EveryoneGrant'
+        type: array
+      mode:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetGrant:
     properties:
@@ -2297,6 +2317,26 @@ definitions:
       registry_id:
         type: string
       requested_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone:
+    properties:
+      excluded_groups:
+        items:
+          type: string
+        type: array
+      grants:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.EveryoneGrant'
+        type: array
+      mode:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.EveryoneGrant:
+    properties:
+      catalog_code:
+        type: string
+      registry_id:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Grant:
@@ -7158,6 +7198,82 @@ paths:
       security:
       - BearerAuth: []
       summary: Set an MCP Store access policy
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/everyone:
+    get:
+      description: Returns the Store level and servers every group passes on to its
+        members, and the excluded groups. An empty mode means the gateway has none.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get the MCP Store Everyone access
+      tags:
+      - store
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the gateway''s Everyone access: mode open or curated
+        (curated needs at least one grant), the servers it grants, and the excluded
+        group keys. Mode is required; an empty mode removes it.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: The Everyone access
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.Everyone'
+        "204":
+          description: Everyone access removed
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Set the MCP Store Everyone access
       tags:
       - store
   /v1/gateways/{gateway_id}/store/grants:
