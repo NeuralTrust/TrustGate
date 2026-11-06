@@ -252,7 +252,7 @@ func ControlConfigSync(c *container.Container) error {
 				logger.Warn("admin last-good snapshot disabled: no usable SERVER_SECRET_KEY",
 					slog.String("component", "configsnapshot"), slog.String("error", err.Error()))
 			} else {
-				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge}))
+				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge, PersistInterval: cfg.ConfigSync.AdminLKGPersistInterval}))
 			}
 		}
 		if cfg.ConfigSync.IncrementalCompile {
