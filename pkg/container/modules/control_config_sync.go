@@ -253,6 +253,9 @@ func ControlConfigSync(c *container.Container) error {
 				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge}))
 			}
 		}
+		if cfg.ConfigSync.IncrementalCompile {
+			opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments()))
+		}
 		d := appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
 			Debounce:  cfg.ConfigSync.RecompileDebounce,
 			Backstop:  cfg.ConfigSync.RecompileBackstop,

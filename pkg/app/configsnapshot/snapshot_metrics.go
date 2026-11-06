@@ -59,7 +59,10 @@ type snapshotEntities struct {
 }
 
 func (n *snapshotEntities) add(snapshot *readmodel.Snapshot) {
-	data := snapshot.Data()
+	n.addData(snapshot.Data())
+}
+
+func (n *snapshotEntities) addData(data readmodel.Data) {
 	n.auths += int64(len(data.Auths))
 	for i := range data.Auths {
 		if data.Auths[i].IsOwned() {

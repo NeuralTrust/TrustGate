@@ -37,7 +37,8 @@ var compileStageOrder = []compileStage{stageRead, stageBuild, stageEncode, stage
 type compileMode string
 
 const (
-	compileModeFull compileMode = "full"
+	compileModeFull        compileMode = "full"
+	compileModeIncremental compileMode = "incremental"
 )
 
 type compileReason string
@@ -52,6 +53,9 @@ const (
 	// compileReasonCursorReset is a cursor that could no longer trust its
 	// position: rows it never read were pruned, or too many seqs went missing.
 	compileReasonCursorReset compileReason = "cursor_reset"
+	compileReasonSwitchOff   compileReason = "switch_off"
+	compileReasonLKGRestore  compileReason = "lkg_restore"
+	compileReasonCacheMiss   compileReason = "cache_miss"
 )
 
 // A nil *compileStages records nothing, so compile paths can time unconditionally.

@@ -415,6 +415,11 @@ type ConfigSyncConfig struct {
 	// seq before it stops holding its read position for it. A seq that commits
 	// later is still read, through the set of expired gaps checked every cycle.
 	OutboxGapExpiry time.Duration
+	// IncrementalCompile is CONFIG_SYNC_INCREMENTAL_COMPILE. When set, the
+	// control plane recompiles only the gateways the outbox markers name and
+	// compiles as soon as a change arrives, with no debounce. Off keeps the
+	// full compile on every change, and turning it off is the rollback.
+	IncrementalCompile bool
 	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
 	// serve them after a restart while compiling fails.
 	AdminLKGEnabled bool
@@ -1409,6 +1414,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 		OutboxGapExpiry:      getEnvDuration("CONFIG_SYNC_OUTBOX_GAP_EXPIRY", defaultConfigSyncOutboxGapExpiry),
+		IncrementalCompile:   getEnvBool("CONFIG_SYNC_INCREMENTAL_COMPILE", false),
 		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
 		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(

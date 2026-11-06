@@ -86,6 +86,9 @@ type Dispatcher struct {
 	cursor            *outboxCursor
 	compileWhileDirty bool
 
+	fragmentEncoder FragmentEncoder
+	incremental     *incrementalState
+
 	mu              sync.Mutex
 	publishedGlobal string
 	publishedScoped map[string]string
@@ -167,6 +170,7 @@ func NewDispatcher(
 	for _, opt := range opts {
 		opt(d)
 	}
+	d.enableIncremental()
 	return d
 }
 
@@ -289,25 +293,23 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 	// on the next one, and the cursor advances only once this cycle succeeds.
 	next, dirty, observed := d.observeOutbox(ctx)
 
-	switch {
-	case !d.compiled.Load():
-		reason = compileReasonBoot
-	case dirty.full:
-		reason = dirty.fullReason
-	}
+	reason = d.compileReason(reason, dirty)
 	stages := newCompileStages()
 	compileStart := time.Now()
 	compiledAt := d.compiledAt()
-	compiled, err := d.compile(ctx, stages)
+	compiled, mode, reason, err := d.build(ctx, reason, dirty, next, observed, stages)
 	if err != nil {
-		recordCompile(ctx, d.logger, compileModeFull, reason, stages, false)
+		recordCompile(ctx, d.logger, mode, reason, stages, false)
 		d.warnServingPersisted(err)
 		return err
 	}
 	compileDuration := time.Since(compileStart)
-	recordCompile(ctx, d.logger, compileModeFull, reason, stages, true)
+	recordCompile(ctx, d.logger, mode, reason, stages, true)
 	if compiled.scoped != nil {
 		d.lastCatalog, d.lastScoped = compiled.catalog, compiled.scoped
+	}
+	if d.incremental != nil {
+		d.incremental.remember(compiled)
 	}
 	raw, version, scoped := compiled.raw, compiled.version, compiled.scoped
 
@@ -344,7 +346,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 			slog.String("component", component),
 			slog.String("version", version),
 			slog.Duration("compile", compileDuration),
-			slog.String("mode", string(compileModeFull)),
+			slog.String("mode", string(mode)),
 			slog.String("reason", string(reason)),
 			slog.Int("dirty", len(dirty.gateways)),
 			stages.logAttr(),
@@ -368,6 +370,20 @@ func (d *Dispatcher) dispatch(ctx context.Context, reason compileReason) error {
 		d.cursor.commit(next)
 	}
 	return nil
+}
+
+func (d *Dispatcher) compileReason(trigger compileReason, dirty dirtySet) compileReason {
+	switch {
+	case !d.compiled.Load() && d.Source() == SourcePersisted:
+		return compileReasonLKGRestore
+	case !d.compiled.Load():
+		return compileReasonBoot
+	case dirty.full:
+		return dirty.fullReason
+	case trigger == compileReasonSignal && d.incremental == nil:
+		return compileReasonSwitchOff
+	}
+	return trigger
 }
 
 // observeOutbox reads the markers above the cursor and the expired gaps that
@@ -396,6 +412,9 @@ type compiledSnapshot struct {
 	scoped       map[string]ScopedSnapshot
 	catalog      []byte
 	catalogBytes int
+	// globalTenant is the global snapshot without the catalog, set by the
+	// incremental path so an unchanged one can be recognised next cycle.
+	globalTenant []byte
 	scopes       scopeSizes
 	entities     snapshotEntities
 }

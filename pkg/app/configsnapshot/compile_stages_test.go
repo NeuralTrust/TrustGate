@@ -78,7 +78,7 @@ func TestDispatchLogsCompileModeReasonAndStages(t *testing.T) {
 	logs.Reset()
 	gateways.set([]*gatewaydomain.Gateway{{ID: mustGatewayID(t, metricsGatewayA), Slug: "renamed"}})
 	require.NoError(t, d.Dispatch(context.Background()))
-	assert.Contains(t, logs.String(), "mode=full reason=signal dirty=0")
+	assert.Contains(t, logs.String(), "mode=full reason=switch_off dirty=0")
 }
 
 func TestDispatchRecordsCompileCountAndStageDurations(t *testing.T) {
@@ -90,8 +90,8 @@ func TestDispatchRecordsCompileCountAndStageDurations(t *testing.T) {
 
 	counts, stages := collectCompileTelemetry(t, reader)
 	assert.Equal(t, map[string]int64{
-		"mode=full,outcome=ok,reason=boot":   1,
-		"mode=full,outcome=ok,reason=signal": 1,
+		"mode=full,outcome=ok,reason=boot":       1,
+		"mode=full,outcome=ok,reason=switch_off": 1,
 	}, counts, "a compile that publishes nothing new is still counted")
 	assert.Equal(t, map[string]uint64{
 		"mode=full,outcome=ok,stage=read":   2,
