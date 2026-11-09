@@ -343,14 +343,52 @@ func TestCompletions_CustomAuthorizationWithoutAPIKey(t *testing.T) {
 	assert.Equal(t, "Token abc123", gotAuth, "a custom Authorization header authenticates without a bearer api key")
 }
 
-func TestCompletions_NoCredentials(t *testing.T) {
+func TestCompletions_CustomHeadersWithoutAPIKey(t *testing.T) {
+	var gotIBM, gotSub, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIBM = r.Header.Get("X-IBM-Client-Id")
+		gotSub = r.Header.Get("Ocp-Apim-Subscription-Key")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
 	_, err := NewClient().Completions(
 		context.Background(),
-		&providers.Config{Options: map[string]any{"base_url": "https://host/v1"}},
+		&providers.Config{
+			Credentials: providers.Credentials{
+				Headers: map[string]string{"X-IBM-Client-Id": "client-secret"},
+			},
+			Options: map[string]any{
+				"base_url": srv.URL + "/v1",
+				"headers":  map[string]any{"Ocp-Apim-Subscription-Key": "sub-secret"},
+			},
+		},
 		[]byte(`{}`),
 	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "API key is required")
+	require.NoError(t, err)
+	assert.Equal(t, "client-secret", gotIBM)
+	assert.Equal(t, "sub-secret", gotSub)
+	assert.Empty(t, gotAuth)
+}
+
+func TestCompletions_NoCredentials(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := NewClient().Completions(
+		context.Background(),
+		&providers.Config{Options: map[string]any{"base_url": srv.URL + "/v1"}},
+		[]byte(`{}`),
+	)
+	require.NoError(t, err)
+	assert.Empty(t, gotAuth)
 }
 
 func TestCompletions_InvalidBaseURL(t *testing.T) {
