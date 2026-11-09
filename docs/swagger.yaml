@@ -2042,6 +2042,12 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+      shared_account:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountStateResponse'
+        description: |-
+          SharedAccount is set by the flat listing on MCP instances that hold one
+          account for every caller, so it shows whether that account is connected.
       type:
         type: string
       updated_at:
@@ -2070,6 +2076,13 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountStateResponse:
+    properties:
+      connected:
+        type: boolean
+      needs_reconnect:
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse:
     properties:
@@ -6584,7 +6597,9 @@ paths:
       description: 'Returns one of two mutually exclusive variants: flat (items/page/size/total)
         when view and type are omitted, or grouped (view/groups/total_groups/total_instances)
         with view=grouped&type=LLM. Grouped requests require at most 200 total registries
-        and must omit name, page, and size.'
+        and must omit name, page, and size. In the flat variant, MCP instances that
+        hold one account for every caller carry shared_account with whether it is
+        connected.'
       parameters:
       - description: Gateway id
         format: uuid
