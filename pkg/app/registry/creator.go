@@ -135,5 +135,8 @@ func validateProviderOptions(target *domain.LLMTarget) error {
 	if err := providers.ValidateProviderOptions(target.Provider, target.ProviderOptions); err != nil {
 		return fmt.Errorf("%w: %w", domain.ErrInvalidRegistry, err)
 	}
+	if name, masked := domain.MaskedProviderOptionHeader(target.ProviderOptions); masked {
+		return fmt.Errorf("%w: provider_options.headers[%s] cannot be a masked value", domain.ErrInvalidRegistry, name)
+	}
 	return nil
 }

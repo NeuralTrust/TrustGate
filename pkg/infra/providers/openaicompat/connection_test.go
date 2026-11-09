@@ -50,6 +50,33 @@ func TestTestConnection_OK(t *testing.T) {
 	assert.Equal(t, "custom-value", gotCustom, "custom headers are applied to the probe too")
 }
 
+func TestTestConnection_NoAPIKeySendsCustomHeadersOnly(t *testing.T) {
+	var gotAuth, gotIBM, gotSub string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotIBM = r.Header.Get("X-IBM-Client-Id")
+		gotSub = r.Header.Get("Ocp-Apim-Subscription-Key")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	tester := NewClient().(providers.ConnectionTester)
+	res := tester.TestConnection(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			Headers: map[string]string{"X-IBM-Client-Id": "client-secret"},
+		},
+		Options: map[string]any{
+			"base_url": srv.URL + "/v1",
+			"headers":  map[string]any{"Ocp-Apim-Subscription-Key": "sub-secret"},
+		},
+	})
+
+	require.True(t, res.OK)
+	assert.Empty(t, gotAuth)
+	assert.Equal(t, "client-secret", gotIBM)
+	assert.Equal(t, "sub-secret", gotSub)
+}
+
 func TestTestConnection_MissingBaseURL(t *testing.T) {
 	tester := NewClient().(providers.ConnectionTester)
 	res := tester.TestConnection(context.Background(), &providers.Config{

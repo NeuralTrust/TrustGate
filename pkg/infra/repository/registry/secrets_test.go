@@ -234,3 +234,80 @@ func TestKeepUnreadableCredentials_ReadTimeMarkKeepsAReadableReplacement(t *test
 		t.Fatalf("without a mark a readable stored value is replaced: %+v %+v", cleared.Auth, cleared.Headers)
 	}
 }
+
+func TestMarshalProviderOptions_SealsHeaderValues(t *testing.T) {
+	t.Parallel()
+	r := sealingRepo(t, true)
+	id := ids.New[ids.RegistryKind]()
+	const value = "client-secret-value"
+	options := map[string]any{
+		"base_url": "https://llm.internal/v1",
+		"headers":  map[string]string{"X-IBM-Client-Id": value},
+	}
+
+	raw, err := r.marshalProviderOptions(id, options)
+	if err != nil {
+		t.Fatalf("marshalProviderOptions: %v", err)
+	}
+	if strings.Contains(string(raw), value) {
+		t.Fatalf("header value stored in clear: %s", raw)
+	}
+	if !strings.Contains(string(raw), "https://llm.internal/v1") {
+		t.Fatalf("base_url dropped: %s", raw)
+	}
+	if options["headers"].(map[string]string)["X-IBM-Client-Id"] != value {
+		t.Fatal("sealing mutated the in-memory options")
+	}
+
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	target := &domain.LLMTarget{ProviderOptions: stored}
+	r.openProviderOptionHeaders(context.Background(), id, target)
+	headers, ok := domain.ProviderOptionHeaders(target.ProviderOptions)
+	if !ok || headers["X-IBM-Client-Id"] != value {
+		t.Fatalf("opened headers = %#v", headers)
+	}
+}
+
+func TestMarshalProviderOptions_LeavesPlaintextWhenEncryptionDisabled(t *testing.T) {
+	t.Parallel()
+	r := sealingRepo(t, false)
+	id := ids.New[ids.RegistryKind]()
+	options := map[string]any{"headers": map[string]string{"X-IBM-Client-Id": "client-secret-value"}}
+	raw, err := r.marshalProviderOptions(id, options)
+	if err != nil {
+		t.Fatalf("marshalProviderOptions: %v", err)
+	}
+	if !strings.Contains(string(raw), "client-secret-value") {
+		t.Fatalf("plaintext write dropped the header: %s", raw)
+	}
+}
+
+func TestKeepUnreadableProviderHeaders_KeepsStoredCiphertext(t *testing.T) {
+	t.Parallel()
+	r := sealingRepo(t, true)
+	id := ids.New[ids.RegistryKind]()
+	raw, err := r.marshalProviderOptions(id, map[string]any{
+		"base_url": "https://llm.internal/v1",
+		"headers":  map[string]string{"X-IBM-Client-Id": "client-secret-value"},
+	})
+	if err != nil {
+		t.Fatalf("marshalProviderOptions: %v", err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out := map[string]any{
+		"base_url": "https://llm.internal/v1",
+		"headers":  map[string]string{"X-IBM-Client-Id": ""},
+	}
+	r.keepUnreadableProviderHeaders(id, []string{"X-IBM-Client-Id"}, out, stored)
+	got := out["headers"].(map[string]string)["X-IBM-Client-Id"]
+	want := stored["headers"].(map[string]any)["X-IBM-Client-Id"].(string)
+	if got != want || got == "" {
+		t.Fatalf("kept %q, stored %q", got, want)
+	}
+}

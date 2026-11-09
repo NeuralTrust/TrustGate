@@ -48,8 +48,8 @@ func (c *ChatCompletionsClient) Completions(
 	reqBody []byte,
 	customHeaders map[string]string,
 ) ([]byte, error) {
-	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
-		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	if err := c.credentialError(config.Credentials.ApiKey, customHeaders); err != nil {
+		return nil, err
 	}
 	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody, customHeaders)
 }
@@ -60,8 +60,8 @@ func (c *ChatCompletionsClient) Files(
 	config *providers.Config,
 	req providers.FilesRequest,
 ) (*providers.FilesResult, error) {
-	if config.Credentials.ApiKey == "" {
-		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	if err := c.credentialError(config.Credentials.ApiKey, nil); err != nil {
+		return nil, err
 	}
 	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
 	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpointURL, req.ContentType, req.Body, func(httpReq *http.Request) {
@@ -76,8 +76,8 @@ func (c *ChatCompletionsClient) Images(
 	req providers.ImagesRequest,
 	customHeaders map[string]string,
 ) (*providers.ImagesResult, error) {
-	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
-		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	if err := c.credentialError(config.Credentials.ApiKey, customHeaders); err != nil {
+		return nil, err
 	}
 	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
 	return providers.ImagesResultFromFiles(providers.DoFilesHTTP(
@@ -101,8 +101,8 @@ func (c *ChatCompletionsClient) Audio(
 	req providers.AudioRequest,
 	customHeaders map[string]string,
 ) (*providers.AudioResult, error) {
-	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
-		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	if err := c.credentialError(config.Credentials.ApiKey, customHeaders); err != nil {
+		return nil, err
 	}
 	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
 	return providers.AudioResultFromFiles(providers.DoFilesHTTP(
@@ -126,8 +126,8 @@ func (c *ChatCompletionsClient) CompletionsStream(
 	reqBody []byte,
 	customHeaders map[string]string,
 ) (iter.Seq2[[]byte, error], error) {
-	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
-		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	if err := c.credentialError(config.Credentials.ApiKey, customHeaders); err != nil {
+		return nil, err
 	}
 
 	httpClient := c.Pool.GetStream(c.ProviderKey)
@@ -203,6 +203,16 @@ func applyExtraHeaders(req *http.Request, headers map[string]string) {
 		}
 		req.Header.Set(k, v)
 	}
+}
+
+func (c *ChatCompletionsClient) credentialError(apiKey string, headers map[string]string) error {
+	if c.ProviderKey == providers.ProviderOpenAICompatible {
+		return nil
+	}
+	if apiKey == "" && !hasAuthorizationHeader(headers) {
+		return fmt.Errorf("API key is required when no Authorization header is set")
+	}
+	return nil
 }
 
 func hasAuthorizationHeader(headers map[string]string) bool {
