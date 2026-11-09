@@ -145,16 +145,16 @@ type client struct {
 
 type clientConfig struct {
 	baseTransport http.RoundTripper
-	v3            V3Config
+	agentSecurity AgentSecurityConfig
 }
 
 // Option configures the plugin beyond its required arguments.
 type Option func(*clientConfig)
 
-// WithV3 sends a copy of every evaluation of the gateways cfg lists to Guard
-// (AgentSecurity). TrustGuard's answer alone decides.
-func WithV3(cfg V3Config) Option {
-	return func(c *clientConfig) { c.v3 = cfg }
+// WithAgentSecurity sends a copy of every evaluation of the gateways cfg lists to AgentSecurity.
+// TrustGuard's answer alone decides.
+func WithAgentSecurity(cfg AgentSecurityConfig) Option {
+	return func(c *clientConfig) { c.agentSecurity = cfg }
 }
 
 func withBaseTransport(base http.RoundTripper) Option {

@@ -785,11 +785,11 @@ type LoggerConfig struct {
 }
 
 type TrustGuardConfig struct {
-	BaseURL      string
-	Timeout      time.Duration
-	ClientID     string
-	ClientSecret string
-	V3           AgentSecurityConfig
+	BaseURL       string
+	Timeout       time.Duration
+	ClientID      string
+	ClientSecret  string
+	AgentSecurity AgentSecurityConfig
 }
 
 // AgentSecurityConfig is AgentSecurity, which the TrustGuard plugin sends a
@@ -1340,13 +1340,13 @@ func getTrustGuardConfig() TrustGuardConfig {
 		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
-		V3: AgentSecurityConfig{
-			BaseURL:      getEnvFallback("AGENTSECURITY_BASE_URL", "TRUSTGUARD_V3_BASE_URL", ""),
-			Timeout:      getEnvDurationFallback("AGENTSECURITY_TIMEOUT", "TRUSTGUARD_V3_TIMEOUT", defaultAgentSecurityTimeout),
-			ClientID:     getEnvFallback("AGENTSECURITY_CLIENT_ID", "TRUSTGUARD_V3_CLIENT_ID", ""),
-			ClientSecret: getEnvFallback("AGENTSECURITY_CLIENT_SECRET", "TRUSTGUARD_V3_CLIENT_SECRET", ""),
-			Gateways:     parseAgentSecurityGateways(getEnvFallback("AGENTSECURITY_GATEWAYS", "TRUSTGUARD_V3_GATEWAYS", "")),
-			Shadow:       strings.ToLower(strings.TrimSpace(getEnvFallback("AGENTSECURITY_SHADOW", "TRUSTGUARD_V3_SHADOW", ""))),
+		AgentSecurity: AgentSecurityConfig{
+			BaseURL:      getEnv("AGENTSECURITY_BASE_URL", ""),
+			Timeout:      getEnvDuration("AGENTSECURITY_TIMEOUT", defaultAgentSecurityTimeout),
+			ClientID:     getEnv("AGENTSECURITY_CLIENT_ID", ""),
+			ClientSecret: getEnv("AGENTSECURITY_CLIENT_SECRET", ""),
+			Gateways:     parseAgentSecurityGateways(getEnv("AGENTSECURITY_GATEWAYS", "")),
+			Shadow:       strings.ToLower(strings.TrimSpace(getEnv("AGENTSECURITY_SHADOW", ""))),
 		},
 	}
 }
@@ -1737,10 +1737,10 @@ func (c *Config) Validate() error {
 	if err := c.BedrockNative.validate(); err != nil {
 		return err
 	}
-	switch c.TrustGuard.V3.Shadow {
+	switch c.TrustGuard.AgentSecurity.Shadow {
 	case "", agentSecurityShadowOff, agentSecurityShadowAll:
 	default:
-		return fmt.Errorf("%w: AGENTSECURITY_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, agentSecurityShadowAll, agentSecurityShadowOff, c.TrustGuard.V3.Shadow)
+		return fmt.Errorf("%w: AGENTSECURITY_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, agentSecurityShadowAll, agentSecurityShadowOff, c.TrustGuard.AgentSecurity.Shadow)
 	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err
@@ -2004,20 +2004,6 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// getEnvFallback reads key, then the pre-rename name legacy for one release.
-func getEnvFallback(key, legacy, defaultValue string) string {
-	return getEnv(key, getEnv(legacy, defaultValue))
-}
-
-// getEnvDurationFallback is getEnvFallback for durations; an invalid new value
-// falls back to the default, not to the legacy name.
-func getEnvDurationFallback(key, legacy string, defaultValue time.Duration) time.Duration {
-	if os.Getenv(key) == "" {
-		key = legacy
-	}
-	return getEnvDuration(key, defaultValue)
 }
 
 func getEnvAllowEmpty(key, defaultValue string) string {

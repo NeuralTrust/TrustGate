@@ -88,9 +88,9 @@ type tokenManager struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
-	// v3 names the integration as Guard's token endpoint does, integration_id,
+	// agentSecurity names the integration as AgentSecurity's token endpoint does, integration_id,
 	// where TrustGuard's reads collector_id.
-	v3 bool
+	agentSecurity bool
 
 	mu    sync.Mutex
 	cache map[string]tokenEntry
@@ -202,7 +202,7 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 		Scope:        tokenScopePlatform,
 		GatewayID:    params.gatewayID,
 	}
-	if m.v3 {
+	if m.agentSecurity {
 		body.IntegrationID = params.collectorID
 	} else {
 		body.CollectorID = params.collectorID
