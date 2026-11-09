@@ -156,6 +156,36 @@ func TestSharedAccountService(t *testing.T) {
 		require.True(t, account.NeedsReconnect)
 	})
 
+	t.Run("a listing learns each shared account in one call, skipping the rest", func(t *testing.T) {
+		connected := sharedRegistry(t, gw, domain.MCPAccountShared)
+		neverConnected := sharedRegistry(t, gw, domain.MCPAccountShared)
+		unreadable := sharedRegistry(t, gw, domain.MCPAccountShared)
+		perUser := sharedRegistry(t, gw, domain.MCPAccountUser)
+		vault := vaultmocks.NewRepository(t)
+		vault.EXPECT().
+			Find(mock.Anything, gw, domain.SharedAccountSubject(connected.ID), mock.Anything).
+			Return(&vaultdomain.Credential{AccountRef: "ops@acme.com", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)}, nil).
+			Once()
+		vault.EXPECT().
+			Find(mock.Anything, gw, domain.SharedAccountSubject(neverConnected.ID), mock.Anything).
+			Return(nil, vaultdomain.ErrNotFound).
+			Once()
+		vault.EXPECT().
+			Find(mock.Anything, gw, domain.SharedAccountSubject(unreadable.ID), mock.Anything).
+			Return(nil, errors.New("vault unavailable")).
+			Once()
+		svc := appregistry.NewSharedAccountService(appmocks.NewFinder(t), vault, &ticketRecorder{})
+
+		accounts := svc.Statuses(context.Background(), gw, []*domain.Registry{connected, neverConnected, unreadable, perUser})
+
+		require.Len(t, accounts, 2)
+		require.True(t, accounts[connected.ID].Connected)
+		require.Equal(t, "ops@acme.com", accounts[connected.ID].AccountRef)
+		require.False(t, accounts[neverConnected.ID].Connected)
+		require.NotContains(t, accounts, unreadable.ID)
+		require.NotContains(t, accounts, perUser.ID)
+	})
+
 	t.Run("a missing credential is simply not connected", func(t *testing.T) {
 		reg := sharedRegistry(t, gw, domain.MCPAccountShared)
 		finder := appmocks.NewFinder(t)
