@@ -16,6 +16,7 @@ package consumer
 
 import (
 	"context"
+	"encoding/binary"
 	"log/slog"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -92,11 +93,15 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	if data, ok := f.cached(key); ok {
 		return data, nil
 	}
-	v, err, _ := f.sf.Do(key, func() (interface{}, error) {
+	generation := f.memoryCache.Generation()
+	var generationBytes [8]byte
+	binary.LittleEndian.PutUint64(generationBytes[:], generation)
+	flightKey := key + string(generationBytes[:])
+	v, err, _ := f.sf.Do(flightKey, func() (interface{}, error) {
 		if data, ok := f.cached(key); ok {
 			return data, nil
 		}
-		return f.load(ctx, gatewayID, key)
+		return f.load(ctx, gatewayID, key, generation)
 	})
 	if err != nil {
 		return nil, err
@@ -119,7 +124,7 @@ func (f *dataFinder) cached(key string) (*Data, bool) {
 	return data, true
 }
 
-func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key string) (*Data, error) {
+func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key string, generation uint64) (*Data, error) {
 	consumers, err := f.repo.ListByGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, err
@@ -183,7 +188,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		}
 		data.SetKeyGroupBudgets(budgets)
 	}
-	f.memoryCache.Set(key, data)
+	f.memoryCache.SetIfGeneration(key, data, generation)
 	return data, nil
 }
 
