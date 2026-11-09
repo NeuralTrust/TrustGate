@@ -29,6 +29,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -188,7 +189,8 @@ func TestV3CopiesTheEvaluationInGuardsShape(t *testing.T) {
 	assert.JSONEq(t, string(sent.Payload), string(got.Payload))
 	assert.NotContains(t, got.Attributes, "consumer")
 	assert.Equal(t, map[string]any{"name": "Support bot"}, got.Attributes["application"])
-	assert.Equal(t, map[string]any{"name": "gpt-4o-mini", "provider": "openai"}, got.Attributes["model"])
+	assert.Equal(t, map[string]any{"name": "gpt-4o", "provider": "openai", "requested_name": "gpt-4o-mini"}, got.Attributes["model"])
+	assert.Equal(t, GuardModel{Name: "gpt-4o-mini", Provider: "openai"}, sent.Attributes.Model)
 
 	require.Len(t, tokens, 1)
 	assert.Equal(t, testCollectorID, tokens[0]["integration_id"])
@@ -352,6 +354,7 @@ func TestV3CopiesEachStreamBlock(t *testing.T) {
 	v3 := &fakeV3{}
 	p := newV3Plugin(t, newSegmentServer(t, g).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
 	in := segmentInput(t, streamingSettings(nil))
+	in.Request.SentModel = "gpt-4.1"
 
 	segments := []appplugins.StreamSegment{
 		{StreamID: "h", Seq: 1, Accumulated: "Hello"},
@@ -369,6 +372,7 @@ func TestV3CopiesEachStreamBlock(t *testing.T) {
 	calls := g.calls()
 	for i, got := range requests {
 		assert.Equal(t, directionOutput, got.Direction)
+		assert.Equal(t, "gpt-4.1", got.Attributes["model"].(map[string]any)["name"])
 		stream, _ := got.Attributes["stream"].(map[string]any)
 		require.NotNil(t, stream)
 		assert.Equal(t, calls[i].Attributes.Stream.ID, stream["id"])
@@ -379,9 +383,86 @@ func TestV3CopiesEachStreamBlock(t *testing.T) {
 func TestV3PayloadIsACopy(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
-	req := toV3Request(GuardRequest{Payload: payload})
+	req := toV3Request(GuardRequest{Payload: payload}, nil)
 	copy(payload, bytes.Repeat([]byte("x"), len(payload)))
 	assert.JSONEq(t, `{"messages":[{"role":"user","content":"hi"}]}`, string(req.Payload))
+}
+
+func TestV3ModelIdentity(t *testing.T) {
+	t.Parallel()
+	const resolved = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	cases := []struct {
+		ref, body, defaultModel, sent, resolved, native, want string
+	}{
+		{ref: "@openai/gpt-4o", body: `{"model":"gpt-4o"}`, want: "gpt-4o"},
+		{ref: "pool:chat", body: `{}`, defaultModel: "gpt-4o", want: "gpt-4o"},
+		{ref: "auto", body: `{}`, defaultModel: "gpt-4o", want: "gpt-4o"},
+		{ref: "gpt-4o", body: `{"model":"gpt-4o"}`, want: "gpt-4o"},
+		{body: `{}`, defaultModel: "gpt-4o", want: "gpt-4o"},
+		{ref: "pool:chat", body: `{}`, defaultModel: "old", sent: "gpt-4.1", want: "gpt-4.1"},
+		{ref: "arn:aws:bedrock:us-east-1:123:application-inference-profile/x", resolved: resolved, want: resolved},
+		{native: resolved, want: resolved},
+		{native: "arn:aws:bedrock:us-east-1::foundation-model/" + resolved, want: resolved},
+		{native: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/x"},
+		{body: `{"model":"auto"}`},
+		{body: `{"model":"pool:chat"}`},
+		{body: `{"model":"@openai/gpt-4o"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ref+tc.native+tc.body+tc.sent, func(t *testing.T) {
+			t.Parallel()
+			req := &infracontext.RequestContext{
+				Provider: " OpenAI ", RequestedModel: tc.ref, Body: []byte(tc.body),
+				DefaultModel: tc.defaultModel, SentModel: tc.sent, ResolvedModel: tc.resolved,
+			}
+			if tc.native != "" {
+				req.BedrockNative = &infracontext.BedrockNativeTarget{ModelID: tc.native}
+			}
+			direction := directionInput
+			if tc.sent != "" {
+				direction = directionOutput
+			}
+			got := toV3Request(GuardRequest{Direction: direction}, req).Attributes.Model
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got.Name)
+			assert.Equal(t, "openai", got.Provider)
+			assert.Equal(t, tc.ref, got.RequestedName)
+		})
+	}
+}
+
+func TestV3NativeMCPToolOnBothDirections(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+			v3 := &fakeV3{}
+			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+			req := mcpRequestContext()
+			req.MCPServerID, req.MCPServerName, req.MCPTool = "shelf-id", "Analytics", "run_query"
+			var response *infracontext.ResponseContext
+			if stage == policy.StagePreResponse {
+				response = &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"text","text":"42"}]}`)}
+			}
+			_, err := p.Execute(context.Background(), execInput(stage, policy.ModeEnforce, settings(""), req, response))
+			require.NoError(t, err)
+			p.v3.wait()
+			requests, _, invalid := v3.seen()
+			require.Zero(t, invalid)
+			require.Len(t, requests, 1)
+			assert.Equal(t, map[string]any{"id": "shelf-id", "name": "Analytics", "tool": map[string]any{"name": "run_query"}}, requests[0].Attributes["mcp_server"])
+			assert.NotContains(t, requests[0].Attributes, "tool")
+			assert.NotContains(t, requests[0].Attributes, "model")
+			raw, err := json.Marshal(v2.captured())
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), "run_query")
+			assert.NotContains(t, string(raw), "Analytics")
+			if stage == policy.StagePreRequest {
+				assert.JSONEq(t, string(v2.captured().Payload), string(requests[0].Payload))
+			}
+		})
+	}
 }
 
 func TestV3FailureReason(t *testing.T) {
