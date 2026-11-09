@@ -17,11 +17,31 @@ package configsnapshot
 import (
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
+
+func BenchmarkCodecDecode(b *testing.B) {
+	w := benchWorld(b)
+	compiled, err := legacyCompile(w.in)
+	if err != nil {
+		b.Fatal(err)
+	}
+	raw := append(compiled.global, compiled.catalog...)
+	codec := NewCodec()
+	b.ReportAllocs()
+	b.SetBytes(int64(len(raw)))
+	for b.Loop() {
+		snapshot, err := codec.Decode(raw)
+		if err != nil {
+			b.Fatal(err)
+		}
+		runtime.KeepAlive(snapshot)
+	}
+}
 
 // benchWorld is a configuration of about 600 gateways with a few entities each
 // and a catalog of a few thousand models.
