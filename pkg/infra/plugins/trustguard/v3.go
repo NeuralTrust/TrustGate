@@ -34,37 +34,47 @@ import (
 
 const (
 	defaultV3Timeout = 5 * time.Second
-	// v3MaxInFlight bounds the Guard calls waiting at once. A Guard that is down
+	// v3MaxInFlight bounds the AgentSecurity calls waiting at once. An AgentSecurity that is down
 	// or slow would otherwise hold one goroutine and one connection per request
 	// for its whole timeout; past the bound a copy is dropped and counted.
 	v3MaxInFlight = 256
 
-	v3PeerService      = "guard"
-	v3EvaluateSpanName = "guard.evaluate"
+	v3PeerService      = "agentsecurity"
+	v3EvaluateSpanName = "agentsecurity.evaluate"
 
 	maxLoggedV3ErrorBytes = 512
+
+	// A gateway AgentSecurity refused is not asked again for this long; the cache
+	// holds at most v3RefusedMax gateways so many tenants cannot grow it.
+	v3RefusedTTL = 5 * time.Minute
+	v3RefusedMax = 4096
+	// v3TokenBackoff pauses every copy after a token request fails for any other reason.
+	v3TokenBackoff = 30 * time.Second
 )
 
-// V3Config is Guard (TrustGuard v3), which receives a copy of every
+// V3Config is AgentSecurity, which receives a copy of every
 // evaluation of the gateways it lists.
 type V3Config struct {
 	BaseURL      string
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends to Guard to the Guard integration
+	// Gateways maps each gateway that sends to AgentSecurity to the AgentSecurity integration
 	// its token names. An empty integration id is the policy's collector_id.
 	Gateways map[string]string
+	// ShadowAll copies every gateway. Those not in Gateways ask for a token by gateway id
+	// alone and AgentSecurity resolves the integration.
+	ShadowAll bool
 }
 
 func (c V3Config) enabled() bool {
 	return strings.TrimSpace(c.BaseURL) != "" &&
 		strings.TrimSpace(c.ClientID) != "" &&
 		strings.TrimSpace(c.ClientSecret) != "" &&
-		len(c.Gateways) > 0
+		(len(c.Gateways) > 0 || c.ShadowAll)
 }
 
-// v3Request is Guard's evaluate body. Guard decodes it strictly and knows no
+// v3Request is AgentSecurity's evaluate body. AgentSecurity decodes it strictly and knows no
 // v2 name: consumer_id is application_id, and there is no a2a.
 type v3Request struct {
 	OriginalRequest *requestmeta.OriginalRequest `json:"original_request,omitempty"`
@@ -90,7 +100,7 @@ type v3Application struct {
 	Name string `json:"name"`
 }
 
-// v3MCPServer carries Guard's canonical id of the server: the catalog code, or
+// v3MCPServer carries AgentSecurity's canonical id of the server: the catalog code, or
 // the registry id of a server added by URL.
 type v3MCPServer struct {
 	ID string `json:"id"`
@@ -135,29 +145,41 @@ type v3StatusError struct {
 }
 
 func (e *v3StatusError) Error() string {
-	return fmt.Sprintf("guard: evaluate status %d", e.status)
+	return fmt.Sprintf("agentsecurity: evaluate status %d", e.status)
 }
 
-// v3Sender sends Guard its copy of an evaluation. Nothing it does reaches the
+// v3Sender sends AgentSecurity its copy of an evaluation. Nothing it does reaches the
 // request: the call runs detached, under its own timeout, and its outcome is
 // only logged and counted.
 type v3Sender struct {
 	baseURL  string
 	timeout  time.Duration
 	gateways map[string]string
+	all      bool
 	http     *http.Client
 	tokens   *tokenManager
 	logger   *slog.Logger
 
 	slots    chan struct{}
 	inFlight sync.WaitGroup
+
+	now       func() time.Time
+	refusedMu sync.Mutex
+	refused   map[string]refusal
+	// tokenBackoffUntil is guarded by refusedMu.
+	tokenBackoffUntil time.Time
+}
+
+type refusal struct {
+	until time.Time
+	code  string
 }
 
 func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3Sender {
 	if !cfg.enabled() {
-		if len(cfg.Gateways) > 0 && logger != nil {
-			logger.Warn("guard v3 copies are off: base URL or client credentials missing",
-				slog.Int("gateways", len(cfg.Gateways)))
+		if (len(cfg.Gateways) > 0 || cfg.ShadowAll) && logger != nil {
+			logger.Warn("AgentSecurity copies are off: base URL or client credentials missing",
+				slog.Int("gateways", len(cfg.Gateways)), slog.Bool("shadow_all", cfg.ShadowAll))
 		}
 		return nil
 	}
@@ -179,6 +201,9 @@ func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3S
 		baseURL:  strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		timeout:  timeout,
 		gateways: gateways,
+		all:      cfg.ShadowAll,
+		now:      time.Now,
+		refused:  make(map[string]refusal),
 		http:     httpClient,
 		tokens:   tokens,
 		logger:   logger,
@@ -189,12 +214,102 @@ func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3S
 func (s *v3Sender) integrationFor(gatewayID, collectorID string) (string, bool) {
 	integration, ok := s.gateways[gatewayID]
 	if !ok {
-		return "", false
+		return "", s.all
 	}
 	if integration == "" {
 		integration = strings.TrimSpace(collectorID)
 	}
-	return integration, integration != ""
+	return integration, integration != "" || s.all
+}
+
+// isRefused returns the refusal code AgentSecurity gave gatewayID, while it is cached.
+func (s *v3Sender) isRefused(gatewayID string) (string, bool) {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	r, ok := s.refused[gatewayID]
+	if ok && s.now().Before(r.until) {
+		return r.code, true
+	}
+	if ok {
+		delete(s.refused, gatewayID)
+	}
+	return "", false
+}
+
+// markRefused caches the refusal and reports whether it is new, so the caller warns once.
+// At the cap it sweeps expired entries, then evicts the earliest expiry.
+func (s *v3Sender) markRefused(gatewayID, code string) bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	now := s.now()
+	if r, ok := s.refused[gatewayID]; ok && now.Before(r.until) {
+		return false
+	}
+	if _, ok := s.refused[gatewayID]; !ok && len(s.refused) >= v3RefusedMax {
+		oldest, oldestAt := "", time.Time{}
+		for gw, r := range s.refused {
+			if !now.Before(r.until) {
+				delete(s.refused, gw)
+			} else if oldest == "" || r.until.Before(oldestAt) {
+				oldest, oldestAt = gw, r.until
+			}
+		}
+		if len(s.refused) >= v3RefusedMax {
+			delete(s.refused, oldest)
+		}
+	}
+	s.refused[gatewayID] = refusal{until: now.Add(v3RefusedTTL), code: code}
+	return true
+}
+
+func recordRefusal(ctx context.Context, code string) {
+	if code == codeAmbiguousGateway {
+		recordV3Outcome(ctx, v3OutcomeAmbiguousGateway)
+		return
+	}
+	recordV3Outcome(ctx, v3OutcomeUnknownGateway)
+}
+
+// handleRefusal skips a gateway AgentSecurity refused at the token step. It reports
+// whether err was one.
+func (s *v3Sender) handleRefusal(ctx context.Context, gatewayID string, err error) bool {
+	var refused *gatewayRefusedError
+	if !errors.As(err, &refused) {
+		return false
+	}
+	fresh := s.markRefused(gatewayID, refused.code)
+	recordRefusal(ctx, refused.code)
+	if !fresh {
+		return true
+	}
+	if refused.code == codeAmbiguousGateway {
+		s.log(ctx, slog.LevelWarn, "AgentSecurity cannot pick an integration for the gateway; copies skipped",
+			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID))
+	} else {
+		s.log(ctx, slog.LevelDebug, "AgentSecurity does not know the gateway; copies skipped",
+			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID))
+	}
+	return true
+}
+
+// inTokenBackoff reports whether a recent token failure pauses all copies.
+func (s *v3Sender) inTokenBackoff() bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	return s.now().Before(s.tokenBackoffUntil)
+}
+
+// startTokenBackoff pauses copies after a token failure and reports whether it began
+// a new pause, so the caller warns once per interval.
+func (s *v3Sender) startTokenBackoff() bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	now := s.now()
+	if now.Before(s.tokenBackoffUntil) {
+		return false
+	}
+	s.tokenBackoffUntil = now.Add(v3TokenBackoff)
+	return true
 }
 
 func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body GuardRequest) {
@@ -207,13 +322,21 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 	}
 	gatewayID := body.GatewayID
 	if body.Protocol == protocolA2A {
-		recordV3Outcome(ctx, gatewayID, v3OutcomeSkipped)
+		recordV3Outcome(ctx, v3OutcomeSkipped)
+		return
+	}
+	if code, refused := s.isRefused(gatewayID); refused {
+		recordRefusal(ctx, code)
+		return
+	}
+	if s.inTokenBackoff() {
+		recordV3Outcome(ctx, v3OutcomeTokenBackoff)
 		return
 	}
 	select {
 	case s.slots <- struct{}{}:
 	default:
-		recordV3Outcome(ctx, gatewayID, v3OutcomeDropped)
+		recordV3Outcome(ctx, v3OutcomeDropped)
 		return
 	}
 	req := toV3Request(body)
@@ -226,14 +349,17 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 		defer func() { <-s.slots }()
 		defer func() {
 			if r := recover(); r != nil {
-				s.log(detached, slog.LevelError, "guard v3 copy panicked", slog.Any("panic", r))
+				s.log(detached, slog.LevelError, "AgentSecurity copy panicked", slog.Any("panic", r))
 			}
 		}()
 		callCtx, cancel := context.WithTimeout(detached, s.timeout)
 		defer cancel()
 		start := time.Now()
 		err := s.evaluate(callCtx, params, traceID, mode, req)
-		recordV3Call(detached, gatewayID, time.Since(start), err)
+		if s.handleRefusal(detached, gatewayID, err) {
+			return
+		}
+		recordV3Call(detached, time.Since(start), err)
 		if err != nil {
 			s.logFailure(detached, gatewayID, err)
 		}
@@ -243,10 +369,11 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mode string, body v3Request) error {
 	payload, err := marshalNoEscape(body)
 	if err != nil {
-		return fmt.Errorf("guard: marshal request: %w", err)
+		return fmt.Errorf("agentsecurity: marshal request: %w", err)
 	}
 	token, err := s.tokens.token(ctx, params)
 	if err != nil {
+		s.tokenFailed(ctx, params.gatewayID, err)
 		return err
 	}
 	err = s.post(ctx, token, traceID, mode, payload)
@@ -256,15 +383,29 @@ func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mo
 	}
 	s.tokens.invalidate(params)
 	if token, err = s.tokens.token(ctx, params); err != nil {
+		s.tokenFailed(ctx, params.gatewayID, err)
 		return err
 	}
 	return s.post(ctx, token, traceID, mode, payload)
 }
 
+// tokenFailed pauses copies after a token failure that is not a typed gateway refusal.
+func (s *v3Sender) tokenFailed(ctx context.Context, gatewayID string, err error) {
+	var refused *gatewayRefusedError
+	if errors.As(err, &refused) || errors.Is(err, context.Canceled) {
+		return
+	}
+	if s.startTokenBackoff() {
+		s.log(ctx, slog.LevelWarn, "AgentSecurity token request failed; copies paused",
+			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID),
+			slog.Duration("backoff", v3TokenBackoff), slog.String("error", err.Error()))
+	}
+}
+
 func (s *v3Sender) post(ctx context.Context, token, traceID, mode string, payload []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+evaluatePath, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("guard: build request: %w", err)
+		return fmt.Errorf("agentsecurity: build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", contentTypeJSON)
@@ -282,7 +423,7 @@ func (s *v3Sender) post(ctx context.Context, token, traceID, mode string, payloa
 	}
 	res, err := s.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("guard: evaluate call: %w", err)
+		return fmt.Errorf("agentsecurity: evaluate call: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
@@ -306,16 +447,16 @@ func (s *v3Sender) logFailure(ctx context.Context, gatewayID string, err error) 
 	if errors.As(err, &status) {
 		attrs = append(attrs, slog.Int("status", status.status), slog.String("body", status.body))
 		if status.status < http.StatusInternalServerError {
-			s.log(ctx, slog.LevelWarn, "guard v3 refused the copy", attrs...)
+			s.log(ctx, slog.LevelWarn, "AgentSecurity refused the copy", attrs...)
 			return
 		}
 	}
 	var rejected *authRejectedError
 	if errors.As(err, &rejected) {
-		s.log(ctx, slog.LevelWarn, "guard v3 refused the copy", attrs...)
+		s.log(ctx, slog.LevelWarn, "AgentSecurity refused the copy", attrs...)
 		return
 	}
-	s.log(ctx, slog.LevelDebug, "guard v3 copy failed", attrs...)
+	s.log(ctx, slog.LevelDebug, "AgentSecurity copy failed", attrs...)
 }
 
 func (s *v3Sender) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
