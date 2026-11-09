@@ -91,6 +91,8 @@ const (
 	// Skips by gateway: AgentSecurity does not know it or cannot pick its integration.
 	v3OutcomeUnknownGateway   = "skipped_unknown_gateway"
 	v3OutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
+	// Skipped during the backoff that follows a failed token request.
+	v3OutcomeTokenBackoff = "skipped_token_unavailable"
 )
 
 func initInstruments() {
@@ -131,52 +133,49 @@ func initInstruments() {
 		}
 		if c, err := meter.Int64Counter(
 			"agentsecurity_evaluate_total",
-			metric.WithDescription("Evaluations copied to AgentSecurity by gateway and outcome"),
+			metric.WithDescription("Evaluations copied to AgentSecurity by outcome"),
 		); err == nil {
 			v3Evaluates = c
 		}
 		if c, err := meter.Int64Counter(
 			"agentsecurity_evaluate_failures_total",
-			metric.WithDescription("AgentSecurity evaluate copies that failed, by gateway and reason"),
+			metric.WithDescription("AgentSecurity evaluate copies that failed, by reason"),
 		); err == nil {
 			v3Failures = c
 		}
 		if h, err := meter.Int64Histogram(
 			"agentsecurity_evaluate_latency_ms",
 			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of the AgentSecurity evaluate copy, token included, by gateway and outcome"),
+			metric.WithDescription("Duration of the AgentSecurity evaluate copy, token included, by outcome"),
 		); err == nil {
 			v3Latency = h
 		}
 	})
 }
 
-func recordV3Outcome(ctx context.Context, gatewayID, outcome string) {
+func recordV3Outcome(ctx context.Context, outcome string) {
 	initInstruments()
 	if v3Evaluates == nil {
 		return
 	}
 	v3Evaluates.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("gateway_id", gatewayID),
 		attribute.String("outcome", outcome),
 	))
 }
 
-func recordV3Call(ctx context.Context, gatewayID string, elapsed time.Duration, err error) {
+func recordV3Call(ctx context.Context, elapsed time.Duration, err error) {
 	outcome := v3OutcomeOK
 	if err != nil {
 		outcome = v3OutcomeFailed
 	}
-	recordV3Outcome(ctx, gatewayID, outcome)
+	recordV3Outcome(ctx, outcome)
 	if v3Latency != nil {
 		v3Latency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
-			attribute.String("gateway_id", gatewayID),
 			attribute.String("outcome", outcome),
 		))
 	}
 	if err != nil && v3Failures != nil {
 		v3Failures.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("gateway_id", gatewayID),
 			attribute.String("reason", v3FailureReason(err)),
 		))
 	}

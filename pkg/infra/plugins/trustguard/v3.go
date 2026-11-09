@@ -48,6 +48,8 @@ const (
 	// holds at most v3RefusedMax gateways so many tenants cannot grow it.
 	v3RefusedTTL = 5 * time.Minute
 	v3RefusedMax = 4096
+	// v3TokenBackoff pauses every copy after a token request fails for any other reason.
+	v3TokenBackoff = 30 * time.Second
 )
 
 // V3Config is AgentSecurity, which receives a copy of every
@@ -163,7 +165,14 @@ type v3Sender struct {
 
 	now       func() time.Time
 	refusedMu sync.Mutex
-	refused   map[string]time.Time
+	refused   map[string]refusal
+	// tokenBackoffUntil is guarded by refusedMu.
+	tokenBackoffUntil time.Time
+}
+
+type refusal struct {
+	until time.Time
+	code  string
 }
 
 func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3Sender {
@@ -194,7 +203,7 @@ func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3S
 		gateways: gateways,
 		all:      cfg.ShadowAll,
 		now:      time.Now,
-		refused:  make(map[string]time.Time),
+		refused:  make(map[string]refusal),
 		http:     httpClient,
 		tokens:   tokens,
 		logger:   logger,
@@ -213,41 +222,52 @@ func (s *v3Sender) integrationFor(gatewayID, collectorID string) (string, bool) 
 	return integration, integration != "" || s.all
 }
 
-// isRefused reports whether AgentSecurity refused gatewayID within v3RefusedTTL.
-func (s *v3Sender) isRefused(gatewayID string) bool {
+// isRefused returns the refusal code AgentSecurity gave gatewayID, while it is cached.
+func (s *v3Sender) isRefused(gatewayID string) (string, bool) {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
-	until, ok := s.refused[gatewayID]
-	if ok && s.now().Before(until) {
-		return true
+	r, ok := s.refused[gatewayID]
+	if ok && s.now().Before(r.until) {
+		return r.code, true
 	}
 	if ok {
 		delete(s.refused, gatewayID)
 	}
-	return false
+	return "", false
 }
 
 // markRefused caches the refusal and reports whether it is new, so the caller warns once.
-// Past v3RefusedMax live entries the gateway is not cached.
-func (s *v3Sender) markRefused(gatewayID string) bool {
+// At the cap it sweeps expired entries, then evicts the earliest expiry.
+func (s *v3Sender) markRefused(gatewayID, code string) bool {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
 	now := s.now()
-	if until, ok := s.refused[gatewayID]; ok && now.Before(until) {
+	if r, ok := s.refused[gatewayID]; ok && now.Before(r.until) {
 		return false
 	}
-	if len(s.refused) >= v3RefusedMax {
-		for gw, until := range s.refused {
-			if !now.Before(until) {
+	if _, ok := s.refused[gatewayID]; !ok && len(s.refused) >= v3RefusedMax {
+		oldest, oldestAt := "", time.Time{}
+		for gw, r := range s.refused {
+			if !now.Before(r.until) {
 				delete(s.refused, gw)
+			} else if oldest == "" || r.until.Before(oldestAt) {
+				oldest, oldestAt = gw, r.until
 			}
 		}
 		if len(s.refused) >= v3RefusedMax {
-			return true
+			delete(s.refused, oldest)
 		}
 	}
-	s.refused[gatewayID] = now.Add(v3RefusedTTL)
+	s.refused[gatewayID] = refusal{until: now.Add(v3RefusedTTL), code: code}
 	return true
+}
+
+func recordRefusal(ctx context.Context, code string) {
+	if code == codeAmbiguousGateway {
+		recordV3Outcome(ctx, v3OutcomeAmbiguousGateway)
+		return
+	}
+	recordV3Outcome(ctx, v3OutcomeUnknownGateway)
 }
 
 // handleRefusal skips a gateway AgentSecurity refused at the token step. It reports
@@ -257,20 +277,38 @@ func (s *v3Sender) handleRefusal(ctx context.Context, gatewayID string, err erro
 	if !errors.As(err, &refused) {
 		return false
 	}
-	fresh := s.markRefused(gatewayID)
-	if refused.code == codeAmbiguousGateway {
-		recordV3Outcome(ctx, gatewayID, v3OutcomeAmbiguousGateway)
-		if fresh {
-			s.log(ctx, slog.LevelWarn, "AgentSecurity cannot pick an integration for the gateway; copies skipped",
-				slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID))
-		}
+	fresh := s.markRefused(gatewayID, refused.code)
+	recordRefusal(ctx, refused.code)
+	if !fresh {
 		return true
 	}
-	recordV3Outcome(ctx, gatewayID, v3OutcomeUnknownGateway)
-	if fresh {
+	if refused.code == codeAmbiguousGateway {
+		s.log(ctx, slog.LevelWarn, "AgentSecurity cannot pick an integration for the gateway; copies skipped",
+			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID))
+	} else {
 		s.log(ctx, slog.LevelDebug, "AgentSecurity does not know the gateway; copies skipped",
 			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID))
 	}
+	return true
+}
+
+// inTokenBackoff reports whether a recent token failure pauses all copies.
+func (s *v3Sender) inTokenBackoff() bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	return s.now().Before(s.tokenBackoffUntil)
+}
+
+// startTokenBackoff pauses copies after a token failure and reports whether it began
+// a new pause, so the caller warns once per interval.
+func (s *v3Sender) startTokenBackoff() bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	now := s.now()
+	if now.Before(s.tokenBackoffUntil) {
+		return false
+	}
+	s.tokenBackoffUntil = now.Add(v3TokenBackoff)
 	return true
 }
 
@@ -284,17 +322,21 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 	}
 	gatewayID := body.GatewayID
 	if body.Protocol == protocolA2A {
-		recordV3Outcome(ctx, gatewayID, v3OutcomeSkipped)
+		recordV3Outcome(ctx, v3OutcomeSkipped)
 		return
 	}
-	if s.isRefused(gatewayID) {
-		recordV3Outcome(ctx, gatewayID, v3OutcomeUnknownGateway)
+	if code, refused := s.isRefused(gatewayID); refused {
+		recordRefusal(ctx, code)
+		return
+	}
+	if s.inTokenBackoff() {
+		recordV3Outcome(ctx, v3OutcomeTokenBackoff)
 		return
 	}
 	select {
 	case s.slots <- struct{}{}:
 	default:
-		recordV3Outcome(ctx, gatewayID, v3OutcomeDropped)
+		recordV3Outcome(ctx, v3OutcomeDropped)
 		return
 	}
 	req := toV3Request(body)
@@ -317,7 +359,7 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 		if s.handleRefusal(detached, gatewayID, err) {
 			return
 		}
-		recordV3Call(detached, gatewayID, time.Since(start), err)
+		recordV3Call(detached, time.Since(start), err)
 		if err != nil {
 			s.logFailure(detached, gatewayID, err)
 		}
@@ -331,6 +373,7 @@ func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mo
 	}
 	token, err := s.tokens.token(ctx, params)
 	if err != nil {
+		s.tokenFailed(ctx, params.gatewayID, err)
 		return err
 	}
 	err = s.post(ctx, token, traceID, mode, payload)
@@ -340,9 +383,23 @@ func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mo
 	}
 	s.tokens.invalidate(params)
 	if token, err = s.tokens.token(ctx, params); err != nil {
+		s.tokenFailed(ctx, params.gatewayID, err)
 		return err
 	}
 	return s.post(ctx, token, traceID, mode, payload)
+}
+
+// tokenFailed pauses copies after a token failure that is not a typed gateway refusal.
+func (s *v3Sender) tokenFailed(ctx context.Context, gatewayID string, err error) {
+	var refused *gatewayRefusedError
+	if errors.As(err, &refused) || errors.Is(err, context.Canceled) {
+		return
+	}
+	if s.startTokenBackoff() {
+		s.log(ctx, slog.LevelWarn, "AgentSecurity token request failed; copies paused",
+			slog.String("plugin", PluginName), slog.String("gateway_id", gatewayID),
+			slog.Duration("backoff", v3TokenBackoff), slog.String("error", err.Error()))
+	}
 }
 
 func (s *v3Sender) post(ctx context.Context, token, traceID, mode string, payload []byte) error {
