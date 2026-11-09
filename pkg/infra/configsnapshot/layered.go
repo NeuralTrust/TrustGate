@@ -110,9 +110,10 @@ func bucketize(fragment, previous *gatewayFragment) {
 		}
 	}
 	k := bucketCount(size)
-	grouped := make([][]element, k)
+	grouped := make([][]*element, k)
 	for _, s := range gatewaySlots {
-		for _, e := range fragment.slots[s] {
+		for i := range fragment.slots[s] {
+			e := &fragment.slots[s][i]
 			b := bucketOf(e.key, k)
 			grouped[b] = append(grouped[b], e)
 		}
@@ -122,28 +123,34 @@ func bucketize(fragment, previous *gatewayFragment) {
 	for b, elements := range grouped {
 		if previous != nil && previous.k == k && sameElements(previous.buckets[b].elements, elements) {
 			fragment.buckets[b] = previous.buckets[b]
-			continue
+		} else {
+			fragment.buckets[b] = newBucket(elements)
 		}
-		fragment.buckets[b] = newBucket(elements)
+		for i, e := range elements {
+			*e = fragment.buckets[b].elements[i]
+		}
 	}
 }
 
-func sameElements(a, b []element) bool {
-	return slices.EqualFunc(a, b, func(x, y element) bool {
+func sameElements(a []element, b []*element) bool {
+	return slices.EqualFunc(a, b, func(x element, y *element) bool {
 		return x.key == y.key && bytes.Equal(x.bytes, y.bytes)
 	})
 }
 
-func newBucket(elements []element) bucket {
+func newBucket(elements []*element) bucket {
 	size := 0
 	for _, e := range elements {
 		size += len(e.bytes)
 	}
 	out := make([]byte, 0, size)
-	for _, e := range elements {
+	canonical := make([]element, len(elements))
+	for i, e := range elements {
+		start := len(out)
 		out = append(out, e.bytes...)
+		canonical[i] = element{key: e.key, bytes: out[start:len(out):len(out)]}
 	}
-	return bucket{elements: elements, bytes: out, digest: digestOf(out)}
+	return bucket{elements: canonical, bytes: out, digest: digestOf(out)}
 }
 
 type manifestBuilder struct {
