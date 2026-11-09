@@ -289,16 +289,14 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 }
 
 func decodeJSON[M any, T any](messages []M, entity string, raw func(M) []byte, adjust func(M, *T)) ([]T, error) {
-	out := make([]T, 0, len(messages))
-	for _, message := range messages {
-		var item T
-		if err := json.Unmarshal(raw(message), &item); err != nil {
+	out := make([]T, len(messages))
+	for i, message := range messages {
+		if err := json.Unmarshal(raw(message), &out[i]); err != nil {
 			return nil, fmt.Errorf("configsnapshot: unmarshal %s: %w", entity, err)
 		}
 		if adjust != nil {
-			adjust(message, &item)
+			adjust(message, &out[i])
 		}
-		out = append(out, item)
 	}
 	return out, nil
 }
