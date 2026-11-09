@@ -1015,6 +1015,40 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_AgentSecurityShadow(t *testing.T) {
+	for raw, wantAll := range map[string]bool{"": false, "off": false, " OFF ": false, "all": true, " All ": true} {
+		t.Run("value "+raw, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("AGENTSECURITY_SHADOW", raw)
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if got := cfg.TrustGuard.V3.ShadowAll(); got != wantAll {
+				t.Errorf("ShadowAll() = %v, want %v", got, wantAll)
+			}
+		})
+	}
+	t.Run("legacy name", func(t *testing.T) {
+		minimumEnv(t)
+		t.Setenv("TRUSTGUARD_V3_SHADOW", "all")
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if !cfg.TrustGuard.V3.ShadowAll() {
+			t.Error("legacy TRUSTGUARD_V3_SHADOW=all not read")
+		}
+	})
+	t.Run("unknown value fails", func(t *testing.T) {
+		minimumEnv(t)
+		t.Setenv("AGENTSECURITY_SHADOW", "some")
+		if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "AGENTSECURITY_SHADOW") {
+			t.Fatalf("LoadConfig err = %v, want AGENTSECURITY_SHADOW error", err)
+		}
+	})
+}
+
 func TestLoadConfig_TrustGuardV3(t *testing.T) {
 	t.Run("off by default", func(t *testing.T) {
 		minimumEnv(t)
