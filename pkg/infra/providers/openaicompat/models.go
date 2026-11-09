@@ -32,14 +32,6 @@ func (c *client) ListLiveModels(ctx context.Context, config *providers.Config) (
 	}
 	base := strings.TrimRight(opts.BaseURL, "/")
 	return providers.ListModelsGET(ctx, providers.ProviderOpenAICompatible, base+modelsPath, func(req *http.Request) {
-		if config.Credentials.ApiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
-		}
-		for k, v := range opts.Headers {
-			if k == "" {
-				continue
-			}
-			req.Header.Set(k, v)
-		}
+		applyUpstreamAuth(req, config.Credentials.ApiKey, upstreamHeaders(config.Credentials, opts))
 	}, providers.ParseOpenAIModelList)
 }

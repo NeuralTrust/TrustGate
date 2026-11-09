@@ -145,6 +145,25 @@ func TestCredentialsFromTargetAuth_GCPServiceAccount(t *testing.T) {
 	}
 }
 
+func TestCredentialsFromTargetAuth_APIKeyCustomHeader(t *testing.T) {
+	t.Parallel()
+
+	auth := &registry.TargetAuth{
+		Type: registry.AuthTypeAPIKey,
+		APIKey: &registry.APIKeyAuth{
+			HeaderName:  "X-IBM-Client-Id",
+			HeaderValue: "client-secret",
+		},
+	}
+	creds := providers.CredentialsFromTargetAuth(auth)
+	if creds.ApiKey != "" {
+		t.Fatalf("ApiKey = %q, want empty", creds.ApiKey)
+	}
+	if got := creds.Headers["X-IBM-Client-Id"]; got != "client-secret" {
+		t.Fatalf("Headers[X-IBM-Client-Id] = %q, want client-secret", got)
+	}
+}
+
 func TestApplyIncomingBearer_Passthrough(t *testing.T) {
 	t.Parallel()
 

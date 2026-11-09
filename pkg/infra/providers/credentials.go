@@ -32,6 +32,9 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	case registry.AuthTypeAPIKey:
 		if a.APIKey != nil {
 			creds.ApiKey = a.APIKey.APIKey
+			if name := strings.TrimSpace(a.APIKey.HeaderName); name != "" && a.APIKey.HeaderValue != "" {
+				creds.Headers = map[string]string{name: a.APIKey.HeaderValue}
+			}
 		}
 	case registry.AuthTypeAWS:
 		if a.AWS != nil {
