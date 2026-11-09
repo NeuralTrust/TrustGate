@@ -152,7 +152,7 @@ type clientConfig struct {
 type Option func(*clientConfig)
 
 // WithV3 sends a copy of every evaluation of the gateways cfg lists to Guard
-// (TrustGuard v3). TrustGuard's answer alone decides.
+// (AgentSecurity). TrustGuard's answer alone decides.
 func WithV3(cfg V3Config) Option {
 	return func(c *clientConfig) { c.v3 = cfg }
 }

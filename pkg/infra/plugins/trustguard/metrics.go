@@ -81,8 +81,8 @@ var (
 	v3Latency          metric.Int64Histogram
 )
 
-// Outcomes of trustguard_v3_evaluate_total: answered, failed, never sent
-// because Guard has no a2a, or dropped because too many copies were waiting.
+// Outcomes of agentsecurity_evaluate_total: answered, failed, never sent
+// because AgentSecurity has no a2a, or dropped because too many copies were waiting.
 const (
 	v3OutcomeOK      = "ok"
 	v3OutcomeFailed  = "failed"
@@ -127,21 +127,21 @@ func initInstruments() {
 			streamAddedLatency = h
 		}
 		if c, err := meter.Int64Counter(
-			"trustguard_v3_evaluate_total",
-			metric.WithDescription("Evaluations copied to Guard (TrustGuard v3) by gateway and outcome"),
+			"agentsecurity_evaluate_total",
+			metric.WithDescription("Evaluations copied to AgentSecurity by gateway and outcome"),
 		); err == nil {
 			v3Evaluates = c
 		}
 		if c, err := meter.Int64Counter(
-			"trustguard_v3_evaluate_failures_total",
-			metric.WithDescription("Guard (TrustGuard v3) evaluate copies that failed, by gateway and reason"),
+			"agentsecurity_evaluate_failures_total",
+			metric.WithDescription("AgentSecurity evaluate copies that failed, by gateway and reason"),
 		); err == nil {
 			v3Failures = c
 		}
 		if h, err := meter.Int64Histogram(
-			"trustguard_v3_evaluate_latency_ms",
+			"agentsecurity_evaluate_latency_ms",
 			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of the Guard (TrustGuard v3) evaluate copy, token included, by gateway and outcome"),
+			metric.WithDescription("Duration of the AgentSecurity evaluate copy, token included, by gateway and outcome"),
 		); err == nil {
 			v3Latency = h
 		}
@@ -179,7 +179,7 @@ func recordV3Call(ctx context.Context, gatewayID string, elapsed time.Duration, 
 	}
 }
 
-// v3FailureReason keeps a 400 apart from every other refusal: it is Guard
+// v3FailureReason keeps a 400 apart from every other refusal: it is AgentSecurity
 // rejecting the body this plugin built, which is the contract breaking.
 func v3FailureReason(err error) string {
 	var status *v3StatusError

@@ -34,25 +34,25 @@ import (
 
 const (
 	defaultV3Timeout = 5 * time.Second
-	// v3MaxInFlight bounds the Guard calls waiting at once. A Guard that is down
+	// v3MaxInFlight bounds the AgentSecurity calls waiting at once. An AgentSecurity that is down
 	// or slow would otherwise hold one goroutine and one connection per request
 	// for its whole timeout; past the bound a copy is dropped and counted.
 	v3MaxInFlight = 256
 
-	v3PeerService      = "guard"
-	v3EvaluateSpanName = "guard.evaluate"
+	v3PeerService      = "agentsecurity"
+	v3EvaluateSpanName = "agentsecurity.evaluate"
 
 	maxLoggedV3ErrorBytes = 512
 )
 
-// V3Config is Guard (TrustGuard v3), which receives a copy of every
+// V3Config is AgentSecurity, which receives a copy of every
 // evaluation of the gateways it lists.
 type V3Config struct {
 	BaseURL      string
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends to Guard to the Guard integration
+	// Gateways maps each gateway that sends to AgentSecurity to the AgentSecurity integration
 	// its token names. An empty integration id is the policy's collector_id.
 	Gateways map[string]string
 }
@@ -64,7 +64,7 @@ func (c V3Config) enabled() bool {
 		len(c.Gateways) > 0
 }
 
-// v3Request is Guard's evaluate body. Guard decodes it strictly and knows no
+// v3Request is AgentSecurity's evaluate body. AgentSecurity decodes it strictly and knows no
 // v2 name: consumer_id is application_id, and there is no a2a.
 type v3Request struct {
 	OriginalRequest *requestmeta.OriginalRequest `json:"original_request,omitempty"`
@@ -90,7 +90,7 @@ type v3Application struct {
 	Name string `json:"name"`
 }
 
-// v3MCPServer carries Guard's canonical id of the server: the catalog code, or
+// v3MCPServer carries AgentSecurity's canonical id of the server: the catalog code, or
 // the registry id of a server added by URL.
 type v3MCPServer struct {
 	ID string `json:"id"`
@@ -135,10 +135,10 @@ type v3StatusError struct {
 }
 
 func (e *v3StatusError) Error() string {
-	return fmt.Sprintf("guard: evaluate status %d", e.status)
+	return fmt.Sprintf("agentsecurity: evaluate status %d", e.status)
 }
 
-// v3Sender sends Guard its copy of an evaluation. Nothing it does reaches the
+// v3Sender sends AgentSecurity its copy of an evaluation. Nothing it does reaches the
 // request: the call runs detached, under its own timeout, and its outcome is
 // only logged and counted.
 type v3Sender struct {
@@ -156,7 +156,7 @@ type v3Sender struct {
 func newV3Sender(cfg V3Config, base http.RoundTripper, logger *slog.Logger) *v3Sender {
 	if !cfg.enabled() {
 		if len(cfg.Gateways) > 0 && logger != nil {
-			logger.Warn("guard v3 copies are off: base URL or client credentials missing",
+			logger.Warn("AgentSecurity copies are off: base URL or client credentials missing",
 				slog.Int("gateways", len(cfg.Gateways)))
 		}
 		return nil
@@ -226,7 +226,7 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 		defer func() { <-s.slots }()
 		defer func() {
 			if r := recover(); r != nil {
-				s.log(detached, slog.LevelError, "guard v3 copy panicked", slog.Any("panic", r))
+				s.log(detached, slog.LevelError, "AgentSecurity copy panicked", slog.Any("panic", r))
 			}
 		}()
 		callCtx, cancel := context.WithTimeout(detached, s.timeout)
@@ -243,7 +243,7 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mode string, body v3Request) error {
 	payload, err := marshalNoEscape(body)
 	if err != nil {
-		return fmt.Errorf("guard: marshal request: %w", err)
+		return fmt.Errorf("agentsecurity: marshal request: %w", err)
 	}
 	token, err := s.tokens.token(ctx, params)
 	if err != nil {
@@ -264,7 +264,7 @@ func (s *v3Sender) evaluate(ctx context.Context, params tokenParams, traceID, mo
 func (s *v3Sender) post(ctx context.Context, token, traceID, mode string, payload []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+evaluatePath, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("guard: build request: %w", err)
+		return fmt.Errorf("agentsecurity: build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", contentTypeJSON)
@@ -282,7 +282,7 @@ func (s *v3Sender) post(ctx context.Context, token, traceID, mode string, payloa
 	}
 	res, err := s.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("guard: evaluate call: %w", err)
+		return fmt.Errorf("agentsecurity: evaluate call: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
@@ -306,16 +306,16 @@ func (s *v3Sender) logFailure(ctx context.Context, gatewayID string, err error) 
 	if errors.As(err, &status) {
 		attrs = append(attrs, slog.Int("status", status.status), slog.String("body", status.body))
 		if status.status < http.StatusInternalServerError {
-			s.log(ctx, slog.LevelWarn, "guard v3 refused the copy", attrs...)
+			s.log(ctx, slog.LevelWarn, "AgentSecurity refused the copy", attrs...)
 			return
 		}
 	}
 	var rejected *authRejectedError
 	if errors.As(err, &rejected) {
-		s.log(ctx, slog.LevelWarn, "guard v3 refused the copy", attrs...)
+		s.log(ctx, slog.LevelWarn, "AgentSecurity refused the copy", attrs...)
 		return
 	}
-	s.log(ctx, slog.LevelDebug, "guard v3 copy failed", attrs...)
+	s.log(ctx, slog.LevelDebug, "AgentSecurity copy failed", attrs...)
 }
 
 func (s *v3Sender) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
