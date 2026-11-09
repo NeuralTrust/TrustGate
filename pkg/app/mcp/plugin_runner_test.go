@@ -610,16 +610,21 @@ func TestPluginRunner_ResolvedCall_CarriesMCPServer(t *testing.T) {
 	instance := *catalog
 	instance.ID = ids.New[ids.RegistryKind]()
 	instance.InstanceOf = catalog.ID
+	instance.Name = "asana (private-instance-label)"
+	data := appconsumer.NewData(catalog.GatewayID, []appconsumer.RoutableConsumer{{Registries: []*registrydomain.Registry{catalog}}})
 
 	cases := []struct {
 		name     string
 		registry *registrydomain.Registry
 		wantID   string
 		wantCode string
+		wantName string
+		noShelf  bool
 	}{
-		{name: "custom registry", registry: custom, wantID: custom.ID.String()},
-		{name: "catalog registry", registry: catalog, wantID: catalog.ID.String(), wantCode: "com.asana/mcp"},
-		{name: "store instance names its shelf", registry: &instance, wantID: catalog.ID.String(), wantCode: "com.asana/mcp"},
+		{name: "custom registry", registry: custom, wantID: custom.ID.String(), wantName: custom.Name},
+		{name: "catalog registry", registry: catalog, wantID: catalog.ID.String(), wantCode: "com.asana/mcp", wantName: catalog.Name},
+		{name: "store instance names its shelf", registry: &instance, wantID: catalog.ID.String(), wantCode: "com.asana/mcp", wantName: catalog.Name},
+		{name: "missing shelf omits instance label", registry: &instance, wantID: catalog.ID.String(), wantCode: "com.asana/mcp", noShelf: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -632,10 +637,15 @@ func TestPluginRunner_ResolvedCall_CarriesMCPServer(t *testing.T) {
 			runner := NewPluginRunner(exec, discardLogger())
 
 			call := ToolCall{Exposed: "t", Registry: tc.registry, NativeTool: "t", Arguments: json.RawMessage(testToolArgs)}
-			_, err := runner.PreRequest(context.Background(), routableMCPConsumer(), call)
+			ctx := context.Background()
+			if !tc.noShelf {
+				ctx = appconsumer.WithData(ctx, data)
+			}
+			_, err := runner.PreRequest(ctx, routableMCPConsumer(), call)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantID, captured.Request.MCPServerID)
 			assert.Equal(t, tc.wantCode, captured.Request.MCPServerCode)
+			assert.Equal(t, tc.wantName, captured.Request.MCPServerName)
 			assert.Equal(t, tc.registry.ID.String(), captured.Request.RegistryID)
 		})
 	}

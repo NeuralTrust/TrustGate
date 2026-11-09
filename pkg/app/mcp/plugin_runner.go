@@ -404,6 +404,18 @@ func (r *PluginRunner) buildRequestContext(
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
 		reqCtx.MCPServerID = call.Registry.ScopeKey().String()
+		server := call.Registry
+		if !server.InstanceOf.IsNil() {
+			server = nil
+			if ctx != nil {
+				if data, ok := appconsumer.DataFromContext(ctx); ok {
+					server, _ = data.RegistryByID(call.Registry.ScopeKey())
+				}
+			}
+		}
+		if server != nil {
+			reqCtx.MCPServerName = server.Name
+		}
 		if call.Registry.MCPTarget != nil {
 			reqCtx.MCPServerCode = call.Registry.MCPTarget.Code
 		}
