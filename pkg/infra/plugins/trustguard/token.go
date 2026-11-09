@@ -36,6 +36,23 @@ const (
 	tokenMinTTL        = time.Minute
 )
 
+// AgentSecurity answers a gateway-only token request it cannot serve with these codes.
+const (
+	codeUnknownGateway   = "unknown_gateway"
+	codeAmbiguousGateway = "ambiguous_gateway"
+)
+
+// gatewayRefusedError is AgentSecurity saying the gateway is not migrated (404) or
+// maps to several integrations (409).
+type gatewayRefusedError struct {
+	status int
+	code   string
+}
+
+func (e *gatewayRefusedError) Error() string {
+	return fmt.Sprintf("agentsecurity: %s (status %d)", e.code, e.status)
+}
+
 type tokenParams struct {
 	baseURL     string
 	collectorID string
@@ -238,6 +255,10 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 // never errUnauthorized: that one sends guard to refetch the token, which is
 // the call that just refused.
 func tokenStatusError(status int, body []byte) error {
+	if code := oauthErrorCode(body); (status == http.StatusNotFound && code == codeUnknownGateway) ||
+		(status == http.StatusConflict && code == codeAmbiguousGateway) {
+		return fmt.Errorf("trustguard: token endpoint status %d: %w", status, &gatewayRefusedError{status: status, code: code})
+	}
 	switch status {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("trustguard: token endpoint: %w", &authRejectedError{status: status, code: oauthErrorCode(body)})
