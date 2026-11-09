@@ -3803,7 +3803,7 @@
         },
         "/v1/gateways/{gateway_id}/registries": {
             "get": {
-                "description": "Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped&type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size.",
+                "description": "Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped&type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size. In the flat variant, MCP instances that hold one account for every caller carry shared_account with whether it is connected.",
                 "tags": [
                     "registries"
                 ],
@@ -11405,6 +11405,14 @@
                         "type": "object",
                         "additionalProperties": {}
                     },
+                    "shared_account": {
+                        "description": "SharedAccount is set by the flat listing on MCP instances that hold one\naccount for every caller, so it shows whether that account is connected.",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountStateResponse"
+                            }
+                        ]
+                    },
                     "type": {
                         "type": "string"
                     },
@@ -11447,6 +11455,17 @@
                         "items": {
                             "type": "string"
                         }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountStateResponse": {
+                "type": "object",
+                "properties": {
+                    "connected": {
+                        "type": "boolean"
+                    },
+                    "needs_reconnect": {
+                        "type": "boolean"
                     }
                 }
             },
