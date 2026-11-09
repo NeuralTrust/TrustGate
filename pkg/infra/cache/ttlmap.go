@@ -17,6 +17,7 @@ package cache
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,7 +33,7 @@ type TTLMap struct {
 	onEvict func(value any)
 	// generation counts the removals (Delete, DeleteByPrefix, Clear), so a
 	// fill that read its source before one can be told it is stale.
-	generation uint64
+	generation atomic.Uint64
 }
 
 func NewTTLMap(ttl time.Duration) *TTLMap {
@@ -93,9 +94,7 @@ func (m *TTLMap) Set(key string, value any) {
 // SetIfGeneration, so an entry removed while it was reading is not put back
 // from what it read before the removal.
 func (m *TTLMap) Generation() uint64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.generation
+	return m.generation.Load()
 }
 
 // SetIfGeneration stores value under key only while the map is still at
@@ -111,7 +110,7 @@ func (m *TTLMap) set(key string, value any, checkGeneration bool, generation uin
 		hadPrev bool
 	)
 	m.mu.Lock()
-	if checkGeneration && m.generation != generation {
+	if checkGeneration && m.generation.Load() != generation {
 		m.mu.Unlock()
 		return false
 	}
@@ -139,7 +138,7 @@ func (m *TTLMap) Delete(key string) {
 		onEvict func(any)
 	)
 	m.mu.Lock()
-	m.generation++
+	m.generation.Add(1)
 	if entry, ok := m.data[key]; ok {
 		evicted = entry.Value
 		onEvict = m.onEvict
@@ -158,7 +157,7 @@ func (m *TTLMap) Delete(key string) {
 func (m *TTLMap) DeleteByPrefix(prefix string) {
 	var evicted []any
 	m.mu.Lock()
-	m.generation++
+	m.generation.Add(1)
 	onEvict := m.onEvict
 	for k, entry := range m.data {
 		if strings.HasPrefix(k, prefix) {
@@ -203,7 +202,7 @@ func (m *TTLMap) Len() int {
 
 func (m *TTLMap) Clear() {
 	m.mu.Lock()
-	m.generation++
+	m.generation.Add(1)
 	old := m.data
 	onEvict := m.onEvict
 	m.data = make(map[string]*TTLEntry)
