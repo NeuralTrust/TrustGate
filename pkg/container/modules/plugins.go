@@ -112,6 +112,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 				ClientID:     p.Cfg.TrustGuard.V3.ClientID,
 				ClientSecret: p.Cfg.TrustGuard.V3.ClientSecret,
 				Gateways:     p.Cfg.TrustGuard.V3.Gateways,
+				ShadowAll:    p.Cfg.TrustGuard.V3.ShadowAll(),
 			})),
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),

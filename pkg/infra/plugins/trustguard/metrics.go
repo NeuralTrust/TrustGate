@@ -88,6 +88,9 @@ const (
 	v3OutcomeFailed  = "failed"
 	v3OutcomeSkipped = "skipped"
 	v3OutcomeDropped = "dropped"
+	// Skips by gateway: AgentSecurity does not know it or cannot pick its integration.
+	v3OutcomeUnknownGateway   = "skipped_unknown_gateway"
+	v3OutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
 )
 
 func initInstruments() {
