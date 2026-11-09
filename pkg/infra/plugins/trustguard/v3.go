@@ -29,7 +29,10 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const (
@@ -89,7 +92,7 @@ type v3Request struct {
 
 type v3Attributes struct {
 	ContentType string         `json:"content_type"`
-	Model       GuardModel     `json:"model"`
+	Model       *v3Model       `json:"model,omitempty"`
 	User        *GuardUser     `json:"user,omitempty"`
 	Application *v3Application `json:"application,omitempty"`
 	MCPServer   *v3MCPServer   `json:"mcp_server,omitempty"`
@@ -103,10 +106,22 @@ type v3Application struct {
 // v3MCPServer carries AgentSecurity's canonical id of the server: the catalog code, or
 // the registry id of a server added by URL.
 type v3MCPServer struct {
-	ID string `json:"id"`
+	ID   string  `json:"id"`
+	Name string  `json:"name,omitempty"`
+	Tool *v3Tool `json:"tool,omitempty"`
 }
 
-func toV3Request(body GuardRequest) v3Request {
+type v3Tool struct {
+	Name string `json:"name"`
+}
+
+type v3Model struct {
+	Name          string `json:"name,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	RequestedName string `json:"requested_name,omitempty"`
+}
+
+func toV3Request(body GuardRequest, request *infracontext.RequestContext) v3Request {
 	req := v3Request{
 		OriginalRequest: body.OriginalRequest,
 		Payload:         append(json.RawMessage(nil), body.Payload...),
@@ -117,16 +132,57 @@ func toV3Request(body GuardRequest) v3Request {
 		ApplicationID:   strings.TrimSpace(body.ConsumerID),
 		Attributes: v3Attributes{
 			ContentType: body.Attributes.ContentType,
-			Model:       body.Attributes.Model,
 			User:        body.Attributes.User,
 			MCPServer:   v3MCPServerOf(body.Attributes.MCPServer),
 			Stream:      body.Attributes.Stream,
 		},
 	}
+	if request != nil {
+		if !request.MCP {
+			req.Attributes.Model = v3ModelOf(request, body.Direction)
+		} else if server := req.Attributes.MCPServer; server != nil {
+			server.Name = strings.TrimSpace(request.MCPServerName)
+			if tool := strings.TrimSpace(request.MCPTool); tool != "" {
+				server.Tool = &v3Tool{Name: tool}
+			}
+		}
+	}
 	if c := body.Attributes.Consumer; c != nil && c.Name != "" {
 		req.Attributes.Application = &v3Application{Name: c.Name}
 	}
 	return req
+}
+
+func v3ModelOf(req *infracontext.RequestContext, direction string) *v3Model {
+	name := strings.TrimSpace(req.ResolvedModel)
+	if name == "" && direction == directionOutput {
+		name = strings.TrimSpace(req.SentModel)
+	}
+	if name == "" {
+		if req.IsBedrockNative() {
+			name = req.BedrockNative.ModelID
+		} else {
+			if model, err := adapter.ExtractModel(req.Body); err == nil {
+				name = model
+			}
+			if name == "" {
+				name = req.DefaultModel
+			}
+		}
+	}
+	name = strings.TrimSpace(name)
+	if arn, ok := bedrocknative.ParseBedrockARN(name); ok {
+		name, _ = arn.ModelID()
+	}
+	if strings.Contains(name, "@") || strings.HasPrefix(strings.ToLower(name), "pool:") ||
+		strings.HasPrefix(strings.ToLower(name), "arn:") || strings.EqualFold(name, "auto") {
+		name = ""
+	}
+	return &v3Model{
+		Name:          name,
+		Provider:      strings.ToLower(strings.TrimSpace(req.Provider)),
+		RequestedName: req.RequestedModel,
+	}
 }
 
 func v3MCPServerOf(server *GuardMCPServer) *v3MCPServer {
@@ -312,7 +368,7 @@ func (s *v3Sender) startTokenBackoff() bool {
 	return true
 }
 
-func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body GuardRequest) {
+func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body GuardRequest, request *infracontext.RequestContext) {
 	if s == nil {
 		return
 	}
@@ -339,7 +395,7 @@ func (s *v3Sender) send(ctx context.Context, collectorID, traceID string, body G
 		recordV3Outcome(ctx, v3OutcomeDropped)
 		return
 	}
-	req := toV3Request(body)
+	req := toV3Request(body, request)
 	mode := body.FailureMode
 	params := tokenParams{baseURL: s.baseURL, collectorID: integration, gatewayID: gatewayID}
 	detached := context.WithoutCancel(ctx)

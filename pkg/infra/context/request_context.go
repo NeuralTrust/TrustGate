@@ -179,7 +179,9 @@ type RequestContext struct {
 	// ResolvedModel is the model behind an identifier that names it only
 	// indirectly, such as an application inference profile ARN, once known. It
 	// is for pricing and the span; RequestedModel keeps what the client sent.
-	ResolvedModel   string
+	ResolvedModel string
+	// SentModel is the model sent upstream on the current provider attempt.
+	SentModel       string
 	AllowedModels   []string
 	DefaultModel    string
 	RequestedModel  string
@@ -230,6 +232,8 @@ type RequestContext struct {
 	// MCPServerCode is that registry's MCP catalog code, empty when it was
 	// added by URL rather than from the catalog.
 	MCPServerCode string
+	// MCPServerName is the persisted server name, without Store instance labels.
+	MCPServerName string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched
