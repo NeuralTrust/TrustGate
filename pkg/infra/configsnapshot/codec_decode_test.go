@@ -17,7 +17,12 @@ package configsnapshot
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +71,77 @@ func TestDecodeJSONRejectsMalformedEntitiesWithoutPartialResults(t *testing.T) {
 	var syntax *json.SyntaxError
 	require.ErrorAs(t, err, &syntax)
 	require.Equal(t, 1, calls)
+}
+
+func TestDecodeJSONRetainsLegacyInputSemantics(t *testing.T) {
+	t.Parallel()
+	type entity struct {
+		Name      string           `json:"name"`
+		GatewayID string           `json:"gateway_id"`
+		Values    []map[string]int `json:"values"`
+		CreatedAt time.Time        `json:"created_at"`
+	}
+	for _, tc := range []struct{ name, raw string }{
+		{"case insensitive", `{"NAME":"legacy","GATEWAY_ID":"gateway"}`},
+		{"case alias duplicates", `{"NAME":"first","name":"last"}`},
+		{"delimiter sensitive", `{"gateway-id":"ignored","gatewayid":"also ignored"}`},
+		{"duplicate scalar and null", `{"name":"kept","name":null}`},
+		{"duplicate nested collections", `{"values":[{"kept":1}],"values":[null]}`},
+		{"invalid utf8", "{\"name\":\"\xff\"}"},
+		{"legacy timestamp", `{"created_at":"2026-11-09T1:02:03Z"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var want entity
+			require.NoError(t, json.Unmarshal([]byte(tc.raw), &want))
+			got, err := decodeJSON[string, entity]([]string{tc.raw}, "legacy entity", func(raw string) []byte { return []byte(raw) }, nil)
+			require.NoError(t, err)
+			require.Equal(t, []entity{want}, got)
+		})
+	}
+}
+
+func TestSnapshotJSONRejectsMalformedInputWithoutPartialMutations(t *testing.T) {
+	t.Parallel()
+	type entity struct {
+		Name   string `json:"name"`
+		Values []int  `json:"values"`
+	}
+	raw := []byte(`{"name":"partial","values":[1,`)
+	var want, got entity
+	require.Error(t, json.Unmarshal(raw, &want))
+	err := unmarshalSnapshotJSON(raw, &got)
+	var syntax *json.SyntaxError
+	require.ErrorAs(t, err, &syntax)
+	require.Equal(t, want, got)
+}
+
+func TestCodecPreservesFallbackNanoseconds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		fallback *consumerdomain.Fallback
+	}{
+		{name: "nil"},
+		{name: "zero", fallback: &consumerdomain.Fallback{}},
+		{name: "nanoseconds", fallback: &consumerdomain.Fallback{Budget: consumerdomain.FallbackBudget{MaxAttempts: 3, MaxTotalLatency: 2*time.Second + 123*time.Nanosecond}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			consumerID := ids.New[ids.ConsumerKind]()
+			codec := NewCodec()
+			raw, err := codec.Encode(readmodel.Build(readmodel.Data{
+				Gateways:  []gatewaydomain.Gateway{{ID: gatewayID, Slug: "fallback", Entitlements: gatewaydomain.DefaultEntitlements()}},
+				Consumers: []consumerdomain.Consumer{{ID: consumerID, GatewayID: gatewayID, Slug: "consumer", Fallback: tc.fallback}},
+			}))
+			require.NoError(t, err)
+			decoded, err := codec.Decode(raw)
+			require.NoError(t, err)
+			consumer, ok := decoded.ConsumerByID(consumerID)
+			require.True(t, ok)
+			require.Equal(t, tc.fallback, consumer.Fallback)
+			reencoded, err := codec.Encode(decoded)
+			require.NoError(t, err)
+			require.Equal(t, raw, reencoded)
+		})
+	}
 }
