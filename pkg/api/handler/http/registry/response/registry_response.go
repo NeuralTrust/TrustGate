@@ -108,8 +108,11 @@ type RegistryResponse struct {
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
 	Pricing         *PricingResponse      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
-	CreatedAt       time.Time             `json:"created_at"`
-	UpdatedAt       time.Time             `json:"updated_at"`
+	// SharedAccount is set by the flat listing on MCP instances that hold one
+	// account for every caller, so it shows whether that account is connected.
+	SharedAccount *SharedAccountStateResponse `json:"shared_account,omitempty"`
+	CreatedAt     time.Time                   `json:"created_at"`
+	UpdatedAt     time.Time                   `json:"updated_at"`
 }
 
 type MCPTargetResponse struct {
