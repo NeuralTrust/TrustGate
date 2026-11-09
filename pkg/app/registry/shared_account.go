@@ -68,6 +68,11 @@ type ServerTicketMinter interface {
 //go:generate mockery --name=SharedAccountService --dir=. --output=./mocks --filename=registry_shared_account_service_mock.go --case=underscore --with-expecter
 type SharedAccountService interface {
 	Status(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) (*SharedAccount, error)
+	// Statuses reports the shared account of every registry in regs that holds
+	// one, keyed by registry id, so a listing can show which servers are usable
+	// without one request per instance. A registry whose account cannot be read
+	// is left out; Status reports why.
+	Statuses(ctx context.Context, gatewayID ids.GatewayID, regs []*domain.Registry) map[ids.RegistryID]*SharedAccount
 	// Link mints the connect page. resumeURL, when set, is where the page sends
 	// the admin back to once the account is connected: the console screen they
 	// started from (see appoauth.NormalizeResumeURL for what it may be).
@@ -94,6 +99,35 @@ func (s *sharedAccountService) Status(
 	if err != nil {
 		return nil, err
 	}
+	return s.status(ctx, gatewayID, reg, cfg)
+}
+
+func (s *sharedAccountService) Statuses(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	regs []*domain.Registry,
+) map[ids.RegistryID]*SharedAccount {
+	out := make(map[ids.RegistryID]*SharedAccount)
+	for _, reg := range regs {
+		cfg := reg.ForwardedAuth()
+		if !cfg.Shared() {
+			continue
+		}
+		account, err := s.status(ctx, gatewayID, reg, cfg)
+		if err != nil {
+			continue
+		}
+		out[reg.ID] = account
+	}
+	return out
+}
+
+func (s *sharedAccountService) status(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	reg *domain.Registry,
+	cfg *domain.MCPAuth,
+) (*SharedAccount, error) {
 	out := &SharedAccount{Provider: cfg.Provider}
 	cred, err := s.vault.Find(ctx, gatewayID, domain.SharedAccountSubject(reg.ID), domain.ForwardedVaultProviderFor(reg, nil))
 	switch {
