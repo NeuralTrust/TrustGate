@@ -136,10 +136,9 @@ const (
 	defaultSemanticCacheVectorStore        = "redis"
 	defaultClusterSemanticCacheVectorStore = "in_memory"
 
-	defaultTrustGuardTimeout    = 30 * time.Second
-	defaultAgentSecurityTimeout = 5 * time.Second
-	agentSecurityShadowAll      = "all"
-	agentSecurityShadowOff      = "off"
+	defaultTrustGuardTimeout = 30 * time.Second
+	v2ShadowAll              = "all"
+	v2ShadowOff              = "off"
 
 	defaultFirewallComplexityTimeout       = 30 * time.Second
 	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
@@ -785,30 +784,33 @@ type LoggerConfig struct {
 }
 
 type TrustGuardConfig struct {
-	BaseURL       string
-	Timeout       time.Duration
-	ClientID      string
-	ClientSecret  string
-	AgentSecurity AgentSecurityConfig
-}
-
-// AgentSecurityConfig is AgentSecurity, which the TrustGuard plugin sends a
-// copy of every evaluation of the listed gateways to. TrustGuard alone
-// decides; AgentSecurity's answer is never applied.
-type AgentSecurityConfig struct {
 	BaseURL      string
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends copies to the AgentSecurity integration id
+	V2           TrustGuardV2Config
+}
+
+// TrustGuardV2Config is TrustGuard's /v2 engine, which the trustguard_v2 plugin
+// evaluates against and, with Shadow or Gateways, which the trustguard plugin
+// copies its evaluations to (only to compare; the copy's answer is never applied).
+// It is the same service as TrustGuard, so BaseURL is TRUSTGUARD_BASE_URL unless
+// TRUSTGUARD_V2_BASE_URL overrides it, and Timeout is TRUSTGUARD_TIMEOUT unless
+// TRUSTGUARD_V2_TIMEOUT does.
+type TrustGuardV2Config struct {
+	BaseURL      string
+	Timeout      time.Duration
+	ClientID     string
+	ClientSecret string
+	// Gateways maps each gateway that sends copies to the /v2 integration id
 	// its token names, empty for the policy's collector_id. No entry, no copy.
 	Gateways map[string]string
-	// Shadow is AGENTSECURITY_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
+	// Shadow is TRUSTGUARD_V2_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
 	Shadow string
 }
 
 // ShadowAll reports whether every gateway is copied.
-func (c AgentSecurityConfig) ShadowAll() bool { return c.Shadow == agentSecurityShadowAll }
+func (c TrustGuardV2Config) ShadowAll() bool { return c.Shadow == v2ShadowAll }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
 // When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
@@ -1335,25 +1337,27 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func getTrustGuardConfig() TrustGuardConfig {
+	baseURL := getEnv("TRUSTGUARD_BASE_URL", "")
+	timeout := getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout)
 	return TrustGuardConfig{
-		BaseURL:      getEnv("TRUSTGUARD_BASE_URL", ""),
-		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
+		BaseURL:      baseURL,
+		Timeout:      timeout,
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
-		AgentSecurity: AgentSecurityConfig{
-			BaseURL:      getEnv("AGENTSECURITY_BASE_URL", ""),
-			Timeout:      getEnvDuration("AGENTSECURITY_TIMEOUT", defaultAgentSecurityTimeout),
-			ClientID:     getEnv("AGENTSECURITY_CLIENT_ID", ""),
-			ClientSecret: getEnv("AGENTSECURITY_CLIENT_SECRET", ""),
-			Gateways:     parseAgentSecurityGateways(getEnv("AGENTSECURITY_GATEWAYS", "")),
-			Shadow:       strings.ToLower(strings.TrimSpace(getEnv("AGENTSECURITY_SHADOW", ""))),
+		V2: TrustGuardV2Config{
+			BaseURL:      getEnv("TRUSTGUARD_V2_BASE_URL", baseURL),
+			Timeout:      getEnvDuration("TRUSTGUARD_V2_TIMEOUT", timeout),
+			ClientID:     getEnv("TRUSTGUARD_V2_CLIENT_ID", ""),
+			ClientSecret: getEnv("TRUSTGUARD_V2_CLIENT_SECRET", ""),
+			Gateways:     parseV2ShadowGateways(getEnv("TRUSTGUARD_V2_GATEWAYS", "")),
+			Shadow:       strings.ToLower(strings.TrimSpace(getEnv("TRUSTGUARD_V2_SHADOW", ""))),
 		},
 	}
 }
 
-// parseAgentSecurityGateways reads AGENTSECURITY_GATEWAYS: a comma list of
-// gateway ids, each optionally followed by =<AgentSecurity integration id>.
-func parseAgentSecurityGateways(raw string) map[string]string {
+// parseV2ShadowGateways reads TRUSTGUARD_V2_GATEWAYS: a comma list of
+// gateway ids, each optionally followed by =<TrustGuard /v2 integration id>.
+func parseV2ShadowGateways(raw string) map[string]string {
 	out := make(map[string]string)
 	for _, entry := range strings.Split(raw, ",") {
 		gateway, integration, _ := strings.Cut(entry, "=")
@@ -1737,10 +1741,10 @@ func (c *Config) Validate() error {
 	if err := c.BedrockNative.validate(); err != nil {
 		return err
 	}
-	switch c.TrustGuard.AgentSecurity.Shadow {
-	case "", agentSecurityShadowOff, agentSecurityShadowAll:
+	switch c.TrustGuard.V2.Shadow {
+	case "", v2ShadowOff, v2ShadowAll:
 	default:
-		return fmt.Errorf("%w: AGENTSECURITY_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, agentSecurityShadowAll, agentSecurityShadowOff, c.TrustGuard.AgentSecurity.Shadow)
+		return fmt.Errorf("%w: TRUSTGUARD_V2_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, v2ShadowAll, v2ShadowOff, c.TrustGuard.V2.Shadow)
 	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err

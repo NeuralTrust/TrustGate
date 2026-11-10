@@ -73,7 +73,17 @@ func Plugins(c *container.Container) error {
 	if err := c.Provide(appplugins.NewCatalogService); err != nil {
 		return err
 	}
-	return c.Provide(cataloghttp.NewListPolicyCatalogHandler)
+	if err := c.Provide(func(cfg *config.Config) appplugins.GatewayEngines {
+		return trustguard.NewEngineResolver(cfg.TrustGuard.V2.BaseURL, cfg.TrustGuard.V2.ClientID, cfg.TrustGuard.V2.ClientSecret)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appplugins.NewGatewayCatalogService); err != nil {
+		return err
+	}
+	return c.Provide(func(s appplugins.GatewayCatalogService) *cataloghttp.ListPolicyCatalogHandler {
+		return cataloghttp.NewListPolicyCatalogHandler(s)
+	})
 }
 
 // newPluginRegistry builds the plugin catalog and registers every built-in
@@ -106,14 +116,15 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		toolallowlist.New(p.Adapters),
 		toolinjection.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger,
-			trustguard.WithAgentSecurity(trustguard.AgentSecurityConfig{
-				BaseURL:      p.Cfg.TrustGuard.AgentSecurity.BaseURL,
-				Timeout:      p.Cfg.TrustGuard.AgentSecurity.Timeout,
-				ClientID:     p.Cfg.TrustGuard.AgentSecurity.ClientID,
-				ClientSecret: p.Cfg.TrustGuard.AgentSecurity.ClientSecret,
-				Gateways:     p.Cfg.TrustGuard.AgentSecurity.Gateways,
-				ShadowAll:    p.Cfg.TrustGuard.AgentSecurity.ShadowAll(),
+			trustguard.WithV2Shadow(trustguard.V2ShadowConfig{
+				BaseURL:      p.Cfg.TrustGuard.V2.BaseURL,
+				Timeout:      p.Cfg.TrustGuard.V2.Timeout,
+				ClientID:     p.Cfg.TrustGuard.V2.ClientID,
+				ClientSecret: p.Cfg.TrustGuard.V2.ClientSecret,
+				Gateways:     p.Cfg.TrustGuard.V2.Gateways,
+				ShadowAll:    p.Cfg.TrustGuard.V2.ShadowAll(),
 			})),
+		trustguard.NewV2(p.Adapters, p.Cfg.TrustGuard.V2.BaseURL, p.Cfg.TrustGuard.V2.Timeout, p.Cfg.TrustGuard.V2.ClientID, p.Cfg.TrustGuard.V2.ClientSecret, p.Logger),
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),
