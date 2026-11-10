@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
@@ -740,5 +741,42 @@ func TestUpdater_Update_UnreadableStoredCredentialDoesNotBlockEdits(t *testing.T
 	}
 	if got.MCPTarget.Auth.Value != "" || !got.MCPTarget.Auth.SecretUnreadable {
 		t.Fatalf("auth = %+v, want the unreadable marker carried", got.MCPTarget.Auth)
+	}
+}
+
+func TestUpdater_Update_RestoresMaskedProviderOptionHeader(t *testing.T) {
+	t.Parallel()
+	const storedValue = "client-secret-value"
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "ibm", "", &domain.LLMTarget{
+		Provider: "openai_compatible",
+		ProviderOptions: map[string]any{
+			"base_url": "https://llm.internal/v1",
+			"headers":  map[string]any{"X-IBM-Client-Id": storedValue},
+		},
+		Auth: domain.NewAPIKeyAuth("sk-real"),
+	})
+	if err != nil {
+		t.Fatalf("NewLLMRegistry: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		headers, ok := domain.ProviderOptionHeaders(b.ProviderOptions())
+		return ok && headers["X-IBM-Client-Id"] == storedValue && b.ProviderOptions()["base_url"] == "https://llm.internal/v1"
+	})).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	incoming := map[string]any{
+		"base_url": "https://llm.internal/v1",
+		"headers":  map[string]any{"X-IBM-Client-Id": secret.Mask(storedValue)},
+	}
+	if _, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:              existing.ID,
+		ProviderOptions: &incoming,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 }

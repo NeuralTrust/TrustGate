@@ -97,6 +97,39 @@ func TestFromAuth_MasksAzureSecretsAndReturnsIdentifiers(t *testing.T) {
 	}
 }
 
+func TestFromRegistry_MasksProviderOptionHeaders(t *testing.T) {
+	t.Parallel()
+	const value = "client-secret-value"
+	reg := &domain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "compatible",
+		Type:      domain.TypeLLM,
+		LLMTarget: &domain.LLMTarget{
+			Provider: "openai_compatible",
+			ProviderOptions: map[string]any{
+				"base_url": "https://llm.internal/v1",
+				"headers":  map[string]string{"X-IBM-Client-Id": value, "Ocp-Apim-Subscription-Key": "sub-secret-value"},
+			},
+		},
+	}
+	got := FromRegistry(reg).ProviderOptions
+	headers, ok := got["headers"].(map[string]string)
+	if !ok {
+		t.Fatalf("headers = %#v", got["headers"])
+	}
+	if headers["X-IBM-Client-Id"] != secret.Mask(value) || headers["Ocp-Apim-Subscription-Key"] != secret.Mask("sub-secret-value") {
+		t.Fatalf("headers not masked: %v", headers)
+	}
+	if got["base_url"] != "https://llm.internal/v1" {
+		t.Fatalf("base_url = %#v", got["base_url"])
+	}
+	stored := reg.LLMTarget.ProviderOptions["headers"].(map[string]string)
+	if stored["X-IBM-Client-Id"] != value {
+		t.Fatal("masking must not modify the registry")
+	}
+}
+
 func TestFromRegistry_MasksHeaderValues(t *testing.T) {
 	t.Parallel()
 	mcp := &domain.Registry{

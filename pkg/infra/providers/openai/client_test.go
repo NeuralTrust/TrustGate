@@ -364,6 +364,29 @@ func TestChatCompletions_MissingAPIKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "API key is required")
 }
 
+func TestChatCompletions_OpenAICompatibleAllowsMissingAPIKey(t *testing.T) {
+	var gotAuth, gotIBM string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotIBM = r.Header.Get("X-IBM-Client-Id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	chat := NewChatCompletionsClient(providers.ProviderOpenAICompatible, nil)
+	_, err := chat.Completions(
+		context.Background(),
+		srv.URL,
+		&providers.Config{},
+		[]byte(`{}`),
+		map[string]string{"X-IBM-Client-Id": "client-secret"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "client-secret", gotIBM)
+	assert.Empty(t, gotAuth)
+}
+
 func TestChatCompletions_RoundTrip(t *testing.T) {
 	var gotAuth, gotPath string
 	var gotBody map[string]any
