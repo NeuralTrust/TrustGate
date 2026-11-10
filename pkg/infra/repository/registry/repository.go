@@ -98,7 +98,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if b == nil {
 		return errors.New("registry repository: nil registry")
 	}
-	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions())
+	providerOptionsBytes, err := r.marshalProviderOptions(b.ID, b.ProviderOptions())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
 	}
@@ -135,10 +135,6 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	if b == nil {
 		return errors.New("registry repository: nil registry")
 	}
-	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions())
-	if err != nil {
-		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
-	}
 	authStored, err := r.encryptAuth(b.Auth())
 	if err != nil {
 		return fmt.Errorf("registry repository: encrypt auth: %w", err)
@@ -166,6 +162,10 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
 	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
+		providerOptionsBytes, err := r.encodeProviderOptionsForUpdate(ctx, tx, b)
+		if err != nil {
+			return fmt.Errorf("registry repository: marshal provider_options: %w", err)
+		}
 		mcpTargetBytes, err := r.encodeMCPTargetForUpdate(ctx, tx, b.ID, b.GatewayID, b.MCPTarget)
 		if err != nil {
 			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
@@ -402,6 +402,7 @@ func (r *Repository) scanRegistry(ctx context.Context, s rowScanner) (*domain.Re
 			if err := json.Unmarshal(providerOptionsRaw, &target.ProviderOptions); err != nil {
 				return nil, fmt.Errorf("scan provider_options: %w: %w", commonerrors.ErrCorruptData, err)
 			}
+			r.openProviderOptionHeaders(ctx, b.ID, target)
 		}
 		if len(authRaw) > 0 {
 			plain, err := r.cipher.Decrypt(string(authRaw))
@@ -466,11 +467,15 @@ func (r *Repository) marshalMCPTarget(id ids.RegistryID, t *domain.MCPTarget) ([
 	return json.Marshal(stored)
 }
 
-func marshalProviderOptions(o map[string]any) ([]byte, error) {
-	if len(o) == 0 {
+func (r *Repository) marshalProviderOptions(id ids.RegistryID, options map[string]any) ([]byte, error) {
+	if len(options) == 0 {
 		return nil, nil
 	}
-	return json.Marshal(o)
+	stored, err := r.sealProviderOptionHeaders(id, options)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(stored)
 }
 
 func marshalAuth(a *domain.TargetAuth) ([]byte, error) {

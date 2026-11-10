@@ -24,9 +24,11 @@ import (
 
 const modelsPath = "/models"
 
-// TestConnection probes the upstream with a Bearer GET to {base_url}/models,
-// the de-facto discovery endpoint exposed by OpenAI-compatible servers. Any
-// configured custom headers are applied to the probe as well.
+// TestConnection probes the upstream with a GET to {base_url}/models, the
+// de-facto discovery endpoint exposed by OpenAI-compatible servers. Authorization
+// is set only when an API key is configured. Custom headers from auth and
+// provider_options are applied afterwards, so an Authorization entry in that
+// map replaces the bearer token.
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
 	opts, err := providers.DecodeOpenAICompatibleOptions(config.Options)
 	if err != nil {
@@ -37,19 +39,10 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 		}
 	}
 	base := strings.TrimRight(opts.BaseURL, "/")
-	return providers.RunAPIKeyGETProbe(
-		ctx,
-		providers.ProviderOpenAICompatible,
-		base+modelsPath,
-		config.Credentials.ApiKey,
-		func(req *http.Request, key string) {
-			req.Header.Set("Authorization", "Bearer "+key)
-			for k, v := range opts.Headers {
-				if k == "" {
-					continue
-				}
-				req.Header.Set(k, v)
-			}
-		},
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+modelsPath, nil)
+	if err != nil {
+		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
+	}
+	applyUpstreamAuth(req, config.Credentials.ApiKey, upstreamHeaders(config.Credentials, opts))
+	return providers.RunHTTPProbe(providers.ProviderOpenAICompatible, req)
 }

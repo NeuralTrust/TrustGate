@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/url"
 	"strings"
 	"time"
@@ -232,7 +233,9 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 		target.Provider = *in.Provider
 	}
 	if in.ProviderOptions != nil {
-		target.ProviderOptions = *in.ProviderOptions
+		opts := maps.Clone(*in.ProviderOptions)
+		target.UnreadableProviderHeaders = domain.ResolveProviderOptionHeaders(opts, target.ProviderOptions, target.UnreadableProviderHeaders)
+		target.ProviderOptions = opts
 	}
 	if in.Auth != nil {
 		in.Auth.ResolveSecretsFrom(target.Auth)
