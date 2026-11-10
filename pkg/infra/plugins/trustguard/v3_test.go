@@ -58,6 +58,9 @@ type fakeV3 struct {
 	tokens   []map[string]any
 	requests []v3WireRequest
 	invalid  int
+	// refuse answers every gateway-only token request with this status and code.
+	refuseStatus int
+	refuseCode   string
 }
 
 func (f *fakeV3) handler() http.HandlerFunc {
@@ -69,6 +72,11 @@ func (f *fakeV3) handler() http.HandlerFunc {
 			f.tokens = append(f.tokens, body)
 			f.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
+			if _, explicit := body["integration_id"]; !explicit && f.refuseStatus != 0 {
+				w.WriteHeader(f.refuseStatus)
+				_, _ = w.Write([]byte(`{"error":"` + f.refuseCode + `"}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v3-token", TokenType: "Bearer", ExpiresIn: 3600})
 			return
 		}

@@ -136,8 +136,10 @@ const (
 	defaultSemanticCacheVectorStore        = "redis"
 	defaultClusterSemanticCacheVectorStore = "in_memory"
 
-	defaultTrustGuardTimeout   = 30 * time.Second
-	defaultTrustGuardV3Timeout = 5 * time.Second
+	defaultTrustGuardTimeout    = 30 * time.Second
+	defaultAgentSecurityTimeout = 5 * time.Second
+	agentSecurityShadowAll      = "all"
+	agentSecurityShadowOff      = "off"
 
 	defaultFirewallComplexityTimeout       = 30 * time.Second
 	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
@@ -768,21 +770,26 @@ type TrustGuardConfig struct {
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	V3           TrustGuardV3Config
+	V3           AgentSecurityConfig
 }
 
-// TrustGuardV3Config is Guard (TrustGuard v3), which the TrustGuard plugin
-// sends a copy of every evaluation of the listed gateways to. TrustGuard alone
-// decides; Guard's answer is never applied.
-type TrustGuardV3Config struct {
+// AgentSecurityConfig is AgentSecurity, which the TrustGuard plugin sends a
+// copy of every evaluation of the listed gateways to. TrustGuard alone
+// decides; AgentSecurity's answer is never applied.
+type AgentSecurityConfig struct {
 	BaseURL      string
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends copies to the Guard integration id
+	// Gateways maps each gateway that sends copies to the AgentSecurity integration id
 	// its token names, empty for the policy's collector_id. No entry, no copy.
 	Gateways map[string]string
+	// Shadow is AGENTSECURITY_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
+	Shadow string
 }
+
+// ShadowAll reports whether every gateway is copied.
+func (c AgentSecurityConfig) ShadowAll() bool { return c.Shadow == agentSecurityShadowAll }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
 // When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
@@ -1314,19 +1321,20 @@ func getTrustGuardConfig() TrustGuardConfig {
 		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
-		V3: TrustGuardV3Config{
-			BaseURL:      getEnv("TRUSTGUARD_V3_BASE_URL", ""),
-			Timeout:      getEnvDuration("TRUSTGUARD_V3_TIMEOUT", defaultTrustGuardV3Timeout),
-			ClientID:     getEnv("TRUSTGUARD_V3_CLIENT_ID", ""),
-			ClientSecret: getEnv("TRUSTGUARD_V3_CLIENT_SECRET", ""),
-			Gateways:     parseTrustGuardV3Gateways(getEnv("TRUSTGUARD_V3_GATEWAYS", "")),
+		V3: AgentSecurityConfig{
+			BaseURL:      getEnvFallback("AGENTSECURITY_BASE_URL", "TRUSTGUARD_V3_BASE_URL", ""),
+			Timeout:      getEnvDurationFallback("AGENTSECURITY_TIMEOUT", "TRUSTGUARD_V3_TIMEOUT", defaultAgentSecurityTimeout),
+			ClientID:     getEnvFallback("AGENTSECURITY_CLIENT_ID", "TRUSTGUARD_V3_CLIENT_ID", ""),
+			ClientSecret: getEnvFallback("AGENTSECURITY_CLIENT_SECRET", "TRUSTGUARD_V3_CLIENT_SECRET", ""),
+			Gateways:     parseAgentSecurityGateways(getEnvFallback("AGENTSECURITY_GATEWAYS", "TRUSTGUARD_V3_GATEWAYS", "")),
+			Shadow:       strings.ToLower(strings.TrimSpace(getEnvFallback("AGENTSECURITY_SHADOW", "TRUSTGUARD_V3_SHADOW", ""))),
 		},
 	}
 }
 
-// parseTrustGuardV3Gateways reads TRUSTGUARD_V3_GATEWAYS: a comma list of
-// gateway ids, each optionally followed by =<Guard integration id>.
-func parseTrustGuardV3Gateways(raw string) map[string]string {
+// parseAgentSecurityGateways reads AGENTSECURITY_GATEWAYS: a comma list of
+// gateway ids, each optionally followed by =<AgentSecurity integration id>.
+func parseAgentSecurityGateways(raw string) map[string]string {
 	out := make(map[string]string)
 	for _, entry := range strings.Split(raw, ",") {
 		gateway, integration, _ := strings.Cut(entry, "=")
@@ -1706,6 +1714,11 @@ func (c *Config) Validate() error {
 	if err := c.BedrockNative.validate(); err != nil {
 		return err
 	}
+	switch c.TrustGuard.V3.Shadow {
+	case "", agentSecurityShadowOff, agentSecurityShadowAll:
+	default:
+		return fmt.Errorf("%w: AGENTSECURITY_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, agentSecurityShadowAll, agentSecurityShadowOff, c.TrustGuard.V3.Shadow)
+	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err
 	}
@@ -1968,6 +1981,20 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvFallback reads key, then the pre-rename name legacy for one release.
+func getEnvFallback(key, legacy, defaultValue string) string {
+	return getEnv(key, getEnv(legacy, defaultValue))
+}
+
+// getEnvDurationFallback is getEnvFallback for durations; an invalid new value
+// falls back to the default, not to the legacy name.
+func getEnvDurationFallback(key, legacy string, defaultValue time.Duration) time.Duration {
+	if os.Getenv(key) == "" {
+		key = legacy
+	}
+	return getEnvDuration(key, defaultValue)
 }
 
 func getEnvAllowEmpty(key, defaultValue string) string {
