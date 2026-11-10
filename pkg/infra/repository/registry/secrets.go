@@ -33,9 +33,10 @@ import (
 )
 
 const (
-	fieldMCPAuthValue    = "registries.mcp_target.auth.value"
-	fieldMCPAuthClient   = "registries.mcp_target.auth.client_secret"
-	fieldMCPHeaderPrefix = "registries.mcp_target.headers."
+	fieldMCPAuthValue         = "registries.mcp_target.auth.value"
+	fieldMCPAuthClient        = "registries.mcp_target.auth.client_secret"
+	fieldMCPHeaderPrefix      = "registries.mcp_target.headers."
+	fieldProviderHeaderPrefix = "registries.provider_options.headers."
 )
 
 // WithFieldSealer lets the repository read credentials stored encrypted in
@@ -247,7 +248,7 @@ func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, in, out, store
 		}
 		marked := slices.ContainsFunc(in.UnreadableHeaders, func(n string) bool { return strings.EqualFold(n, name) })
 		if marked || r.unopenable(sealedAAD(fieldMCPHeaderPrefix+storedName, id), prev) {
-			out.Headers[name] = r.resealHeader(id, storedName, name, prev)
+			out.Headers[name] = r.resealHeader(id, fieldMCPHeaderPrefix, storedName, name, prev)
 		}
 	}
 }
@@ -268,22 +269,190 @@ func storedHeader(headers map[string]string, name string) (string, string) {
 // under. The field path is part of what a value is sealed for, so a value kept
 // under a name whose case changed is re-sealed when it can be read, and kept
 // as stored otherwise.
-func (r *Repository) resealHeader(id ids.RegistryID, storedName, name, stored string) string {
+func (r *Repository) resealHeader(id ids.RegistryID, prefix, storedName, name, stored string) string {
 	if storedName == name || !crypto.IsSealed(stored) {
 		return stored
 	}
-	plain, err := r.sealer.OpenField(sealedAAD(fieldMCPHeaderPrefix+storedName, id), stored)
+	plain, err := r.sealer.OpenField(sealedAAD(prefix+storedName, id), stored)
 	if err != nil {
 		return stored
 	}
 	if !r.encryptWrites {
 		return plain
 	}
-	resealed, err := r.sealer.Seal(sealedAAD(fieldMCPHeaderPrefix+name, id), plain)
+	resealed, err := r.sealer.Seal(sealedAAD(prefix+name, id), plain)
 	if err != nil {
 		return stored
 	}
 	return resealed
+}
+
+func (r *Repository) sealProviderOptionHeaders(id ids.RegistryID, options map[string]any) (map[string]any, error) {
+	if !r.encryptWrites || r.sealer == nil {
+		return options, nil
+	}
+	headers, ok := domain.ProviderOptionHeaders(options)
+	if !ok || len(headers) == 0 {
+		return options, nil
+	}
+	sealed := make(map[string]string, len(headers))
+	for name, value := range headers {
+		stored, err := r.sealer.Seal(sealedAAD(fieldProviderHeaderPrefix+name, id), value)
+		if err != nil {
+			return nil, err
+		}
+		sealed[name] = stored
+	}
+	out := maps.Clone(options)
+	out["headers"] = sealed
+	return out, nil
+}
+
+func (r *Repository) openProviderOptionHeaders(ctx context.Context, id ids.RegistryID, target *domain.LLMTarget) {
+	if target == nil {
+		return
+	}
+	headers, ok := domain.ProviderOptionHeaders(target.ProviderOptions)
+	if !ok || len(headers) == 0 {
+		return
+	}
+	opened := make(map[string]string, len(headers))
+	var unreadable []string
+	for name, value := range headers {
+		plain, err := r.sealer.OpenField(sealedAAD(fieldProviderHeaderPrefix+name, id), value)
+		if err != nil {
+			crypto.ReportUnreadableField(ctx, "registries", id.String(), fieldProviderHeaderPrefix+name, value, err)
+			opened[name] = ""
+			unreadable = append(unreadable, name)
+			continue
+		}
+		opened[name] = plain
+	}
+	slices.Sort(unreadable)
+	target.ProviderOptions["headers"] = opened
+	target.UnreadableProviderHeaders = unreadable
+}
+
+func (r *Repository) encodeProviderOptionsForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	b *domain.Registry,
+) ([]byte, error) {
+	options := b.ProviderOptions()
+	if len(options) == 0 {
+		return nil, nil
+	}
+	out, err := r.sealProviderOptionHeaders(b.ID, options)
+	if err != nil {
+		return nil, err
+	}
+	var marks []string
+	if b.LLMTarget != nil {
+		marks = b.LLMTarget.UnreadableProviderHeaders
+	}
+	if len(marks) > 0 {
+		out = cloneProviderOptions(out)
+		stored, err := lockStoredProviderOptions(ctx, tx, b.ID, b.GatewayID)
+		if err != nil {
+			return nil, err
+		}
+		r.keepUnreadableProviderHeaders(b.ID, marks, out, stored)
+	}
+	return json.Marshal(out)
+}
+
+func cloneProviderOptions(options map[string]any) map[string]any {
+	if options == nil {
+		return nil
+	}
+	out := maps.Clone(options)
+	switch headers := out["headers"].(type) {
+	case map[string]string:
+		out["headers"] = maps.Clone(headers)
+	case map[string]any:
+		out["headers"] = maps.Clone(headers)
+	}
+	return out
+}
+
+func lockStoredProviderOptions(
+	ctx context.Context,
+	tx pgx.Tx,
+	id ids.RegistryID,
+	gatewayID ids.GatewayID,
+) (map[string]any, error) {
+	const lock = `SELECT provider_options FROM registries WHERE id = $1 AND gateway_id = $2 FOR UPDATE`
+	var raw []byte
+	if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&raw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("registry repository: lock provider_options: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, fmt.Errorf("registry repository: stored provider_options: %w: %w", commonerrors.ErrCorruptData, err)
+	}
+	return stored, nil
+}
+
+func (r *Repository) keepUnreadableProviderHeaders(id ids.RegistryID, marks []string, out, stored map[string]any) {
+	if len(marks) == 0 || stored == nil || out == nil {
+		return
+	}
+	storedHeaders, _ := domain.ProviderOptionHeaders(stored)
+	for _, name := range marks {
+		if headerValue(out, name) != "" {
+			continue
+		}
+		storedName, prev := storedHeader(storedHeaders, name)
+		if prev == "" {
+			continue
+		}
+		setProviderOptionHeader(out, name, r.resealHeader(id, fieldProviderHeaderPrefix, storedName, name, prev))
+	}
+}
+
+func headerValue(options map[string]any, name string) string {
+	headers, ok := domain.ProviderOptionHeaders(options)
+	if !ok {
+		return ""
+	}
+	if value, ok := headers[name]; ok {
+		return value
+	}
+	_, value := storedHeader(headers, name)
+	return value
+}
+
+func setProviderOptionHeader(options map[string]any, name, value string) {
+	switch headers := options["headers"].(type) {
+	case map[string]string:
+		if _, ok := headers[name]; ok {
+			headers[name] = value
+			return
+		}
+		for _, key := range slices.Sorted(maps.Keys(headers)) {
+			if strings.EqualFold(key, name) {
+				headers[key] = value
+				return
+			}
+		}
+		headers[name] = value
+	case map[string]any:
+		for _, key := range slices.Sorted(maps.Keys(headers)) {
+			if strings.EqualFold(key, name) {
+				headers[key] = value
+				return
+			}
+		}
+		headers[name] = value
+	default:
+		options["headers"] = map[string]string{name: value}
+	}
 }
 
 // hasUnsealedSecrets reports whether a stored target still holds a credential

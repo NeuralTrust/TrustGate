@@ -15,6 +15,7 @@
 package response
 
 import (
+	"maps"
 	"net/url"
 	"strings"
 	"time"
@@ -79,6 +80,16 @@ func maskSecretURLVariables(t *domain.MCPTarget) string {
 	}
 	u.RawQuery = strings.Join(pairs, "&")
 	return u.String()
+}
+
+func maskProviderOptions(options map[string]any) map[string]any {
+	headers, ok := domain.ProviderOptionHeaders(options)
+	if !ok || len(headers) == 0 {
+		return options
+	}
+	out := maps.Clone(options)
+	out["headers"] = maskHeaders(headers)
+	return out
 }
 
 // maskHeaders keeps the header names and masks every value: static headers
@@ -253,7 +264,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Type:            string(regType),
 		Enabled:         b.Enabled,
 		Provider:        b.Provider(),
-		ProviderOptions: b.ProviderOptions(),
+		ProviderOptions: maskProviderOptions(b.ProviderOptions()),
 		Description:     b.Description,
 		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,

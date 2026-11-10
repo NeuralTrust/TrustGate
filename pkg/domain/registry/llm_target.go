@@ -26,6 +26,10 @@ type LLMTarget struct {
 	Auth            *TargetAuth    `json:"auth,omitempty"`
 	HealthChecks    *HealthChecks  `json:"health_checks,omitempty"`
 	Pricing         *Pricing       `json:"pricing,omitempty"`
+	// UnreadableProviderHeaders names provider_options.headers whose stored
+	// values could not be decrypted. An update that echoes them empty or masked
+	// keeps the stored ciphertext.
+	UnreadableProviderHeaders []string `json:"-"`
 }
 
 func (t *LLMTarget) Validate() error {

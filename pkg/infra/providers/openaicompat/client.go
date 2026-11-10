@@ -65,7 +65,7 @@ func (c *client) Completions(
 	if err != nil {
 		return nil, err
 	}
-	return c.chat.Completions(ctx, completionsURL(opts), config, reqBody, opts.Headers)
+	return c.chat.Completions(ctx, completionsURL(opts), config, reqBody, upstreamHeaders(config.Credentials, opts))
 }
 
 func (c *client) CompletionsStream(
@@ -77,7 +77,7 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, err
 	}
-	return c.chat.CompletionsStream(ctx, completionsURL(opts), config, reqBody, opts.Headers)
+	return c.chat.CompletionsStream(ctx, completionsURL(opts), config, reqBody, upstreamHeaders(config.Credentials, opts))
 }
 
 func (c *client) Embeddings(
@@ -89,7 +89,7 @@ func (c *client) Embeddings(
 	if err != nil {
 		return nil, err
 	}
-	return c.chat.Completions(ctx, embeddingsURL(opts), config, reqBody, opts.Headers)
+	return c.chat.Completions(ctx, embeddingsURL(opts), config, reqBody, upstreamHeaders(config.Credentials, opts))
 }
 
 func (c *client) Images(
@@ -101,7 +101,7 @@ func (c *client) Images(
 	if err != nil {
 		return nil, err
 	}
-	return c.chat.Images(ctx, providers.JoinOpenAIImagesURL(opts.BaseURL, req.Path, req.Query), config, req, opts.Headers)
+	return c.chat.Images(ctx, providers.JoinOpenAIImagesURL(opts.BaseURL, req.Path, req.Query), config, req, upstreamHeaders(config.Credentials, opts))
 }
 
 func completionsURL(opts providers.OpenAICompatibleOptions) string {
@@ -137,5 +137,5 @@ func (c *client) audio(
 	if err != nil {
 		return nil, err
 	}
-	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(opts.BaseURL, req.Path, req.Query), config, req, opts.Headers)
+	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(opts.BaseURL, req.Path, req.Query), config, req, upstreamHeaders(config.Credentials, opts))
 }
