@@ -30,121 +30,121 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-func newAgentSecurityPluginAll(t *testing.T, v2URL, agentSecurityURL string, gateways map[string]string) *Plugin {
+func newV2ShadowPluginAll(t *testing.T, v2URL, v2ShadowURL string, gateways map[string]string) *Plugin {
 	t.Helper()
 	p := New(adapter.NewRegistry(), v2URL, testTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)),
-		WithAgentSecurity(AgentSecurityConfig{BaseURL: agentSecurityURL, Timeout: time.Second, ClientID: "agentSecurity-client", ClientSecret: "agentSecurity-secret", Gateways: gateways, ShadowAll: true}))
-	t.Cleanup(p.agentSecurity.wait)
+		WithV2Shadow(V2ShadowConfig{BaseURL: v2ShadowURL, Timeout: time.Second, ClientID: "v2Shadow-client", ClientSecret: "v2Shadow-secret", Gateways: gateways, ShadowAll: true}))
+	t.Cleanup(p.v2Shadow.wait)
 	return p
 }
 
-func runAgentSecurityOnce(t *testing.T, p *Plugin) {
+func runV2ShadowOnce(t *testing.T, p *Plugin) {
 	t.Helper()
 	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 	require.NoError(t, err)
-	p.agentSecurity.wait()
+	p.v2Shadow.wait()
 }
 
-func TestAgentSecurityShadowAllRequestsTokenByGatewayOnly(t *testing.T) {
+func TestV2ShadowAllRequestsTokenByGatewayOnly(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 
-	runAgentSecurityOnce(t, p)
-	runAgentSecurityOnce(t, p)
+	runV2ShadowOnce(t, p)
+	runV2ShadowOnce(t, p)
 
-	requests, tokens, _ := agentSecurity.seen()
+	requests, tokens, _ := v2Shadow.seen()
 	assert.Len(t, requests, 2)
 	require.Len(t, tokens, 1, "gateway-only token is cached")
 	assert.Equal(t, "gw-test", tokens[0]["gateway_id"])
 	assert.NotContains(t, tokens[0], "integration_id")
 }
 
-func TestAgentSecurityShadowAllExplicitMapWins(t *testing.T) {
+func TestV2ShadowAllExplicitMapWins(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": testAgentSecurityIntegrationID})
+	v2Shadow := &fakeV2Shadow{}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, map[string]string{"gw-test": testV2ShadowIntegrationID})
 
-	runAgentSecurityOnce(t, p)
+	runV2ShadowOnce(t, p)
 
-	requests, tokens, _ := agentSecurity.seen()
+	requests, tokens, _ := v2Shadow.seen()
 	assert.Len(t, requests, 1)
 	require.Len(t, tokens, 1)
-	assert.Equal(t, testAgentSecurityIntegrationID, tokens[0]["integration_id"])
+	assert.Equal(t, testV2ShadowIntegrationID, tokens[0]["integration_id"])
 }
 
-func TestAgentSecurityShadowAllTokenCacheSeparatesExplicitFromGatewayOnly(t *testing.T) {
+func TestV2ShadowAllTokenCacheSeparatesExplicitFromGatewayOnly(t *testing.T) {
 	t.Parallel()
 	gwOnly := tokenParams{baseURL: "http://x", gatewayID: "gw"}
-	explicit := tokenParams{baseURL: "http://x", collectorID: testAgentSecurityIntegrationID, gatewayID: "gw"}
+	explicit := tokenParams{baseURL: "http://x", collectorID: testV2ShadowIntegrationID, gatewayID: "gw"}
 	assert.NotEqual(t, gwOnly.cacheKey(), explicit.cacheKey())
 }
 
-func TestAgentSecurityUnknownGatewaySkippedAndCached(t *testing.T) {
+func TestV2ShadowUnknownGatewaySkippedAndCached(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{refuseStatus: http.StatusNotFound, refuseCode: "unknown_gateway"}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{refuseStatus: http.StatusNotFound, refuseCode: "unknown_gateway"}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 
 	for range 3 {
-		runAgentSecurityOnce(t, p)
+		runV2ShadowOnce(t, p)
 	}
 
-	requests, tokens, _ := agentSecurity.seen()
+	requests, tokens, _ := v2Shadow.seen()
 	assert.Empty(t, requests)
 	assert.Len(t, tokens, 1, "the refusal is cached, later requests do not ask")
 	assert.Equal(t, 3, v2.count(), "TrustGuard is unaffected")
 }
 
-func TestAgentSecurityUnknownGatewayAskedAgainAfterTTL(t *testing.T) {
+func TestV2ShadowUnknownGatewayAskedAgainAfterTTL(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{refuseStatus: http.StatusNotFound, refuseCode: "unknown_gateway"}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{refuseStatus: http.StatusNotFound, refuseCode: "unknown_gateway"}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 	clock := time.Now()
-	p.agentSecurity.now = func() time.Time { return clock }
+	p.v2Shadow.now = func() time.Time { return clock }
 
-	runAgentSecurityOnce(t, p)
-	clock = clock.Add(agentSecurityRefusedTTL + time.Second)
-	runAgentSecurityOnce(t, p)
+	runV2ShadowOnce(t, p)
+	clock = clock.Add(v2ShadowRefusedTTL + time.Second)
+	runV2ShadowOnce(t, p)
 
-	_, tokens, _ := agentSecurity.seen()
+	_, tokens, _ := v2Shadow.seen()
 	assert.Len(t, tokens, 2)
 }
 
-func TestAgentSecurityAmbiguousGatewaySkippedAndCached(t *testing.T) {
+func TestV2ShadowAmbiguousGatewaySkippedAndCached(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{refuseStatus: http.StatusConflict, refuseCode: "ambiguous_gateway"}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{refuseStatus: http.StatusConflict, refuseCode: "ambiguous_gateway"}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 
-	runAgentSecurityOnce(t, p)
-	runAgentSecurityOnce(t, p)
+	runV2ShadowOnce(t, p)
+	runV2ShadowOnce(t, p)
 
-	requests, tokens, _ := agentSecurity.seen()
+	requests, tokens, _ := v2Shadow.seen()
 	assert.Empty(t, requests)
 	assert.Len(t, tokens, 1)
 	assert.Equal(t, 2, v2.count())
 }
 
-func newRefusalSender(clock *time.Time) *agentSecuritySender {
-	return &agentSecuritySender{now: func() time.Time { return *clock }, refused: map[string]refusal{}}
+func newRefusalSender(clock *time.Time) *v2ShadowSender {
+	return &v2ShadowSender{now: func() time.Time { return *clock }, refused: map[string]refusal{}}
 }
 
-func TestAgentSecurityRefusedCacheEvictsEarliestAtCap(t *testing.T) {
+func TestV2ShadowRefusedCacheEvictsEarliestAtCap(t *testing.T) {
 	t.Parallel()
 	clock := time.Now()
 	s := newRefusalSender(&clock)
-	for i := range agentSecurityRefusedMax {
+	for i := range v2ShadowRefusedMax {
 		clock = clock.Add(time.Millisecond)
 		assert.True(t, s.markRefused("gw-"+strconv.Itoa(i), codeUnknownGateway))
 	}
 	clock = clock.Add(time.Millisecond)
 	assert.True(t, s.markRefused("new", codeAmbiguousGateway), "the new refusal is cached, not warned on every request")
-	assert.Len(t, s.refused, agentSecurityRefusedMax)
+	assert.Len(t, s.refused, v2ShadowRefusedMax)
 	_, evicted := s.isRefused("gw-0")
 	assert.False(t, evicted, "earliest expiry is evicted")
 	code, ok := s.isRefused("new")
@@ -153,21 +153,21 @@ func TestAgentSecurityRefusedCacheEvictsEarliestAtCap(t *testing.T) {
 	assert.False(t, s.markRefused("new", codeAmbiguousGateway), "second mark in the period is not new")
 }
 
-func TestAgentSecurityRefusedCacheSweepsExpiredAtCap(t *testing.T) {
+func TestV2ShadowRefusedCacheSweepsExpiredAtCap(t *testing.T) {
 	t.Parallel()
 	clock := time.Now()
 	s := newRefusalSender(&clock)
-	for i := range agentSecurityRefusedMax {
+	for i := range v2ShadowRefusedMax {
 		s.markRefused("gw-"+strconv.Itoa(i), codeUnknownGateway)
 	}
-	clock = clock.Add(agentSecurityRefusedTTL + time.Second)
+	clock = clock.Add(v2ShadowRefusedTTL + time.Second)
 	s.markRefused("fresh", codeUnknownGateway)
 	assert.Len(t, s.refused, 1)
 }
 
-func TestAgentSecurityRefusedCacheParallel(t *testing.T) {
+func TestV2ShadowRefusedCacheParallel(t *testing.T) {
 	t.Parallel()
-	s := &agentSecuritySender{now: time.Now, refused: map[string]refusal{}}
+	s := &v2ShadowSender{now: time.Now, refused: map[string]refusal{}}
 	var wg sync.WaitGroup
 	for i := range 16 {
 		wg.Add(1)
@@ -184,7 +184,7 @@ func TestAgentSecurityRefusedCacheParallel(t *testing.T) {
 	assert.LessOrEqual(t, len(s.refused), 64)
 }
 
-func TestAgentSecurityAmbiguousCachedOutcomeLabel(t *testing.T) {
+func TestV2ShadowAmbiguousCachedOutcomeLabel(t *testing.T) {
 	t.Parallel()
 	clock := time.Now()
 	s := newRefusalSender(&clock)
@@ -194,33 +194,33 @@ func TestAgentSecurityAmbiguousCachedOutcomeLabel(t *testing.T) {
 	assert.Equal(t, codeAmbiguousGateway, code, "cached hits report the matching outcome")
 }
 
-func TestAgentSecurityNotFoundTokenErrorIsNotCachedAsRefusal(t *testing.T) {
+func TestV2ShadowNotFoundTokenErrorIsNotCachedAsRefusal(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{refuseStatus: http.StatusNotFound, refuseCode: "not_found"}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{refuseStatus: http.StatusNotFound, refuseCode: "not_found"}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 
-	runAgentSecurityOnce(t, p)
-	assert.Empty(t, p.agentSecurity.refused)
-	assert.True(t, p.agentSecurity.inTokenBackoff(), "a plain token failure pauses copies")
+	runV2ShadowOnce(t, p)
+	assert.Empty(t, p.v2Shadow.refused)
+	assert.True(t, p.v2Shadow.inTokenBackoff(), "a plain token failure pauses copies")
 }
 
-func TestAgentSecurityTokenFailureBacksOffThenRetries(t *testing.T) {
+func TestV2ShadowTokenFailureBacksOffThenRetries(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{refuseStatus: http.StatusInternalServerError, refuseCode: "boom"}
-	p := newAgentSecurityPluginAll(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, nil)
+	v2Shadow := &fakeV2Shadow{refuseStatus: http.StatusInternalServerError, refuseCode: "boom"}
+	p := newV2ShadowPluginAll(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, nil)
 	clock := time.Now()
-	p.agentSecurity.now = func() time.Time { return clock }
+	p.v2Shadow.now = func() time.Time { return clock }
 
-	runAgentSecurityOnce(t, p)
-	runAgentSecurityOnce(t, p)
-	_, tokens, _ := agentSecurity.seen()
+	runV2ShadowOnce(t, p)
+	runV2ShadowOnce(t, p)
+	_, tokens, _ := v2Shadow.seen()
 	assert.Len(t, tokens, 1, "no token request during the backoff")
 
-	clock = clock.Add(agentSecurityTokenBackoff + time.Second)
-	runAgentSecurityOnce(t, p)
-	_, tokens, _ = agentSecurity.seen()
+	clock = clock.Add(v2ShadowTokenBackoff + time.Second)
+	runV2ShadowOnce(t, p)
+	_, tokens, _ = v2Shadow.seen()
 	assert.Len(t, tokens, 2)
 }
 
@@ -262,22 +262,22 @@ func TestTokenStatusError(t *testing.T) {
 	}
 }
 
-func TestAgentSecurityShadowOffUnchanged(t *testing.T) {
+func TestV2ShadowOffUnchanged(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	agentSecurity := &fakeAgentSecurity{}
-	p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-other": ""})
+	v2Shadow := &fakeV2Shadow{}
+	p := newV2ShadowPlugin(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, map[string]string{"gw-other": ""})
 
-	runAgentSecurityOnce(t, p)
+	runV2ShadowOnce(t, p)
 
-	requests, tokens, _ := agentSecurity.seen()
+	requests, tokens, _ := v2Shadow.seen()
 	assert.Empty(t, requests)
 	assert.Empty(t, tokens)
 }
 
-func TestAgentSecurityShadowAllStillNeedsCredentials(t *testing.T) {
+func TestV2ShadowAllStillNeedsCredentials(t *testing.T) {
 	t.Parallel()
-	assert.False(t, AgentSecurityConfig{BaseURL: "http://x", ClientID: "id", ShadowAll: true}.enabled())
-	assert.False(t, AgentSecurityConfig{ClientID: "id", ClientSecret: "s", ShadowAll: true}.enabled())
-	assert.True(t, AgentSecurityConfig{BaseURL: "http://x", ClientID: "id", ClientSecret: "s", ShadowAll: true}.enabled())
+	assert.False(t, V2ShadowConfig{BaseURL: "http://x", ClientID: "id", ShadowAll: true}.enabled())
+	assert.False(t, V2ShadowConfig{ClientID: "id", ClientSecret: "s", ShadowAll: true}.enabled())
+	assert.True(t, V2ShadowConfig{BaseURL: "http://x", ClientID: "id", ClientSecret: "s", ShadowAll: true}.enabled())
 }
