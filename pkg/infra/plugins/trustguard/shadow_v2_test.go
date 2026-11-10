@@ -62,6 +62,8 @@ type fakeV2Shadow struct {
 	// refuse answers every gateway-only token request with this status and code.
 	refuseStatus int
 	refuseCode   string
+	// activeVersion is what the gateway-only token answers in active_version; empty omits it.
+	activeVersion string
 }
 
 func (f *fakeV2Shadow) handler() http.HandlerFunc {
@@ -78,7 +80,7 @@ func (f *fakeV2Shadow) handler() http.HandlerFunc {
 				_, _ = w.Write([]byte(`{"error":"` + f.refuseCode + `"}`))
 				return
 			}
-			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v2Shadow-token", TokenType: "Bearer", ExpiresIn: 3600})
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v2Shadow-token", TokenType: "Bearer", ExpiresIn: 3600, ActiveVersion: f.activeVersion})
 			return
 		}
 		if r.URL.Path != v2EvaluatePath {
@@ -202,6 +204,30 @@ func TestV2ShadowCopiesTheEvaluationInGuardsShape(t *testing.T) {
 	assert.Equal(t, "gw-test", tokens[0]["gateway_id"])
 	assert.Equal(t, tokenScopePlatform, tokens[0]["scope"])
 	assert.Equal(t, "test-shadow-client", tokens[0]["client_id"])
+}
+
+// A migrated org still active on v1 is shadowed: the copy path asks for its own token and never consults the engine
+// resolver, so active_version "v1" changes nothing for it.
+func TestV2ShadowKeepsCopyingAMigratedOrgStillOnV1(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"v1", "v2", ""} {
+		t.Run("active_version "+version, func(t *testing.T) {
+			t.Parallel()
+			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+			v2Shadow := &fakeV2Shadow{activeVersion: version}
+			p := newV2ShadowPlugin(t, newServer(t, v2).URL, newV2ShadowServer(t, v2Shadow).URL, map[string]string{"gw-test": ""})
+
+			_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
+			require.NoError(t, err)
+			p.v2Shadow.wait()
+
+			requests, tokens, invalid := v2Shadow.seen()
+			assert.Zero(t, invalid)
+			assert.Len(t, tokens, 1)
+			assert.Len(t, requests, 1, "the copy is sent whatever version the org is active on")
+			assert.Equal(t, 1, v2.count(), "the live evaluation still goes to the configured TrustGuard")
+		})
+	}
 }
 
 func TestV2ShadowIntegrationOverrideAndTokenCache(t *testing.T) {
