@@ -136,7 +136,7 @@ func newV2ShadowPlugin(t *testing.T, v2URL, v2ShadowURL string, gateways map[str
 	t.Helper()
 	p := New(adapter.NewRegistry(), v2URL, testTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)),
-		WithV2Shadow(V2ShadowConfig{BaseURL: v2ShadowURL, Timeout: time.Second, ClientID: "v2Shadow-client", ClientSecret: "v2Shadow-secret", Gateways: gateways}))
+		WithV2Shadow(V2ShadowConfig{BaseURL: v2ShadowURL, Timeout: time.Second, ClientID: "test-shadow-client", ClientSecret: "test-shadow-secret", Gateways: gateways}))
 	t.Cleanup(p.v2Shadow.wait)
 	return p
 }
@@ -201,7 +201,7 @@ func TestV2ShadowCopiesTheEvaluationInGuardsShape(t *testing.T) {
 	assert.NotContains(t, tokens[0], "collector_id")
 	assert.Equal(t, "gw-test", tokens[0]["gateway_id"])
 	assert.Equal(t, tokenScopePlatform, tokens[0]["scope"])
-	assert.Equal(t, "v2Shadow-client", tokens[0]["client_id"])
+	assert.Equal(t, "test-shadow-client", tokens[0]["client_id"])
 }
 
 func TestV2ShadowIntegrationOverrideAndTokenCache(t *testing.T) {

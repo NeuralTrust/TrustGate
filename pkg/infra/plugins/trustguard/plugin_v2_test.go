@@ -128,7 +128,7 @@ func newV2Engine(t *testing.T, f *fakeV2Engine) *httptest.Server {
 
 func newV2TestPlugin(t *testing.T, baseURL string) *Plugin {
 	t.Helper()
-	return NewV2(adapter.NewRegistry(), baseURL, testTimeout, "v2-client", "v2-secret", nil, withBaseTransport(testTransport(t)))
+	return NewV2(adapter.NewRegistry(), baseURL, testTimeout, "test-v2-client", "test-v2-secret", nil, withBaseTransport(testTransport(t)))
 }
 
 func v2Settings(direction string) map[string]any {
@@ -174,8 +174,8 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 	defer f.mu.Unlock()
 	assert.Equal(t, []string{v2TokenPath, v2EvaluatePath}, f.paths, "token on /v2/token, evaluation on /v2/evaluate, nothing on /v1")
 	require.Len(t, f.tokens, 1)
-	assert.Equal(t, "v2-client", f.tokens[0]["client_id"])
-	assert.Equal(t, "v2-secret", f.tokens[0]["client_secret"])
+	assert.Equal(t, "test-v2-client", f.tokens[0]["client_id"])
+	assert.Equal(t, "test-v2-secret", f.tokens[0]["client_secret"])
 	assert.Equal(t, "platform", f.tokens[0]["scope"])
 	assert.Equal(t, "gw-test", f.tokens[0]["gateway_id"])
 	assert.NotContains(t, f.tokens[0], "integration_id", "no collector_id configured: TrustGuard resolves it from the gateway")
@@ -370,7 +370,7 @@ func TestV2PluginFailureModes(t *testing.T) {
 
 			closed := v2Settings("")
 			closed["failure_mode"] = failureModeClosed
-			res, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, closed, requestContext(), nil))
+			_, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, closed, requestContext(), nil))
 			pe, ok := appplugins.AsPluginError(err)
 			require.True(t, ok, "closed refuses what it could not evaluate, got %v", err)
 			assert.Equal(t, http.StatusForbidden, pe.StatusCode)

@@ -34,7 +34,7 @@ func newV2ShadowPluginAll(t *testing.T, v2URL, v2ShadowURL string, gateways map[
 	t.Helper()
 	p := New(adapter.NewRegistry(), v2URL, testTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)),
-		WithV2Shadow(V2ShadowConfig{BaseURL: v2ShadowURL, Timeout: time.Second, ClientID: "v2Shadow-client", ClientSecret: "v2Shadow-secret", Gateways: gateways, ShadowAll: true}))
+		WithV2Shadow(V2ShadowConfig{BaseURL: v2ShadowURL, Timeout: time.Second, ClientID: "test-shadow-client", ClientSecret: "test-shadow-secret", Gateways: gateways, ShadowAll: true}))
 	t.Cleanup(p.v2Shadow.wait)
 	return p
 }
