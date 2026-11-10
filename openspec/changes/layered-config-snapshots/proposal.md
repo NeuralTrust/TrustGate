@@ -79,7 +79,7 @@ Linear: ENG-3112 (TrustGate). Parent: ENG-3111. Builds on TrustGate#1273
 ### Out of Scope
 - Incremental apply on the data plane: it still decodes the assembled
   snapshot, which costs about 150 ms today.
-- TrustGuard v2 (ENG-3113) and TrustGuard-v3 (ENG-3114): they port this
+- TrustGuard v2 (ENG-3113) and AgentSecurity (ENG-3114): they port this
   design once it is validated here.
 - A single compiling replica or leader election, and any debounce or rate
   limit that adds latency.

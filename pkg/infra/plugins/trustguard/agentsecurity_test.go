@@ -33,10 +33,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-const testV3IntegrationID = "22222222-2222-4222-8222-222222222222"
+const testAgentSecurityIntegrationID = "22222222-2222-4222-8222-222222222222"
 
-// v3WireRequest is Guard's /v1/evaluate decoder: unknown fields are a 400.
-type v3WireRequest struct {
+// agentSecurityWireRequest is AgentSecurity's /v1/evaluate decoder: unknown fields are a 400.
+type agentSecurityWireRequest struct {
 	OriginalRequest *struct {
 		IP      string              `json:"ip,omitempty"`
 		Headers map[string][]string `json:"headers,omitempty"`
@@ -51,20 +51,20 @@ type v3WireRequest struct {
 	Attributes     map[string]any  `json:"attributes"`
 }
 
-type fakeV3 struct {
+type fakeAgentSecurity struct {
 	mu       sync.Mutex
 	status   int
 	delay    time.Duration
 	answer   string
 	tokens   []map[string]any
-	requests []v3WireRequest
+	requests []agentSecurityWireRequest
 	invalid  int
 	// refuse answers every gateway-only token request with this status and code.
 	refuseStatus int
 	refuseCode   string
 }
 
-func (f *fakeV3) handler() http.HandlerFunc {
+func (f *fakeAgentSecurity) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == tokenPath {
 			var body map[string]any
@@ -78,7 +78,7 @@ func (f *fakeV3) handler() http.HandlerFunc {
 				_, _ = w.Write([]byte(`{"error":"` + f.refuseCode + `"}`))
 				return
 			}
-			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v3-token", TokenType: "Bearer", ExpiresIn: 3600})
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "agentSecurity-token", TokenType: "Bearer", ExpiresIn: 3600})
 			return
 		}
 		if f.delay > 0 {
@@ -90,10 +90,10 @@ func (f *fakeV3) handler() http.HandlerFunc {
 		}
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
-		var body v3WireRequest
+		var body agentSecurityWireRequest
 		err := dec.Decode(&body)
 		f.mu.Lock()
-		if err != nil || r.Header.Get("Authorization") != "Bearer v3-token" {
+		if err != nil || r.Header.Get("Authorization") != "Bearer agentSecurity-token" {
 			f.invalid++
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusBadRequest)
@@ -115,29 +115,29 @@ func (f *fakeV3) handler() http.HandlerFunc {
 	}
 }
 
-func (f *fakeV3) seen() ([]v3WireRequest, []map[string]any, int) {
+func (f *fakeAgentSecurity) seen() ([]agentSecurityWireRequest, []map[string]any, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]v3WireRequest(nil), f.requests...), append([]map[string]any(nil), f.tokens...), f.invalid
+	return append([]agentSecurityWireRequest(nil), f.requests...), append([]map[string]any(nil), f.tokens...), f.invalid
 }
 
-func newV3Server(t *testing.T, f *fakeV3) *httptest.Server {
+func newAgentSecurityServer(t *testing.T, f *fakeAgentSecurity) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-func newV3Plugin(t *testing.T, v2URL, v3URL string, gateways map[string]string) *Plugin {
+func newAgentSecurityPlugin(t *testing.T, v2URL, agentSecurityURL string, gateways map[string]string) *Plugin {
 	t.Helper()
 	p := New(adapter.NewRegistry(), v2URL, testTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)),
-		WithV3(V3Config{BaseURL: v3URL, Timeout: time.Second, ClientID: "v3-client", ClientSecret: "v3-secret", Gateways: gateways}))
-	t.Cleanup(p.v3.wait)
+		WithAgentSecurity(AgentSecurityConfig{BaseURL: agentSecurityURL, Timeout: time.Second, ClientID: "agentSecurity-client", ClientSecret: "agentSecurity-secret", Gateways: gateways}))
+	t.Cleanup(p.agentSecurity.wait)
 	return p
 }
 
-func TestV3OffSendsNothing(t *testing.T) {
+func TestAgentSecurityOffSendsNothing(t *testing.T) {
 	t.Parallel()
 	for name, gateways := range map[string]map[string]string{
 		"no gateways":     nil,
@@ -147,14 +147,14 @@ func TestV3OffSendsNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-			v3 := &fakeV3{}
-			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, gateways)
+			agentSecurity := &fakeAgentSecurity{}
+			p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, gateways)
 
 			_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 			require.NoError(t, err)
-			p.v3.wait()
+			p.agentSecurity.wait()
 
-			requests, tokens, invalid := v3.seen()
+			requests, tokens, invalid := agentSecurity.seen()
 			assert.Equal(t, 1, v2.count())
 			assert.Empty(t, requests)
 			assert.Empty(t, tokens)
@@ -163,19 +163,19 @@ func TestV3OffSendsNothing(t *testing.T) {
 	}
 }
 
-func TestV3CopiesTheEvaluationInGuardsShape(t *testing.T) {
+func TestAgentSecurityCopiesTheEvaluationInGuardsShape(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+	agentSecurity := &fakeAgentSecurity{}
+	p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 	req := requestContext()
 	req.ConsumerName = "Support bot"
 
 	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
 	require.NoError(t, err)
-	p.v3.wait()
+	p.agentSecurity.wait()
 
-	requests, tokens, invalid := v3.seen()
+	requests, tokens, invalid := agentSecurity.seen()
 	require.Zero(t, invalid)
 	require.Len(t, requests, 1)
 	got := requests[0]
@@ -197,28 +197,28 @@ func TestV3CopiesTheEvaluationInGuardsShape(t *testing.T) {
 	assert.NotContains(t, tokens[0], "collector_id")
 	assert.Equal(t, "gw-test", tokens[0]["gateway_id"])
 	assert.Equal(t, tokenScopePlatform, tokens[0]["scope"])
-	assert.Equal(t, "v3-client", tokens[0]["client_id"])
+	assert.Equal(t, "agentSecurity-client", tokens[0]["client_id"])
 }
 
-func TestV3IntegrationOverrideAndTokenCache(t *testing.T) {
+func TestAgentSecurityIntegrationOverrideAndTokenCache(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": testV3IntegrationID})
+	agentSecurity := &fakeAgentSecurity{}
+	p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": testAgentSecurityIntegrationID})
 
 	for range 3 {
 		_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 		require.NoError(t, err)
-		p.v3.wait()
+		p.agentSecurity.wait()
 	}
 
-	requests, tokens, _ := v3.seen()
+	requests, tokens, _ := agentSecurity.seen()
 	assert.Len(t, requests, 3)
 	require.Len(t, tokens, 1, "the token is cached like TrustGuard's")
-	assert.Equal(t, testV3IntegrationID, tokens[0]["integration_id"])
+	assert.Equal(t, testAgentSecurityIntegrationID, tokens[0]["integration_id"])
 }
 
-func TestV3CopiesMCPWithItsServer(t *testing.T) {
+func TestAgentSecurityCopiesMCPWithItsServer(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
 		code string
@@ -231,17 +231,17 @@ func TestV3CopiesMCPWithItsServer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-			v3 := &fakeV3{}
-			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+			agentSecurity := &fakeAgentSecurity{}
+			p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 			req := mcpRequestContext()
 			req.MCPServerID = "reg-1"
 			req.MCPServerCode = tc.code
 
 			_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
 			require.NoError(t, err)
-			p.v3.wait()
+			p.agentSecurity.wait()
 
-			requests, _, invalid := v3.seen()
+			requests, _, invalid := agentSecurity.seen()
 			require.Zero(t, invalid)
 			require.Len(t, requests, 1)
 			assert.Equal(t, protocolMCP, requests[0].Protocol)
@@ -251,70 +251,70 @@ func TestV3CopiesMCPWithItsServer(t *testing.T) {
 	}
 }
 
-func TestV3SkipsA2A(t *testing.T) {
+func TestAgentSecuritySkipsA2A(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+	agentSecurity := &fakeAgentSecurity{}
+	p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 	req := requestContext()
 	req.ConsumerType = protocolA2A
 
 	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
 	require.NoError(t, err)
-	p.v3.wait()
+	p.agentSecurity.wait()
 
-	requests, tokens, _ := v3.seen()
+	requests, tokens, _ := agentSecurity.seen()
 	assert.Equal(t, protocolA2A, v2.captured().Protocol)
 	assert.Empty(t, requests)
 	assert.Empty(t, tokens)
 }
 
-func TestV3NeverDecides(t *testing.T) {
+func TestAgentSecurityNeverDecides(t *testing.T) {
 	t.Parallel()
-	cases := map[string]*fakeV3{
-		"v3 blocks":       {answer: `{"status":"block","findings":[],"mode":"enforce"}`},
-		"v3 refuses":      {status: http.StatusBadRequest},
-		"v3 fails":        {status: http.StatusInternalServerError},
-		"v3 rate limited": {status: http.StatusTooManyRequests},
+	cases := map[string]*fakeAgentSecurity{
+		"agentsecurity blocks":       {answer: `{"status":"block","findings":[],"mode":"enforce"}`},
+		"agentsecurity refuses":      {status: http.StatusBadRequest},
+		"agentsecurity fails":        {status: http.StatusInternalServerError},
+		"agentsecurity rate limited": {status: http.StatusTooManyRequests},
 	}
-	for name, v3 := range cases {
+	for name, agentSecurity := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+			p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 
 			res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 			require.NoError(t, err)
 			assert.Equal(t, passThrough(), res)
-			p.v3.wait()
+			p.agentSecurity.wait()
 		})
 	}
 
-	t.Run("v2 blocks, v3 allows", func(t *testing.T) {
+	t.Run("v2 blocks, agentsecurity allows", func(t *testing.T) {
 		t.Parallel()
 		v2 := &fakeGuard{response: GuardResponse{Status: statusBlock}}
-		p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, &fakeV3{}).URL, map[string]string{"gw-test": ""})
+		p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, &fakeAgentSecurity{}).URL, map[string]string{"gw-test": ""})
 
 		res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 		assert.Nil(t, res)
 		_, blocked := appplugins.AsPluginError(err)
 		assert.True(t, blocked)
-		p.v3.wait()
+		p.agentSecurity.wait()
 	})
 }
 
-func TestV3SlowOrDownDoesNotDelay(t *testing.T) {
+func TestAgentSecuritySlowOrDownDoesNotDelay(t *testing.T) {
 	t.Parallel()
-	slow := &fakeV3{delay: 3 * time.Second}
+	slow := &fakeAgentSecurity{delay: 3 * time.Second}
 	cases := map[string]string{
-		"slow": newV3Server(t, slow).URL,
+		"slow": newAgentSecurityServer(t, slow).URL,
 		"down": "http://127.0.0.1:1",
 	}
-	for name, v3URL := range cases {
+	for name, agentSecurityURL := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-			p := newV3Plugin(t, newServer(t, v2).URL, v3URL, map[string]string{"gw-test": ""})
+			p := newAgentSecurityPlugin(t, newServer(t, v2).URL, agentSecurityURL, map[string]string{"gw-test": ""})
 
 			start := time.Now()
 			res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
@@ -326,33 +326,33 @@ func TestV3SlowOrDownDoesNotDelay(t *testing.T) {
 	}
 }
 
-func TestV3DropsPastTheBound(t *testing.T) {
+func TestAgentSecurityDropsPastTheBound(t *testing.T) {
 	t.Parallel()
 	v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
-	for range cap(p.v3.slots) {
-		p.v3.slots <- struct{}{}
+	agentSecurity := &fakeAgentSecurity{}
+	p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
+	for range cap(p.agentSecurity.slots) {
+		p.agentSecurity.slots <- struct{}{}
 	}
 
 	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil))
 	require.NoError(t, err)
-	for range cap(p.v3.slots) {
-		<-p.v3.slots
+	for range cap(p.agentSecurity.slots) {
+		<-p.agentSecurity.slots
 	}
-	p.v3.wait()
+	p.agentSecurity.wait()
 
-	requests, tokens, _ := v3.seen()
+	requests, tokens, _ := agentSecurity.seen()
 	assert.Equal(t, 1, v2.count())
 	assert.Empty(t, requests)
 	assert.Empty(t, tokens)
 }
 
-func TestV3CopiesEachStreamBlock(t *testing.T) {
+func TestAgentSecurityCopiesEachStreamBlock(t *testing.T) {
 	t.Parallel()
 	g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
-	v3 := &fakeV3{}
-	p := newV3Plugin(t, newSegmentServer(t, g).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+	agentSecurity := &fakeAgentSecurity{}
+	p := newAgentSecurityPlugin(t, newSegmentServer(t, g).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 	in := segmentInput(t, streamingSettings(nil))
 	in.Request.SentModel = "gpt-4.1"
 
@@ -363,10 +363,10 @@ func TestV3CopiesEachStreamBlock(t *testing.T) {
 	for _, seg := range segments {
 		_, err := p.InspectSegment(segmentTraceContext(), in, seg)
 		require.NoError(t, err)
-		p.v3.wait()
+		p.agentSecurity.wait()
 	}
 
-	requests, _, invalid := v3.seen()
+	requests, _, invalid := agentSecurity.seen()
 	require.Zero(t, invalid)
 	require.Len(t, requests, len(segments))
 	calls := g.calls()
@@ -380,15 +380,15 @@ func TestV3CopiesEachStreamBlock(t *testing.T) {
 	}
 }
 
-func TestV3PayloadIsACopy(t *testing.T) {
+func TestAgentSecurityPayloadIsACopy(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
-	req := toV3Request(GuardRequest{Payload: payload}, nil)
+	req := toAgentSecurityRequest(GuardRequest{Payload: payload}, nil)
 	copy(payload, bytes.Repeat([]byte("x"), len(payload)))
 	assert.JSONEq(t, `{"messages":[{"role":"user","content":"hi"}]}`, string(req.Payload))
 }
 
-func TestV3ModelIdentity(t *testing.T) {
+func TestAgentSecurityModelIdentity(t *testing.T) {
 	t.Parallel()
 	const resolved = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 	cases := []struct {
@@ -422,7 +422,7 @@ func TestV3ModelIdentity(t *testing.T) {
 			if tc.sent != "" {
 				direction = directionOutput
 			}
-			got := toV3Request(GuardRequest{Direction: direction}, req).Attributes.Model
+			got := toAgentSecurityRequest(GuardRequest{Direction: direction}, req).Attributes.Model
 			require.NotNil(t, got)
 			assert.Equal(t, tc.want, got.Name)
 			assert.Equal(t, "openai", got.Provider)
@@ -431,14 +431,14 @@ func TestV3ModelIdentity(t *testing.T) {
 	}
 }
 
-func TestV3NativeMCPToolOnBothDirections(t *testing.T) {
+func TestAgentSecurityNativeMCPToolOnBothDirections(t *testing.T) {
 	t.Parallel()
 	for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
 		t.Run(string(stage), func(t *testing.T) {
 			t.Parallel()
 			v2 := &fakeGuard{response: GuardResponse{Status: statusAllow}}
-			v3 := &fakeV3{}
-			p := newV3Plugin(t, newServer(t, v2).URL, newV3Server(t, v3).URL, map[string]string{"gw-test": ""})
+			agentSecurity := &fakeAgentSecurity{}
+			p := newAgentSecurityPlugin(t, newServer(t, v2).URL, newAgentSecurityServer(t, agentSecurity).URL, map[string]string{"gw-test": ""})
 			req := mcpRequestContext()
 			req.MCPServerID, req.MCPServerName, req.MCPTool = "shelf-id", "Analytics", "run_query"
 			var response *infracontext.ResponseContext
@@ -447,8 +447,8 @@ func TestV3NativeMCPToolOnBothDirections(t *testing.T) {
 			}
 			_, err := p.Execute(context.Background(), execInput(stage, policy.ModeEnforce, settings(""), req, response))
 			require.NoError(t, err)
-			p.v3.wait()
-			requests, _, invalid := v3.seen()
+			p.agentSecurity.wait()
+			requests, _, invalid := agentSecurity.seen()
 			require.Zero(t, invalid)
 			require.Len(t, requests, 1)
 			assert.Equal(t, map[string]any{"id": "shelf-id", "name": "Analytics", "tool": map[string]any{"name": "run_query"}}, requests[0].Attributes["mcp_server"])
@@ -465,24 +465,24 @@ func TestV3NativeMCPToolOnBothDirections(t *testing.T) {
 	}
 }
 
-func TestV3FailureReason(t *testing.T) {
+func TestAgentSecurityFailureReason(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
 		err  error
 		want string
 	}{
-		"bad request":  {&v3StatusError{status: http.StatusBadRequest}, "bad_request"},
-		"unauthorized": {&v3StatusError{status: http.StatusForbidden}, failureReasonUnauthorized},
+		"bad request":  {&agentSecurityStatusError{status: http.StatusBadRequest}, "bad_request"},
+		"unauthorized": {&agentSecurityStatusError{status: http.StatusForbidden}, failureReasonUnauthorized},
 		"token":        {&authRejectedError{status: http.StatusBadRequest}, failureReasonUnauthorized},
-		"rate limited": {&v3StatusError{status: http.StatusTooManyRequests}, "rate_limited"},
-		"server":       {&v3StatusError{status: http.StatusBadGateway}, "status_502"},
+		"rate limited": {&agentSecurityStatusError{status: http.StatusTooManyRequests}, "rate_limited"},
+		"server":       {&agentSecurityStatusError{status: http.StatusBadGateway}, "status_502"},
 		"timeout":      {context.DeadlineExceeded, failureReasonTimeout},
 		"transport":    {assert.AnError, failureReasonTransport},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, v3FailureReason(tc.err))
+			assert.Equal(t, tc.want, agentSecurityFailureReason(tc.err))
 		})
 	}
 }
