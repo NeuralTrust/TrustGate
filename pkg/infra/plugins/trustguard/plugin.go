@@ -164,7 +164,7 @@ type Plugin struct {
 	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
-	v3 *v3Sender
+	agentSecurity *agentSecuritySender
 
 	cfgCache sync.Map
 
@@ -194,13 +194,13 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 	// (see fetchOnce), so the client timeout is the only bound it has.
 	tokenHTTP := &http.Client{Timeout: timeout, Transport: c.http.Transport}
 	return &Plugin{
-		registry: registry,
-		client:   c,
-		tokens:   newTokenManager(tokenHTTP, clientID, clientSecret),
-		baseURL:  baseURL,
-		logger:   logger,
-		timeout:  timeout,
-		v3:       newV3Sender(cfg.v3, cfg.baseTransport, logger),
+		registry:      registry,
+		client:        c,
+		tokens:        newTokenManager(tokenHTTP, clientID, clientSecret),
+		baseURL:       baseURL,
+		logger:        logger,
+		timeout:       timeout,
+		agentSecurity: newAgentSecuritySender(cfg.agentSecurity, cfg.baseTransport, logger),
 	}
 }
 
@@ -361,7 +361,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
-	p.v3.send(ctx, cfg.CollectorID, traceID, body, in.Request)
+	p.agentSecurity.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {

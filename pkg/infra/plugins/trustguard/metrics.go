@@ -70,29 +70,29 @@ const (
 )
 
 var (
-	instrumentsOnce    sync.Once
-	evaluateFailures   metric.Int64Counter
-	streamEvals        metric.Int64Counter
-	streamResponses    metric.Int64Counter
-	streamGuardCalls   metric.Int64Histogram
-	streamAddedLatency metric.Int64Histogram
-	v3Evaluates        metric.Int64Counter
-	v3Failures         metric.Int64Counter
-	v3Latency          metric.Int64Histogram
+	instrumentsOnce        sync.Once
+	evaluateFailures       metric.Int64Counter
+	streamEvals            metric.Int64Counter
+	streamResponses        metric.Int64Counter
+	streamGuardCalls       metric.Int64Histogram
+	streamAddedLatency     metric.Int64Histogram
+	agentSecurityEvaluates metric.Int64Counter
+	agentSecurityFailures  metric.Int64Counter
+	agentSecurityLatency   metric.Int64Histogram
 )
 
 // Outcomes of agentsecurity_evaluate_total: answered, failed, never sent
 // because AgentSecurity has no a2a, or dropped because too many copies were waiting.
 const (
-	v3OutcomeOK      = "ok"
-	v3OutcomeFailed  = "failed"
-	v3OutcomeSkipped = "skipped"
-	v3OutcomeDropped = "dropped"
+	agentSecurityOutcomeOK      = "ok"
+	agentSecurityOutcomeFailed  = "failed"
+	agentSecurityOutcomeSkipped = "skipped"
+	agentSecurityOutcomeDropped = "dropped"
 	// Skips by gateway: AgentSecurity does not know it or cannot pick its integration.
-	v3OutcomeUnknownGateway   = "skipped_unknown_gateway"
-	v3OutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
+	agentSecurityOutcomeUnknownGateway   = "skipped_unknown_gateway"
+	agentSecurityOutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
 	// Skipped during the backoff that follows a failed token request.
-	v3OutcomeTokenBackoff = "skipped_token_unavailable"
+	agentSecurityOutcomeTokenBackoff = "skipped_token_unavailable"
 )
 
 func initInstruments() {
@@ -135,56 +135,56 @@ func initInstruments() {
 			"agentsecurity_evaluate_total",
 			metric.WithDescription("Evaluations copied to AgentSecurity by outcome"),
 		); err == nil {
-			v3Evaluates = c
+			agentSecurityEvaluates = c
 		}
 		if c, err := meter.Int64Counter(
 			"agentsecurity_evaluate_failures_total",
 			metric.WithDescription("AgentSecurity evaluate copies that failed, by reason"),
 		); err == nil {
-			v3Failures = c
+			agentSecurityFailures = c
 		}
 		if h, err := meter.Int64Histogram(
 			"agentsecurity_evaluate_latency_ms",
 			metric.WithUnit("ms"),
 			metric.WithDescription("Duration of the AgentSecurity evaluate copy, token included, by outcome"),
 		); err == nil {
-			v3Latency = h
+			agentSecurityLatency = h
 		}
 	})
 }
 
-func recordV3Outcome(ctx context.Context, outcome string) {
+func recordAgentSecurityOutcome(ctx context.Context, outcome string) {
 	initInstruments()
-	if v3Evaluates == nil {
+	if agentSecurityEvaluates == nil {
 		return
 	}
-	v3Evaluates.Add(ctx, 1, metric.WithAttributes(
+	agentSecurityEvaluates.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("outcome", outcome),
 	))
 }
 
-func recordV3Call(ctx context.Context, elapsed time.Duration, err error) {
-	outcome := v3OutcomeOK
+func recordAgentSecurityCall(ctx context.Context, elapsed time.Duration, err error) {
+	outcome := agentSecurityOutcomeOK
 	if err != nil {
-		outcome = v3OutcomeFailed
+		outcome = agentSecurityOutcomeFailed
 	}
-	recordV3Outcome(ctx, outcome)
-	if v3Latency != nil {
-		v3Latency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
+	recordAgentSecurityOutcome(ctx, outcome)
+	if agentSecurityLatency != nil {
+		agentSecurityLatency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
 			attribute.String("outcome", outcome),
 		))
 	}
-	if err != nil && v3Failures != nil {
-		v3Failures.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("reason", v3FailureReason(err)),
+	if err != nil && agentSecurityFailures != nil {
+		agentSecurityFailures.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("reason", agentSecurityFailureReason(err)),
 		))
 	}
 }
 
-// v3FailureReason keeps a 400 apart from every other refusal: it is AgentSecurity
+// agentSecurityFailureReason keeps a 400 apart from every other refusal: it is AgentSecurity
 // rejecting the body this plugin built, which is the contract breaking.
-func v3FailureReason(err error) string {
-	var status *v3StatusError
+func agentSecurityFailureReason(err error) string {
+	var status *agentSecurityStatusError
 	var rejected *authRejectedError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
