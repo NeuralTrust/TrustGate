@@ -481,6 +481,35 @@ func TestTrustGuardSchema(t *testing.T) {
 	}
 }
 
+func TestTrustGuardV2Schema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["trustguard_v2"]
+	require.True(t, ok)
+	assert.Equal(t, "TrustGuard v2", meta.name)
+	assert.Equal(t, groupGuardrails, meta.group)
+
+	v1 := pluginCatalogMeta["trustguard"]
+	keys := func(fields []Field) []string {
+		out := make([]string, 0, len(fields))
+		for _, f := range fields {
+			out = append(out, f.Key)
+		}
+		return out
+	}
+	assert.Equal(t, keys(v1.schema.Fields), keys(meta.schema.Fields), "same settings as trustguard")
+
+	collectorID, ok := fieldByKey(meta.schema.Fields, "collector_id")
+	require.True(t, ok)
+	assert.False(t, collectorID.Required, "TrustGuard v2 resolves the integration from the gateway")
+	failureMode, ok := fieldByKey(meta.schema.Fields, "failure_mode")
+	require.True(t, ok)
+	assert.Equal(t, "open", failureMode.Default)
+	assert.Contains(t, meta.description, "fail")
+	for _, removed := range []string{"api_key", "base_url", "on_error", "on_timeout", "timeout", "on_mask_failure"} {
+		_, ok := fieldByKey(meta.schema.Fields, removed)
+		assert.False(t, ok, "trustguard_v2 schema must not expose %s", removed)
+	}
+}
+
 func TestAzureContentSafetySchema(t *testing.T) {
 	meta, ok := pluginCatalogMeta["azure_content_safety"]
 	require.True(t, ok)

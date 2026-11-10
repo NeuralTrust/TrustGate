@@ -19,6 +19,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -35,6 +36,9 @@ type GuardRequest struct {
 	// FailureMode is the policy's failure_mode. It travels as the
 	// X-Failure-Mode header, never in the body; empty is sent as open.
 	FailureMode string `json:"-"`
+	// request is the request context the body was built from. The v2 engine reads
+	// the model and the MCP server from it. Never serialized.
+	request *infracontext.RequestContext
 }
 
 type GuardUser struct {
@@ -119,6 +123,11 @@ type GuardResponse struct {
 	Findings           []GuardFinding `json:"findings"`
 	TraceID            string         `json:"trace_id"`
 	RequestID          string         `json:"request_id"`
+	// Shadow and ShadowStatus are the /v2 answer of a tenant still in shadow:
+	// status is then always allow and ShadowStatus is what an enforcing tenant
+	// would have said. Nothing here acts on it; it is logged.
+	Shadow       bool   `json:"shadow,omitempty"`
+	ShadowStatus string `json:"shadow_status,omitempty"`
 }
 
 // GuardFindingSource identifies who produced a guard finding.
@@ -129,6 +138,14 @@ type GuardFindingSource struct {
 	DetectorName string `json:"detector_name,omitempty"`
 	PolicyID     string `json:"policy_id,omitempty"`
 	GateName     string `json:"gate_name,omitempty"`
+	// The /v2 engine names the source by control, exception or asset.
+	ControlID     string `json:"control_id,omitempty"`
+	ControlName   string `json:"control_name,omitempty"`
+	ControlScope  string `json:"control_scope,omitempty"`
+	ExceptionID   string `json:"exception_id,omitempty"`
+	ExceptionName string `json:"exception_name,omitempty"`
+	RuleID        string `json:"rule_id,omitempty"`
+	AssetID       string `json:"asset_id,omitempty"`
 }
 
 // GuardFindingSignal is the detection signal when a plugin or gate matched.
