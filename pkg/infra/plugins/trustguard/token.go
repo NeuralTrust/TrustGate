@@ -36,13 +36,13 @@ const (
 	tokenMinTTL        = time.Minute
 )
 
-// AgentSecurity answers a gateway-only token request it cannot serve with these codes.
+// TrustGuard v2 answers a gateway-only token request it cannot serve with these codes.
 const (
 	codeUnknownGateway   = "unknown_gateway"
 	codeAmbiguousGateway = "ambiguous_gateway"
 )
 
-// gatewayRefusedError is AgentSecurity saying the gateway is not migrated (404) or
+// gatewayRefusedError is TrustGuard v2 saying the gateway is not migrated (404) or
 // maps to several integrations (409).
 type gatewayRefusedError struct {
 	status int
@@ -50,7 +50,7 @@ type gatewayRefusedError struct {
 }
 
 func (e *gatewayRefusedError) Error() string {
-	return fmt.Sprintf("agentsecurity: %s (status %d)", e.code, e.status)
+	return fmt.Sprintf("trustguard v2: %s (status %d)", e.code, e.status)
 }
 
 type tokenParams struct {
@@ -88,15 +88,18 @@ type tokenManager struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
-	// agentSecurity names the integration as AgentSecurity's token endpoint does, integration_id,
-	// where TrustGuard's reads collector_id.
-	agentSecurity bool
+	// v2 asks /v2/token and names the integration as it does, integration_id,
+	// where /v1/token reads collector_id.
+	v2 bool
 
 	mu    sync.Mutex
 	cache map[string]tokenEntry
 
 	group singleflight.Group
 }
+
+// useV2 points the manager at TrustGuard's /v2/token.
+func (m *tokenManager) useV2() { m.v2 = true }
 
 func newTokenManager(httpClient *http.Client, clientID, clientSecret string) *tokenManager {
 	return &tokenManager{
@@ -194,7 +197,11 @@ func (m *tokenManager) invalidate(params tokenParams) {
 }
 
 func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntry, error) {
-	tokenURL := strings.TrimRight(params.baseURL, "/") + tokenPath
+	path := tokenPath
+	if m.v2 {
+		path = v2TokenPath
+	}
+	tokenURL := strings.TrimRight(params.baseURL, "/") + path
 	body := tokenRequest{
 		GrantType:    grantType,
 		ClientID:     m.clientID,
@@ -202,7 +209,7 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 		Scope:        tokenScopePlatform,
 		GatewayID:    params.gatewayID,
 	}
-	if m.agentSecurity {
+	if m.v2 {
 		body.IntegrationID = params.collectorID
 	} else {
 		body.CollectorID = params.collectorID

@@ -49,6 +49,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"request_size_limiter":  {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"trustguard":            {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"trustguard_v2":         {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"per_tool_rate_limiter": {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"token_rate_limiter":    {appplugins.ProtocolLLM},
 		"model_allowlist":       {appplugins.ProtocolLLM},
@@ -166,6 +167,7 @@ func TestNewPluginRegistry_NativeBedrockBehaviours(t *testing.T) {
 		"semantic_cache":     appplugins.BedrockNativeSkips,
 		"regex_replace":      appplugins.BedrockNativeMasks,
 		"trustguard":         appplugins.BedrockNativeMasks,
+		"trustguard_v2":      appplugins.BedrockNativeMasks,
 		"bedrock_guardrail":  appplugins.BedrockNativeMasks,
 		"google_model_armor": appplugins.BedrockNativeMasks,
 	}
@@ -204,6 +206,7 @@ func TestNewPluginRegistry_RetiredSettingsSet(t *testing.T) {
 	}
 	kept := map[string][]string{
 		"trustguard":           {"streaming"},
+		"trustguard_v2":        {"streaming"},
 		"bedrock_guardrail":    {"timeout", "on_timeout", "streaming"},
 		"google_model_armor":   {"timeout", "on_timeout", "streaming"},
 		"openai_moderation":    {"timeout", "on_timeout", "on_mask_failure", "streaming"},
@@ -243,6 +246,9 @@ func TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut(t *testing.
 	reg := newTestPluginRegistry(t)
 	fixtures := map[string]func() map[string]any{
 		"trustguard": func() map[string]any {
+			return map[string]any{"collector_id": "11111111-1111-4111-8111-111111111111"}
+		},
+		"trustguard_v2": func() map[string]any {
 			return map[string]any{"collector_id": "11111111-1111-4111-8111-111111111111"}
 		},
 		"openai_moderation": func() map[string]any {

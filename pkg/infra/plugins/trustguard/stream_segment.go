@@ -96,6 +96,9 @@ func (p *Plugin) inspectSegment(
 	if !p.tokens.configured() {
 		return p.segmentGuardFailure(ctx, in, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
 	}
+	if p.v2 && protocolFor(in.Request.ConsumerType) == protocolA2A {
+		return segmentAllow(), nil
+	}
 	traceID := gatewayTraceID(ctx)
 	// Counted here, after every check that can skip the call, so the position is
 	// that of an evaluate that is really sent. A block that fails on the wire was
@@ -110,6 +113,7 @@ func (p *Plugin) inspectSegment(
 		GatewayID:       in.Request.GatewayID,
 		SessionID:       in.Request.SessionID,
 		ConsumerID:      in.Request.ConsumerID,
+		request:         in.Request,
 		Attributes: GuardAttributes{
 			ContentType: contentTypeJSON,
 			Model: GuardModel{
@@ -137,7 +141,7 @@ func (p *Plugin) inspectSegment(
 		body,
 		requestHasPlaygroundToken(in.Request),
 	)
-	p.agentSecurity.send(ctx, cfg.CollectorID, traceID, body, in.Request)
+	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		return p.segmentFailure(ctx, in, cfg, seg, err)
 	}
@@ -317,7 +321,7 @@ func (p *Plugin) segmentPayload(
 		// breakdown arrives with the stream aggregate.
 		recordEvaluateFailure(ctx, failureReasonTransport)
 		p.warn(ctx, "trustguard stream segment payload build failed, skipping block",
-			slog.String("plugin", PluginName),
+			slog.String("plugin", p.Name()),
 			slog.Int("seq", seg.Seq),
 			slog.Any("error", err),
 		)
@@ -414,7 +418,7 @@ func (p *Plugin) segmentFailureOf(
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	verdict, _ := appplugins.ExternalStreamOutcomeUnder(PluginName, in.Mode, sharedReason, detail, block, p.failClosed(in), err)
+	verdict, _ := appplugins.ExternalStreamOutcomeUnder(p.Name(), in.Mode, sharedReason, detail, block, p.failClosed(in), err)
 	if block == nil && appplugins.Cancelled(ctx) {
 		// The client left mid-stream: the guard did not fail, so the outcome is
 		// unchanged but nothing is counted, logged or carried to the closing
@@ -427,7 +431,7 @@ func (p *Plugin) segmentFailureOf(
 	recordEvaluateFailure(ctx, reason)
 	if verdict != nil && verdict.Block {
 		p.warn(ctx, "trustguard could not inspect stream segment, cutting the stream",
-			slog.String("plugin", PluginName),
+			slog.String("plugin", p.Name()),
 			slog.String("direction", directionOutput),
 			slog.Int("seq", seg.Seq),
 			slog.String("reason", reason),
@@ -436,7 +440,7 @@ func (p *Plugin) segmentFailureOf(
 		return verdict, nil
 	}
 	p.warn(ctx, "trustguard could not inspect stream segment, failing open",
-		slog.String("plugin", PluginName),
+		slog.String("plugin", p.Name()),
 		slog.String("direction", directionOutput),
 		slog.Int("seq", seg.Seq),
 		slog.String("reason", reason),
