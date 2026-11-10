@@ -28,13 +28,16 @@ import (
 
 const (
 	engineLookupTimeout = 3 * time.Second
-	// A gateway TrustGuard v2 gave a token for stays v2 this long; one it does not know stays
-	// v1 this long; any other answer is v1 for the short one, so a TrustGuard that is down is
-	// not asked on every request.
+	// A gateway whose org TrustGuard v2 says is active on v2 stays v2 this long; one it does not know,
+	// or whose org is still active on v1, stays v1 this long; any other answer is v1 for the short one,
+	// so a TrustGuard that is down is not asked on every request.
 	engineV2TTL    = 5 * time.Minute
 	engineV1TTL    = 3 * time.Minute
 	engineErrorTTL = 30 * time.Second
 	engineCacheMax = 4096
+
+	// activeVersionV2 is what /v2/token answers in active_version once an org is cut over to v2.
+	activeVersionV2 = "v2"
 )
 
 var _ appplugins.GatewayEngines = (*EngineResolver)(nil)
@@ -45,8 +48,9 @@ type engineEntry struct {
 }
 
 // EngineResolver tells which TrustGuard engine a gateway is on by asking TrustGuard v2 for the
-// gateway's platform token: a token means v2, unknown_gateway means v1. Anything else (an error,
-// a timeout, no v2 credentials or base URL) is v1, so nothing changes until v2 is in use.
+// gateway's platform token: v2 only when the token says active_version "v2". A token with "v1" or no
+// version (an org migrated and shadowed but not cut over), unknown_gateway, an error, a timeout or no
+// v2 credentials or base URL is v1, so nothing changes until the org is cut over.
 type EngineResolver struct {
 	tokens  *tokenManager
 	baseURL string
@@ -82,12 +86,15 @@ func (r *EngineResolver) TrustGuardV2(ctx context.Context, gatewayID string) boo
 	}
 	callCtx, cancel := context.WithTimeout(ctx, engineLookupTimeout)
 	defer cancel()
-	_, err := r.tokens.token(callCtx, tokenParams{baseURL: r.baseURL, gatewayID: gatewayID})
+	version, err := r.tokens.gatewayVersion(callCtx, tokenParams{baseURL: r.baseURL, gatewayID: gatewayID})
 	var refused *gatewayRefusedError
 	switch {
-	case err == nil:
+	case err == nil && version == activeVersionV2:
 		r.store(gatewayID, true, engineV2TTL)
 		return true
+	case err == nil:
+		// A token with v1 or no version: the org is migrated (or shadowed) but still served by v1.
+		r.store(gatewayID, false, engineV1TTL)
 	case errors.As(err, &refused) && refused.code == codeUnknownGateway:
 		r.store(gatewayID, false, engineV1TTL)
 	case errors.Is(err, context.Canceled):

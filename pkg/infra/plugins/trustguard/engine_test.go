@@ -30,6 +30,8 @@ import (
 type tokenAnswer struct {
 	status int
 	code   string
+	// version is the active_version of a 200 answer; empty omits the field (a TrustGuard from before it).
+	version string
 }
 
 func engineServer(t *testing.T, answers map[string]tokenAnswer, hits *int32) *httptest.Server {
@@ -45,12 +47,13 @@ func engineServer(t *testing.T, answers map[string]tokenAnswer, hits *int32) *ht
 		assert.Equal(t, "platform", body["scope"])
 		gw, _ := body["gateway_id"].(string)
 		w.Header().Set("Content-Type", contentTypeJSON)
-		if a, ok := answers[gw]; ok && a.status != http.StatusOK {
+		a := answers[gw]
+		if a.status != 0 && a.status != http.StatusOK {
 			w.WriteHeader(a.status)
 			_, _ = w.Write([]byte(`{"error":"` + a.code + `"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok-" + gw, TokenType: "Bearer", ExpiresIn: 3600})
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok-" + gw, TokenType: "Bearer", ExpiresIn: 3600, ActiveVersion: a.version})
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -60,15 +63,22 @@ func TestEngineResolver(t *testing.T) {
 	t.Parallel()
 	var hits int32
 	srv := engineServer(t, map[string]tokenAnswer{
-		"gw-v1":        {http.StatusNotFound, codeUnknownGateway},
-		"gw-ambiguous": {http.StatusConflict, codeAmbiguousGateway},
-		"gw-down":      {http.StatusInternalServerError, "boom"},
-		"gw-denied":    {http.StatusUnauthorized, "invalid_client"},
+		"gw-v2":         {version: "v2"},
+		"gw-migrated":   {version: "v1"},
+		"gw-no-version": {},
+		"gw-odd":        {version: "v3"},
+		"gw-v1":         {status: http.StatusNotFound, code: codeUnknownGateway},
+		"gw-ambiguous":  {status: http.StatusConflict, code: codeAmbiguousGateway},
+		"gw-down":       {status: http.StatusInternalServerError, code: "boom"},
+		"gw-denied":     {status: http.StatusUnauthorized, code: "invalid_client"},
 	}, &hits)
 	r := NewEngineResolver(srv.URL, "client", "secret")
 	ctx := context.Background()
 
-	assert.True(t, r.TrustGuardV2(ctx, "gw-v2"), "a token means v2")
+	assert.True(t, r.TrustGuardV2(ctx, "gw-v2"), "a token with active_version v2 means v2")
+	assert.False(t, r.TrustGuardV2(ctx, "gw-migrated"), "a migrated org still active on v1 is v1")
+	assert.False(t, r.TrustGuardV2(ctx, "gw-no-version"), "a token without active_version is v1")
+	assert.False(t, r.TrustGuardV2(ctx, "gw-odd"), "an unknown version is v1")
 	assert.False(t, r.TrustGuardV2(ctx, "gw-v1"), "unknown_gateway means v1")
 	assert.False(t, r.TrustGuardV2(ctx, "gw-ambiguous"), "any other answer means v1")
 	assert.False(t, r.TrustGuardV2(ctx, "gw-down"))
@@ -100,8 +110,9 @@ func TestEngineResolverCaches(t *testing.T) {
 	t.Parallel()
 	var hits int32
 	srv := engineServer(t, map[string]tokenAnswer{
-		"gw-v1":   {http.StatusNotFound, codeUnknownGateway},
-		"gw-down": {http.StatusInternalServerError, "boom"},
+		"gw-v2":   {version: "v2"},
+		"gw-v1":   {status: http.StatusNotFound, code: codeUnknownGateway},
+		"gw-down": {status: http.StatusInternalServerError, code: "boom"},
 	}, &hits)
 	r := NewEngineResolver(srv.URL, "client", "secret")
 	now := time.Now()
@@ -125,7 +136,35 @@ func TestEngineResolverCaches(t *testing.T) {
 	assert.False(t, r.TrustGuardV2(ctx, "gw-v1"))
 	assert.EqualValues(t, 5, asks(), "unknown_gateway is asked again after its TTL")
 	assert.True(t, r.TrustGuardV2(ctx, "gw-v2"))
-	assert.EqualValues(t, 5, asks(), "the v2 token outlives the answer, so v2 needs no new request")
+	assert.EqualValues(t, 5, asks(), "v2 is cached until its own TTL")
+	now = now.Add(engineV2TTL)
+	assert.True(t, r.TrustGuardV2(ctx, "gw-v2"))
+	assert.EqualValues(t, 6, asks(), "v2 is asked again after its TTL: the token cache must not hide a rollback")
+}
+
+// A cutover or rollback shows within the TTL even though the platform token itself is still valid.
+func TestEngineResolverFollowsACutoverAndARollback(t *testing.T) {
+	t.Parallel()
+	var version atomic.Value
+	version.Store("v1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600, ActiveVersion: version.Load().(string)})
+	}))
+	t.Cleanup(srv.Close)
+	r := NewEngineResolver(srv.URL, "client", "secret")
+	now := time.Now()
+	r.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	assert.False(t, r.TrustGuardV2(ctx, "gw"))
+	version.Store("v2")
+	assert.False(t, r.TrustGuardV2(ctx, "gw"), "the v1 answer is cached")
+	now = now.Add(engineV1TTL + time.Second)
+	assert.True(t, r.TrustGuardV2(ctx, "gw"), "cutover seen after the TTL")
+	version.Store("v1")
+	now = now.Add(engineV2TTL + time.Second)
+	assert.False(t, r.TrustGuardV2(ctx, "gw"), "rollback seen after the TTL")
 }
 
 func TestEngineResolverCacheIsBounded(t *testing.T) {
