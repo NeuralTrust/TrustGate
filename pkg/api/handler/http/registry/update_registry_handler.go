@@ -49,6 +49,7 @@ func NewUpdateRegistryHandler(updater appregistry.Updater) *UpdateRegistryHandle
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id} [put]
 func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)
@@ -78,6 +79,7 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Pricing:         req.ToPricing(),
 		SetPricing:      req.Pricing != nil,
 		MCPTarget:       req.ToMCPTarget(),
+		A2ATarget:       req.A2ATarget.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
