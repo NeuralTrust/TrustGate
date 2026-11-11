@@ -15,13 +15,16 @@
 package router_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
+	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/gofiber/fiber/v2"
@@ -36,6 +39,7 @@ func TestAgentRouter_HealthRoutes(t *testing.T) {
 		apihandler.NewHealthHandler(),
 		middleware.NewOpsMetricsMiddleware(recorder, o11y.PlaneAgent),
 		a2ahttp.NewHandler(nil),
+		jwksHandler(t),
 	)
 	app := fiber.New()
 	require.NoError(t, r.BuildRoutes(app))
@@ -53,6 +57,36 @@ func TestAgentRouter_HealthRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func jwksHandler(t *testing.T) *oauthhttp.JWKSHandler {
+	t.Helper()
+	signer, err := infrasts.NewSigner("https://sts.example", "", nil)
+	require.NoError(t, err)
+	return oauthhttp.NewJWKSHandler(signer)
+}
+
+func TestAgentRouter_JWKSNeedsNoCredential(t *testing.T) {
+	r := router.NewAgentRouter(
+		middleware.NewTransport(),
+		middleware.NewTransport(denyAll{}),
+		apihandler.NewHealthHandler(),
+		nil,
+		a2ahttp.NewHandler(nil),
+		jwksHandler(t),
+	)
+	app := fiber.New()
+	require.NoError(t, r.BuildRoutes(app))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, oauthhttp.JWKSPath, nil))
+	require.NoError(t, err)
+	var jwks struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&jwks))
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, jwks.Keys, 1)
 }
 
 type denyAll struct{}
@@ -73,6 +107,7 @@ func TestAgentRouter_AgentRoutesRunTheAuthTransport(t *testing.T) {
 		apihandler.NewHealthHandler(),
 		nil,
 		a2ahttp.NewHandler(nil),
+		jwksHandler(t),
 	)
 	app := fiber.New()
 	require.NoError(t, r.BuildRoutes(app))

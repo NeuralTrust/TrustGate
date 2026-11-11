@@ -83,7 +83,7 @@ func newApp(t *testing.T, agentURL string) (*fiber.App, *registrydomain.Registry
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}
-	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(), logger)
+	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(nil, nil, false), logger)
 	h := a2ahttp.NewHandler(forwarder)
 	app := fiber.New()
 	withConsumer := func(c *fiber.Ctx) error {

@@ -146,7 +146,7 @@ func newHarness(t *testing.T, v a2a.Version, url string, exec executorFunc) *har
 	reg := a2aRegistry(t, v, url)
 	rc := a2aConsumer(reg)
 	return &harness{
-		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(), logger),
+		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(nil, nil, false), logger),
 		consumer:  rc,
 		agent:     reg,
 		principal: &identity.Principal{Subject: consumerdomain.AppSubject(rc.Consumer.ID), Method: identity.MethodAPIKey},
