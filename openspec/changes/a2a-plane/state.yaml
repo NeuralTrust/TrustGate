@@ -1,0 +1,23 @@
+change: a2a-plane
+linear: pending
+branch: feat/a2a-plane
+base:
+  branch: origin/develop
+  commit: de098c6f
+  audited_at: 2026-11-11
+phases:
+  explore: done
+  propose: draft
+  spec: draft
+  design: draft
+  tasks: draft
+  apply: not_started
+artifacts_done: [exploration, proposal, specs, design, tasks]
+delivery:
+  strategy: integration-branch (proposed, not approved)
+  integration_branch: feat/a2a-plane
+  final_pr: "feat/a2a-plane -> develop, size:exception"
+open_questions:
+  - "TrustGuard v1 evaluates protocol a2a? v2 skips it (owner: TrustGuard team) - blocks GA of inspection"
+  - "Authenticated-only agent card acceptable for first customers' clients?"
+  - "Linear issue, owner, and delivery strategy approval"
