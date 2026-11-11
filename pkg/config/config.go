@@ -40,6 +40,7 @@ const (
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
 	defaultServerMCPPort      = 8082
+	defaultServerAgentPort    = 8084
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
@@ -455,6 +456,7 @@ type ServerConfig struct {
 	AdminPort         int
 	ProxyPort         int
 	MCPPort           int
+	AgentPort         int
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
@@ -466,6 +468,9 @@ type ServerConfig struct {
 	// MCPBaseDomain; these only widen what the request router recognises, for
 	// when the same cluster is also reachable under a second domain.
 	MCPExtraBaseDomains []string
+	// AgentBaseDomain is the suffix a gateway's A2A agent plane is published
+	// under. Empty means this environment offers no agents.
+	AgentBaseDomain string
 	// ReservedGatewayDomains are host suffixes no tenant may claim as a
 	// gateway's own domain, on top of the base domains this deployment routes
 	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
@@ -927,6 +932,7 @@ func getServerConfig() ServerConfig {
 		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
 		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
 		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
+		AgentPort:    getEnvInt("SERVER_AGENT_PORT", defaultServerAgentPort),
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
@@ -940,6 +946,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		AgentBaseDomain:                getEnv("AGENT_BASE_DOMAIN", ""),
 		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
 		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),

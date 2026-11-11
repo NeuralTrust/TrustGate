@@ -36,6 +36,7 @@ func gatewayBaseDomain() string {
 var (
 	gatewayHosts  sync.Map
 	mcpHosts      sync.Map
+	agentHosts    sync.Map
 	proxyHosts    sync.Map
 	consumerSlugs sync.Map
 )
@@ -84,6 +85,9 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	if hosts, ok := body["hosts"].(map[string]any); ok {
 		if mcp, ok := hosts["mcp"].(string); ok && mcp != "" {
 			mcpHosts.Store(id, mcp)
+		}
+		if agent, ok := hosts["agent"].(string); ok && agent != "" {
+			agentHosts.Store(id, agent)
 		}
 	}
 	return id

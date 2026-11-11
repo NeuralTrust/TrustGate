@@ -68,3 +68,16 @@ Si Redis no puede leer, MUST responder `-32092` sin llamar al agente.
 - GIVEN Redis no responde
 - WHEN U1 llama a `tasks/cancel` con `t1`
 - THEN `-32092`, y el agente no recibe nada
+
+### Requirement: Sesión del proveedor junto al contexto
+
+El registro de un contexto MUST poder llevar un campo opcional `upstream_session`. Hoy lo usa solo `bedrock_agentcore` (`a2a-hosted-agents`).
+
+- `upstream_session` MUST leerse solo cuando el dueño coincide. Un contexto ajeno sigue respondiendo `TaskNotFoundError` antes de mirar la sesión.
+- El campo MUST NOT afectar al TTL ni a las reglas de conflicto.
+
+#### Scenario: Contexto ajeno en AgentCore
+
+- GIVEN el contexto `c-1` de U1 con una sesión de AgentCore guardada
+- WHEN U2 envía un mensaje con `contextId: "c-1"`
+- THEN recibe `TaskNotFoundError` y nunca llega a usar la sesión de U1

@@ -1,0 +1,8 @@
+{
+  "id": "42b19238-e0a1-4947-b138-f285382a239b",
+  "jsonrpc": "2.0",
+  "method": "GetTask",
+  "params": {
+    "id": "3cad155d-0af8-4d33-9734-4dc86c76004c"
+  }
+}

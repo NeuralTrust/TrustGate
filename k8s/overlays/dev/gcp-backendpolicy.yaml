@@ -32,3 +32,15 @@ spec:
     group: ""
     kind: Service
     name: agentgateway-mcp
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-agent-timeout
+spec:
+  default:
+    timeoutSec: 3600
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-agent

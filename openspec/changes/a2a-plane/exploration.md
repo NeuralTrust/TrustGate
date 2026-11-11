@@ -66,6 +66,34 @@ The README already sells A2A as a shipped feature: "multi-protocol gateway engin
   - JWT signing (`mcp_jwt_signer`), OBO / RFC 8693 and Okta ID-JAG exist **for MCP only**.
 - **Chains.** `X-LiteLLM-Trace-Id` and `X-LiteLLM-Agent-Id` are trusted from the client. Iteration budgets (calls and $ per session) hang off that unauthenticated trace id.
 
+## Agents on AWS, Azure and Google (checked 2026-11-11)
+
+All three clouds now host agents that serve A2A natively, so none of them needs the kind of bridge LiteLLM builds:
+
+- **Amazon Bedrock AgentCore Runtime** ([protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-a2a-protocol-contract.html)):
+  - JSON-RPC 2.0 at the runtime's `InvokeAgentRuntime` URL, with the card at `…/invocations/.well-known/agent-card.json`;
+  - SigV4, or an OAuth Bearer validated by a JWT authorizer the customer configures;
+  - the platform session header `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`;
+  - JSON-RPC errors returned with their real HTTP status, including a retryable `-32054`;
+  - streaming is supported.
+- **Microsoft Foundry Agent Service** ([enable incoming A2A](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint), [A2A authentication](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-to-agent-authentication)):
+  - `…/agents/{agent}/endpoint/protocols/a2a`, with cards at `agentCard/v1.0` (GA, JSON-RPC only) and `agentCard/v0.3` (preview);
+  - without an `A2A-Version` header it serves 0.3;
+  - Microsoft Entra only, card included: scope `https://ai.azure.com/.default` and the *Foundry Agent Consumer* role, as a service identity or on behalf of the user;
+  - text only, no streaming, tasks kept 60 days.
+- **Google Vertex AI Agent Engine** ([use an A2A agent](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/use-an-a2a-agent)):
+  - HTTP+JSON only: `/v1/card` (authenticated only), `/v1/message:send`, `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`, A2A 0.3;
+  - a Google OAuth token with scope `cloud-platform`;
+  - no streaming documented, and the page shows two different request body shapes.
+
+TrustGate already has the credential code for all three in its LLM providers:
+
+- `pkg/infra/providers/bedrock` (SigV4, assume role);
+- the Azure provider (service principal, managed identity);
+- `pkg/infra/providers/gcpauth` (service-account JSON, ADC, impersonation).
+
+Classic Bedrock Agents (`InvokeAgent`) do not speak A2A and remain a bridge (out of scope).
+
 ## Approaches
 
 | # | Approach | Pros | Cons |
