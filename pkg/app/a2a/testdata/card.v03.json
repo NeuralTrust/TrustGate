@@ -1,0 +1,60 @@
+{
+  "additionalInterfaces": [
+    {
+      "transport": "JSONRPC",
+      "url": "https://agent.example.com/rpc"
+    }
+  ],
+  "capabilities": {
+    "pushNotifications": true,
+    "streaming": true
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "description": "Plans trips",
+  "name": "Travel planner",
+  "preferredTransport": "HTTP+JSON",
+  "protocolVersion": "0.3",
+  "security": [
+    {
+      "oauth": []
+    }
+  ],
+  "securitySchemes": {
+    "oauth": {
+      "scheme": "bearer",
+      "type": "http"
+    }
+  },
+  "signatures": [
+    {
+      "protected": "eyJhbGciOiJFUzI1NiJ9",
+      "signature": "c2ln"
+    }
+  ],
+  "skills": [
+    {
+      "description": "Books flights",
+      "id": "flights",
+      "name": "Flights",
+      "security": [
+        {
+          "oauth": [
+            "flights"
+          ]
+        }
+      ],
+      "tags": [
+        "travel"
+      ]
+    }
+  ],
+  "supportsAuthenticatedExtendedCard": true,
+  "url": "https://agent.example.com/a2a",
+  "version": "2.1.0",
+  "x-vendor-region": "eu"
+}
