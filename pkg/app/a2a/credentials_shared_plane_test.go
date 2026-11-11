@@ -125,3 +125,18 @@ func TestSignKeepsAmbientCloudCredentialsOffTheSharedDataPlane(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedDataPlaneSignRejectsAnAmbientProviderBesideAnExplicitOne(t *testing.T) {
+	t.Parallel()
+	signer := &countingSigner{}
+	creds := a2a.NewCredentials(nil, nil, signer, false, a2a.WithSharedDataPlane())
+	reg := cloudRegistry(t, &registrydomain.A2ACloudAuth{
+		AWS: &registrydomain.A2AAWSAuth{AWSAuth: registrydomain.AWSAuth{AccessKeyID: "AKIA", SecretAccessKey: "secret"}},
+		GCP: &registrydomain.A2AGCPAuth{},
+	})
+
+	err := creds.Sign(gatewayCtx(gatewaydomain.DataPlaneHosted), reg, signRequest(t))
+	require.ErrorIs(t, err, registrydomain.ErrInvalidRegistry)
+	assert.ErrorContains(t, err, "service_account_json")
+	assert.Zero(t, signer.calls)
+}
