@@ -1,0 +1,88 @@
+{
+  "capabilities": {
+    "extendedAgentCard": true,
+    "pushNotifications": true,
+    "streaming": true
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "description": "Plans trips",
+  "name": "Travel planner",
+  "preferredTransport": "JSONRPC",
+  "protocolVersion": "0.3",
+  "security": [
+    {
+      "oauth": []
+    }
+  ],
+  "securityRequirements": [
+    {
+      "schemes": {
+        "oauth": {}
+      }
+    }
+  ],
+  "securitySchemes": {
+    "oauth": {
+      "httpAuthSecurityScheme": {
+        "scheme": "bearer"
+      },
+      "scheme": "bearer",
+      "type": "http"
+    }
+  },
+  "signatures": [
+    {
+      "protected": "eyJhbGciOiJFUzI1NiJ9",
+      "signature": "c2ln"
+    }
+  ],
+  "skills": [
+    {
+      "description": "Books flights",
+      "id": "flights",
+      "name": "Flights",
+      "security": [
+        {
+          "oauth": [
+            "flights"
+          ]
+        }
+      ],
+      "securityRequirements": [
+        {
+          "schemes": {
+            "oauth": {
+              "list": [
+                "flights"
+              ]
+            }
+          }
+        }
+      ],
+      "tags": [
+        "travel"
+      ]
+    }
+  ],
+  "supportedInterfaces": [
+    {
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0",
+      "url": "http://agent.test/"
+    },
+    {
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "0.3",
+      "url": "http://agent.test/"
+    }
+  ],
+  "supportsAuthenticatedExtendedCard": true,
+  "url": "http://agent.test/",
+  "version": "2.1.0",
+  "x-vendor-region": "eu"
+}

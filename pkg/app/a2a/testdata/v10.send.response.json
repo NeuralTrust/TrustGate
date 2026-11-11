@@ -1,0 +1,90 @@
+{
+  "id": "f51f07b3-1fd6-402c-8028-adc72e73a10f",
+  "jsonrpc": "2.0",
+  "result": {
+    "task": {
+      "artifacts": [
+        {
+          "artifactId": "d26d5fa1-b384-4e41-8145-08a0be71947f",
+          "name": "plan",
+          "parts": [
+            {
+              "text": "itinerary"
+            },
+            {
+              "data": {
+                "flight": "IB3166"
+              }
+            },
+            {
+              "filename": "ticket.pdf",
+              "mediaType": "application/pdf",
+              "url": "https://files.example.com/ticket.pdf"
+            },
+            {
+              "filename": "raw.pdf",
+              "mediaType": "application/pdf",
+              "raw": "JVBERi0xLjc="
+            }
+          ]
+        }
+      ],
+      "contextId": "263ba948-ae05-4d97-a610-a5f398ff2bbe",
+      "history": [
+        {
+          "contextId": "263ba948-ae05-4d97-a610-a5f398ff2bbe",
+          "messageId": "m-1",
+          "parts": [
+            {
+              "text": "book a flight"
+            },
+            {
+              "data": {
+                "iban": "ES9121000418450200051332"
+              }
+            },
+            {
+              "filename": "a.pdf",
+              "mediaType": "application/pdf",
+              "url": "https://files.example.com/a.pdf"
+            },
+            {
+              "filename": "b.pdf",
+              "mediaType": "application/pdf",
+              "raw": "JVBERi0xLjc="
+            }
+          ],
+          "role": "ROLE_USER",
+          "taskId": "3cad155d-0af8-4d33-9734-4dc86c76004c"
+        },
+        {
+          "contextId": "263ba948-ae05-4d97-a610-a5f398ff2bbe",
+          "messageId": "29169b2f-ccb4-4f3d-a000-75c3a8de6464",
+          "parts": [
+            {
+              "text": "working on it"
+            }
+          ],
+          "role": "ROLE_AGENT",
+          "taskId": "3cad155d-0af8-4d33-9734-4dc86c76004c"
+        }
+      ],
+      "id": "3cad155d-0af8-4d33-9734-4dc86c76004c",
+      "status": {
+        "message": {
+          "contextId": "263ba948-ae05-4d97-a610-a5f398ff2bbe",
+          "messageId": "425d9b20-3364-4a70-b8a8-a9f0fd5b1bde",
+          "parts": [
+            {
+              "text": "done"
+            }
+          ],
+          "role": "ROLE_AGENT",
+          "taskId": "3cad155d-0af8-4d33-9734-4dc86c76004c"
+        },
+        "state": "TASK_STATE_COMPLETED",
+        "timestamp": "2026-11-11T17:03:43.871915Z"
+      }
+    }
+  }
+}

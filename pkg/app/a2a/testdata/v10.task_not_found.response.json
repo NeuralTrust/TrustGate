@@ -1,0 +1,16 @@
+{
+  "error": {
+    "code": -32001,
+    "data": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "domain": "a2a-protocol.org",
+        "metadata": {},
+        "reason": "TASK_NOT_FOUND"
+      }
+    ],
+    "message": "Task not found"
+  },
+  "id": "1ccda39a-402f-425b-b6ea-5a60f9915301",
+  "jsonrpc": "2.0"
+}

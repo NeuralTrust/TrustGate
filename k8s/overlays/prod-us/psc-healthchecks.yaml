@@ -41,3 +41,25 @@ spec:
     group: ""
     kind: Service
     name: agentgateway-mcp-psc
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: agentgateway-agent-psc-healthcheck
+spec:
+  default:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8084
+        # Readiness, not liveness: a data-plane pod has nothing to serve until it
+        # holds a config snapshot, and /readyz reports 503 until then.
+        requestPath: /readyz
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-agent-psc

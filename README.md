@@ -182,7 +182,7 @@ Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
 - **Semantic Cache** — Embedding-based response caching for repeated prompts.
 - **Multi-Tenancy** — Per-gateway consumers, API-key auth, scoped policies.
 - **Observability** — Built-in metrics, OpenTelemetry (OTLP) export. See [Telemetry Configuration](#observability).
-- **Independent Planes** — Admin (`:8080`), Proxy (`:8081`), MCP (`:8082`) scale separately.
+- **Independent Planes** — Admin (`:8080`), Proxy (`:8081`), MCP (`:8082`), Agent (`:8084`) scale separately.
 
 ---
 
@@ -194,6 +194,7 @@ TrustGate ships a **single binary** that boots one HTTP server per plane:
 ./trustgate              # proxy (default)
 ./trustgate admin        # admin
 ./trustgate mcp          # MCP server
+./trustgate agent        # A2A agent server
 ./trustgate run          # admin + proxy together (single-node)
 ```
 
@@ -208,6 +209,7 @@ flowchart LR
         ADMIN["Admin Plane :8080\nGateways · Registries · Consumers\nAuth · Policies · Catalog"]
         PROXY["Proxy Plane :8081\nRouting · Load Balancing\nPolicy Stages · Plugins"]
         MCP["MCP Plane :8082\nMCP targets & tools for agents"]
+        AGENT["Agent Plane :8084\nA2A agents"]
     end
 
     subgraph Plugins["Policy Plugins"]
@@ -230,10 +232,12 @@ flowchart LR
 
     APP -->|API key| PROXY
     APP -->|MCP| MCP
+    APP -->|A2A| AGENT
     PROXY --> Plugins
     PROXY -->|load balance| Providers
     ADMIN -. config .-> PROXY
     ADMIN -. config .-> MCP
+    ADMIN -. config .-> AGENT
     ADMIN --- PG
     PROXY --- PG
     PROXY --- RD
@@ -245,6 +249,7 @@ flowchart LR
 | **Admin** | `8080` | Gateway, registry, consumer, auth, policy management. DB migrations. |
 | **Proxy** | `8081` | Request routing, load balancing, plugin execution, provider forwarding. |
 | **MCP** | `8082` | Model Context Protocol server for AI agents. See [MCP Guide](docs/mcp/testing-guide.md) and [OpenAPI → MCP](docs/mcp/openapi.md). |
+| **Agent** | `8084` | A2A (0.3 and 1.0) agents behind the gateway: pinned cards, policies, task ownership, delegated identity. See [A2A agent plane](docs/a2a.md). |
 
 ---
 
@@ -303,6 +308,7 @@ All config is via **environment variables**. Copy `.env.example` to `.env` for d
 SERVER_ADMIN_PORT=8080
 SERVER_PROXY_PORT=8081
 SERVER_MCP_PORT=8082
+SERVER_AGENT_PORT=8084
 
 # Infrastructure
 DB_HOST=localhost
@@ -488,9 +494,9 @@ Yes. Point any OpenAI SDK at the proxy with no client changes beyond
 the base URL and two headers — see Quick Start.
  
 **Does TrustGate govern MCP and agent-to-agent (A2A) traffic, or only LLM calls?**
-All three. A model call, the MCP tool calls it triggers, and any A2A
-delegation resolve into one unified trace tree — not separate logs in
-separate systems.
+All three, each on its own plane: LLM calls on the proxy, MCP tool calls
+on the MCP plane and A2A agent calls on the agent plane, each with the
+consumer's policies and telemetry. See [docs/a2a.md](docs/a2a.md).
  
 **Does TrustGate replace my existing API gateway (Kong, Apigee, AWS API Gateway)?**
 No. TrustGate governs AI-specific traffic and is built to layer

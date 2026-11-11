@@ -30,6 +30,7 @@ type Registry struct {
 	Description string         `json:"description,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
+	A2ATarget   *A2ATarget     `json:"a2a_target,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 
@@ -102,6 +103,35 @@ func NewMCPRegistry(
 	return b, nil
 }
 
+// NewA2ARegistry builds an enabled A2A registry around a target whose card is
+// already pinned.
+func NewA2ARegistry(
+	gatewayID ids.GatewayID,
+	name, description string,
+	target *A2ATarget,
+) (*Registry, error) {
+	id, err := ids.NewV7[ids.RegistryKind]()
+	if err != nil {
+		return nil, fmt.Errorf("registry: generate uuid: %w", err)
+	}
+	now := time.Now().UTC()
+	b := &Registry{
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        name,
+		Type:        TypeA2A,
+		Enabled:     true,
+		Description: description,
+		A2ATarget:   target,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := b.Validate(); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 func (b *Registry) IsMCP() bool {
 	return b.Type == TypeMCP
 }
@@ -150,6 +180,7 @@ type RehydrateParams struct {
 	Description string
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
+	A2ATarget   *A2ATarget
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -168,6 +199,7 @@ func Rehydrate(params RehydrateParams) *Registry {
 		Description: params.Description,
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,
+		A2ATarget:   params.A2ATarget,
 		CreatedAt:   params.CreatedAt,
 		UpdatedAt:   params.UpdatedAt,
 	}
@@ -188,6 +220,8 @@ func (b *Registry) Validate() error {
 		return b.validateLLM()
 	case TypeMCP:
 		return b.validateMCP()
+	case TypeA2A:
+		return b.validateA2A()
 	default:
 		return fmt.Errorf("%w: unsupported type %q", ErrInvalidRegistry, b.Type)
 	}
@@ -197,6 +231,9 @@ func (b *Registry) validateLLM() error {
 	if b.MCPTarget != nil {
 		return fmt.Errorf("%w: mcp_target is only valid for MCP registries", ErrInvalidRegistry)
 	}
+	if b.A2ATarget != nil {
+		return fmt.Errorf("%w: a2a_target is only valid for A2A registries", ErrInvalidRegistry)
+	}
 	return b.LLMTarget.Validate()
 }
 
@@ -204,9 +241,23 @@ func (b *Registry) validateMCP() error {
 	if b.LLMTarget != nil {
 		return fmt.Errorf("%w: llm_target is only valid for LLM registries", ErrInvalidRegistry)
 	}
+	if b.A2ATarget != nil {
+		return fmt.Errorf("%w: a2a_target is only valid for A2A registries", ErrInvalidRegistry)
+	}
 	if b.MCPTarget == nil {
 		return fmt.Errorf("%w: mcp_target is required for MCP registries", ErrInvalidMCPTarget)
 	}
 	b.MCPTarget.Normalize()
 	return b.MCPTarget.Validate()
+}
+
+func (b *Registry) validateA2A() error {
+	if b.LLMTarget != nil {
+		return fmt.Errorf("%w: llm_target is only valid for LLM registries", ErrInvalidRegistry)
+	}
+	if b.MCPTarget != nil {
+		return fmt.Errorf("%w: mcp_target is only valid for MCP registries", ErrInvalidRegistry)
+	}
+	b.A2ATarget.Normalize()
+	return b.A2ATarget.Validate()
 }
