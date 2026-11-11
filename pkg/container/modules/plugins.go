@@ -73,17 +73,7 @@ func Plugins(c *container.Container) error {
 	if err := c.Provide(appplugins.NewCatalogService); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) appplugins.GatewayEngines {
-		return trustguard.NewEngineResolver(cfg.TrustGuard.V2.BaseURL, cfg.TrustGuard.V2.ClientID, cfg.TrustGuard.V2.ClientSecret)
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(appplugins.NewGatewayCatalogService); err != nil {
-		return err
-	}
-	return c.Provide(func(s appplugins.GatewayCatalogService) *cataloghttp.ListPolicyCatalogHandler {
-		return cataloghttp.NewListPolicyCatalogHandler(s)
-	})
+	return c.Provide(cataloghttp.NewListPolicyCatalogHandler)
 }
 
 // newPluginRegistry builds the plugin catalog and registers every built-in

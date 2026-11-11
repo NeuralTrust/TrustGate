@@ -16,6 +16,8 @@ package trustguard
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -68,6 +70,7 @@ const (
 var (
 	instrumentsOnce    sync.Once
 	evaluateFailures   metric.Int64Counter
+	evaluations        metric.Int64Counter
 	streamEvals        metric.Int64Counter
 	streamResponses    metric.Int64Counter
 	streamGuardCalls   metric.Int64Histogram
@@ -79,9 +82,15 @@ func initInstruments() {
 		meter := otel.Meter("trustgate/trustguard")
 		if c, err := meter.Int64Counter(
 			"trustguard_evaluate_failures_total",
-			metric.WithDescription("TrustGuard /v1/evaluate call failures by reason"),
+			metric.WithDescription("TrustGuard /v2/evaluate call failures by reason"),
 		); err == nil {
 			evaluateFailures = c
+		}
+		if c, err := meter.Int64Counter(
+			"trustguard_evaluations_total",
+			metric.WithDescription("TrustGuard /v2/evaluate answers by plugin and by the engine (v1 or v2) that answered"),
+		); err == nil {
+			evaluations = c
 		}
 		if c, err := meter.Int64Counter(
 			"trustguard_stream_evals_total",
@@ -119,6 +128,25 @@ func recordEvaluateFailure(ctx context.Context, reason string) {
 		return
 	}
 	evaluateFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+}
+
+// recordEvaluation counts one answer of TrustGuard by the engine its X-TrustGuard-Engine header
+// names: the organisation of the policy's collector is served by v1 until it is cut over to v2.
+// An answer without the header is "unknown" (a TrustGuard that does not route by organisation).
+func recordEvaluation(ctx context.Context, plugin, engine string, status int) {
+	initInstruments()
+	if evaluations == nil {
+		return
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine != engineV1 && engine != engineV2 {
+		engine = "unknown"
+	}
+	evaluations.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("plugin", plugin),
+		attribute.String("engine", engine),
+		attribute.String("status_class", strconv.Itoa(status/100)+"xx"),
+	))
 }
 
 // recordStreamEvals publishes one streamed response, from the entry the

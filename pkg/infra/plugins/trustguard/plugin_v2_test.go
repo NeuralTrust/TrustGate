@@ -74,7 +74,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 		f.paths = append(f.paths, r.URL.Path)
 		f.mu.Unlock()
 		switch r.URL.Path {
-		case v2TokenPath:
+		case tokenPath:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.mu.Lock()
@@ -83,7 +83,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 			f.mu.Unlock()
 			w.Header().Set("Content-Type", contentTypeJSON)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v2-token-" + string(rune('0'+n)), TokenType: "Bearer", ExpiresIn: 3600})
-		case v2EvaluatePath:
+		case evaluatePath:
 			calls := atomic.AddInt32(&f.evaluateCalls, 1)
 			if f.unauthorizedFirst && calls == 1 {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -187,7 +187,7 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	assert.Equal(t, []string{v2TokenPath, v2EvaluatePath}, f.paths, "token on /v2/token, evaluation on /v2/evaluate, nothing on /v1")
+	assert.Equal(t, []string{tokenPath, evaluatePath}, f.paths, "token on /v2/token, evaluation on /v2/evaluate, nothing on /v1")
 	require.Len(t, f.tokens, 1)
 	assert.Equal(t, "test-v2-client", f.tokens[0]["client_id"])
 	assert.Equal(t, "test-v2-secret", f.tokens[0]["client_secret"])
@@ -471,7 +471,7 @@ func TestV2PluginStreamedBlocks(t *testing.T) {
 	stream, ok := seen[0].Attributes["stream"].(map[string]any)
 	require.True(t, ok, "the stream envelope travels in attributes.stream")
 	assert.Equal(t, float64(1), stream["seq"])
-	assert.Equal(t, []string{v2TokenPath, v2EvaluatePath}, f.pathsSnapshot())
+	assert.Equal(t, []string{tokenPath, evaluatePath}, f.pathsSnapshot())
 }
 
 func (f *fakeV2Engine) pathsSnapshot() []string {
@@ -591,7 +591,7 @@ func TestV2PluginWithoutCredentialsOrBaseURLFailsOpenWithoutACall(t *testing.T) 
 func TestV2PluginTimeoutFailsOpen(t *testing.T) {
 	t.Parallel()
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == v2TokenPath {
+		if r.URL.Path == tokenPath {
 			w.Header().Set("Content-Type", contentTypeJSON)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "t", TokenType: "Bearer", ExpiresIn: 3600})
 			return
