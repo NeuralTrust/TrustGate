@@ -44,3 +44,20 @@ spec:
     group: ""
     kind: Service
     name: agentgateway-mcp-psc
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: agentgateway-agent-psc-timeout
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: agent
+    neuraltrust.ai/exposure: psc
+spec:
+  default:
+    timeoutSec: 3600
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-agent-psc

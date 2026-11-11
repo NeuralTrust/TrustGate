@@ -43,3 +43,24 @@ spec:
     app.kubernetes.io/instance: agentgateway
     app.kubernetes.io/component: mcp
     component: mcp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-agent-psc
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: agent
+    component: agent
+    neuraltrust.ai/exposure: psc
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8084
+    targetPort: 8084
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: agent
+    component: agent

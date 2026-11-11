@@ -49,3 +49,16 @@ spec:
     group: ""
     kind: Service
     name: agentgateway-mcp
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-agent
+spec:
+  default:
+    # securityPolicy: neuraltrust-prod-cloudflare-only
+    timeoutSec: 3600
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-agent

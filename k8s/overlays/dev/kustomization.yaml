@@ -40,6 +40,12 @@ patches:
   target:
     kind: Deployment
     name: agentgateway-mcp
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-agent
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev
