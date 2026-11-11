@@ -87,7 +87,7 @@ func lockLinkedConsumers(ctx context.Context, tx pgx.Tx, linking []ids.ConsumerI
 	if len(linking) == 0 {
 		return nil
 	}
-	const query = `SELECT 1 FROM consumers WHERE id = ANY($1) ORDER BY id FOR KEY SHARE`
+	const query = `SELECT 1 FROM consumers WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id FOR KEY SHARE`
 	if _, err := tx.Exec(ctx, query, ids.ToUUIDs(linking)); err != nil {
 		return fmt.Errorf("policy repository: lock linked consumers: %w", err)
 	}
