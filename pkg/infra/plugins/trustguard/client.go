@@ -147,18 +147,11 @@ type client struct {
 
 type clientConfig struct {
 	baseTransport http.RoundTripper
-	v2Shadow      V2ShadowConfig
 	v2Engine      bool
 }
 
 // Option configures the plugin beyond its required arguments.
 type Option func(*clientConfig)
-
-// WithV2Shadow sends a copy of every evaluation of the gateways cfg lists to TrustGuard v2.
-// TrustGuard's answer alone decides.
-func WithV2Shadow(cfg V2ShadowConfig) Option {
-	return func(c *clientConfig) { c.v2Shadow = cfg }
-}
 
 // withV2Engine points the client and the token manager at TrustGuard's /v2 engine.
 func withV2Engine() Option {

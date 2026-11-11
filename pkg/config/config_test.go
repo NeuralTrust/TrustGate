@@ -1015,49 +1015,12 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_TrustGuardV2Shadow(t *testing.T) {
-	for raw, wantAll := range map[string]bool{"": false, "off": false, " OFF ": false, "all": true, " All ": true} {
-		t.Run("value "+raw, func(t *testing.T) {
-			minimumEnv(t)
-			t.Setenv("TRUSTGUARD_V2_SHADOW", raw)
-			cfg, err := LoadConfig()
-			if err != nil {
-				t.Fatalf("LoadConfig: %v", err)
-			}
-			if got := cfg.TrustGuard.V2.ShadowAll(); got != wantAll {
-				t.Errorf("ShadowAll() = %v, want %v", got, wantAll)
-			}
-		})
-	}
-	t.Run("old name is ignored", func(t *testing.T) {
-		minimumEnv(t)
-		t.Setenv("TRUSTGUARD_V3_SHADOW", "all")
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		if cfg.TrustGuard.V2.ShadowAll() {
-			t.Error("TRUSTGUARD_V3_SHADOW must not be read")
-		}
-	})
-	t.Run("unknown value fails", func(t *testing.T) {
-		minimumEnv(t)
-		t.Setenv("TRUSTGUARD_V2_SHADOW", "some")
-		if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "TRUSTGUARD_V2_SHADOW") {
-			t.Fatalf("LoadConfig err = %v, want TRUSTGUARD_V2_SHADOW error", err)
-		}
-	})
-}
-
 func TestLoadConfig_TrustGuardV2(t *testing.T) {
 	t.Run("off by default", func(t *testing.T) {
 		minimumEnv(t)
 		cfg, err := LoadConfig()
 		if err != nil {
 			t.Fatalf("LoadConfig: %v", err)
-		}
-		if len(cfg.TrustGuard.V2.Gateways) != 0 {
-			t.Errorf("TrustGuard.V2.Gateways = %v, want none", cfg.TrustGuard.V2.Gateways)
 		}
 		if cfg.TrustGuard.V2.Timeout != defaultTrustGuardTimeout {
 			t.Errorf("TrustGuard.V2.Timeout = %v, want %v", cfg.TrustGuard.V2.Timeout, defaultTrustGuardTimeout)
@@ -1081,7 +1044,6 @@ func TestLoadConfig_TrustGuardV2(t *testing.T) {
 		t.Setenv("TRUSTGUARD_V2_TIMEOUT", "2s")
 		t.Setenv("TRUSTGUARD_V2_CLIENT_ID", "tgc_platform")
 		t.Setenv("TRUSTGUARD_V2_CLIENT_SECRET", "platform-secret")
-		t.Setenv("TRUSTGUARD_V2_GATEWAYS", " gw-a , gw-b=6f0c3c1e-8a52-4b8e-9d0e-1f2a3b4c5d6e,,=orphan")
 
 		cfg, err := LoadConfig()
 		if err != nil {
@@ -1092,15 +1054,6 @@ func TestLoadConfig_TrustGuardV2(t *testing.T) {
 			v2cfg.ClientID != "tgc_platform" || v2cfg.ClientSecret != "platform-secret" {
 			t.Errorf("TrustGuard.V2 = %+v", v2cfg)
 		}
-		want := map[string]string{"gw-a": "", "gw-b": "6f0c3c1e-8a52-4b8e-9d0e-1f2a3b4c5d6e"}
-		if len(v2cfg.Gateways) != len(want) {
-			t.Fatalf("TrustGuard.V2.Gateways = %v, want %v", v2cfg.Gateways, want)
-		}
-		for gw, integration := range want {
-			if got, ok := v2cfg.Gateways[gw]; !ok || got != integration {
-				t.Errorf("TrustGuard.V2.Gateways[%q] = %q, %v; want %q", gw, got, ok, integration)
-			}
-		}
 	})
 }
 
@@ -1110,14 +1063,13 @@ func TestLoadConfig_TrustGuardV2IgnoresOldNames(t *testing.T) {
 	t.Setenv("TRUSTGUARD_V3_TIMEOUT", "3s")
 	t.Setenv("TRUSTGUARD_V3_CLIENT_ID", "old-id")
 	t.Setenv("TRUSTGUARD_V3_CLIENT_SECRET", "old-secret")
-	t.Setenv("TRUSTGUARD_V3_GATEWAYS", "gw-old=11111111-1111-4111-8111-111111111111")
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	v2 := cfg.TrustGuard.V2
 	if v2.BaseURL != "" || v2.ClientID != "" || v2.ClientSecret != "" ||
-		v2.Timeout != defaultTrustGuardTimeout || len(v2.Gateways) != 0 {
+		v2.Timeout != defaultTrustGuardTimeout {
 		t.Errorf("TrustGuard.V2 = %+v, want zero values", v2)
 	}
 }

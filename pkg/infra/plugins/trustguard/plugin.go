@@ -170,9 +170,6 @@ type Plugin struct {
 	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
-	// v2Shadow copies every evaluation to TrustGuard /v2. Only the v1 plugin has one.
-	v2Shadow *v2ShadowSender
-
 	// name is the slug this instance is registered under, and v2 says it speaks to
 	// TrustGuard's /v2 engine (asset-based request, /v2/token) and enforces its
 	// answer. Everything else, the failure modes, the legs, streaming and MCP, is shared.
@@ -222,13 +219,11 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 		p.v2 = true
 		return p
 	}
-	p.v2Shadow = newV2ShadowSender(cfg.v2Shadow, cfg.baseTransport, logger)
 	return p
 }
 
 // NewV2 builds the trustguard_v2 plugin: the same plugin, speaking to
-// TrustGuard's /v2 engine with the credentials of the v2 platform client. It
-// sends no shadow copy; it is the evaluation.
+// TrustGuard's /v2 engine with the credentials of the v2 platform client.
 func NewV2(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...Option) *Plugin {
 	return New(registry, baseURL, timeout, clientID, clientSecret, logger, append(opts[:len(opts):len(opts)], withV2Engine())...)
 }
@@ -404,7 +399,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
-	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
