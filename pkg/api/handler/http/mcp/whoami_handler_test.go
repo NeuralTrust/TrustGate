@@ -32,6 +32,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -544,4 +545,73 @@ func TestWhoAmI_AnswersAHybridKeyOnItsOwnDataPlane(t *testing.T) {
 
 	require.Equal(t, fiber.StatusOK, status)
 	require.Equal(t, "https://gw.mcp.neuraltrust.ai/support-agent/mcp", body.Consumers[0].URL)
+}
+
+func whoAmIAgentsConsumers(t *testing.T, agentDomain string, consumers ...appconsumer.KeyConsumer) []map[string]any {
+	t.Helper()
+	handler := mcphttp.NewWhoAmIHandler(
+		whoAmIGateway{gw: &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "gw-x"}},
+		&whoAmIConsumers{consumers: consumers}, "acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIAgentDomain(agentDomain),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+	response, err := app.Test(whoAmIRequest("ag_secret"))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, fiber.StatusOK, response.StatusCode)
+	var body struct {
+		Consumers []map[string]any `json:"consumers"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	return body.Consumers
+}
+
+func TestWhoAmI_ListsTheAgentsOfAnA2AConsumerOnTheAgentHost(t *testing.T) {
+	t.Parallel()
+	research := ids.New[ids.RegistryKind]()
+	travel := ids.New[ids.RegistryKind]()
+	consumers := whoAmIAgentsConsumers(t, "agents.example.com",
+		appconsumer.KeyConsumer{Slug: "tools", Type: consumerdomain.TypeMCP, Active: true},
+		appconsumer.KeyConsumer{Slug: "research-bot", Type: consumerdomain.TypeA2A, Active: true, Agents: []appconsumer.KeyAgent{
+			{ID: research, Name: "Research", ProtocolVersion: registrydomain.A2AVersion03},
+			{ID: travel, Name: "Travel planner", ProtocolVersion: registrydomain.A2AVersion10},
+		}},
+	)
+
+	require.Len(t, consumers, 2)
+	require.NotContains(t, consumers[0], "agents")
+	require.Equal(t, "A2A", consumers[1]["type"])
+	require.Equal(t, "https://gw-x.agents.example.com/research-bot/agents", consumers[1]["url"])
+	require.Equal(t, []any{
+		map[string]any{
+			"id": research.String(), "name": "Research", "protocol_version": "0.3",
+			"card_url": "https://gw-x.agents.example.com/research-bot/agents/" + research.String() + "/.well-known/agent-card.json",
+		},
+		map[string]any{
+			"id": travel.String(), "name": "Travel planner", "protocol_version": "1.0",
+			"card_url": "https://gw-x.agents.example.com/research-bot/agents/" + travel.String() + "/.well-known/agent-card.json",
+		},
+	}, consumers[1]["agents"])
+}
+
+func TestWhoAmI_SendsAnEmptyAgentListForAnA2AConsumerWithoutAgents(t *testing.T) {
+	t.Parallel()
+	consumers := whoAmIAgentsConsumers(t, "agents.example.com",
+		appconsumer.KeyConsumer{Slug: "research-bot", Type: consumerdomain.TypeA2A, Active: true, Agents: []appconsumer.KeyAgent{}},
+	)
+
+	require.Equal(t, []any{}, consumers[0]["agents"])
+}
+
+func TestWhoAmI_GivesAnA2AConsumerNoURLAndNoAgentsWithoutAnAgentDomain(t *testing.T) {
+	t.Parallel()
+	consumers := whoAmIAgentsConsumers(t, "",
+		appconsumer.KeyConsumer{Slug: "research-bot", Type: consumerdomain.TypeA2A, Active: true, Agents: []appconsumer.KeyAgent{
+			{ID: ids.New[ids.RegistryKind](), Name: "Research", ProtocolVersion: registrydomain.A2AVersion10},
+		}},
+	)
+
+	require.NotContains(t, consumers[0], "url")
+	require.Equal(t, []any{}, consumers[0]["agents"])
 }

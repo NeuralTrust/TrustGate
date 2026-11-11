@@ -1188,6 +1188,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts:
     properties:
+      agent:
+        type: string
       mcp:
         type: string
       proxy:
@@ -3864,10 +3866,28 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer'
         type: array
     type: object
+  pkg_api_handler_http_mcp.WhoAmIAgent:
+    properties:
+      card_url:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      protocol_version:
+        type: string
+    type: object
   pkg_api_handler_http_mcp.WhoAmIConsumer:
     properties:
       active:
         type: boolean
+      agents:
+        description: |-
+          Agents are the enabled agents of an A2A consumer, sorted by name.
+          Always present for an A2A consumer, absent for any other.
+        items:
+          $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIAgent'
+        type: array
       name:
         type: string
       slug:
@@ -3887,7 +3907,8 @@ definitions:
       url:
         description: |-
           URL is where this consumer is served — the MCP endpoint for an MCP
-          consumer, the provider-compatible base URL for an LLM one. Empty when
+          consumer, the provider-compatible base URL for an LLM one, the agents
+          base on the agent plane for an A2A one. Empty when
           the gateway has no public host configured for that plane.
         type: string
     type: object
@@ -9034,16 +9055,19 @@ paths:
       description: 'Returns the consumers this API key is attached to, one per plane,
         each with the URL it is served on — plus when the key itself expires and,
         for an MCP consumer, which of its bound servers still need an account connected
-        and by whom. A personal key (key.personal) is a person''s own: it lists the
-        Store, slug "store", on the MCP plane (/store/mcp, where it runs as its owner)
-        and, when the gateway has personal consumers, on the LLM plane (/store/v1).
-        A key is attached to consumers and a consumer has one type, so an agent that
-        calls both tools and models holds an MCP consumer and an LLM one behind the
-        same key; this is how a client learns their slugs and addresses instead of
-        being configured with them. Carries no identifiers and no credentials. An
-        unknown, disabled, expired or foreign key is refused without saying which.
-        On a host that names no gateway (the fixed entry point), the gateway is found
-        from the key itself and the answer carries that gateway''s own plane URLs.'
+        and by whom. An A2A consumer carries agents: its enabled agents, each with
+        the card URL on the gateway''s agent host (empty when AGENT_BASE_DOMAIN is
+        not set). A personal key (key.personal) is a person''s own: it lists the Store,
+        slug "store", on the MCP plane (/store/mcp, where it runs as its owner) and,
+        when the gateway has personal consumers, on the LLM plane (/store/v1). A key
+        is attached to consumers and a consumer has one type, so an agent that calls
+        both tools and models holds an MCP consumer and an LLM one behind the same
+        key; this is how a client learns their slugs and addresses instead of being
+        configured with them. Carries no credentials, and no identifiers beyond agent
+        ids. An unknown, disabled, expired or foreign key is refused without saying
+        which. On a host that names no gateway (the fixed entry point), the gateway
+        is found from the key itself and the answer carries that gateway''s own plane
+        URLs.'
       produces:
       - application/json
       responses:
