@@ -167,3 +167,30 @@ func TestRPCRefusals(t *testing.T) {
 	status, _ := do(t, app, httptest.NewRequest(http.MethodPost, "/research-bot/agents/unknown", strings.NewReader(`{}`)))
 	assert.Equal(t, http.StatusNotFound, status)
 }
+
+func TestRPCStreamsServerSentEvents(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":\"agent-id\",\"result\":{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_AGENT\",\"parts\":[{\"text\":\"one\"}]}}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":\"agent-id\",\"result\":{\"message\":{\"messageId\":\"m2\",\"role\":\"ROLE_AGENT\",\"parts\":[{\"text\":\"two\"}]}}}\n\n"))
+	}))
+	t.Cleanup(agent.Close)
+	app, reg := newApp(t, agent.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/research-bot/agents/"+reg.ID.String(),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"caller-id","method":"SendStreamingMessage","params":{"message":{"messageId":"m","role":"ROLE_USER","parts":[{"text":"hello"}]}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+	frames := strings.Split(strings.TrimSpace(string(body)), "\n\n")
+	require.Len(t, frames, 2)
+	for i, text := range []string{"one", "two"} {
+		data, ok := strings.CutPrefix(frames[i], "data: ")
+		require.True(t, ok)
+		assert.JSONEq(t, `{"jsonrpc":"2.0","id":"caller-id","result":{"message":{"messageId":"m`+string(rune('1'+i))+`","role":"ROLE_AGENT","parts":[{"text":"`+text+`"}]}}}`, data)
+	}
+}
