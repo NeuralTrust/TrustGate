@@ -504,23 +504,10 @@ func foldA2ASpans(requestTrace *trace.RequestTrace) (*events.A2A, int64) {
 			continue
 		}
 		upstreamMs += span.Latency().Milliseconds()
-		a2a = &events.A2A{
-			Method:              attrs.Method,
-			RegistryID:          attrs.RegistryID,
-			AgentName:           attrs.AgentName,
-			Provider:            attrs.Provider,
-			ProtocolVersion:     attrs.ProtocolVersion,
-			TaskID:              attrs.TaskID,
-			ContextID:           attrs.ContextID,
-			TaskState:           attrs.TaskState,
-			UpstreamStatus:      attrs.UpstreamStatus,
-			Outcome:             attrs.Outcome,
-			Reason:              attrs.Reason,
-			BlockedBy:           attrs.BlockedBy,
-			IdentityMode:        attrs.IdentityMode,
-			IdentitySubjectKind: attrs.IdentitySubjectKind,
-			RPCErrorCode:        attrs.RPCErrorCode,
-		}
+		// events.A2A has the fields of trace.A2AAttrs, so a change to one
+		// fails to build until the other follows.
+		a2aEvent := events.A2A(attrs)
+		a2a = &a2aEvent
 	}
 	return a2a, upstreamMs
 }
