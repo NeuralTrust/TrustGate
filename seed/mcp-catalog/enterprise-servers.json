@@ -739,20 +739,16 @@
       "relevance": 55,
       "tools": [
         {
-          "name": "search_docs",
-          "description": "Search across all AssemblyAI documentation including guides, API reference, tutorials, FAQ, and cookbooks. Returns matching pages with relevant excerpts. Search should be used as a complement to browsing the docs (list_sections), not as a replacement. Use get_pages to read the full content of any..."
+          "description": "Search across the AssemblyAI knowledge base to find relevant information, code examples, API references, and guides.",
+          "name": "search_assembly_ai"
         },
         {
-          "name": "get_pages",
-          "description": "Retrieve the full content of one or more AssemblyAI documentation pages by path. Use search_docs first to find the right page paths, or list_sections to browse the structure. Supports fetching multiple pages in a single call to reduce round-trips."
+          "description": "Run a read-only shell-like query against a virtualized, in-memory filesystem rooted at `/` that contains ONLY the AssemblyAI documentation pages and OpenAPI specs.",
+          "name": "query_docs_filesystem_assembly_ai"
         },
         {
-          "name": "list_sections",
-          "description": "List all available sections and pages in AssemblyAI documentation. Useful for understanding the documentation structure and finding the right topic."
-        },
-        {
-          "name": "get_api_reference",
-          "description": "Get details about AssemblyAI API endpoints including request/response schemas, parameters, and descriptions. Covers REST API, Streaming WebSocket API, and LLM Gateway API."
+          "description": "Report a problem with this documentation site so the docs team can fix it.",
+          "name": "submit_feedback"
         }
       ]
     },
@@ -6958,96 +6954,112 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "list_k8s_api_resources",
-          "description": "Retrieves the available API groups and resources from a Kubernetes cluster. This is similar to running `kubectl api-resources`."
+          "description": "Retrieves the available API groups and resources from a Kubernetes cluster. This is similar to running `kubectl api-resources`.",
+          "name": "list_k8s_api_resources"
         },
         {
-          "name": "check_k8s_auth",
-          "description": "Checks whether an action is allowed on a Kubernetes resource. This is similar to running `kubectl auth can-i`."
+          "description": "Checks whether an action is allowed on a Kubernetes resource. This is similar to running `kubectl auth can-i`.",
+          "name": "check_k8s_auth"
         },
         {
-          "name": "describe_k8s_resource",
-          "description": "Shows the details of a specific Kubernetes resource. This is similar to running `kubectl describe`."
+          "description": "Shows the details of a specific Kubernetes resource. This is similar to running `kubectl describe`.",
+          "name": "describe_k8s_resource"
         },
         {
-          "name": "list_k8s_events",
-          "description": "Retrieves events from a Kubernetes cluster. This is similar to running `kubectl events`."
+          "description": "Retrieves events from a Kubernetes cluster. This is similar to running `kubectl events`.",
+          "name": "list_k8s_events"
         },
         {
-          "name": "get_k8s_resource",
-          "description": "Gets one or more Kubernetes resources from a cluster. Resources can be filtered by type, name, namespace, and label selectors. Returns the resources in YAML format. This is similar to running `kubectl get`."
+          "description": "Gets one or more Kubernetes resources from a cluster. Resources can be filtered by type, name, namespace, and label selectors. Returns the resources in YAML format. This is similar to running `kubectl get`.",
+          "name": "get_k8s_resource"
         },
         {
-          "name": "get_k8s_cluster_info",
-          "description": "Gets cluster endpoint information. This is similar to running `kubectl cluster-info`."
+          "description": "Gets cluster endpoint information. This is similar to running `kubectl cluster-info`.",
+          "name": "get_k8s_cluster_info"
         },
         {
-          "name": "get_k8s_version",
-          "description": "Retrieves Kubernetes client and server versions for a given cluster. This is similar to running `kubectl version`."
+          "description": "Retrieves Kubernetes client and server versions for a given cluster. This is similar to running `kubectl version`.",
+          "name": "get_k8s_version"
         },
         {
-          "name": "get_k8s_rollout_status",
-          "description": "Checks the current rollout status of a Kubernetes resource. This is similar to running `kubectl rollout status`."
+          "description": "Checks the current rollout status of a Kubernetes resource. This is similar to running `kubectl rollout status`.",
+          "name": "get_k8s_rollout_status"
         },
         {
-          "name": "list_clusters",
-          "description": "Lists GKE clusters in a given project and location. Location can be a region, zone, or '-' for all locations."
+          "description": "Lists GKE clusters in a given project and location. Location can be a region, zone, or '-' for all locations.",
+          "name": "list_clusters"
         },
         {
-          "name": "create_cluster",
-          "description": "Creates a new GKE cluster in a given project and location. It's recommended to read the [GKE documentation](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/configuration-overview) to understand cluster configuration options. Cluster creation will default to Autopilot mode, as recomm..."
+          "description": "Creates a new GKE cluster in a given project and location. It's recommended to read the [GKE documentation](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/configuration-overview) to understand cluster configuration options. Cluster creation will default to Autopilot mode, as recomm...",
+          "name": "create_cluster"
         },
         {
-          "name": "update_cluster",
-          "description": "Updates a specific GKE cluster."
+          "description": "Updates a specific GKE cluster.",
+          "name": "update_cluster"
         },
         {
-          "name": "get_cluster",
-          "description": "Gets the details of a specific GKE cluster."
+          "description": "Gets the details of a specific GKE cluster.",
+          "name": "get_cluster"
         },
         {
-          "name": "list_operations",
-          "description": "Lists GKE operations in a given project and location. Location can be a region, zone, or '-' for all locations."
+          "description": "Lists GKE operations in a given project and location. Location can be a region, zone, or '-' for all locations.",
+          "name": "list_operations"
         },
         {
-          "name": "get_operation",
-          "description": "Gets the details of a specific GKE operation."
+          "description": "Gets the details of a specific GKE operation.",
+          "name": "get_operation"
         },
         {
-          "name": "cancel_operation",
-          "description": "Cancels a specific GKE operation."
+          "description": "Cancels a specific GKE operation.",
+          "name": "cancel_operation"
         },
         {
-          "name": "create_node_pool",
-          "description": "Creates a node pool for a specific GKE cluster."
+          "description": "Creates a node pool for a specific GKE cluster.",
+          "name": "create_node_pool"
         },
         {
-          "name": "list_node_pools",
-          "description": "Lists the node pools for a specific GKE cluster."
+          "description": "Lists the node pools for a specific GKE cluster.",
+          "name": "list_node_pools"
         },
         {
-          "name": "get_node_pool",
-          "description": "Gets the details of a specific node pool within a GKE cluster."
+          "description": "Gets the details of a specific node pool within a GKE cluster.",
+          "name": "get_node_pool"
         },
         {
-          "name": "update_node_pool",
-          "description": "Updates a specific node pool within a GKE cluster."
+          "description": "Updates a specific node pool within a GKE cluster.",
+          "name": "update_node_pool"
         },
         {
-          "name": "get_k8s_logs",
-          "description": "Gets logs from a Kubernetes container in a pod. This is similar to running `kubectl logs`."
+          "description": "Gets logs from a Kubernetes container in a pod. This is similar to running `kubectl logs`.",
+          "name": "get_k8s_logs"
         },
         {
-          "name": "apply_k8s_manifest",
-          "description": "Applies a Kubernetes manifest to a cluster using server-side apply. This is similar to running `kubectl apply --server-side`."
+          "description": "Applies a Kubernetes manifest to a cluster using server-side apply. This is similar to running `kubectl apply --server-side`.",
+          "name": "apply_k8s_manifest"
         },
         {
-          "name": "delete_k8s_resource",
-          "description": "Deletes a Kubernetes resource from a cluster. This is similar to running `kubectl delete`."
+          "description": "Deletes a Kubernetes resource from a cluster. This is similar to running `kubectl delete`.",
+          "name": "delete_k8s_resource"
         },
         {
-          "name": "patch_k8s_resource",
-          "description": "Patches a Kubernetes resource. This is similar to running `kubectl patch`."
+          "description": "Patches a Kubernetes resource. This is similar to running `kubectl patch`.",
+          "name": "patch_k8s_resource"
+        },
+        {
+          "description": "Collects a correlated incident snapshot for a Kubernetes workload (Deployment, StatefulSet, DaemonSet), verifying referenced ConfigMaps, Secrets, and PVCs, warning events, and automatically deduplica…",
+          "name": "diagnose_k8s_workload"
+        },
+        {
+          "description": "Computes a high-level health scorecard across nodes, workloads, system pods, and control-plane components (GKE cluster state, admission webhooks, and API Priority and Fairness).",
+          "name": "get_k8s_cluster_health"
+        },
+        {
+          "description": "Fetches and deduplicates container logs using pattern fingerprinting to reduce token usage.",
+          "name": "get_k8s_log_summary"
+        },
+        {
+          "description": "Scans a cluster or namespace for abnormal pods (CrashLoopBackOff, OOMKilled, ImagePullBackOff), node pressure, stalled rollouts, quota exhaustion, PDB blocks, admission webhook risks, and API Priorit…",
+          "name": "list_k8s_cluster_issues"
         }
       ]
     },
@@ -7366,24 +7378,28 @@
       "relevance": 90,
       "tools": [
         {
-          "name": "search_places",
-          "description": "Call this tool when the user's request is to find places, businesses, addresses, locations, points of interest, or any other Google Maps related search. **Input Requirements (CRITICAL):** 1. **`text_query` (string - MANDATORY):** The primary search query. This must clearly define what the user is..."
+          "description": "Call this tool when the user's request is to find places, businesses, addresses, locations, points of interest, or any other Google Maps related search. **Input Requirements (CRITICAL):** 1. **`text_query` (string - MANDATORY):** The primary search query. This must clearly define what the user is...",
+          "name": "search_places"
         },
         {
-          "name": "lookup_weather",
-          "description": "Retrieves comprehensive weather data including current conditions, hourly, and daily forecasts. **Specific Data Available:** Temperature (Current, Feels Like, Max/Min, Heat Index), Wind (Speed, Gusts, Direction), Celestial Events (Sunrise/Sunset, Moon Phase), Precipitation (Type, Probability, Qua..."
+          "description": "Retrieves comprehensive weather data including current conditions, hourly, and daily forecasts. **Specific Data Available:** Temperature (Current, Feels Like, Max/Min, Heat Index), Wind (Speed, Gusts, Direction), Celestial Events (Sunrise/Sunset, Moon Phase), Precipitation (Type, Probability, Qua...",
+          "name": "lookup_weather"
         },
         {
-          "name": "compute_routes",
-          "description": "Computes a travel route between a specified origin and destination. **Supported Travel Modes:** DRIVE (default), WALK. **Input Requirements (CRITICAL):** Requires both **origin** and **destination**. Each must be provided using one of the following methods, nested within its respective field: * *..."
+          "description": "Computes a travel route between a specified origin and destination. **Supported Travel Modes:** DRIVE (default), WALK. **Input Requirements (CRITICAL):** Requires both **origin** and **destination**. Each must be provided using one of the following methods, nested within its respective field: * *...",
+          "name": "compute_routes"
         },
         {
-          "name": "resolve_names",
-          "description": "Resolves a batch list of specific location queries (landmark names or exact addresses) into canonical Google Maps Place IDs. **Input Requirements (CRITICAL):** 1. **`queries` (array of objects - MANDATORY):** A list of location queries to resolve. You may specify up to 20 queries. * **Each query ..."
+          "description": "Call this tool when the user wants to find places, businesses, or points of interest along a travel route (e.g., \"gas stations on my way to Tahoe\", \"coffee shops between SF and San Jose\").",
+          "name": "search_along_route"
         },
         {
-          "name": "resolve_maps_urls",
-          "description": "Resolves a list of Google Maps URLs into canonical Google Maps Place IDs. **When to call this tool (CRITICAL):** * Use this tool when the user provides one or more Google Maps sharing links or URLs (e.g. 'https://maps.app.goo.gl/...', 'https://www.google.com/maps/place/...', or 'https://maps.goog..."
+          "description": "Resolves a batch list of specific location queries (landmark names or exact addresses) into canonical Google Maps Place IDs. **Input Requirements (CRITICAL):** 1. **`queries` (array of objects - MANDATORY):** A list of location queries to resolve. You may specify up to 20 queries. * **Each query ...",
+          "name": "resolve_names"
+        },
+        {
+          "description": "Resolves a list of Google Maps URLs into canonical Google Maps Place IDs. **When to call this tool (CRITICAL):** * Use this tool when the user provides one or more Google Maps sharing links or URLs (e.g. 'https://maps.app.goo.gl/...', 'https://www.google.com/maps/place/...', or 'https://maps.goog...",
+          "name": "resolve_maps_urls"
         }
       ]
     },
@@ -7722,6 +7738,10 @@
           "name": "get_project"
         },
         {
+          "description": "Updates a Stitch project's metadata (such as title, background_theme, or visibility) and/or canvas screen instances (positions, dimensions, labels, or hidden state).",
+          "name": "update_project"
+        },
+        {
           "description": "Deletes a specific Stitch project using its project name.",
           "name": "delete_project"
         },
@@ -7736,6 +7756,10 @@
         {
           "description": "Retrieves the details of a specific screen within a project.",
           "name": "get_screen"
+        },
+        {
+          "description": "Updates the HTML code or screenshot of a specific screen within a Stitch project.",
+          "name": "update_screen"
         },
         {
           "description": "Downloads the content of a screen file: its HTML code or its screenshot.",
@@ -14384,6 +14408,10 @@
           "name": "search_table"
         },
         {
+          "description": "Extract content from a public http(s) URL, discover site URLs, or crawl pages.",
+          "name": "extract"
+        },
+        {
           "description": "Unified search across all SerpApi engines (Google, Bing, Yahoo, DuckDuckGo, YouTube, eBay, etc.)",
           "name": "search"
         }
@@ -14939,7 +14967,9 @@
           "name": "account_url",
           "description": "Snowflake account URL host.",
           "required": true,
-          "host_suffix": ["*.snowflakecomputing.com"]
+          "host_suffix": [
+            "*.snowflakecomputing.com"
+          ]
         },
         {
           "name": "database",
