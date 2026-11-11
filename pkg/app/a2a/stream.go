@@ -173,7 +173,7 @@ func (s *Stream) relay(ctx context.Context, data []byte) (json.RawMessage, *RPCE
 	}
 	if len(content.Parts) > 0 {
 		if blocked := s.x.f.runner.PreResponse(ctx, s.x, content.Parts); blocked != nil {
-			go s.x.cancelTask(s.task)
+			go s.x.cancelTask(ctx, s.task)
 			return nil, blocked
 		}
 	}
@@ -235,7 +235,7 @@ func readFailure(err error) *RPCError {
 
 // cancelTask asks the agent to cancel a task the gateway stopped relaying,
 // without waiting on anyone.
-func (x *Exchange) cancelTask(task string) {
+func (x *Exchange) cancelTask(ctx context.Context, task string) {
 	if task == "" {
 		return
 	}
@@ -246,7 +246,7 @@ func (x *Exchange) cancelTask(task string) {
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": uuid.NewString(), "method": method, "params": map[string]string{"id": task}})
 	header := x.header.Clone()
 	header.Set("Accept", "application/json")
-	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
 	defer cancel()
 	res, err := x.do(ctx, header, body)
 	if err != nil {
