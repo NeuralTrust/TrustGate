@@ -17,6 +17,7 @@ package router
 import (
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
+	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 )
@@ -33,6 +34,7 @@ type agentRouter struct {
 	opsMetrics    *middleware.OpsMetricsMiddleware
 	healthHandler *apihandler.HealthHandler
 	a2aHandler    *a2ahttp.Handler
+	jwksHandler   *oauthhttp.JWKSHandler
 }
 
 // NewAgentRouter builds the routes of the A2A agent plane.
@@ -42,6 +44,7 @@ func NewAgentRouter(
 	healthHandler *apihandler.HealthHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
 	a2aHandler *a2ahttp.Handler,
+	jwksHandler *oauthhttp.JWKSHandler,
 ) ServerRouter {
 	return &agentRouter{
 		baseTransport: baseTransport,
@@ -49,6 +52,7 @@ func NewAgentRouter(
 		opsMetrics:    opsMetrics,
 		healthHandler: healthHandler,
 		a2aHandler:    a2aHandler,
+		jwksHandler:   jwksHandler,
 	}
 }
 
@@ -61,6 +65,8 @@ func (r *agentRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ReadyPath, r.healthHandler.Readiness)
 
 	installMiddlewares(app, r.baseTransport)
+
+	app.Get(oauthhttp.JWKSPath, r.jwksHandler.Handle)
 
 	app.Get(AgentCardPath, append(r.authTransport.GetMiddlewares(), r.a2aHandler.Card)...)
 	app.Post(AgentRPCPath, append(r.authTransport.GetMiddlewares(), r.a2aHandler.RPC)...)

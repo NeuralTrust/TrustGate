@@ -17,8 +17,11 @@ package modules
 import (
 	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	infraa2a "github.com/NeuralTrust/TrustGate/pkg/infra/a2a"
+	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 )
 
 // A2A provides the agent plane's forwarding: upstream client, policies,
@@ -27,7 +30,9 @@ func A2A(c *container.Container) error {
 	for _, provider := range []any{
 		infraa2a.NewUpstreamClient,
 		appa2a.NewPluginRunner,
-		appa2a.NewCredentials,
+		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, signer *infrasts.Signer) *appa2a.Credentials {
+			return appa2a.NewCredentials(exchanger, provider, signer.Ephemeral())
+		},
 		appa2a.NewForwarder,
 		a2ahttp.NewHandler,
 	} {
