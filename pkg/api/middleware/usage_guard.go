@@ -40,6 +40,10 @@ const (
 	// refused for usage. It travels with HTTP 402, never 200, so the refused
 	// call is not billed as usage.
 	mcpUsageExhaustedCode = -32005
+
+	// agentUnavailableCode is the agent plane's JSON-RPC code for a call the
+	// gateway cannot complete. Like MCP's, it travels with HTTP 402.
+	agentUnavailableCode = -32092
 )
 
 // UsageGuardMiddleware blocks the requests of tenants whose usage the control
@@ -50,6 +54,7 @@ type UsageGuardMiddleware struct {
 	checker appusage.ExhaustionChecker
 	enabled func() bool
 	mcp     bool
+	agent   bool
 }
 
 // NewUsageGuardMiddleware builds the guard. A nil checker or enabled function
@@ -80,6 +85,14 @@ func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 	return &clone
 }
 
+// ForAgent returns a copy of the guard that answers in the agent plane's
+// JSON-RPC.
+func (m *UsageGuardMiddleware) ForAgent() *UsageGuardMiddleware {
+	clone := *m
+	clone.agent = true
+	return &clone
+}
+
 // Middleware returns the Fiber handler of the guard.
 func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -105,6 +118,18 @@ func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *UsageGuardMiddleware) body(c *fiber.Ctx, code string) []byte {
+	if m.agent {
+		out, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      nil,
+			"error": map[string]any{
+				"code":    agentUnavailableCode,
+				"message": usageBlockedMessage,
+				"data":    map[string]string{"reason": "plan_unavailable"},
+			},
+		})
+		return out
+	}
 	if m.mcp {
 		out, _ := json.Marshal(map[string]any{
 			"jsonrpc": "2.0",

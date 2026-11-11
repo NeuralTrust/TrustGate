@@ -20,8 +20,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// AgentRPCPath is the agent plane's JSON-RPC endpoint.
+const AgentRPCPath = "/:consumer/agents/:agent"
+
 type agentRouter struct {
 	baseTransport *middleware.Transport
+	authTransport *middleware.Transport
 	opsMetrics    *middleware.OpsMetricsMiddleware
 	healthHandler *apihandler.HealthHandler
 }
@@ -29,11 +33,13 @@ type agentRouter struct {
 // NewAgentRouter builds the routes of the A2A agent plane.
 func NewAgentRouter(
 	baseTransport *middleware.Transport,
+	authTransport *middleware.Transport,
 	healthHandler *apihandler.HealthHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
 	return &agentRouter{
 		baseTransport: baseTransport,
+		authTransport: authTransport,
 		opsMetrics:    opsMetrics,
 		healthHandler: healthHandler,
 	}
@@ -49,7 +55,17 @@ func (r *agentRouter) BuildRoutes(app *fiber.App) error {
 
 	installMiddlewares(app, r.baseTransport)
 
-	// A2A routes go here: /.well-known/jwks.json on the base transport, then
-	// the agent card and the JSON-RPC endpoint behind the auth transport.
+	// TODO(a2a): /.well-known/jwks.json goes here, on the base transport, and
+	// the agent card route and the A2A handler below, behind the auth transport.
+	app.Post(AgentRPCPath, append(r.authTransport.GetMiddlewares(), agentMethodNotFound)...)
 	return nil
+}
+
+// agentMethodNotFound stands in for the A2A handler until it lands.
+func agentMethodNotFound(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"jsonrpc": "2.0",
+		"id":      nil,
+		"error":   fiber.Map{"code": -32601, "message": "Method not found"},
+	})
 }

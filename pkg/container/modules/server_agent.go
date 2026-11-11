@@ -20,8 +20,18 @@ import (
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/mtls"
+	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -30,10 +40,14 @@ import (
 
 type agentMiddlewares struct {
 	dig.In
-	RequestID       *middleware.RequestIDMiddleware
-	PanicRecover    *middleware.PanicRecoverMiddleware
-	AccessLog       *middleware.AccessLogMiddleware
-	SecurityHeaders *middleware.SecurityHeadersMiddleware
+	RequestID          *middleware.RequestIDMiddleware
+	PanicRecover       *middleware.PanicRecoverMiddleware
+	AccessLog          *middleware.AccessLogMiddleware
+	SecurityHeaders    *middleware.SecurityHeadersMiddleware
+	Auth               *middleware.AgentAuthMiddleware
+	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
+	Metrics            *middleware.AgentMetricsMiddleware
+	UsageGuard         *middleware.UsageGuardMiddleware
 }
 
 func agentBaseTransport(m agentMiddlewares) *middleware.Transport {
@@ -45,9 +59,49 @@ func agentBaseTransport(m agentMiddlewares) *middleware.Transport {
 	)
 }
 
+func agentAuthTransport(m agentMiddlewares) *middleware.Transport {
+	return middleware.NewTransport(
+		m.Auth,
+		m.HybridGatewayGuard,
+		m.Metrics,
+		m.UsageGuard.ForAgent(),
+	)
+}
+
+type agentAuthParams struct {
+	dig.In
+	APIKeys     appauth.APIKeyFinder
+	Credentials appauth.CredentialFinder
+	Verifier    appauth.JWTVerifier
+	Consumers   consumerdomain.Reader
+	Auths       authdomain.Repository
+	Gateways    gatewaydomain.Repository
+	TTLMaps     *cache.TTLMapManager
+	DataFinder  appconsumer.DataFinder
+	Finder      appgateway.Finder
+	Cfg         *config.Config
+	Logger      *slog.Logger
+}
+
+func provideAgentAuth(p agentAuthParams) *middleware.AgentAuthMiddleware {
+	paths := appconsumer.NewAgentPathResolver(p.Consumers, p.Auths, p.Gateways, p.TTLMaps, p.Logger)
+	resolver := middleware.NewAgentChainIdentityResolver(
+		p.APIKeys,
+		p.Credentials,
+		paths,
+		oidcauth.NewOAuth2TokenValidator(p.Verifier, nil),
+		introspection.NewValidator(nil),
+		mtls.NewValidator(),
+		mtls.NewXFCCExtractor(),
+		p.Cfg.Server.TrustXFCCFrom,
+	)
+	return middleware.NewAgentAuthMiddleware(resolver, p.DataFinder, p.Finder)
+}
+
 type agentRouterParams struct {
 	dig.In
 	BaseTransport *middleware.Transport `name:"agentBase"`
+	AuthTransport *middleware.Transport `name:"agentAuth"`
 	OpsMetrics    *o11y.Provider
 	HealthHandler *apihandler.HealthHandler
 }
@@ -61,13 +115,22 @@ type agentServerParams struct {
 
 // ServerAgent provides the A2A agent plane's server.
 func ServerAgent(c *container.Container) error {
+	if err := c.Provide(provideAgentAuth); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewAgentMetricsMiddleware); err != nil {
+		return err
+	}
 	if err := c.Provide(agentBaseTransport, dig.Name("agentBase")); err != nil {
+		return err
+	}
+	if err := c.Provide(agentAuthTransport, dig.Name("agentAuth")); err != nil {
 		return err
 	}
 	if err := c.Provide(
 		func(p agentRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAgent)
-			return router.NewAgentRouter(p.BaseTransport, p.HealthHandler, ops)
+			return router.NewAgentRouter(p.BaseTransport, p.AuthTransport, p.HealthHandler, ops)
 		},
 		dig.Name("agent"),
 	); err != nil {
