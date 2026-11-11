@@ -221,9 +221,6 @@ func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydo
 	if pol.IsGlobal() {
 		return nil
 	}
-	if cons.Type != domain.TypeLLM && cons.Type != domain.TypeMCP {
-		return nil
-	}
 	protocols, ok := a.resolver.SupportedProtocols(pol.Slug)
 	if !ok {
 		return nil

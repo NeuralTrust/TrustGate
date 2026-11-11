@@ -246,7 +246,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	if p.v2 {
+		return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
 }
 
 // ScopeInertSafe reports true: TrustGuard inspects the content of a request or
@@ -315,10 +318,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	mcpMode := in.Request.MCP
-	if !mcpMode && in.Request.Provider == "" {
+	a2aMode := in.Request.A2A
+	if !mcpMode && !a2aMode && in.Request.Provider == "" {
 		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonProviderMissing, nil)
 	}
-	if !mcpMode && p.registry == nil {
+	if !mcpMode && !a2aMode && p.registry == nil {
 		return passThrough(), nil
 	}
 
@@ -461,6 +465,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if resp.Status == statusTransform {
+		if a2aMode {
+			return a2aMaskRefused(in, data, resp)
+		}
 		return p.applyTransform(ctx, in, cfg, data, resp, tgt)
 	}
 
@@ -583,6 +590,9 @@ func (p *Plugin) inspectionPayload(
 ) (json.RawMessage, transformTarget, *inspectionHalt) {
 	if mcpMode {
 		return p.mcpInspectionPayload(ctx, in, direction)
+	}
+	if in.Request.A2A {
+		return p.a2aInspectionPayload(ctx, in, direction)
 	}
 	return p.llmInspectionPayload(ctx, in, direction)
 }

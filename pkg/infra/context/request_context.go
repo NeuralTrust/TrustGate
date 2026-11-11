@@ -234,6 +234,13 @@ type RequestContext struct {
 	MCPServerCode string
 	// MCPServerName is the persisted server name, without Store instance labels.
 	MCPServerName string
+	// A2A marks a call on the agent plane. Body is then the normalised A2A
+	// body (method, agent and parts), not the JSON-RPC request.
+	A2A bool
+	// A2AMethod is the JSON-RPC method of an A2A call.
+	A2AMethod string
+	// A2ATaskID is the task an A2A call names, "" when it names none.
+	A2ATaskID string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched
