@@ -73,6 +73,39 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 - `impersonation`, `passthrough` and `forwarded` are refused on A2A registries.
 - Agents verify the token against the gateway's JWKS. An agent that accepts only gateway tokens cannot be called around the gateway.
 
+**Agents hosted on AWS, Azure and Google** (spec `a2a-hosted-agents`)
+
+Amazon Bedrock AgentCore Runtime, Microsoft Foundry Agent Service and Google Vertex AI Agent Engine all serve A2A natively (checked against their docs on 2026-11-11). Registering one of them is therefore not a protocol bridge. It is the generic A2A path plus three things per provider:
+
+- how the agent is located;
+- how the gateway signs in;
+- a few transport differences.
+
+| | AgentCore Runtime | Foundry Agent Service | Vertex AI Agent Engine |
+|---|---|---|---|
+| Located by | runtime ARN + qualifier | project endpoint + agent name | project, location, Agent Engine id |
+| Binding | JSON-RPC | JSON-RPC (1.0 GA, 0.3 preview) | HTTP+JSON only |
+| Gateway signs in with | SigV4 (keys, role, or pod identity), or a Bearer the runtime's JWT authorizer trusts | Microsoft Entra only (service principal or managed identity), scope `https://ai.azure.com/.default` | A Google service-account token (JSON key, impersonation, or ADC) |
+| The user reaches the agent | Yes, via `obo`/`token_exchange` when the authorizer trusts the user's IdP | Yes, via Entra OBO | No |
+| Streaming | Yes | No | No |
+| Card needs a credential | Yes | Yes | Yes |
+
+In more detail:
+
+- `a2a_target.provider`: `generic` (default), `bedrock_agentcore`, `azure_foundry` or `vertex_agent_engine`. A provider object replaces `card_url`, and the gateway derives the card URL and the endpoint from it. The derived endpoint wins over the card's `url`.
+- `auth.mode: cloud` with `a2a_target.cloud_auth` (`aws`, `azure` or `gcp`). It reuses the LLM registry credential shapes and their encryption and masking. Each provider accepts only the modes its service accepts, and anything else answers 422 with the reason.
+- Cloud credentials go only to the provider's own host, over HTTPS.
+- Every provider requires a credential to read the card. So the card is fetched with the registry's credential, and `preview-agent-card` accepts the credential in its body. It still writes nothing.
+- A user-identity mode needs an application credential (`card_auth`) to read the card at registration, when there is no user.
+- Generic registries can opt in with `card_auth: "same"`: same host, HTTPS only.
+- **AgentCore:**
+  - `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` is gateway-generated and stored with the context's ownership, so one A2A context keeps one runtime session and a caller can never pick another's;
+  - JSON-RPC errors are read from non-2xx responses;
+  - a bounded retry on `-32054 Session operation in progress`.
+- **Foundry:** `A2A-Version` is always sent, because Foundry defaults to 0.3 without it. 1.0 is preselected.
+- **Vertex:** a binding adapter. Callers speak JSON-RPC 0.3 and the gateway calls `/v1/message:send`, `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`. Streams answer `-32004`. The objects are the same 0.3 objects, so Q2 (no version translation) holds.
+- **On every provider:** stream methods answer `UnsupportedOperationError` when the pinned card does not declare streaming.
+
 **Discovery for callers**
 
 - `GET /whoami` lists, for each A2A consumer the key reaches, its agents: id, name, card URL and wire version. The SDK and the console read agents from there, so a caller never has to be handed a URL by hand.
@@ -107,6 +140,11 @@ Ship the MVP behind real demand: validate with two or three customers running A2
   - two-plane literals become maps over `PLANES`;
   - one A2A badge tone;
   - the A2A filters in Requests and Activity (ENG-1203) come back.
+- **Hosted agents in the Add agent panel:** *Where does this agent run?* (Any A2A URL, Amazon Bedrock AgentCore, Microsoft Foundry, Google Vertex AI Agent Engine), with provider fields.
+  - For providers the order is Location → Sign-in → Card → Settings, because the card needs the credential.
+  - Sign-in offers only the modes the provider accepts, and reuses `GcpServiceAccountField`, `EntraOboAuthFields` and the LLM provider's AWS and Azure fields.
+  - The detail panel shows a read-only Location section.
+  - Foundry and Vertex agents carry a *No streaming* chip.
 - **Not shown, because the MVP does not do it:** per-user agent accounts, cost per agent, chained traces.
 
 ### Out of scope (follow-ups)
@@ -124,7 +162,11 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 | Card signature verification; re-signing the served card | Pinning already stops silent drift |
 | Periodic drift check and an automatic "card changed" badge | **Check for changes** covers it manually |
 | Skills curation (hiding skills from the served card) | Cosmetic: A2A messages do not name a skill, so it is not access control |
-| Protocol bridges (LangGraph, AgentCore, Vertex, Foundry), `a2a/` models on chat completions, gRPC and HTTP+JSON bindings, agent search, per-call pricing | Breadth with no demand yet |
+| Protocol bridges to agents that do not speak A2A (LangGraph, classic Bedrock Agents `InvokeAgent`, Pydantic AI), `a2a/` models on chat completions, gRPC binding, HTTP+JSON on the caller side, agent search, per-call pricing | Breadth with no demand yet. AgentCore, Foundry and Vertex speak A2A natively and are in scope. |
+| `delegation` (TrustGate-signed token) to AgentCore | AgentCore's JWT authorizer needs an OIDC discovery URL, and `STS_ISSUER` is not an HTTPS issuer with one today. It needs a published issuer per environment. |
+| Google ID tokens for A2A agents on Cloud Run (`generic` + Google auth) | Cloud Run agents already work through `static` or `client_credentials` in front of IAP. A native ID-token mode can follow the first request. |
+| Vertex's cross-project Agent Gateway (`a2a-agent-gateway.vertexai.cloud.goog`) and Gemini Enterprise (Discovery Engine) agents | Preview surfaces with their own resource model |
+| Foundry `AgentOnBehalfOfUser` and OAuth identity passthrough; reusing credentials from an existing LLM registry; importing agents by listing an AWS, Azure or GCP account | Each needs its own UX. Plain OBO and per-registry credentials cover the first customers. |
 
 ## Decisions
 
@@ -149,6 +191,12 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 | Q17 | Who `act` names | The calling application (`app:<consumer_id>`), not a configured string. A2A ignores MCP's static `Actor`. |
 | Q18 | Labels | *Agents* in the console. "A2A" only as a protocol badge. |
 | Q19 | Phase 2 in this change? | No. Phase 1 alone tells the agent who the call is for. The chain needs the application ↔ agent binding and deserves its own design. |
+| Q20 | AgentCore, Foundry and Vertex: bridges or A2A? | A2A. All three serve A2A, so each is a provider preset on the A2A registry (location, credentials, transport quirks), not a translation layer. |
+| Q21 | How does the admin locate a hosted agent? | By the provider's own identifiers (ARN, project and agent, engine id). The gateway builds the URLs, and a pasted URL is refused. That pins credentials to the provider's host and avoids hand-escaping an ARN. |
+| Q22 | Where do cloud credentials live? | `a2a_target.cloud_auth`, reusing `AWSAuth`, `AzureAuth` and `gcpauth` from LLM registries, with their encryption and masking. No shared credential object across registries yet. |
+| Q23 | Vertex is HTTP+JSON only | The gateway adapts the binding upstream. Callers still speak JSON-RPC 0.3, so there is one inspection path. Streaming is refused. |
+| Q24 | AgentCore sessions | Gateway-generated, stored with the context owner, never taken from the caller |
+| Q25 | Ship all three together? | Yes, in this change. Order: Foundry, then AgentCore, then Vertex. Vertex merges only after a recorded exchange with a real Agent Engine, because its docs disagree on the request body. |
 
 ## Open questions (need an owner)
 
@@ -156,6 +204,8 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 2. Is an authenticated-only card acceptable for the first customers' A2A clients?
 3. Agents host names per environment (dev, prod, prod-us, hybrid), DNS and certificates. The platform team owns this.
 4. Linear issue and owner. Delivery is proposed as an integration branch with `size:exception`.
+5. **Cloud test accounts.** Merging S14–S16 needs an AWS account with an AgentCore A2A runtime, a Foundry project with incoming A2A, and a GCP project with an A2A Agent Engine, to record fixtures and run the interop smoke. Who owns them?
+6. **Vertex request body.** Google's "Use an A2A agent" page shows two body shapes (`parts`/`kind` and `content`/`role: "1"`). The recorded exchange decides which one; until then S16 cannot merge.
 
 ## Rollout
 
@@ -170,11 +220,12 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 
 ## Delivery
 
-- **TrustGate:** about 3,550 production and 2,650 test lines. Fifteen slices on the integration branch `feat/a2a-plane`, then one PR to `develop` with `size:exception`. Forwarding without identity, ownership and streams must never reach an environment.
-- **app:** about 1,200 production and 600 test lines in five units:
+- **TrustGate:** about 4,560 production and 3,490 test lines, of which hosted agents (S13–S16) add about 1,010 and 840. Nineteen slices on the integration branch `feat/a2a-plane`, then one PR to `develop` with `size:exception`. Forwarding without identity, ownership and streams must never reach an environment.
+- **app:** about 1,650 production and 810 test lines in six units:
   - A0 (policy fallback) can ship now;
   - A1 (gateway connection) ships after `hosts.agent` is deployed;
   - A2 (Registry Agents tab) ships after the admin endpoints are deployed;
-  - A3 and A4 ship after the agent plane runs.
+  - A3 and A4 ship after the agent plane runs;
+  - A5 (hosted agents in Registry) ships after S13–S16 are deployed. Its provider options are shown only for the providers the deployed gateway accepts.
 
 See [`tasks.md`](./tasks.md).
