@@ -10,8 +10,8 @@ this.
 Today every credential an admin configures is stored in TrustGate's database.
 That covers LLM provider keys, MCP server tokens, plugin API keys and exporter
 headers. Some are encrypted, some are plaintext (`exploration.md` §1.1). They
-are then compiled in plaintext into the config snapshot. For **hybrid and
-dedicated** gateways the snapshot is sent to the customer's own data plane. A
+are then compiled in plaintext into the config snapshot. For **hybrid**
+gateways the snapshot is sent to the customer's own data plane. A
 credential that never needed to leave the customer's network therefore goes
 through NeuralTrust's SaaS and database.
 
@@ -28,8 +28,8 @@ Linear: _pending (no issue yet)_. Research: `exploration.md`.
   The same grammar works everywhere: typed fields (registry auth, MCP auth) and
   untyped plugin settings (`CredentialPaths()`).
 - **G2. Backends.** HashiCorp Vault and OpenBao (KV v1/v2), AWS Secrets
-  Manager, GCP Secret Manager and Azure Key Vault. Hybrid, dedicated and
-  self-hosted planes also get local `env` and `file` stores.
+  Manager, GCP Secret Manager and Azure Key Vault. Hybrid and self-hosted
+  planes also get local `env` and `file` stores.
 - **G3. Data-plane resolution.** For a gateway whose stores are local to its
   data plane, the secret value and the store's credentials never reach the
   control plane, its database, the snapshot or the LKG file.
@@ -88,7 +88,8 @@ Linear: _pending (no issue yet)_. Research: `exploration.md`.
 
 **Phase 2: local stores and the other cloud backends**
 - Local stores, declared on the data plane in `SECRET_STORES_FILE` (YAML).
-  Allowed only on hybrid, dedicated and self-hosted planes (`SECRET_STORES_ALLOW_LOCAL=true`).
+  Allowed only on hybrid and self-hosted planes (`SECRET_STORES_ALLOW_LOCAL=true`).
+  Dedicated planes are run by NeuralTrust, so they behave like hosted.
   They can use:
   - ambient identity: AWS default chain or IRSA, GCP ADC or Workload Identity,
     Azure managed or workload identity, Vault Kubernetes auth;

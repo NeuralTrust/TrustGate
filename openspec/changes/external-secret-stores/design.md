@@ -63,7 +63,7 @@
 |---|---|---|---|
 | D1 | **Resolution happens on the data plane.** The control plane stores and distributes references only. Admin features that use a credential keep running on the plane that runs them today. **Hybrid:** the console already calls the data plane's `/__diagnostics/...` routes for test-connection and model listing (`app/server/lib/gateway/registryModelCatalog.ts`, `testRegistryConnectionAction.ts`), so they resolve there. **Hosted and dedicated:** the admin runs them (`POST …/registries/test-connection`, `GET /v1/models-catalog`) and resolves **managed** stores through the same port. The traffic-label classifier runs on the `worker` plane and resolves like a data plane. | Resolve once in the compiler and ship values in the snapshot (the LiteLLM model). | With compile-time resolution the value is still in our snapshot, a SaaS control plane cannot reach a private vault, and rotation needs polling plus a recompile. G3 rules it out. |
 | D2 | **The reference is a string with a URI grammar,** `secret://store/path?version=v#field`. It is recognised **only at declared secret locations**; anywhere else it is inert text. | A structured `{"secret_ref":{…}}` object in every DTO. | Every secret field is already a string, whether typed or inside plugin `map[string]any`. A string needs no change to any DTO, snapshot JSON or masking helper, and it matches Kong and LiteLLM. Restricting where references are recognised stops a reference planted in a prompt template or a non-secret header from pulling a secret out. |
-| D3 | **Two locations, `managed` and `local`.** Local stores are declared in the API with a name and type only. Their address, auth and allowed paths live in `SECRET_STORES_FILE` on the data plane. Ambient identity, `env` and `file` are local-only. A plane honours local stores only when `SECRET_STORES_ALLOW_LOCAL=true`, and the admin API accepts them only for gateways whose `Entitlements.DataPlane` is hybrid or dedicated. | Let the API configure ambient identity, as `MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY` does. Discover local stores from Heartbeat with no declaration. | Whoever can use the pod identity must be whoever runs the pod. Otherwise a console admin could aim the pod's Kubernetes SA token or IMDS credentials at their own host, or read NeuralTrust's environment on a shared plane. Declaring the name keeps admin-time validation deterministic. |
+| D3 | **Two locations, `managed` and `local`.** Local stores are declared in the API with a name and type only. Their address, auth and allowed paths live in `SECRET_STORES_FILE` on the data plane. Ambient identity, `env` and `file` are local-only. A plane honours local stores only when `SECRET_STORES_ALLOW_LOCAL=true`, and the admin API accepts them only for gateways whose `Entitlements.DataPlane` is hybrid. Dedicated planes are run by NeuralTrust, so their pod identity, env and files are ours: they get managed stores only, like hosted. | Let the API configure ambient identity, as `MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY` does. Discover local stores from Heartbeat with no declaration. | Whoever can use the pod identity must be whoever runs the pod. Otherwise a console admin could aim the pod's Kubernetes SA token or IMDS credentials at their own host, or read NeuralTrust's environment on a shared plane. Declaring the name keeps admin-time validation deterministic. |
 | D4 | **A store belongs to exactly one gateway.** Its name is a unique slug within the gateway. `allowed_paths` is **required**, and `*` must be written explicitly. | Tenant-wide stores shared across gateways. Empty means allow all. | Gateways are the isolation unit for config, snapshots and authorization. Requiring a prefix makes the blast radius a conscious choice. Sharing across gateways can be added later as a grant without breaking this model. |
 | D5 | **Materialize in the runtime finders:** `consumer.DataFinder.load` and `registry.Finder`. Runtime readers outside those finders (§9) call the materializer explicitly. The admin read path never materializes. | Resolve at every call site, e.g. `CredentialsFromTargetAuth(ctx, resolver, …)`. Use a decorator on the repositories. | About 10 call sites span providers, plugins, MCP and telemetry, and missing one is the LiteLLM #35239 class of bug. The finders sit above both the Postgres and the snapshot repositories, so a single change covers every plane. A repository decorator would also materialize admin reads and return values where references belong. |
 | D6 | **The cache is in-process and per replica.** Key: (store, path, version). TTL 5 min. Refresh-ahead from 80 % of the TTL, with ±10 % jitter. Stale-on-error up to `max_stale` (24 h). Negative TTL 30 s. Singleflight. Fetch timeout 2 s. An entry unused for 1 h is evicted. A pinned `version` is immutable, so it never refreshes. | Share the cache in Redis. Persist resolved values in the LKG. Use LiteLLM's 24 h TTL with no refresher. | Redis or the LKG would put plaintext into shared or persistent storage, which breaks G3. The per-replica fetch rate is low: one fetch per secret per TTL. Refresh-ahead keeps the request path on cache hits. |
@@ -187,7 +187,7 @@ expires, the store's health becomes `auth_failed`.
 
 ### Local store file
 
-Hybrid, dedicated and self-hosted planes only.
+Hybrid and self-hosted planes only. Dedicated planes are run by NeuralTrust, so they get managed stores only.
 
 ```yaml
 # SECRET_STORES_FILE=/etc/trustgate/secret-stores.yaml   (and SECRET_STORES_ALLOW_LOCAL=true)
@@ -241,7 +241,7 @@ PUT /v1/gateways/G/registries/R   { auth: { type: api_key, api_key: { api_key: "
       ├─ caller holds secret_stores:read                 else 403 missing scope
       ├─ store "corp-vault" exists in G                  else 422 unknown_secret_store
       ├─ managed: path within allowed_paths              else 422 secret_path_not_allowed
-      ├─ local: G is hybrid|dedicated                    else 422 secret_store_local_not_allowed
+      ├─ local: G is hybrid                              else 422 secret_store_local_not_allowed
       └─ hybrid/dedicated: connected data planes ≥ min version   else 422 data_plane_too_old (D16)
     TargetAuth.ResolveSecretsFrom(prev)                  unchanged: a reference is just a new value
   repository: seal/encrypt as today; outbox marker for G
@@ -519,8 +519,7 @@ Machine identity, in `app/[locale]/v2/features/settings/components/gateway/`.
   plane*), health, usages count and last update.
 - **"Add store" side panel:**
   - type picker;
-  - location picker, where *Local* is offered only for hybrid and dedicated
-    gateways;
+  - location picker, where *Local* is offered only for hybrid gateways;
   - for managed stores, a type-specific form, allowed paths and cache
     settings, plus *Test connection* with an optional path;
   - for local stores, name and type only, plus a copyable YAML snippet for the
