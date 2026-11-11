@@ -378,7 +378,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Provider: in.Request.Provider,
 			},
 			User:      principalUser(ctx),
-			Consumer:  guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			Consumer:  guardConsumer(in.Request),
 			MCPServer: guardMCPServer(in.Request),
 		},
 	}
@@ -1010,12 +1010,20 @@ func gatewayTraceID(ctx context.Context) string {
 
 // guardConsumer is the application a request came from, or nil when it is not
 // known.
-func guardConsumer(id, name string) *GuardConsumer {
-	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
-	if id == "" && name == "" {
+func guardConsumer(req *infracontext.RequestContext) *GuardConsumer {
+	if req == nil {
 		return nil
 	}
-	return &GuardConsumer{ID: id, Name: name}
+	c := GuardConsumer{
+		ID:        strings.TrimSpace(req.ConsumerID),
+		Name:      strings.TrimSpace(req.ConsumerName),
+		Audience:  strings.TrimSpace(req.ConsumerAudience),
+		Synthetic: req.ConsumerSynthetic,
+	}
+	if c == (GuardConsumer{}) {
+		return nil
+	}
+	return &c
 }
 
 func guardMCPServer(req *infracontext.RequestContext) *GuardMCPServer {

@@ -103,19 +103,15 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 			}
 		}
 	}
-	req.Attributes.Application = v2ApplicationOf(body.Attributes.Consumer, request)
+	req.Attributes.Application = v2ApplicationOf(body.Attributes.Consumer)
 	return req
 }
 
-func v2ApplicationOf(consumer *GuardConsumer, request *infracontext.RequestContext) *v2Application {
-	app := v2Application{}
-	if consumer != nil {
-		app.Name = consumer.Name
+func v2ApplicationOf(consumer *GuardConsumer) *v2Application {
+	if consumer == nil {
+		return nil
 	}
-	if request != nil {
-		app.Audience = strings.TrimSpace(request.ConsumerAudience)
-		app.Synthetic = request.ConsumerSynthetic
-	}
+	app := v2Application{Name: consumer.Name, Audience: consumer.Audience, Synthetic: consumer.Synthetic}
 	if app == (v2Application{}) {
 		return nil
 	}
