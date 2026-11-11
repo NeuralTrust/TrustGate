@@ -42,14 +42,13 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+func (r *Repository) withCatalogMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return outbox.WithMarkedTx(ctx, r.conn, r.outbox, func(tx pgx.Tx, marks *outbox.Marks) error {
 		if err := fn(tx); err != nil {
 			return err
 		}
-		return r.outbox.AppendTx(ctx, tx)
+		marks.Catalog()
+		return nil
 	})
 }
 
@@ -72,7 +71,7 @@ func (r *Repository) UpsertProvider(ctx context.Context, p *domain.Provider) err
 	if id.IsNil() {
 		id = ids.New[ids.ProviderKind]()
 	}
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withCatalogMarkedTx(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, query, id, p.Code, p.DisplayName, p.WireFormat, p.Source, metadata, now)
 		return err
 	})
@@ -120,7 +119,7 @@ func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
 	if outputModalities == nil {
 		outputModalities = []string{}
 	}
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withCatalogMarkedTx(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, query,
 			id, m.ProviderID, m.Slug, m.ExternalID, m.DisplayName, m.ContextWindow, m.MaxOutput,
 			m.InputPrice, m.OutputPrice, m.CacheReadPrice, m.CacheWritePrice,
@@ -139,7 +138,7 @@ func (r *Repository) DisableModelsExcept(ctx context.Context, providerID ids.Pro
 		UPDATE models_catalog
 		   SET enabled = FALSE, updated_at = $2
 		 WHERE provider_id = $1 AND source = $3 AND NOT (slug = ANY($4))`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withCatalogMarkedTx(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, query, providerID, time.Now().UTC(), source, keepSlugs)
 		return err
 	})
@@ -150,7 +149,7 @@ func (r *Repository) ListProviders(ctx context.Context) ([]domain.Provider, erro
 		SELECT id, code, display_name, wire_format, source, metadata, created_at, updated_at
 		  FROM providers_catalog
 		 ORDER BY code`
-	rows, err := r.conn.Pool.Query(ctx, query)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +187,7 @@ func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode 
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE ($1 = '' OR p.code = $1)
 		 ORDER BY m.release_date DESC NULLS LAST, p.code, m.slug`
-	rows, err := r.conn.Pool.Query(ctx, query, providerCode)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, providerCode)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +201,7 @@ func (r *Repository) FindModel(ctx context.Context, providerCode, slug string) (
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE p.code = $1 AND m.slug = $2`
-	rows, err := r.conn.Pool.Query(ctx, query, providerCode, slug)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, providerCode, slug)
 	if err != nil {
 		return nil, err
 	}

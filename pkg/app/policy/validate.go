@@ -27,6 +27,35 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// Option configures a policy Creator or Updater beyond its required arguments.
+type Option func(*options)
+
+type options struct {
+	engines appplugins.GatewayEngines
+}
+
+// WithGatewayEngines makes a write refuse the TrustGuard plugin of the other TrustGuard
+// version than the gateway's (trustguard_v2 on a v1 gateway, trustguard on a v2 one).
+func WithGatewayEngines(engines appplugins.GatewayEngines) Option {
+	return func(o *options) { o.engines = engines }
+}
+
+func applyOptions(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
+// validateEngine is the TrustGuard-version rule of a write that carries settings or a slug.
+func validateEngine(ctx context.Context, engines appplugins.GatewayEngines, gatewayID ids.GatewayID, slug string) error {
+	if err := appplugins.CheckTrustGuardEngine(ctx, engines, gatewayID.String(), slug); err != nil {
+		return errors.Join(commonerrors.ErrValidation, err)
+	}
+	return nil
+}
+
 // validatePlugin runs ValidateSettingsWrite only when settingsWritten is true:
 // on create, and on an update that carries settings. previous is the
 // settings as they were stored immediately before this write - nil on

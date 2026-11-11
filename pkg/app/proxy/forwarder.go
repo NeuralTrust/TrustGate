@@ -359,9 +359,6 @@ func (f *forwarder) invokeWithFailover(
 	modelMissOnly := sequential
 	for current.Registry != nil {
 		bk := current.Registry
-		f.retarget(dto, bk)
-		f.stampRoutingPolicy(dto, rc, current)
-		dto.tierRouted = takeTierRouted(dto.request)
 		for r := 0; r < attemptsPerBackend; r++ {
 			selectingRegistry := sequential && modelMissOnly
 			if selectingRegistry && budget.deadlineExceeded() {
@@ -370,12 +367,21 @@ func (f *forwarder) invokeWithFailover(
 			if !selectingRegistry && budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
 			}
+			if r == 0 {
+				f.retarget(dto, bk)
+				f.stampRoutingPolicy(dto, rc, current)
+				dto.tierRouted = takeTierRouted(dto.request)
+			}
 			budget.recordAttempt()
 
 			dto.request.NativeMask.Reset(policydomain.StagePreResponse)
 			dto.request.FallbackLeg = fromFallback
+			dto.request.SentModel = ""
 			startedAt := time.Now()
 			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
+			if resp != nil {
+				dto.request.SentModel = resp.SentModel
+			}
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
 			span := f.recordSpan(ctx, dto, current, fromFallback, budget.attempts, outcome, resp, elapsed)
@@ -679,6 +685,9 @@ func takeTierRouted(req *infracontext.RequestContext) bool {
 }
 
 func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
+	if dto.request.RegistryID != bk.ID.String() {
+		dto.request.ResolvedModel = ""
+	}
 	dto.backend = bk
 	stampTarget(dto.request, bk)
 	if dto.response != nil {

@@ -48,6 +48,7 @@ import (
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	lkgrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsnapshotlkg"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
@@ -90,7 +91,7 @@ type compilerReaders struct {
 // write use cases call. The dispatcher and gRPC server are started in the
 // control/run run funcs; nothing here resolves on the data plane graph.
 func ControlConfigSync(c *container.Container) error {
-	if err := c.Provide(func(r compilerReaders, shared mcpoauth.Provider, cfg *config.Config, logger *slog.Logger) (*appsnapshot.Compiler, error) {
+	if err := c.Provide(func(r compilerReaders, shared mcpoauth.Provider, conn *database.Connection, cfg *config.Config, logger *slog.Logger) (*appsnapshot.Compiler, error) {
 		keys, err := playgroundSnapshotKeys(cfg)
 		if err != nil {
 			return nil, err
@@ -106,6 +107,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithSessionRevocations(r.SessionRevocations, cfg.Server.MCPDefaultIdP.SessionMaxAge),
 			appsnapshot.WithSharedOAuth(shared),
 			appsnapshot.WithUsageEnforcement(cfg.Usage.Enabled),
+			appsnapshot.WithConsistentReads(conn),
 		), nil
 	}); err != nil {
 		return err
@@ -250,14 +252,18 @@ func ControlConfigSync(c *container.Container) error {
 				logger.Warn("admin last-good snapshot disabled: no usable SERVER_SECRET_KEY",
 					slog.String("component", "configsnapshot"), slog.String("error", err.Error()))
 			} else {
-				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge}))
+				opts = append(opts, appsnapshot.WithLKG(store, sealer, appsnapshot.LKGConfig{MaxAge: cfg.ConfigSync.AdminLKGMaxAge, PersistInterval: cfg.ConfigSync.AdminLKGPersistInterval}))
 			}
+		}
+		if cfg.ConfigSync.IncrementalCompile {
+			opts = append(opts, appsnapshot.WithIncrementalCompile(infrasnapshot.NewFragments(), compiler))
 		}
 		d := appsnapshot.NewDispatcher(compiler, codec, holder, broadcaster, outbox, logger, appsnapshot.DispatcherConfig{
 			Debounce:  cfg.ConfigSync.RecompileDebounce,
 			Backstop:  cfg.ConfigSync.RecompileBackstop,
 			Retention: cfg.ConfigSync.OutboxRetention,
 			MaxRows:   int(cfg.ConfigSync.OutboxMaxRows),
+			GapExpiry: cfg.ConfigSync.OutboxGapExpiry,
 		}, opts...)
 		if err := appsnapshot.RegisterAdminSnapshotGauges(otel.Meter("trustgate/configsync"), d); err != nil {
 			return nil, err

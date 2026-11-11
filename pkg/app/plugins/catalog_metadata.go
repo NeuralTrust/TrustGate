@@ -898,6 +898,42 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"trustguard_v2": {
+		name:        "TrustGuard v2",
+		group:       groupGuardrails,
+		description: "Inspect request or response content with TrustGuard v2 (asset-based controls and exceptions), block flagged material, and apply data-masking. With failure_mode open (default), if TrustGuard is unavailable, slow or rejects the credentials, the request goes through uninspected and the event records failed_open; with closed it is blocked in enforce and only recorded in observe. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block when the direction includes the response.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "direction",
+					Label:       "Direction",
+					Type:        FieldTypeEnum,
+					Description: "Which legs to inspect: the request, the response, or both.",
+					Enum:        enumOptions("request", "response", "request_response"),
+					// Matches the plugin's own defaultDirection. The two used to
+					// disagree — the catalog prefilled "request" — so a guardrail
+					// policy created through the console inspected the request leg
+					// only, leaving every response-side detector off with nothing
+					// saying so.
+					Default: "request_response",
+				},
+				{
+					Key:         "collector_id",
+					Label:       "Integration ID",
+					Type:        FieldTypeString,
+					Description: "Optional TrustGuard v2 integration UUID. Left empty, TrustGuard resolves the integration from the gateway.",
+				},
+				{
+					Key:         "failure_mode",
+					Label:       "Failure mode",
+					Type:        FieldTypeEnum,
+					Description: "What happens when TrustGuard cannot evaluate a request: open lets it through, closed blocks it (enforce) or records it (observe).",
+					Enum:        enumOptions("open", "closed"),
+					Default:     "open",
+				},
+			},
+		},
+	},
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,

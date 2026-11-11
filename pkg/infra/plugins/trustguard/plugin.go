@@ -38,7 +38,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-const PluginName = "trustguard"
+const (
+	PluginName = "trustguard"
+	// PluginNameV2 is the plugin that evaluates against TrustGuard's /v2 engine and enforces its answer.
+	PluginNameV2 = "trustguard_v2"
+)
 
 const (
 	directionInput  = "input"
@@ -60,6 +64,8 @@ const (
 	skipReasonEmptyResponseBody   = "empty_response_body"
 	skipReasonStreamingMismatch   = "streaming_stage_mismatch"
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
+	// skipReasonUnsupportedProtocol is a protocol the /v2 engine does not evaluate (a2a).
+	skipReasonUnsupportedProtocol = "unsupported_protocol"
 	skipReasonObserveMode         = "observe_mode"
 	// skipReasonProviderNotStreaming marks a response leg handed to per-block
 	// inspection that never got a block to inspect: the provider
@@ -164,7 +170,14 @@ type Plugin struct {
 	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
-	v3 *v3Sender
+	// v2Shadow copies every evaluation to TrustGuard /v2. Only the v1 plugin has one.
+	v2Shadow *v2ShadowSender
+
+	// name is the slug this instance is registered under, and v2 says it speaks to
+	// TrustGuard's /v2 engine (asset-based request, /v2/token) and enforces its
+	// answer. Everything else, the failure modes, the legs, streaming and MCP, is shared.
+	name string
+	v2   bool
 
 	cfgCache sync.Map
 
@@ -193,18 +206,39 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 	// through singleflight and runs detached from every caller's deadline
 	// (see fetchOnce), so the client timeout is the only bound it has.
 	tokenHTTP := &http.Client{Timeout: timeout, Transport: c.http.Transport}
-	return &Plugin{
+	tokens := newTokenManager(tokenHTTP, clientID, clientSecret)
+	p := &Plugin{
 		registry: registry,
 		client:   c,
-		tokens:   newTokenManager(tokenHTTP, clientID, clientSecret),
+		tokens:   tokens,
 		baseURL:  baseURL,
 		logger:   logger,
 		timeout:  timeout,
-		v3:       newV3Sender(cfg.v3, cfg.baseTransport, logger),
+		name:     PluginName,
 	}
+	if cfg.v2Engine {
+		tokens.useV2()
+		p.name = PluginNameV2
+		p.v2 = true
+		return p
+	}
+	p.v2Shadow = newV2ShadowSender(cfg.v2Shadow, cfg.baseTransport, logger)
+	return p
 }
 
-func (p *Plugin) Name() string { return PluginName }
+// NewV2 builds the trustguard_v2 plugin: the same plugin, speaking to
+// TrustGuard's /v2 engine with the credentials of the v2 platform client. It
+// sends no shadow copy; it is the evaluation.
+func NewV2(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...Option) *Plugin {
+	return New(registry, baseURL, timeout, clientID, clientSecret, logger, append(opts[:len(opts):len(opts)], withV2Engine())...)
+}
+
+func (p *Plugin) Name() string {
+	if p.name == "" {
+		return PluginName
+	}
+	return p.name
+}
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	// post_response audits a streamed response after the drain only when its
@@ -247,9 +281,12 @@ func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if !p.tokens.configured() {
+		if p.v2 {
+			return fmt.Errorf("trustguard_v2: client credentials are not configured (set TRUSTGUARD_V2_CLIENT_ID and TRUSTGUARD_V2_CLIENT_SECRET)")
+		}
 		return fmt.Errorf("trustguard: client credentials are not configured (set TRUSTGUARD_CLIENT_ID and TRUSTGUARD_CLIENT_SECRET)")
 	}
-	_, err := parseConfig(settings)
+	_, err := parseConfigFor(settings, p.v2)
 	return err
 }
 
@@ -259,7 +296,7 @@ var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 // streaming.enabled: false, which the block loop cannot honour
 // (pluginutil.ValidateStreamingWrite).
 func (p *Plugin) ValidateSettingsWrite(settings, previous map[string]any) error {
-	return pluginutil.ValidateStreamingWrite(PluginName, settings, previous)
+	return pluginutil.ValidateStreamingWrite(p.Name(), settings, previous)
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
@@ -273,7 +310,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		// "inspected, nothing found" are otherwise indistinguishable from the
 		// outside: no event, no finding, no trace of the decision anywhere.
 		p.debug(ctx, "trustguard leg not selected by policy, skipping",
-			slog.String("plugin", PluginName),
+			slog.String("plugin", p.Name()),
 			slog.String("stage", string(in.Stage)),
 			slog.String("direction", cfg.Direction),
 		)
@@ -313,6 +350,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// failure of the guard, not a finding, so it fails open like any
 	// other. Checked only once there is something to inspect, so the failure
 	// count is the traffic that actually went through uninspected.
+	if p.v2 && !mcpMode && protocolFor(in.Request.ConsumerType) == protocolA2A {
+		_, _, halt := p.skipInspection(ctx, in, transformTarget{isResponse: direction == directionOutput}, direction, skipReasonUnsupportedProtocol)
+		return halt.result, halt.err
+	}
+
 	baseURL := p.baseURL
 	if baseURL == "" {
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonBaseURLMissing, nil)
@@ -334,6 +376,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		GatewayID:       in.Request.GatewayID,
 		SessionID:       in.Request.SessionID,
 		ConsumerID:      in.Request.ConsumerID,
+		request:         in.Request,
 		Attributes: GuardAttributes{
 			ContentType: contentTypeJSON,
 			Model: GuardModel{
@@ -361,7 +404,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
-	p.v3.send(ctx, cfg.CollectorID, traceID, body)
+	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
@@ -620,7 +663,7 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		if request != nil && request.DroppedInputItems > 0 {
 			p.debug(ctx, "trustguard request input items left out of inspection",
-				slog.String("plugin", PluginName),
+				slog.String("plugin", p.Name()),
 				slog.Int("dropped_items", request.DroppedInputItems),
 			)
 		}
@@ -711,7 +754,7 @@ func (p *Plugin) skipInspection(
 	direction, reason string,
 ) (json.RawMessage, transformTarget, *inspectionHalt) {
 	p.debug(ctx, "trustguard leg not inspected, skipping",
-		slog.String("plugin", PluginName),
+		slog.String("plugin", p.Name()),
 		slog.String("stage", string(in.Stage)),
 		slog.String("direction", direction),
 		slog.String("reason", reason),
@@ -747,7 +790,7 @@ func (p *Plugin) applyTransform(
 			// so the content the detector flagged reaches the caller as it
 			// was. The event already says "reported"; this says what that cost.
 			p.debug(ctx, "trustguard transform not applied in observe mode, forwarding unmasked",
-				slog.String("plugin", PluginName),
+				slog.String("plugin", p.Name()),
 				slog.String("stage", string(in.Stage)),
 				slog.String("direction", data.Direction),
 				slog.String("reason", skipReasonObserveMode),
@@ -815,7 +858,7 @@ func (p *Plugin) transformDegraded(
 	// No FailClosed here on purpose: a transform that cannot be applied is already input-class.
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
-		Plugin:  PluginName,
+		Plugin:  p.Name(),
 		Stage:   in.Stage,
 		Mode:    in.Mode,
 		Reason:  sharedReason,
@@ -907,7 +950,7 @@ func unknownStatusDecision(mode policy.Mode) string {
 // payload.
 func (p *Plugin) warnUnrecognizedStatus(ctx context.Context, stage policy.Stage, mode policy.Mode, direction, status string, seq *int) {
 	attrs := []any{
-		slog.String("plugin", PluginName),
+		slog.String("plugin", p.Name()),
 		slog.String("stage", string(stage)),
 		slog.String("mode", string(mode)),
 		slog.String("direction", direction),
@@ -939,7 +982,7 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 			return v.(Settings), nil
 		}
 	}
-	cfg, err := parseConfig(settings)
+	cfg, err := parseConfigFor(settings, p.v2)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -1118,7 +1161,7 @@ func (p *Plugin) guardFailureOmitting(
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		FailClosed: failClosed,
 		Ctx:        ctx,
-		Plugin:     PluginName,
+		Plugin:     p.Name(),
 		Stage:      in.Stage,
 		Mode:       in.Mode,
 		Reason:     sharedReason,

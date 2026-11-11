@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -38,6 +39,12 @@ import (
 )
 
 type Codec struct{}
+
+var snapshotDecodeOptions = jsonv2.JoinOptions(
+	json.FormatDurationAsNano(true),
+	jsonv2.MatchCaseInsensitiveNames(true),
+	json.MatchCaseSensitiveDelimiter(true),
+)
 
 var _ configsync.SnapshotCodec[*readmodel.Snapshot] = Codec{}
 
@@ -226,7 +233,7 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 
 	for _, m := range msg.GetCatalogModels() {
 		var model catalogdomain.Model
-		if err := json.Unmarshal(m.GetJson(), &model); err != nil {
+		if err := unmarshalSnapshotJSON(m.GetJson(), &model); err != nil {
 			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal catalog model: %w", err)
 		}
 		data.CatalogModels = append(data.CatalogModels, readmodel.CatalogModel{
@@ -289,16 +296,23 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 }
 
 func decodeJSON[M any, T any](messages []M, entity string, raw func(M) []byte, adjust func(M, *T)) ([]T, error) {
-	out := make([]T, 0, len(messages))
-	for _, message := range messages {
-		var item T
-		if err := json.Unmarshal(raw(message), &item); err != nil {
+	out := make([]T, len(messages))
+	for i, message := range messages {
+		if err := unmarshalSnapshotJSON(raw(message), &out[i]); err != nil {
 			return nil, fmt.Errorf("configsnapshot: unmarshal %s: %w", entity, err)
 		}
 		if adjust != nil {
-			adjust(message, &item)
+			adjust(message, &out[i])
 		}
-		out = append(out, item)
 	}
 	return out, nil
+}
+
+func unmarshalSnapshotJSON[T any](raw []byte, value *T) error {
+	if err := jsonv2.Unmarshal(raw, value, snapshotDecodeOptions); err != nil {
+		var zero T
+		*value = zero
+		return json.Unmarshal(raw, value)
+	}
+	return nil
 }

@@ -26,20 +26,26 @@ import (
 )
 
 type ListRegistryHandler struct {
-	finder        appregistry.Finder
-	groupedFinder appregistry.GroupedFinder
+	finder         appregistry.Finder
+	groupedFinder  appregistry.GroupedFinder
+	sharedAccounts appregistry.SharedAccountService
 }
 
-func NewListRegistryHandler(finder appregistry.Finder, groupedFinder appregistry.GroupedFinder) *ListRegistryHandler {
+func NewListRegistryHandler(
+	finder appregistry.Finder,
+	groupedFinder appregistry.GroupedFinder,
+	sharedAccounts appregistry.SharedAccountService,
+) *ListRegistryHandler {
 	return &ListRegistryHandler{
-		finder:        finder,
-		groupedFinder: groupedFinder,
+		finder:         finder,
+		groupedFinder:  groupedFinder,
+		sharedAccounts: sharedAccounts,
 	}
 }
 
 // Handle godoc
 // @Summary      List registries
-// @Description  Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped&type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size.
+// @Description  Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped&type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size. In the flat variant, MCP instances that hold one account for every caller carry shared_account with whether it is connected.
 // @Tags         registries
 // @Produce      json
 // @Security     BearerAuth
@@ -107,8 +113,11 @@ func (h *ListRegistryHandler) Handle(c *fiber.Ctx) error {
 		Size:  req.Size,
 		Total: total,
 	}
+	accounts := h.sharedAccounts.Statuses(c.UserContext(), gatewayID, items)
 	for _, b := range items {
-		out.Items = append(out.Items, response.FromRegistry(b))
+		item := response.FromRegistry(b)
+		item.SharedAccount = response.FromSharedAccountState(accounts[b.ID])
+		out.Items = append(out.Items, item)
 	}
 	return httpio.WriteOK(c, out)
 }

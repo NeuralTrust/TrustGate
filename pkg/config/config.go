@@ -136,10 +136,9 @@ const (
 	defaultSemanticCacheVectorStore        = "redis"
 	defaultClusterSemanticCacheVectorStore = "in_memory"
 
-	defaultTrustGuardTimeout    = 30 * time.Second
-	defaultAgentSecurityTimeout = 5 * time.Second
-	agentSecurityShadowAll      = "all"
-	agentSecurityShadowOff      = "off"
+	defaultTrustGuardTimeout = 30 * time.Second
+	v2ShadowAll              = "all"
+	v2ShadowOff              = "off"
 
 	defaultFirewallComplexityTimeout       = 30 * time.Second
 	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
@@ -172,18 +171,20 @@ const (
 	// defaultGRPCMaxMessageBytes is both the control plane's default UsageSync
 	// message limit and the data plane's default Sync receive limit: the usage
 	// list goes from one to the other in a single message.
-	defaultGRPCMaxMessageBytes                    = 64 << 20
-	defaultConfigSyncGRPCMinBackoff               = 1 * time.Second
-	defaultConfigSyncGRPCMaxBackoff               = 30 * time.Second
-	defaultConfigSyncOutboxRetention              = 24 * time.Hour
-	defaultConfigSyncOutboxMaxRows          int64 = 10000
-	defaultConfigSyncAdminLKGMaxAge               = 7 * 24 * time.Hour
-	defaultConfigSyncTokenRevocationMode          = ConfigSyncTokenRevocationShadow
-	defaultConfigSyncTokenRevocationRefresh       = 30 * time.Second
-	minConfigSyncTokenRevocationRefresh           = time.Second
-	defaultConfigSyncHeartbeatInterval            = 30 * time.Second
-	minConfigSyncHeartbeatInterval                = time.Second
-	defaultInstanceDeploymentType                 = InstanceDeploymentSelfHosted
+	defaultGRPCMaxMessageBytes                     = 64 << 20
+	defaultConfigSyncGRPCMinBackoff                = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff                = 30 * time.Second
+	defaultConfigSyncOutboxRetention               = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows           int64 = 10000
+	defaultConfigSyncOutboxGapExpiry               = 30 * time.Second
+	defaultConfigSyncAdminLKGMaxAge                = 7 * 24 * time.Hour
+	defaultConfigSyncAdminLKGPersistInterval       = 30 * time.Second
+	defaultConfigSyncTokenRevocationMode           = ConfigSyncTokenRevocationShadow
+	defaultConfigSyncTokenRevocationRefresh        = 30 * time.Second
+	minConfigSyncTokenRevocationRefresh            = time.Second
+	defaultConfigSyncHeartbeatInterval             = 30 * time.Second
+	minConfigSyncHeartbeatInterval                 = time.Second
+	defaultInstanceDeploymentType                  = InstanceDeploymentSelfHosted
 
 	configSyncKeyBytes = 32
 
@@ -412,11 +413,28 @@ type ConfigSyncConfig struct {
 	GRPCMaxRecvBytes int
 	OutboxRetention  time.Duration
 	OutboxMaxRows    int64
+	// OutboxGapExpiry is how long the dispatcher waits for a missing outbox
+	// seq before it stops holding its read position for it. A seq that commits
+	// later is still read, through the set of expired gaps checked every cycle.
+	OutboxGapExpiry time.Duration
+	// IncrementalCompile is CONFIG_SYNC_INCREMENTAL_COMPILE. When set, the
+	// control plane recompiles only the gateways the outbox markers name and
+	// compiles as soon as a change arrives, with no debounce. Off keeps the
+	// full compile on every change, and turning it off is the rollback.
+	IncrementalCompile bool
+	// LayeredPull is CONFIG_SYNC_LAYERED_PULL, read by the data plane. When set
+	// it advertises accepts_layered and pulls snapshots as a manifest plus the
+	// fragments it does not hold yet, falling back to the single blob whenever
+	// the control plane does not serve a layered snapshot.
+	LayeredPull bool
 	// AdminLKGEnabled makes the control plane persist its compiled snapshots and
 	// serve them after a restart while compiling fails.
 	AdminLKGEnabled bool
 	// AdminLKGMaxAge refuses a persisted snapshot older than this.
 	AdminLKGMaxAge time.Duration
+	// AdminLKGPersistInterval is the shortest time between two writes of the
+	// persisted snapshot; compiles in between leave the latest one pending.
+	AdminLKGPersistInterval time.Duration
 	// TokenRevocationMode decides what the control plane does with a revoked
 	// config-sync token: off, shadow or enforce.
 	TokenRevocationMode string
@@ -770,26 +788,29 @@ type TrustGuardConfig struct {
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	V3           AgentSecurityConfig
+	V2           TrustGuardV2Config
 }
 
-// AgentSecurityConfig is AgentSecurity, which the TrustGuard plugin sends a
-// copy of every evaluation of the listed gateways to. TrustGuard alone
-// decides; AgentSecurity's answer is never applied.
-type AgentSecurityConfig struct {
+// TrustGuardV2Config is TrustGuard's /v2 engine, which the trustguard_v2 plugin
+// evaluates against and, with Shadow or Gateways, which the trustguard plugin
+// copies its evaluations to (only to compare; the copy's answer is never applied).
+// It is the same service as TrustGuard, so BaseURL is TRUSTGUARD_BASE_URL unless
+// TRUSTGUARD_V2_BASE_URL overrides it, and Timeout is TRUSTGUARD_TIMEOUT unless
+// TRUSTGUARD_V2_TIMEOUT does.
+type TrustGuardV2Config struct {
 	BaseURL      string
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends copies to the AgentSecurity integration id
+	// Gateways maps each gateway that sends copies to the /v2 integration id
 	// its token names, empty for the policy's collector_id. No entry, no copy.
 	Gateways map[string]string
-	// Shadow is AGENTSECURITY_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
+	// Shadow is TRUSTGUARD_V2_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
 	Shadow string
 }
 
 // ShadowAll reports whether every gateway is copied.
-func (c AgentSecurityConfig) ShadowAll() bool { return c.Shadow == agentSecurityShadowAll }
+func (c TrustGuardV2Config) ShadowAll() bool { return c.Shadow == v2ShadowAll }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
 // When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
@@ -1316,25 +1337,27 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func getTrustGuardConfig() TrustGuardConfig {
+	baseURL := getEnv("TRUSTGUARD_BASE_URL", "")
+	timeout := getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout)
 	return TrustGuardConfig{
-		BaseURL:      getEnv("TRUSTGUARD_BASE_URL", ""),
-		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
+		BaseURL:      baseURL,
+		Timeout:      timeout,
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
-		V3: AgentSecurityConfig{
-			BaseURL:      getEnvFallback("AGENTSECURITY_BASE_URL", "TRUSTGUARD_V3_BASE_URL", ""),
-			Timeout:      getEnvDurationFallback("AGENTSECURITY_TIMEOUT", "TRUSTGUARD_V3_TIMEOUT", defaultAgentSecurityTimeout),
-			ClientID:     getEnvFallback("AGENTSECURITY_CLIENT_ID", "TRUSTGUARD_V3_CLIENT_ID", ""),
-			ClientSecret: getEnvFallback("AGENTSECURITY_CLIENT_SECRET", "TRUSTGUARD_V3_CLIENT_SECRET", ""),
-			Gateways:     parseAgentSecurityGateways(getEnvFallback("AGENTSECURITY_GATEWAYS", "TRUSTGUARD_V3_GATEWAYS", "")),
-			Shadow:       strings.ToLower(strings.TrimSpace(getEnvFallback("AGENTSECURITY_SHADOW", "TRUSTGUARD_V3_SHADOW", ""))),
+		V2: TrustGuardV2Config{
+			BaseURL:      getEnv("TRUSTGUARD_V2_BASE_URL", baseURL),
+			Timeout:      getEnvDuration("TRUSTGUARD_V2_TIMEOUT", timeout),
+			ClientID:     getEnv("TRUSTGUARD_V2_CLIENT_ID", ""),
+			ClientSecret: getEnv("TRUSTGUARD_V2_CLIENT_SECRET", ""),
+			Gateways:     parseV2ShadowGateways(getEnv("TRUSTGUARD_V2_GATEWAYS", "")),
+			Shadow:       strings.ToLower(strings.TrimSpace(getEnv("TRUSTGUARD_V2_SHADOW", ""))),
 		},
 	}
 }
 
-// parseAgentSecurityGateways reads AGENTSECURITY_GATEWAYS: a comma list of
-// gateway ids, each optionally followed by =<AgentSecurity integration id>.
-func parseAgentSecurityGateways(raw string) map[string]string {
+// parseV2ShadowGateways reads TRUSTGUARD_V2_GATEWAYS: a comma list of
+// gateway ids, each optionally followed by =<TrustGuard /v2 integration id>.
+func parseV2ShadowGateways(raw string) map[string]string {
 	out := make(map[string]string)
 	for _, entry := range strings.Split(raw, ",") {
 		gateway, integration, _ := strings.Cut(entry, "=")
@@ -1383,36 +1406,40 @@ func getModelArmorConfig() ModelArmorConfig {
 
 func getConfigSyncConfig() ConfigSyncConfig {
 	return ConfigSyncConfig{
-		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
-		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
-		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
-		AuthMode:             normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
-		JWTSecret:            getEnv("CONFIG_SYNC_JWT_SECRET", ""),
-		JWTSecretPrevious:    getEnv("CONFIG_SYNC_JWT_SECRET_PREVIOUS", ""),
-		JWTIssuer:            getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
-		JWTAudience:          getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
-		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
-		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
-		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
-		RecompileDebounce:    getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
-		RecompileBackstop:    getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
-		InstanceID:           resolveConfigSyncInstanceID(),
-		GRPCEndpoint:         getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
-		GRPCListenAddr:       getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
-		TLSCAPath:            getEnv("CONFIG_SYNC_TLS_CA", ""),
-		TLSServerName:        getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
-		TLSInsecure:          getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
-		GRPCTLSCertPath:      getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
-		GRPCTLSKeyPath:       getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
-		GRPCKeepaliveTime:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
-		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
-		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
-		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
-		GRPCMaxRecvBytes:     getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
-		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
-		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
-		AdminLKGEnabled:      getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
-		AdminLKGMaxAge:       getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		DataPlaneEnabled:        getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
+		Token:                   getEnv("CONFIG_SYNC_TOKEN", ""),
+		TokenPrevious:           getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
+		AuthMode:                normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
+		JWTSecret:               getEnv("CONFIG_SYNC_JWT_SECRET", ""),
+		JWTSecretPrevious:       getEnv("CONFIG_SYNC_JWT_SECRET_PREVIOUS", ""),
+		JWTIssuer:               getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
+		JWTAudience:             getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
+		LKGPath:                 getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
+		LKGKey:                  getEnv("CONFIG_SYNC_LKG_KEY", ""),
+		PollInterval:            getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
+		RecompileDebounce:       getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		RecompileBackstop:       getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
+		InstanceID:              resolveConfigSyncInstanceID(),
+		GRPCEndpoint:            getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
+		GRPCListenAddr:          getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
+		TLSCAPath:               getEnv("CONFIG_SYNC_TLS_CA", ""),
+		TLSServerName:           getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
+		TLSInsecure:             getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
+		GRPCTLSCertPath:         getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
+		GRPCTLSKeyPath:          getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
+		GRPCKeepaliveTime:       getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
+		GRPCKeepaliveTimeout:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
+		GRPCMinBackoff:          getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
+		GRPCMaxBackoff:          getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
+		GRPCMaxRecvBytes:        getEnvInt("CONFIG_SYNC_GRPC_MAX_RECV_BYTES", defaultGRPCMaxMessageBytes),
+		OutboxRetention:         getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
+		OutboxMaxRows:           getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+		OutboxGapExpiry:         getEnvDuration("CONFIG_SYNC_OUTBOX_GAP_EXPIRY", defaultConfigSyncOutboxGapExpiry),
+		IncrementalCompile:      getEnvBool("CONFIG_SYNC_INCREMENTAL_COMPILE", false),
+		LayeredPull:             getEnvBool("CONFIG_SYNC_LAYERED_PULL", false),
+		AdminLKGEnabled:         getEnvBool("CONFIG_SYNC_ADMIN_LKG_ENABLED", true),
+		AdminLKGMaxAge:          getEnvDuration("CONFIG_SYNC_ADMIN_LKG_MAX_AGE", defaultConfigSyncAdminLKGMaxAge),
+		AdminLKGPersistInterval: getEnvDuration("CONFIG_SYNC_ADMIN_LKG_PERSIST_INTERVAL", defaultConfigSyncAdminLKGPersistInterval),
 		TokenRevocationMode: strings.ToLower(strings.TrimSpace(
 			getEnv("CONFIG_SYNC_TOKEN_REVOCATION_MODE", defaultConfigSyncTokenRevocationMode))),
 		TokenRevocationRefreshInterval: getEnvDuration("CONFIG_SYNC_TOKEN_REVOCATION_REFRESH_INTERVAL", defaultConfigSyncTokenRevocationRefresh),
@@ -1714,10 +1741,10 @@ func (c *Config) Validate() error {
 	if err := c.BedrockNative.validate(); err != nil {
 		return err
 	}
-	switch c.TrustGuard.V3.Shadow {
-	case "", agentSecurityShadowOff, agentSecurityShadowAll:
+	switch c.TrustGuard.V2.Shadow {
+	case "", v2ShadowOff, v2ShadowAll:
 	default:
-		return fmt.Errorf("%w: AGENTSECURITY_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, agentSecurityShadowAll, agentSecurityShadowOff, c.TrustGuard.V3.Shadow)
+		return fmt.Errorf("%w: TRUSTGUARD_V2_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, v2ShadowAll, v2ShadowOff, c.TrustGuard.V2.Shadow)
 	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err
@@ -1981,20 +2008,6 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// getEnvFallback reads key, then the pre-rename name legacy for one release.
-func getEnvFallback(key, legacy, defaultValue string) string {
-	return getEnv(key, getEnv(legacy, defaultValue))
-}
-
-// getEnvDurationFallback is getEnvFallback for durations; an invalid new value
-// falls back to the default, not to the legacy name.
-func getEnvDurationFallback(key, legacy string, defaultValue time.Duration) time.Duration {
-	if os.Getenv(key) == "" {
-		key = legacy
-	}
-	return getEnvDuration(key, defaultValue)
 }
 
 func getEnvAllowEmpty(key, defaultValue string) string {

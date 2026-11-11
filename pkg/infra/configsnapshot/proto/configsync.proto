@@ -30,6 +30,17 @@ service ConfigSync {
   // first message is a SnapshotHeader; when the applied version already matches the
   // header carries not_modified=true and no data chunks follow.
   rpc GetSnapshot(GetSnapshotRequest) returns (stream SnapshotChunk);
+
+  // GetManifest returns the ordered fragment digests of the caller's snapshot.
+  // A data plane that already holds most fragments then fetches only the ones it
+  // is missing with GetFragments. Concatenating the fragments in manifest order
+  // gives a snapshot that decodes to the same configuration as GetSnapshot.
+  rpc GetManifest(GetManifestRequest) returns (Manifest);
+
+  // GetFragments streams the requested fragments as chunks. An unknown digest
+  // fails the call with NOT_FOUND; the data plane then starts again from
+  // GetManifest.
+  rpc GetFragments(GetFragmentsRequest) returns (stream FragmentChunk);
 }
 
 message ClientMessage {
@@ -51,6 +62,10 @@ message Hello {
   // control plane then sends a full UsageSnapshot once and, after it, only
   // the tenants that changed; without it every change resends the list.
   bool accepts_usage_changes = 4;
+  // accepts_layered says the data plane pulls snapshots with GetManifest and
+  // GetFragments. Notices on this stream then carry the manifest version, and
+  // VersionNotice.layered is set.
+  bool accepts_layered = 5;
 }
 
 message Ack {
@@ -134,6 +149,37 @@ enum UsageReason {
 
 message VersionNotice {
   string version = 1;
+  // layered says version is a manifest version, to be pulled with GetManifest.
+  bool layered = 2;
+}
+
+message GetManifestRequest {
+  string applied_version = 1;
+  string instance_id = 2;
+}
+
+message Manifest {
+  string version = 1;
+  bool not_modified = 2;
+  repeated FragmentRef fragments = 3;
+}
+
+message FragmentRef {
+  // digest is the SHA-256 of the fragment bytes.
+  bytes digest = 1;
+  int64 size = 2;
+}
+
+message GetFragmentsRequest {
+  repeated bytes digests = 1;
+}
+
+// FragmentChunk carries part of one fragment. A fragment's chunks arrive in
+// order, and last is set on its final chunk.
+message FragmentChunk {
+  bytes digest = 1;
+  bytes data = 2;
+  bool last = 3;
 }
 
 message GetSnapshotRequest {

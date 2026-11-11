@@ -70,15 +70,8 @@ func NewRepository(conn *database.Connection, appender outbox.Appender) *Reposit
 	return &Repository{conn: conn, outbox: appender}
 }
 
-// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
-// config-snapshot change marker so the mutation and its marker commit atomically.
-func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *Repository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
@@ -100,7 +93,7 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	const query = `
 		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, mcp_wide, priority, parallel, settings, stages, created_at, updated_at, description, mode, mcp_scope)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, p.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.MCPWide, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), scopeBytes,
@@ -150,7 +143,7 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope
 		       mcp_scope   = CASE WHEN $14::boolean THEN $13::jsonb ELSE mcp_scope END
 		 WHERE id = $1 AND gateway_id = $12
 		   AND global = $15 AND mcp_wide = $16`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, p.GatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			p.ID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID, scopeBytes,
@@ -229,7 +222,7 @@ func (r *Repository) setPlacementFlag(
 		unchangedSince = readAt
 	}
 	var written domain.Placement
-	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	err := r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, query, id, on, gatewayID, unchangedSince).
 			Scan(&written.Global, &written.MCPWide, &written.UpdatedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -254,7 +247,7 @@ func (r *Repository) setPlacementFlag(
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error {
 	const query = `DELETE FROM policies WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
@@ -270,7 +263,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.PolicyID) (*domain.Pol
 	query := policySelectColumns + `
 		  FROM policies p
 		 WHERE p.id = $1`
-	row := r.conn.Pool.QueryRow(ctx, query, id)
+	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	p, err := scanPolicy(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -289,7 +282,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 		  FROM policies p
 		 WHERE p.gateway_id = $1
 		   AND p.id = ANY($2::uuid[])`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(policyIDs))
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(policyIDs))
 	if err != nil {
 		return nil, fmt.Errorf("policy repository: find by ids: %w", err)
 	}
@@ -314,7 +307,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 		  FROM policies p
 		 WHERE p.gateway_id = $1
 		 ORDER BY p.priority, p.created_at, p.id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID())
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID.UUID())
 	if err != nil {
 		return nil, fmt.Errorf("policy repository: list by gateway: %w", err)
 	}
@@ -361,7 +354,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	registryParam := nullableRegistryID(filter.RegistryID)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(
 		ctx,
 		countQuery,
 		gatewayParam,
@@ -387,7 +380,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($8::text IS NULL OR ` + fmt.Sprintf(mcpScopeReferencesRegistry, 8) + `)
 		 ORDER BY ` + policyOrderBy(filter.Sort) + `
 		 LIMIT $9 OFFSET $10`
-	rows, err := r.conn.Pool.Query(
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(
 		ctx,
 		listQuery,
 		gatewayParam,

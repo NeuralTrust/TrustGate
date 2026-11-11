@@ -108,7 +108,8 @@ func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
 	h.Broadcast("v3")
 
 	select {
-	case got := <-conn.notices:
+	case n := <-conn.notices:
+		got := n.version
 		if got != "v3" {
 			t.Fatalf("notice = %q, want latest v3", got)
 		}
@@ -117,7 +118,7 @@ func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
 	}
 	select {
 	case extra := <-conn.notices:
-		t.Fatalf("expected drained channel, got %q", extra)
+		t.Fatalf("expected drained channel, got %q", extra.version)
 	default:
 	}
 }
@@ -178,7 +179,7 @@ func TestHub_ConcurrentRegisterBroadcastAck(t *testing.T) {
 						case <-stop:
 							return
 						case v := <-conn.notices:
-							conn.recordAck(v)
+							conn.recordAck(v.version)
 						}
 					}
 				}()

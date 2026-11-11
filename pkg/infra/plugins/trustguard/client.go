@@ -141,20 +141,28 @@ func (e *authRejectedError) Error() string {
 
 type client struct {
 	http *http.Client
+	// v2 sends the asset-based /v2/evaluate request and reads its answer.
+	v2 bool
 }
 
 type clientConfig struct {
 	baseTransport http.RoundTripper
-	v3            V3Config
+	v2Shadow      V2ShadowConfig
+	v2Engine      bool
 }
 
 // Option configures the plugin beyond its required arguments.
 type Option func(*clientConfig)
 
-// WithV3 sends a copy of every evaluation of the gateways cfg lists to Guard
-// (AgentSecurity). TrustGuard's answer alone decides.
-func WithV3(cfg V3Config) Option {
-	return func(c *clientConfig) { c.v3 = cfg }
+// WithV2Shadow sends a copy of every evaluation of the gateways cfg lists to TrustGuard v2.
+// TrustGuard's answer alone decides.
+func WithV2Shadow(cfg V2ShadowConfig) Option {
+	return func(c *clientConfig) { c.v2Shadow = cfg }
+}
+
+// withV2Engine points the client and the token manager at TrustGuard's /v2 engine.
+func withV2Engine() Option {
+	return func(cfg *clientConfig) { cfg.v2Engine = true }
 }
 
 func withBaseTransport(base http.RoundTripper) Option {
@@ -170,9 +178,13 @@ func newClient(timeout time.Duration, opts ...Option) *client {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return &client{http: &http.Client{
+	span := evaluateSpanName
+	if cfg.v2Engine {
+		span = v2EvaluateSpanName
+	}
+	return &client{v2: cfg.v2Engine, http: &http.Client{
 		Timeout:   max(defaultStreamingGuardTimeout, timeout),
-		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, evaluateSpanName),
+		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, span),
 	}}
 }
 
@@ -187,12 +199,18 @@ func answerLimit(payloadBytes int) int {
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
-	payload, err := marshalNoEscape(body)
+	var wire any = body
+	path := evaluatePath
+	if c.v2 {
+		wire = toV2Request(body, body.request)
+		path = v2EvaluatePath
+	}
+	payload, err := marshalNoEscape(wire)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
 	limit := answerLimit(len(payload))
-	endpoint := strings.TrimRight(baseURL, "/") + evaluatePath
+	endpoint := strings.TrimRight(baseURL, "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: build request: %w", err)
@@ -257,6 +275,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	var out GuardResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("trustguard: decode response: %w", err)
+	}
+	if c.v2 {
+		normalizeV2Response(&out)
 	}
 	return &out, nil
 }

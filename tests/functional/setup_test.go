@@ -360,7 +360,20 @@ func seedCatalogModels(ctx context.Context, provider, displayName string, slugs 
 	if err != nil {
 		return nil, fmt.Errorf("read the seeded %s models: %w", provider, err)
 	}
+	if err := markCatalogChanged(ctx, conn); err != nil {
+		return nil, err
+	}
 	return seeded, nil
+}
+
+// markCatalogChanged leaves the change marker the catalog repository writes
+// with every catalog write. The seed bypasses the repository, and without the
+// marker an incremental compile has no reason to re-read the catalog.
+func markCatalogChanged(ctx context.Context, conn *pgx.Conn) error {
+	if _, err := conn.Exec(ctx, `INSERT INTO config_snapshot_outbox (kind) VALUES ('catalog')`); err != nil {
+		return fmt.Errorf("mark the catalog changed: %w", err)
+	}
+	return nil
 }
 
 func unseedCatalogModels(ctx context.Context, modelIDs []string) error {
@@ -372,7 +385,7 @@ func unseedCatalogModels(ctx context.Context, modelIDs []string) error {
 	if _, err := conn.Exec(ctx, `DELETE FROM models_catalog WHERE id = ANY($1::uuid[]) AND source = $2`, modelIDs, catalogSeedSource); err != nil {
 		return fmt.Errorf("remove the seeded models: %w", err)
 	}
-	return nil
+	return markCatalogChanged(ctx, conn)
 }
 
 func createTestDB(name string) {

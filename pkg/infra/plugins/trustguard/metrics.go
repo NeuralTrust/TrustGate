@@ -76,23 +76,23 @@ var (
 	streamResponses    metric.Int64Counter
 	streamGuardCalls   metric.Int64Histogram
 	streamAddedLatency metric.Int64Histogram
-	v3Evaluates        metric.Int64Counter
-	v3Failures         metric.Int64Counter
-	v3Latency          metric.Int64Histogram
+	v2ShadowEvaluates  metric.Int64Counter
+	v2ShadowFailures   metric.Int64Counter
+	v2ShadowLatency    metric.Int64Histogram
 )
 
-// Outcomes of agentsecurity_evaluate_total: answered, failed, never sent
-// because AgentSecurity has no a2a, or dropped because too many copies were waiting.
+// Outcomes of trustguard_v2_evaluate_total: answered, failed, never sent
+// because TrustGuard v2 has no a2a, or dropped because too many copies were waiting.
 const (
-	v3OutcomeOK      = "ok"
-	v3OutcomeFailed  = "failed"
-	v3OutcomeSkipped = "skipped"
-	v3OutcomeDropped = "dropped"
-	// Skips by gateway: AgentSecurity does not know it or cannot pick its integration.
-	v3OutcomeUnknownGateway   = "skipped_unknown_gateway"
-	v3OutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
+	v2ShadowOutcomeOK      = "ok"
+	v2ShadowOutcomeFailed  = "failed"
+	v2ShadowOutcomeSkipped = "skipped"
+	v2ShadowOutcomeDropped = "dropped"
+	// Skips by gateway: TrustGuard v2 does not know it or cannot pick its integration.
+	v2ShadowOutcomeUnknownGateway   = "skipped_unknown_gateway"
+	v2ShadowOutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
 	// Skipped during the backoff that follows a failed token request.
-	v3OutcomeTokenBackoff = "skipped_token_unavailable"
+	v2ShadowOutcomeTokenBackoff = "skipped_token_unavailable"
 )
 
 func initInstruments() {
@@ -132,59 +132,59 @@ func initInstruments() {
 			streamAddedLatency = h
 		}
 		if c, err := meter.Int64Counter(
-			"agentsecurity_evaluate_total",
-			metric.WithDescription("Evaluations copied to AgentSecurity by outcome"),
+			"trustguard_v2_evaluate_total",
+			metric.WithDescription("Evaluations copied to TrustGuard v2 by outcome"),
 		); err == nil {
-			v3Evaluates = c
+			v2ShadowEvaluates = c
 		}
 		if c, err := meter.Int64Counter(
-			"agentsecurity_evaluate_failures_total",
-			metric.WithDescription("AgentSecurity evaluate copies that failed, by reason"),
+			"trustguard_v2_evaluate_failures_total",
+			metric.WithDescription("TrustGuard v2 evaluate copies that failed, by reason"),
 		); err == nil {
-			v3Failures = c
+			v2ShadowFailures = c
 		}
 		if h, err := meter.Int64Histogram(
-			"agentsecurity_evaluate_latency_ms",
+			"trustguard_v2_evaluate_latency_ms",
 			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of the AgentSecurity evaluate copy, token included, by outcome"),
+			metric.WithDescription("Duration of the TrustGuard v2 evaluate copy, token included, by outcome"),
 		); err == nil {
-			v3Latency = h
+			v2ShadowLatency = h
 		}
 	})
 }
 
-func recordV3Outcome(ctx context.Context, outcome string) {
+func recordV2ShadowOutcome(ctx context.Context, outcome string) {
 	initInstruments()
-	if v3Evaluates == nil {
+	if v2ShadowEvaluates == nil {
 		return
 	}
-	v3Evaluates.Add(ctx, 1, metric.WithAttributes(
+	v2ShadowEvaluates.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("outcome", outcome),
 	))
 }
 
-func recordV3Call(ctx context.Context, elapsed time.Duration, err error) {
-	outcome := v3OutcomeOK
+func recordV2ShadowCall(ctx context.Context, elapsed time.Duration, err error) {
+	outcome := v2ShadowOutcomeOK
 	if err != nil {
-		outcome = v3OutcomeFailed
+		outcome = v2ShadowOutcomeFailed
 	}
-	recordV3Outcome(ctx, outcome)
-	if v3Latency != nil {
-		v3Latency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
+	recordV2ShadowOutcome(ctx, outcome)
+	if v2ShadowLatency != nil {
+		v2ShadowLatency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
 			attribute.String("outcome", outcome),
 		))
 	}
-	if err != nil && v3Failures != nil {
-		v3Failures.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("reason", v3FailureReason(err)),
+	if err != nil && v2ShadowFailures != nil {
+		v2ShadowFailures.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("reason", v2ShadowFailureReason(err)),
 		))
 	}
 }
 
-// v3FailureReason keeps a 400 apart from every other refusal: it is AgentSecurity
+// v2ShadowFailureReason keeps a 400 apart from every other refusal: it is TrustGuard v2
 // rejecting the body this plugin built, which is the contract breaking.
-func v3FailureReason(err error) string {
-	var status *v3StatusError
+func v2ShadowFailureReason(err error) string {
+	var status *v2ShadowStatusError
 	var rejected *authRejectedError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

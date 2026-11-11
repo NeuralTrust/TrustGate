@@ -49,7 +49,12 @@ func TestListRegistryHandler_DefaultViewPreservesFlatResponse(t *testing.T) {
 		Return([]*domain.Registry{}, 0, nil).
 		Once()
 	groupedFinder := registrymocks.NewGroupedFinder(t)
-	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder))
+	sharedAccounts := registrymocks.NewSharedAccountService(t)
+	sharedAccounts.EXPECT().
+		Statuses(mock.Anything, gatewayID, []*domain.Registry{}).
+		Return(map[ids.RegistryID]*appregistry.SharedAccount{}).
+		Once()
+	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder, sharedAccounts))
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries", nil))
 
@@ -59,6 +64,56 @@ func TestListRegistryHandler_DefaultViewPreservesFlatResponse(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, `{"items":[],"page":1,"size":20,"total":0}`, string(body))
+}
+
+func TestListRegistryHandler_FlatViewCarriesSharedAccountStatus(t *testing.T) {
+	t.Parallel()
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	shared := listMCPRegistry(t, gatewayID, "postman", domain.MCPAccountShared)
+	perUser := listMCPRegistry(t, gatewayID, "notion", domain.MCPAccountUser)
+	items := []*domain.Registry{shared, perUser}
+	finder := registrymocks.NewFinder(t)
+	finder.EXPECT().
+		List(mock.Anything, domain.ListFilter{GatewayID: gatewayID, Page: 1, Size: 20}).
+		Return(items, 2, nil).
+		Once()
+	sharedAccounts := registrymocks.NewSharedAccountService(t)
+	sharedAccounts.EXPECT().
+		Statuses(mock.Anything, gatewayID, items).
+		Return(map[ids.RegistryID]*appregistry.SharedAccount{
+			shared.ID: {Provider: "postman", Connected: true, NeedsReconnect: true},
+		}).
+		Once()
+	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, registrymocks.NewGroupedFinder(t), sharedAccounts))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries", nil))
+
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body response.ListRegistryResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Len(t, body.Items, 2)
+	require.NotNil(t, body.Items[0].SharedAccount)
+	assert.True(t, body.Items[0].SharedAccount.Connected)
+	assert.True(t, body.Items[0].SharedAccount.NeedsReconnect)
+	assert.Nil(t, body.Items[1].SharedAccount)
+}
+
+func listMCPRegistry(t *testing.T, gatewayID ids.GatewayID, provider string, account domain.MCPAccount) *domain.Registry {
+	t.Helper()
+	reg, err := domain.NewMCPRegistry(gatewayID, provider, "", &domain.MCPTarget{
+		URL:  "https://mcp." + provider + ".example/mcp",
+		Code: "com." + provider + "/mcp",
+		Auth: &domain.MCPAuth{
+			Mode: domain.MCPAuthModeForwarded, Provider: provider, ClientID: "cid",
+			AuthorizeURL: "https://" + provider + ".example/a", TokenURL: "https://" + provider + ".example/t",
+			Account: account,
+		},
+	})
+	require.NoError(t, err)
+	return reg
 }
 
 func TestListRegistryHandler_GroupedViewMapsInstancesAndTotals(t *testing.T) {
@@ -93,7 +148,7 @@ func TestListRegistryHandler_GroupedViewMapsInstancesAndTotals(t *testing.T) {
 			TotalInstances: 1,
 		}, nil).
 		Once()
-	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder))
+	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder, registrymocks.NewSharedAccountService(t)))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries?view=grouped&type=LLM", nil)
 	resp, err := app.Test(req)
@@ -127,7 +182,7 @@ func TestListRegistryHandler_GroupedViewReturnsEmptyGroupsArray(t *testing.T) {
 		Find(mock.Anything, gatewayID).
 		Return(appregistry.GroupedRegistryResult{Groups: []appregistry.RegistryProviderGroup{}}, nil).
 		Once()
-	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder))
+	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder, registrymocks.NewSharedAccountService(t)))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries?view=grouped&type=LLM", nil)
 	resp, err := app.Test(req)
@@ -167,7 +222,7 @@ func TestListRegistryHandler_InvalidViewQuery(t *testing.T) {
 			gatewayID := ids.New[ids.GatewayKind]()
 			finder := registrymocks.NewFinder(t)
 			groupedFinder := registrymocks.NewGroupedFinder(t)
-			app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder))
+			app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder, registrymocks.NewSharedAccountService(t)))
 
 			req := httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries"+test.query, nil)
 			resp, err := app.Test(req)
@@ -192,7 +247,7 @@ func TestListRegistryHandler_GroupedViewRejectsResultAboveMaximum(t *testing.T) 
 		Find(mock.Anything, gatewayID).
 		Return(appregistry.GroupedRegistryResult{}, commonerrors.ErrResultTooLarge).
 		Once()
-	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder))
+	app := newListRegistryApp(registryhttp.NewListRegistryHandler(finder, groupedFinder, registrymocks.NewSharedAccountService(t)))
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gatewayID.String()+"/registries?view=grouped&type=LLM", nil)
 	resp, err := app.Test(req)

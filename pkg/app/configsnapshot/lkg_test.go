@@ -648,3 +648,54 @@ func TestLKG_DisabledKeepsTodaysBehaviour(t *testing.T) {
 		t.Fatalf("source = %v, want none (untracked) with the feature off", d.Source())
 	}
 }
+
+func TestLKG_PersistIntervalThrottlesWritesAndFlushesTheLatest(t *testing.T) {
+	t.Parallel()
+	h := newLKGHarness(t)
+	gwA := h.gateways.items[0].ID
+	d, holder, _ := h.dispatcher(appsnapshot.WithLKG(h.store, h.sealer, appsnapshot.LKGConfig{
+		MaxAge: 24 * time.Hour, Now: h.clock.Now, PersistInterval: 30 * time.Second,
+	}))
+	ctx := context.Background()
+
+	if err := d.Dispatch(ctx); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := h.store.attemptCount(""); got != 1 {
+		t.Fatalf("the first compile must persist immediately, got %d global writes", got)
+	}
+
+	for i, slug := range []string{"one", "two", "three"} {
+		h.gateways.set([]*gatewaydomain.Gateway{{ID: gwA, Slug: slug}})
+		h.clock.advance(5 * time.Second)
+		if err := d.Dispatch(ctx); err != nil {
+			t.Fatalf("dispatch %d: %v", i, err)
+		}
+	}
+	if got := h.store.attemptCount(""); got != 1 {
+		t.Fatalf("compiles inside the interval must not write, got %d global writes", got)
+	}
+
+	d.FlushPendingLKG(ctx)
+	if got := h.store.attemptCount(""); got != 1 {
+		t.Fatalf("a flush before the interval passed must not write, got %d global writes", got)
+	}
+
+	h.clock.advance(20 * time.Second)
+	d.FlushPendingLKG(ctx)
+	if got := h.store.attemptCount(""); got != 2 {
+		t.Fatalf("a flush after the interval must write the pending snapshot once, got %d global writes", got)
+	}
+	_, version, _ := holder.Snapshot()
+	h.store.mu.Lock()
+	stored := h.store.rows[""].Version
+	h.store.mu.Unlock()
+	if stored != version {
+		t.Fatalf("the flush must store the latest compile %q, stored %q", version, stored)
+	}
+
+	d.FlushPendingLKG(ctx)
+	if got := h.store.attemptCount(""); got != 2 {
+		t.Fatalf("nothing is pending after a flush, got %d global writes", got)
+	}
+}
