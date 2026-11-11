@@ -138,7 +138,7 @@ func provideGatewayServices(c *container.Container) error {
 // reservedGatewayDomains are the host suffixes this deployment routes gateways
 // on by slug, which no tenant may claim as one gateway's own domain.
 func reservedGatewayDomains(cfg *config.Config) []string {
-	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain}
+	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain}
 	if u, err := url.Parse(cfg.Server.MCPOAuthPublicBaseURL); err == nil && u.Hostname() != "" {
 		reserved = append(reserved, u.Hostname())
 	}
