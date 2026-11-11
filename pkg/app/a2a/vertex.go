@@ -110,13 +110,6 @@ func (vertex) retry(*RPCError, int) (time.Duration, bool) {
 	return 0, false
 }
 
-func decodeMap(raw []byte) (map[string]any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var m map[string]any
-	return m, dec.Decode(&m) == nil && m != nil
-}
-
 func copyFields(from map[string]any, keys ...string) map[string]any {
 	out := map[string]any{}
 	for _, k := range keys {

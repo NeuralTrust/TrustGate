@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -40,10 +41,6 @@ const (
 	// refused for usage. It travels with HTTP 402, never 200, so the refused
 	// call is not billed as usage.
 	mcpUsageExhaustedCode = -32005
-
-	// agentUnavailableCode is the agent plane's JSON-RPC code for a call the
-	// gateway cannot complete. Like MCP's, it travels with HTTP 402.
-	agentUnavailableCode = -32092
 )
 
 // UsageGuardMiddleware blocks the requests of tenants whose usage the control
@@ -123,9 +120,9 @@ func (m *UsageGuardMiddleware) body(c *fiber.Ctx, code string) []byte {
 			"jsonrpc": "2.0",
 			"id":      nil,
 			"error": map[string]any{
-				"code":    agentUnavailableCode,
+				"code":    appa2a.CodeGatewayFailure,
 				"message": usageBlockedMessage,
-				"data":    map[string]string{"reason": "plan_unavailable"},
+				"data":    map[string]string{"reason": appa2a.ReasonPlanUnavailable},
 			},
 		})
 		return out

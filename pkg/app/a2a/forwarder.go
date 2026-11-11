@@ -84,7 +84,7 @@ type Exchange struct {
 // the owner of the task or context it names, the policies on the request,
 // and the credential.
 func (f *Forwarder) Prepare(ctx context.Context, call *Call) (*Exchange, *RPCError) {
-	x := &Exchange{f: f, call: call, provider: providerOf(call.Agent.A2ATarget), version: Version(call.Agent.A2ATarget.ProtocolVersion), owner: ownerOf(call)}
+	x := &Exchange{f: f, call: call, provider: providerOf(call.Agent.A2ATarget), version: call.Agent.A2ATarget.ProtocolVersion, owner: ownerOf(call)}
 	x.attrs = trace.A2AAttrs{
 		Method:          call.Request.Method,
 		RegistryID:      call.Agent.ID.String(),
