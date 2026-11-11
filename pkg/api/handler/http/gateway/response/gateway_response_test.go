@@ -15,11 +15,14 @@
 package response
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
@@ -94,5 +97,34 @@ func TestFromDomain_ReportsTheStoreMode(t *testing.T) {
 		if got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai"); got.StoreMode != tc.want {
 			t.Fatalf("%s: StoreMode = %q, want %q", tc.name, got.StoreMode, tc.want)
 		}
+	}
+}
+
+func TestFromDomain_OmitsTelemetryCredentials(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, nil, nil, now, now)
+	gw.Telemetry = &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{
+		{Name: "otlp", Settings: map[string]any{
+			"endpoint": "https://collector.example.com",
+			"headers":  map[string]any{"Authorization": "Bearer secret-token"},
+		}},
+		{Name: "postgres", Settings: map[string]any{"dsn": "postgres://u:secret@db/metrics"}},
+	}}
+
+	body, err := json.Marshal(FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai"))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leaked := range []string{"secret-token", "u:secret@", `"headers"`, `"dsn"`} {
+		if strings.Contains(string(body), leaked) {
+			t.Fatalf("response carries %q: %s", leaked, body)
+		}
+	}
+	if !strings.Contains(string(body), "https://collector.example.com") {
+		t.Fatalf("response lost the endpoint: %s", body)
+	}
+	if _, ok := gw.Telemetry.Exporters[0].Settings["headers"]; !ok {
+		t.Fatal("FromDomain removed the headers from the stored gateway")
 	}
 }

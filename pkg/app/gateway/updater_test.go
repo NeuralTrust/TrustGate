@@ -26,6 +26,7 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
@@ -831,5 +832,73 @@ func TestUpdater_Update_LetsThePlatformSetAReservedDomain(t *testing.T) {
 		Domain:        ptr("acme.llm.example.test"),
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_KeepsTelemetryCredentialsOmittedByTheRead(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "acme", "active", "", nil, nil, nil, now, now)
+	existing.Telemetry = &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{{
+		Name: "otlp",
+		Settings: map[string]any{
+			"endpoint": "https://collector.example.com",
+			"headers":  map[string]any{"Authorization": "Bearer secret-token"},
+		},
+	}}}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			headers, ok := g.Telemetry.Exporters[0].Settings["headers"].(map[string]any)
+			return ok && headers["Authorization"] == "Bearer secret-token"
+		})).
+		Return(nil).
+		Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), publisher, nil, newTestLogger(), nil, false, nil)
+
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID: id,
+		Telemetry: &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{{
+			Name:     "otlp",
+			Settings: map[string]any{"endpoint": "https://collector.example.com"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_RejectsRedirectingStoredTelemetryHeaders(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "acme", "active", "", nil, nil, nil, now, now)
+	existing.Telemetry = &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{{
+		Name: "otlp",
+		Settings: map[string]any{
+			"endpoint": "https://collector.example.com",
+			"headers":  map[string]any{"Authorization": "Bearer secret-token"},
+		},
+	}}}
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+
+	updater := appgateway.NewUpdater(repo, nil, newCacheManager(), cachemocks.NewEventPublisher(t), nil, newTestLogger(), nil, false, nil)
+
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID: id,
+		Telemetry: &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{{
+			Name:     "otlp",
+			Settings: map[string]any{"endpoint": "https://attacker.example.com"},
+		}}},
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }

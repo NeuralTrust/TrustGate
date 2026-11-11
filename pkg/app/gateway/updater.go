@@ -100,11 +100,14 @@ func NewUpdater(
 }
 
 func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, error) {
-	if err := validateExporters(u.exporterFactory, in.Telemetry); err != nil {
-		return nil, err
-	}
 	g, err := u.repo.FindByID(ctx, in.ID)
 	if err != nil {
+		return nil, err
+	}
+	if err := telemetry.KeepOmittedCredentials(in.Telemetry, g.Telemetry); err != nil {
+		return nil, fmt.Errorf("invalid telemetry exporter: %v: %w", err, commonerrors.ErrValidation)
+	}
+	if err := validateExporters(u.exporterFactory, in.Telemetry); err != nil {
 		return nil, err
 	}
 	old := *g

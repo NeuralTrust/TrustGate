@@ -71,7 +71,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		},
 		Metadata:        g.Metadata,
 		StoreMode:       g.StoreMode(),
-		Telemetry:       g.Telemetry,
+		Telemetry:       g.Telemetry.WithoutCredentials(),
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,
 		Entitlements:    g.Entitlements,
