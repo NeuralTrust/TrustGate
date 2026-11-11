@@ -167,6 +167,15 @@ func TestEngineResolverFollowsACutoverAndARollback(t *testing.T) {
 	assert.False(t, r.TrustGuardV2(ctx, "gw"), "rollback seen after the TTL")
 }
 
+// Only "v2" is v2: "shadow" (TrustGuard copies v1 to v2 itself), "v1" and anything else stay v1.
+func TestEngineResolverNonV2VersionsAreV1(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"shadow", "v1", "", "v3"} {
+		srv := engineServer(t, map[string]tokenAnswer{"gw": {version: version}}, new(int32))
+		assert.False(t, NewEngineResolver(srv.URL, "client", "secret").TrustGuardV2(context.Background(), "gw"), "active_version %q", version)
+	}
+}
+
 func TestEngineResolverCacheIsBounded(t *testing.T) {
 	t.Parallel()
 	r := newEngineResolver("http://unused", newTokenManager(nil, "c", "s"))

@@ -48,8 +48,8 @@ type engineEntry struct {
 }
 
 // EngineResolver tells which TrustGuard engine a gateway is on by asking TrustGuard v2 for the
-// gateway's platform token: v2 only when the token says active_version "v2". A token with "v1" or no
-// version (an org migrated and shadowed but not cut over), unknown_gateway, an error, a timeout or no
+// gateway's platform token: v2 only when the token says active_version "v2". A token with "v1", "shadow" or
+// no version (an org not cut over), unknown_gateway, an error, a timeout or no
 // v2 credentials or base URL is v1, so nothing changes until the org is cut over.
 type EngineResolver struct {
 	tokens  *tokenManager
@@ -93,7 +93,7 @@ func (r *EngineResolver) TrustGuardV2(ctx context.Context, gatewayID string) boo
 		r.store(gatewayID, true, engineV2TTL)
 		return true
 	case err == nil:
-		// A token with v1 or no version: the org is migrated (or shadowed) but still served by v1.
+		// A token with v1, shadow or no version: the org is still served by v1.
 		r.store(gatewayID, false, engineV1TTL)
 	case errors.As(err, &refused) && refused.code == codeUnknownGateway:
 		r.store(gatewayID, false, engineV1TTL)

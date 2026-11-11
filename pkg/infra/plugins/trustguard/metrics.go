@@ -16,11 +16,7 @@ package trustguard
 
 import (
 	"context"
-	"errors"
-	"net/http"
-	"strconv"
 	"sync"
-	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 
@@ -76,23 +72,6 @@ var (
 	streamResponses    metric.Int64Counter
 	streamGuardCalls   metric.Int64Histogram
 	streamAddedLatency metric.Int64Histogram
-	v2ShadowEvaluates  metric.Int64Counter
-	v2ShadowFailures   metric.Int64Counter
-	v2ShadowLatency    metric.Int64Histogram
-)
-
-// Outcomes of trustguard_v2_evaluate_total: answered, failed, never sent
-// because TrustGuard v2 has no a2a, or dropped because too many copies were waiting.
-const (
-	v2ShadowOutcomeOK      = "ok"
-	v2ShadowOutcomeFailed  = "failed"
-	v2ShadowOutcomeSkipped = "skipped"
-	v2ShadowOutcomeDropped = "dropped"
-	// Skips by gateway: TrustGuard v2 does not know it or cannot pick its integration.
-	v2ShadowOutcomeUnknownGateway   = "skipped_unknown_gateway"
-	v2ShadowOutcomeAmbiguousGateway = "skipped_ambiguous_gateway"
-	// Skipped during the backoff that follows a failed token request.
-	v2ShadowOutcomeTokenBackoff = "skipped_token_unavailable"
 )
 
 func initInstruments() {
@@ -131,80 +110,7 @@ func initInstruments() {
 		); err == nil {
 			streamAddedLatency = h
 		}
-		if c, err := meter.Int64Counter(
-			"trustguard_v2_evaluate_total",
-			metric.WithDescription("Evaluations copied to TrustGuard v2 by outcome"),
-		); err == nil {
-			v2ShadowEvaluates = c
-		}
-		if c, err := meter.Int64Counter(
-			"trustguard_v2_evaluate_failures_total",
-			metric.WithDescription("TrustGuard v2 evaluate copies that failed, by reason"),
-		); err == nil {
-			v2ShadowFailures = c
-		}
-		if h, err := meter.Int64Histogram(
-			"trustguard_v2_evaluate_latency_ms",
-			metric.WithUnit("ms"),
-			metric.WithDescription("Duration of the TrustGuard v2 evaluate copy, token included, by outcome"),
-		); err == nil {
-			v2ShadowLatency = h
-		}
 	})
-}
-
-func recordV2ShadowOutcome(ctx context.Context, outcome string) {
-	initInstruments()
-	if v2ShadowEvaluates == nil {
-		return
-	}
-	v2ShadowEvaluates.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("outcome", outcome),
-	))
-}
-
-func recordV2ShadowCall(ctx context.Context, elapsed time.Duration, err error) {
-	outcome := v2ShadowOutcomeOK
-	if err != nil {
-		outcome = v2ShadowOutcomeFailed
-	}
-	recordV2ShadowOutcome(ctx, outcome)
-	if v2ShadowLatency != nil {
-		v2ShadowLatency.Record(ctx, elapsed.Milliseconds(), metric.WithAttributes(
-			attribute.String("outcome", outcome),
-		))
-	}
-	if err != nil && v2ShadowFailures != nil {
-		v2ShadowFailures.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("reason", v2ShadowFailureReason(err)),
-		))
-	}
-}
-
-// v2ShadowFailureReason keeps a 400 apart from every other refusal: it is TrustGuard v2
-// rejecting the body this plugin built, which is the contract breaking.
-func v2ShadowFailureReason(err error) string {
-	var status *v2ShadowStatusError
-	var rejected *authRejectedError
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return failureReasonTimeout
-	case errors.As(err, &status):
-		switch status.status {
-		case http.StatusBadRequest:
-			return "bad_request"
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return failureReasonUnauthorized
-		case http.StatusTooManyRequests:
-			return "rate_limited"
-		default:
-			return "status_" + strconv.Itoa(status.status)
-		}
-	case errors.As(err, &rejected):
-		return failureReasonUnauthorized
-	default:
-		return failureReasonTransport
-	}
 }
 
 func recordEvaluateFailure(ctx context.Context, reason string) {
