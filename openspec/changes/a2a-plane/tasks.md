@@ -1,17 +1,17 @@
 # Tasks: A2A agent plane
 
-Inputs: [`proposal.md`](./proposal.md) (binding), [`design.md`](./design.md) (D1–D22, C1–C11), [`exploration.md`](./exploration.md), specs under [`specs/`](./specs). TrustGate paths from the repo root; app paths as in the design (`F/`, `V/`, `R/`).
+Inputs: [`proposal.md`](./proposal.md) (binding), [`design.md`](./design.md) (D1–D28, C1–C15), [`exploration.md`](./exploration.md), specs under [`specs/`](./specs). TrustGate paths from the repo root; app paths as in the design (`F/`, `V/`, `R/`).
 
 ## Review Workload Forecast
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | TrustGate hand-written ≈6,200 (production ≈3,550, tests ≈2,650). app hand-written ≈1,800 (production ≈1,190, tests ≈610). Generated ≈700 (swagger, openapi, mocks, Prisma). openspec ≈1,600, outside the budget. |
+| Estimated changed lines | TrustGate hand-written ≈8,050 (production ≈4,560, tests ≈3,490). app hand-written ≈2,450 (production ≈1,640, tests ≈810). Generated ≈700 (swagger, openapi, mocks, Prisma). openspec ≈1,600, outside the budget. |
 | 400-line budget risk | High in total. Most slices are ≤ ≈500 hand-written lines; S6 and A2 are over and flagged ⚠. |
 | Chained PRs recommended | Yes |
 | Delivery strategy | **TrustGate:** integration branch `feat/a2a-plane`. Slice PRs target it; one final PR to `develop` with `size:exception`. **app:** one PR per unit to `develop`. |
 
-Decision needed before apply: **Yes.** Open a Linear issue, confirm the integration-branch strategy, and resolve open question 3 (agents hosts) before S12.
+Decision needed before apply: **Yes.** Open a Linear issue, confirm the integration-branch strategy, and resolve open question 3 (agents hosts) before S12. Name owners for the cloud test accounts (open question 5) before S14.
 
 Budget measure (excludes openspec and generated files):
 - TrustGate: `git diff --shortstat <parent> -- pkg cmd tests docs k8s README.md Makefile docker-compose.api.yaml ':!docs/swagger.*' ':!docs/docs.go' ':!docs/openapi.json' ':!**/mocks/**'`
@@ -35,14 +35,19 @@ Budget measure (excludes openspec and generated files):
 | S9 | Streaming | S7, S8 | 200 / 170 |
 | S10 | Telemetry: events, span, builder, OTLP keys, contract doc | S6 | 160 / 90 |
 | S11 | `whoami.agents` and `hosts.agent` | S1, S5a | 70 / 70 |
-| S12 | Deployment, functional suite, docs | all | 150 + yaml / 320 |
+| S12 | Deployment, functional suite, docs | S1–S11 | 150 + yaml / 320 |
+| S13 | Hosted agents: provider framework, `cloud_auth`, card fetch with credentials, streaming gate | S7, S8 | 280 / 220 |
+| S14 | Microsoft Foundry | S13 | 150 / 140 |
+| S15 | Amazon Bedrock AgentCore | S13 | 260 / 220 |
+| S16 | Google Vertex AI Agent Engine (gated on a recorded exchange) | S13 | 320 / 260 |
 | A0 | app: `slugToProtocols` default | — | 5 / 20 |
 | A1 | app: gateway connection learns the agents host | S11 deployed | 90 / 80 |
 | A2 ⚠ | app: Registry Agents tab | S3b deployed, A1 | 650 / 260 |
 | A3 | app: Agents plane in Applications | A2 | 380 / 220 |
 | A4 | app: filters, badges, copy, docs | A3 | 60 / 30 |
+| A5 | app: hosted agents in Add agent and detail | A2, S13–S16 deployed | 450 / 200 |
 
-Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c in parallel. Then S5b → S6 → (S7, S8, S10, S11) → S9 → S12. Until S7, S8 and S9 land, the branch forwards without identity, ownership or streams. That is why nothing merges into `develop` before the final PR.
+Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c in parallel. Then S5b → S6 → (S7, S8, S10, S11) → S9 → S12. S13 follows S7 and S8, then S14 → S15 → S16. The docs and functional parts of S12 grow with each provider. Until S7, S8 and S9 land, the branch forwards without identity, ownership or streams. That is why nothing merges into `develop` before the final PR.
 
 ## Tasks — TrustGate
 
@@ -132,6 +137,34 @@ Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c
 - [ ] 12.3 `docs/a2a.md`: setup, hosts, card pinning, identity modes with a verification snippet, ownership, refused methods, limits, error codes. Update the README FAQ and comparison table.
 - [ ] 12.4 Manual interop smoke with the a2a-sdk 1.x client, both versions, recorded in the final PR.
 
+### S13 — Hosted agents: provider framework
+- [ ] 13.1 `A2AProvider`, the three locators, `A2ACloudAuth` and `CardAuth` in `a2a_target.go`; the `Validate` matrix with the spec's 422 messages; `CardURL(version)` and `Endpoint()` derived; ARN parsing.
+- [ ] 13.2 `secrets.go` and `ResolveSecretsFrom` for the `cloud_auth` secrets; masking in `A2ATargetResponse`; provider change refused on update.
+- [ ] 13.3 `app/a2a/provider.go` (port) and `providers/generic.go`; forwarder and stream call `Authorize`, `Prepare`, `Decode` and `Retry`; streaming gate from the card (`-32004`).
+- [ ] 13.4 Card fetcher `Fetch` with an authorizer; preview, refresh and approve accept or use credentials; redaction test.
+- [ ] 13.5 Tests: every validation scenario of `a2a-hosted-agents`; foreign-host refusal; generic `card_auth: "same"` on the same host only.
+
+### S14 — Microsoft Foundry
+- [ ] 14.1 `providers/foundry.go`: locator → URLs per version; `A2A-Version` always; both versions offered, 1.0 default.
+- [ ] 14.2 `infra/a2a/entra_token.go` (`azidentity`: client secret, managed or workload identity), scope `https://ai.azure.com/.default`, cache per registry; OBO default scope.
+- [ ] 14.3 Tests: the Foundry scenarios; recorded card fixtures for v1.0 and v0.3.
+
+### S15 — Amazon Bedrock AgentCore
+- [ ] 15.1 `providers/agentcore.go`: ARN-escaped URLs with the qualifier; SigV4 (`infra/a2a/sigv4.go` over the Bedrock credential loader, service `bedrock-agentcore`).
+- [ ] 15.2 Session id: `Owner.UpstreamSession`, generate and record, reuse only after the owner matches.
+- [ ] 15.3 Non-2xx JSON-RPC decode, 401/403 mapping, `-32054` retry for buffered kinds.
+- [ ] 15.4 Tests: SigV4 test vectors; session reuse across two turns; foreign owner never reaches the session; retry then success; SSE through SigV4.
+
+### S16 — Google Vertex AI Agent Engine
+- [ ] 16.1 Record a real exchange (card, send, get, cancel, one error) against an A2A Agent Engine; settle the body shape and the API host (open question 6).
+- [ ] 16.2 `providers/vertex.go`: JSON-RPC → REST mapping, `result` wrapping, the error table; version pinned to 0.3; the card view advertises JSON-RPC on the gateway URL.
+- [ ] 16.3 `gcpauth` credentials (service account, impersonation, ADC), scope `cloud-platform`.
+- [ ] 16.4 Tests: the Vertex scenarios against the recorded fixtures; stream refused without an upstream call.
+
+### Hosted agents in S12
+- [ ] 12.5 `docs/a2a.md`: one section per provider: what to enable on the provider side (AgentCore A2A runtime and authorizer; Foundry `a2a` protocol and the *Foundry Agent Consumer* role; Vertex `A2aAgent` and IAM), the accepted sign-in modes, and limits (Foundry text only and no streaming; Vertex no streaming).
+- [ ] 12.6 Manual interop smoke per provider, recorded in the final PR.
+
 ## Tasks — app
 
 ### A0 — Policy protocol fallback
@@ -162,6 +195,13 @@ Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c
 - [ ] A4.2 One `lila` tone across policies, requests, activity, consumers, `RegistryAccessTab` and `PLANE_TONE`; check it next to the status badges.
 - [ ] A4.3 `V/COMPONENTS.md` and `docs/v2/SDD.md`.
 
+### A5 — Hosted agents
+- [ ] A5.1 Types (design §2.9); `a2aProviders.ts` with locator validators and sign-in matrix.
+- [ ] A5.2 `AgentLocationStep`; `useAddAgentFlow` step order per provider; the preview payload with credentials.
+- [ ] A5.3 `AgentSignInFields` provider options reusing `GcpServiceAccountField`, `EntraOboAuthFields` and the LLM AWS and Azure fields; `card_auth` sub-section.
+- [ ] A5.4 Detail Location section, *Change location*; `RegistryCard` provider icon and *No streaming* chip; generic `card_auth` toggle in Advanced.
+- [ ] A5.5 Copy; tests for the new scenarios of `console-agents-registry`.
+
 ## Verification
 
 - **TrustGate, every slice:** `go build ./...`, `go vet ./...`, `make lint`, `make test-race`, and `go vet -tags functional ./tests/...` when tests change. Mocks come from `make generate`. Comment policy: exported docs only, and swagger annotations kept. CI `functional-tests` must be green.
@@ -171,4 +211,4 @@ Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c
 
 - Titles carry the Linear id once it exists, for example `feat(a2a): agent plane skeleton (RUN-####)`.
 - TrustGate slice PRs target `feat/a2a-plane`. The final PR to `develop` has `size:exception` and the measured breakdown.
-- app: A0 any time. A1 after S11 is deployed. A2 after S3b is deployed. A3 and A4 after the agent plane runs in the target environment.
+- app: A0 any time. A1 after S11 is deployed. A2 after S3b is deployed. A3 and A4 after the agent plane runs in the target environment. A5 after S13–S16 are deployed; until S16 lands, A5 hides the Vertex option.

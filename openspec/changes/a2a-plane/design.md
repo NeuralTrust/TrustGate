@@ -1,8 +1,8 @@
 # Design: A2A agent plane
 
-Inputs: [`proposal.md`](./proposal.md) (decisions Q1–Q19), [`exploration.md`](./exploration.md), and the specs:
+Inputs: [`proposal.md`](./proposal.md) (decisions Q1–Q25), [`exploration.md`](./exploration.md), and the specs:
 
-- TrustGate: `a2a-agent-registry`, `a2a-agent-plane`, `a2a-task-ownership`, `a2a-policy-chain`, `a2a-delegated-identity`, `a2a-whoami-agents`.
+- TrustGate: `a2a-agent-registry`, `a2a-agent-plane`, `a2a-task-ownership`, `a2a-policy-chain`, `a2a-delegated-identity`, `a2a-whoami-agents`, `a2a-hosted-agents`.
 - app: `console-agents-registry`, `console-agents-plane`.
 
 Audited bases:
@@ -452,6 +452,96 @@ DNS and certificates for `*.agents.<domain>` belong to the platform team (propos
 
 ---
 
+## 1.13 Hosted agents: AgentCore, Foundry, Vertex
+
+Spec `a2a-hosted-agents`. All three speak A2A, so each provider is a small adapter around the same forwarder, not a second forwarder.
+
+| # | Decision | Rejected | Why |
+|---|---|---|---|
+| D23 | `a2a_target.provider` plus one locator object per provider. The gateway derives the card URL and the endpoint | A pasted URL plus a "this is Foundry" flag | Credentials can only go to a host the gateway built. No hand-escaped ARNs. |
+| D24 | `auth.mode: cloud` + `a2a_target.cloud_auth{aws\|azure\|gcp}`, reusing `registry.AWSAuth`, `registry.AzureAuth` and a small `A2AGCPAuth{ServiceAccountJSON, ImpersonateServiceAccount}` | New `MCPAuth` modes | `MCPAuth` belongs to MCP. LLM registries already validate, encrypt and mask these shapes. |
+| D25 | A `Provider` port in `pkg/app/a2a/provider.go`, with one implementation per provider and `generic` as the identity | `switch` statements in the forwarder | The forwarder stays one path, and each provider is testable alone |
+| D26 | Vertex: adapt the binding upstream. Callers keep JSON-RPC 0.3 | Expose HTTP+JSON to callers | One inspection and ownership path. Vertex has three methods, so the mapping is small. |
+| D27 | The AgentCore session id lives in the context's ownership record | A deterministic hash of owner + `contextId` | The first message has no `contextId`, and a hash would split the first and second turns into different sessions |
+| D28 | Card fetch with credentials goes through the same `Provider` and credential code as calls | A second credential path in the card fetcher | One place decides which host may receive a secret |
+
+**Domain** (`pkg/domain/registry/a2a_target.go`, `a2a_provider.go`):
+
+```go
+type A2AProvider string // "generic" | "bedrock_agentcore" | "azure_foundry" | "vertex_agent_engine"
+
+type A2ATarget struct {
+	// … fields from §1.2
+	Provider          A2AProvider        `json:"provider,omitempty"`
+	BedrockAgentCore  *AgentCoreLocator  `json:"bedrock_agentcore,omitempty"`  // RuntimeARN, Qualifier
+	AzureFoundry      *FoundryLocator    `json:"azure_foundry,omitempty"`      // ProjectEndpoint, AgentName
+	VertexAgentEngine *VertexLocator     `json:"vertex_agent_engine,omitempty"` // Project, Location, ReasoningEngineID
+	CloudAuth         *A2ACloudAuth      `json:"cloud_auth,omitempty"`         // AWS *AWSAuth | Azure *AzureAuth | GCP *A2AGCPAuth
+	CardAuth          string             `json:"card_auth,omitempty"`          // "", "same", "client_credentials", "cloud"
+}
+```
+
+- `Validate` gains the provider matrix of the spec: locator required, `card_url` and `url` refused, the allowed `auth` modes, and `card_auth` required with user-identity modes.
+- `CardURL(version)` and `Endpoint()` derive from the locator. The `Region()` of an AgentCore ARN comes from `arn.Parse`.
+- `ResolveSecretsFrom` and `secrets.go` add `cloud_auth.aws.secret_access_key`, `.session_token`, `cloud_auth.azure.client_secret` and `cloud_auth.gcp.service_account_json`, with the same `FieldAAD`.
+
+**Port** (`pkg/app/a2a/provider.go`):
+
+```go
+type Provider interface {
+	// Authorize sets credentials on an outgoing request (card or call). It refuses any host but the derived one.
+	Authorize(ctx context.Context, req *http.Request, reg *registrydomain.Registry, p *identity.Principal, body []byte) (IdentityTrace, error)
+	// Prepare adds provider headers (A2A-Version, AgentCore session) and may rewrite method → HTTP request (Vertex).
+	Prepare(ctx context.Context, call *UpstreamCall, own *OwnershipRecord) error
+	// Decode turns the provider's HTTP response into a JSON-RPC response or *RPCError.
+	Decode(ctx context.Context, call *UpstreamCall, resp *http.Response) (*RPCResponse, error)
+	Retry(err error, attempt int) (time.Duration, bool)
+	Streaming(card []byte) bool
+}
+```
+
+`generic` implements it with today's behaviour: credentials from §1.5, a JSON-RPC body passed through, and no retry. The forwarder (§1.4) calls `Authorize` at step 8, `Prepare` and `Decode` around step 9, and `Retry` only on buffered kinds.
+
+| Provider | `Authorize` | `Prepare` | `Decode` / `Retry` |
+|---|---|---|---|
+| `bedrock_agentcore` | `cloud`: SigV4 signer from `pkg/infra/providers/bedrock` credentials (static, `AssumeRole`, or the default chain), service `bedrock-agentcore`, `X-Amz-Content-Sha256` over the body. Otherwise generic §1.5 | Session header from `own.UpstreamSession`, or new `tgs-` + UUIDv7 (40 chars); the new id is recorded with the `contextId` of the response | JSON-RPC body read on any status; 401 + `WWW-Authenticate` → `-32093`; bare 403 → `-32092 upstream_auth_failed`; retry `-32054` "Session operation in progress" at 100 ms, then 400 ms |
+| `azure_foundry` | `cloud`: `azidentity` client secret or managed or workload identity, scope `https://ai.azure.com/.default`, cached per registry until 5 min before expiry. `obo`: §1.5 with default scope `https://ai.azure.com/.default` | `A2A-Version` = pinned version, always | Generic |
+| `vertex_agent_engine` | `gcpauth.ServiceAccountCache`, `ImpersonationCache` or `ApplicationDefaultCache`, scope `cloud-platform` | JSON-RPC → REST (`message/send` → `POST /v1/message:send`; `tasks/get` → `GET /v1/tasks/{id}?historyLength=`; `tasks/cancel` → `POST /v1/tasks/{id}:cancel`) | 2xx body → `result`; status table of the spec → `RPCError`; no retry |
+
+`Streaming(card)` reads `capabilities.streaming`. False or absent sends stream and subscribe kinds to `-32004` before any upstream call, for every provider.
+
+**Card fetcher** (§S3a) gains `Fetch(ctx, url, authorize func(*http.Request) error)`.
+
+- Probing runs only for `generic` without `card_auth`.
+- Provider registries fetch the single derived URL. For user-identity modes, `card_auth` picks which credential signs it.
+- The netguard SSRF check still applies: provider hosts are public.
+
+**Admin.**
+
+- `CreateRegistryRequest.a2a_target` and `PreviewAgentCardRequest` accept `provider`, the locator, `auth`, `cloud_auth` and `card_auth`.
+- The preview runs with the credentials in the body and drops them after the call. A `logging.Redact` test asserts they never reach a log line.
+- `A2ATargetResponse` adds `provider`, the locator and the masked `cloud_auth`.
+- The update refuses a `provider` change (`ErrInvalidRegistry`).
+
+**Ownership.** `Owner` gains `UpstreamSession string \`json:"upstream_session,omitempty"\``. It is set only by `Claim` on a context key, and read only after the owner matches.
+
+**Config.**
+
+- `A2A_FOUNDRY_HOST_SUFFIXES` (default `.services.ai.azure.com`).
+- `A2A_VERTEX_API_HOST_TEMPLATE` (default `{location}-aiplatform.googleapis.com`, pinned by the S16 fixture).
+- `A2A_AGENTCORE_RETRY_MAX` (default 2).
+
+**Telemetry.** `a2a.provider` and `a2a.cloud_auth` (`aws_sigv4`, `azure_entra`, `gcp_oauth`) are added to the span and the OTLP contract.
+
+**Files and estimates:**
+
+| Slice | Files | Prod / test |
+|---|---|---|
+| S13 Provider framework | `a2a_provider.go`, locators and `cloud_auth` in `a2a_target.go`, `secrets.go`, DTOs, card fetcher `Fetch`, `app/a2a/provider.go`, `providers/generic.go`, streaming gate | 280 / 220 |
+| S14 Foundry | `providers/foundry.go`, Entra token cache (`pkg/infra/a2a/entra_token.go`), OBO default scope | 150 / 140 |
+| S15 AgentCore | `providers/agentcore.go`, `pkg/infra/a2a/sigv4.go` (wrapping the Bedrock credential loader), session in ownership, non-2xx decode, retry | 260 / 220 |
+| S16 Vertex | `providers/vertex.go`, REST mapping, error table, card view for HTTP+JSON cards, recorded fixtures | 320 / 260 |
+
 # Part 2 — app (console)
 
 ## 2.1 Decisions
@@ -624,6 +714,40 @@ No new namespace file, so `i18n/request.ts` does not change.
 | A2 | Registry Agents tab: types, actions, screen wiring, the six components, diff lib | 650 / 260 |
 | A3 | Applications Agents plane: types, groups, drafts, routing, side panel, Connect and snippets, keyring, policies, analytics, topology | 380 / 220 |
 | A4 | Filters, badges, copy pass, `COMPONENTS.md`, `SDD.md` | 60 / 30 |
+| A5 | Hosted agents in Add agent and the detail panel (§2.9) | 450 / 200 |
+
+## 2.9 Hosted agents in Registry (A5)
+
+| # | Decision | Rejected | Why |
+|---|---|---|---|
+| C12 | *Where does this agent run?* is the first question of Add agent, with four options | Separate "Add AgentCore agent" actions | One entry point. The tab already has one primary action. |
+| C13 | Provider flows run Location → Sign-in → Card → Settings | Card first, as for generic | All three providers refuse an anonymous card read |
+| C14 | Sign-in reuses `GcpServiceAccountField`, `EntraOboAuthFields` and the LLM provider AWS and Azure fields from `RegistrySchemaFieldRenderer` | New credential components | They exist and are tested |
+| C15 | Only modes the provider accepts are offered. The API still validates | Showing everything and relying on 422 | The matrix is fixed per provider |
+
+Types (`F/registry/types.ts`):
+
+```ts
+export type A2aProvider = 'generic' | 'bedrock_agentcore' | 'azure_foundry' | 'vertex_agent_engine'
+export type A2aCloudAuth =
+	| { aws: { access_key_id?: string; secret_access_key?: string; session_token?: string; region?: string; use_role?: boolean; role?: string } }
+	| { azure: { tenant_id?: string; client_id?: string; client_secret?: string; use_managed_identity?: boolean } }
+	| { gcp: { service_account_json?: string; impersonate_service_account?: string } }
+// A2aTarget gains: provider?, bedrock_agentcore?, azure_foundry?, vertex_agent_engine?, cloud_auth?, card_auth?
+// A2aTargetAuth gains { mode: 'cloud' }
+```
+
+| File | Change |
+|---|---|
+| `F/registry/lib/a2aProviders.ts` (new) | Per provider: label, icon key, locator fields with validators (ARN regex, Foundry host suffix, GCP ids), allowed sign-in options, version policy |
+| `F/registry/components/agents/AgentLocationStep.tsx` (new) | The four options and provider fields |
+| `AddAgentSidePanel` / `useAddAgentFlow` | Step order by provider; the preview sends `provider`, locator, `auth`, `cloud_auth` and `card_auth` |
+| `AgentSignInFields` | Options from `a2aProviders`; cloud credential subforms; `card_auth` sub-section for user modes |
+| `AgentDetailSidePanel` | Location section; *Change location*; no provider change |
+| `RegistryCard` (A2A variant) | Provider icon; *No streaming* chip from `card.capabilities.streaming` |
+| `messages/en/v2Registry.json` | Provider labels, field help, 422 explanations |
+
+Estimate: 450 / 200.
 
 ---
 
@@ -636,6 +760,16 @@ No new namespace file, so `i18n/request.ts` does not change.
   - digest stability;
   - `ChangedFields` and `SkillDiff`;
   - target validation (reserved headers, auth subset, methods per version).
+- **Hosted agents:**
+  - locator validation and URL derivation (ARN escaping, Foundry versions, Vertex base);
+  - the auth matrix per provider;
+  - SigV4 signature against AWS's published test vectors;
+  - Entra and Google token caches;
+  - the Vertex REST mapping and error table;
+  - AgentCore session reuse and retry;
+  - foreign-host refusal.
+
+  Fixtures are recorded per provider.
 - **Admin:** handler tests per spec scenario; a repository integration test (`PG_TEST_URL`) for `a2a_target` with encryption on and off; `docs/openapi_test.go` for the three new routes.
 - **Plane:**
   - DI smoke for `agent`;
@@ -702,3 +836,8 @@ No new namespace file, so `i18n/request.ts` does not change.
 | Content split across artifact chunks evades inspection | Documented limitation; follow-up reuses `stream_segmenter.go` |
 | SDK clients that only fetch public cards | Open question 2 |
 | `/whoami` is not served by DB-less MCP planes (pre-existing) | Out of scope; recorded |
+| A cloud credential sent to the wrong host | Hosts are derived only from locators, checked again in `Authorize`, HTTPS only. Tests send a provider registry to a foreign host and expect a refusal. |
+| Vertex request body differs from the docs | S16 merges only with a recorded exchange against a real Agent Engine (open question 6) |
+| AgentCore retry duplicates work | Only `-32054` "Session operation in progress", which AgentCore documents as not processed. Buffered kinds only, at most 2 retries. |
+| Foundry task retention (60 days) outlives the ownership TTL (7 days) | Documented. Admins can raise `A2A_TASK_OWNERSHIP_TTL`. |
+| No cloud accounts in CI | Unit tests with recorded fixtures per provider; a manual interop smoke per provider recorded in the final PR (open question 5) |

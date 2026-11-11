@@ -152,3 +152,69 @@ Las escrituras y lecturas a TrustGate MUST ser server actions bajo `registry/act
 - GIVEN TrustGate responde 422 "card offers ["0.3"]"
 - WHEN `createA2aRegistryAction` lo recibe
 - THEN devuelve `{success: false, error}` con ese mensaje, y el panel lo muestra formateado
+
+### Requirement: Dónde vive el agente
+
+El paso 1 de *Add agent* MUST empezar con *Where does this agent run?*, con cuatro opciones:
+
+| Opción | `provider` | Campos |
+|---|---|---|
+| Any A2A URL | `generic` | "Agent URL", como hasta ahora |
+| Amazon Bedrock AgentCore | `bedrock_agentcore` | "Agent runtime ARN" y "Endpoint qualifier" (por defecto `DEFAULT`) |
+| Microsoft Foundry | `azure_foundry` | "Project endpoint" y "Agent name" |
+| Google Vertex AI Agent Engine | `vertex_agent_engine` | "Project", "Location" y "Agent Engine ID" |
+
+Los iconos MUST ser los de proveedor que ya usa Registry (`providerMapping`). La validación del ARN, el host de Foundry y los campos de Vertex MUST hacerse en el cliente con los mismos mensajes que la API.
+
+Con un proveedor, el orden MUST ser **Location → Sign-in → Card → Settings**, porque los tres exigen credencial para leer el card. La vista previa MUST enviar la credencial que el admin acaba de escribir. Con *Any A2A URL* se mantiene **URL → Card → Settings**.
+
+*Sign-in* MUST ofrecer solo los modos que el proveedor admite (`a2a-hosted-agents`):
+
+| Proveedor | Opciones |
+|---|---|
+| AgentCore | "AWS IAM (SigV4)", con claves, rol o "Use the gateway's AWS identity"; "OAuth client credentials"; "As the user, through your identity provider" |
+| Foundry | "Microsoft Entra ID", con service principal o "Use the gateway's managed identity"; "As the user, through Microsoft Entra (on-behalf-of)" |
+| Vertex | "Google service account", con JSON (`GcpServiceAccountField`), "Impersonate a service account" o "Use the gateway's Google identity" |
+
+Las opciones de usuario de AgentCore y Foundry MUST pedir también la credencial de aplicación con la que se lee el card (`card_auth`), con la ayuda "Used only to read the agent's card".
+
+Los campos MUST reutilizar los componentes de Registry que ya existen:
+
+- `GcpServiceAccountField`;
+- `EntraOboAuthFields`;
+- los campos de AWS y Azure del alta de proveedores LLM.
+
+No se crean variantes nuevas.
+
+En Foundry, el paso *Settings* MUST mostrar las dos versiones con 1.0 preseleccionada y la nota "0.3 is in preview on Foundry". En Vertex, la versión MUST mostrarse fija en 0.3.
+
+#### Scenario: Agente de Foundry con managed identity
+
+- GIVEN el admin elige Microsoft Foundry y escribe el endpoint del proyecto y el nombre del agente
+- WHEN elige "Use the gateway's managed identity" y continúa
+- THEN la vista previa se pide con `provider: "azure_foundry"` y `cloud_auth: {"azure": {"use_managed_identity": true}}`, y muestra el card de Foundry
+
+#### Scenario: Opciones de Vertex
+
+- WHEN el admin elige Google Vertex AI Agent Engine
+- THEN *Sign-in* ofrece solo las tres variantes de cuenta de servicio de Google
+
+### Requirement: El detalle muestra el proveedor
+
+El detalle de un agente de proveedor MUST mostrar una sección **Location**, de solo lectura, con:
+
+- el proveedor;
+- los campos que lo localizan;
+- el endpoint derivado.
+
+*Change URL* MUST llamarse *Change location* y repetir Location, Sign-in y Card. El proveedor MUST NOT poder cambiarse: el panel sugiere crear otro agente.
+
+La tarjeta de la cuadrícula MUST llevar el icono del proveedor junto al glifo de A2A. Los agentes de Foundry y Vertex MUST mostrar el chip *No streaming*.
+
+En un agente genérico, *Advanced* MUST ofrecer "Send sign-in credentials when reading the card" (`card_auth: "same"`), desactivado por defecto.
+
+#### Scenario: Agente de AgentCore en la cuadrícula
+
+- GIVEN un registry `bedrock_agentcore`
+- WHEN se abre la pestaña Agents
+- THEN su tarjeta muestra el icono de AWS, "A2A 0.3" y su número de skills
