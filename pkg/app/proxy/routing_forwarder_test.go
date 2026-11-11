@@ -455,7 +455,7 @@ func TestForward_SpanRecordsRouteSource(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Forward: %v", err)
 			}
-			spans := rt.Spans()
+			spans := spansOfType(rt, trace.SpanLLM)
 			if len(spans) != 1 || spans[0].LLM == nil {
 				t.Fatalf("expected one LLM span, got %d", len(spans))
 			}
@@ -546,7 +546,7 @@ func TestForward_SpanRecordsRequestedModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	spans := rt.Spans()
+	spans := spansOfType(rt, trace.SpanLLM)
 	if len(spans) != 1 || spans[0].LLM == nil {
 		t.Fatalf("expected one LLM span, got %d", len(spans))
 	}

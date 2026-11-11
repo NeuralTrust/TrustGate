@@ -445,7 +445,7 @@ func (f *forwarder) routeBackend(
 		return routedBackend{}, err
 	}
 	excluded := nonCandidateRoutes(lb, rc, candidates)
-	route, err := lb.NextRoute(ctx, req, excluded)
+	route, err := timedNextRoute(ctx, lb, req, excluded)
 	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
 		if errors.Is(err, routingdomain.ErrSR1PolicyExhausted) {
@@ -462,6 +462,25 @@ func (f *forwarder) routeBackend(
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
 	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
+}
+
+// timedNextRoute records the load balancer's decision as a routing span. Some
+// strategies wait on the network to decide (smart routing scores the prompt
+// remotely, semantic routing embeds it), and without the span that wait is
+// left over in the remainder the metrics builder reports as gateway overhead.
+func timedNextRoute(
+	ctx context.Context,
+	lb *loadbalancer.LoadBalancer,
+	req *infracontext.RequestContext,
+	excluded map[routingdomain.RouteKey]struct{},
+) (*routingdomain.Route, error) {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return lb.NextRoute(ctx, req, excluded)
+	}
+	span := rt.StartSpan(trace.SpanRouting, lb.Algorithm())
+	defer span.End()
+	return lb.NextRoute(ctx, req, excluded)
 }
 
 func candidateChain(candidates *routingdomain.CandidateSet) []routingdomain.Route {

@@ -78,7 +78,7 @@ func fullEvent() *events.Event {
 			ReasoningOutputTokens:   1,
 		},
 		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
-		Latency: events.Latency{TotalMs: 120, ProviderMs: i64ptr(100), PoliciesMs: 14, GatewayMs: 6},
+		Latency: events.Latency{TotalMs: 120, ProviderMs: i64ptr(100), PoliciesMs: 14, RoutingMs: 4, GatewayMs: 2},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
 		},
@@ -129,13 +129,15 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
 	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
-	assert.Equal(t, int64(6), attrs["trustgate.latency.gateway_ms"].AsInt64())
+	assert.Equal(t, int64(4), attrs["trustgate.latency.routing_ms"].AsInt64())
+	assert.Equal(t, int64(2), attrs["trustgate.latency.gateway_ms"].AsInt64())
 	assert.Equal(t,
 		attrs["trustgate.latency.total_ms"].AsInt64(),
 		attrs["trustgate.latency.provider_ms"].AsInt64()+
 			attrs["trustgate.latency.policies_ms"].AsInt64()+
+			attrs["trustgate.latency.routing_ms"].AsInt64()+
 			attrs["trustgate.latency.gateway_ms"].AsInt64(),
-		"the three buckets reconcile against total_ms; the exporter must not break the split the builder made")
+		"the buckets reconcile against total_ms; the exporter must not break the split the builder made")
 
 	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
 	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())
