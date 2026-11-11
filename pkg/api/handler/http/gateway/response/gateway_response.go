@@ -33,6 +33,9 @@ type GatewayResponse struct {
 	Domain   string            `json:"domain,omitempty"`
 	Hosts    GatewayHosts      `json:"hosts"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// AgentTokenIssuer is the iss of the tokens the agent plane sends to
+	// agents (STS_ISSUER). Set only when hosts.agent is.
+	AgentTokenIssuer string `json:"agent_token_issuer,omitempty"`
 	// StoreMode is the gateway's MCP Store curation mode, the same value
 	// UpdateGatewayRequest writes. It is derived (never blank) rather than left
 	// for readers to dig out of metadata: a reader that missed it there read a
@@ -57,11 +60,11 @@ type GatewayHosts struct {
 	Agent string `json:"agent,omitempty"`
 }
 
-func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDomain string) GatewayResponse {
+func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDomain, agentTokenIssuer string) GatewayResponse {
 	if g == nil {
 		return GatewayResponse{}
 	}
-	return GatewayResponse{
+	resp := GatewayResponse{
 		ID:      g.ID,
 		Slug:    g.Slug,
 		Status:  g.Status,
@@ -82,6 +85,10 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDoma
 		CreatedAt:       g.CreatedAt,
 		UpdatedAt:       g.UpdatedAt,
 	}
+	if resp.Hosts.Agent != "" {
+		resp.AgentTokenIssuer = agentTokenIssuer
+	}
+	return resp
 }
 
 func proxyHost(g *domain.Gateway, baseDomain string) string {

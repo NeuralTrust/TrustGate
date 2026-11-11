@@ -29,15 +29,16 @@ import (
 )
 
 type UpdateGatewayHandler struct {
-	updater         appgateway.Updater
-	finder          appgateway.Finder
-	baseDomain      string
-	mcpBaseDomain   string
-	agentBaseDomain string
+	updater          appgateway.Updater
+	finder           appgateway.Finder
+	baseDomain       string
+	mcpBaseDomain    string
+	agentBaseDomain  string
+	agentTokenIssuer string
 }
 
-func NewUpdateGatewayHandler(updater appgateway.Updater, finder appgateway.Finder, baseDomain, mcpBaseDomain, agentBaseDomain string) *UpdateGatewayHandler {
-	return &UpdateGatewayHandler{updater: updater, finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain, agentBaseDomain: agentBaseDomain}
+func NewUpdateGatewayHandler(updater appgateway.Updater, finder appgateway.Finder, baseDomain, mcpBaseDomain, agentBaseDomain, agentTokenIssuer string) *UpdateGatewayHandler {
+	return &UpdateGatewayHandler{updater: updater, finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain, agentBaseDomain: agentBaseDomain, agentTokenIssuer: agentTokenIssuer}
 }
 
 // Handle godoc
@@ -101,5 +102,5 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain, h.agentBaseDomain))
+	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain, h.agentBaseDomain, h.agentTokenIssuer))
 }

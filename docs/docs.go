@@ -8614,6 +8614,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse": {
             "type": "object",
             "properties": {
+                "agent_token_issuer": {
+                    "description": "AgentTokenIssuer is the iss of the tokens the agent plane sends to\nagents (STS_ISSUER). Set only when hosts.agent is.",
+                    "type": "string"
+                },
                 "client_tls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig"
                 },
@@ -11766,6 +11770,53 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "blocked_by": {
+                    "type": "string"
+                },
+                "context_id": {
+                    "type": "string"
+                },
+                "identity_mode": {
+                    "type": "string"
+                },
+                "identity_subject_kind": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "protocol_version": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "rpc_error_code": {
+                    "type": "integer"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "task_state": {
+                    "type": "string"
+                },
+                "upstream_status": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt": {
             "type": "object",
             "properties": {
@@ -11856,6 +11907,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
+                "a2a": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A"
+                },
                 "attempts": {
                     "type": "array",
                     "items": {

@@ -1197,6 +1197,11 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse:
     properties:
+      agent_token_issuer:
+        description: |-
+          AgentTokenIssuer is the iss of the tokens the agent plane sends to
+          agents (STS_ISSUER). Set only when hosts.agent is.
+        type: string
       client_tls:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig'
       created_at:
@@ -3476,6 +3481,37 @@ definitions:
       sampling_rate:
         type: number
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A:
+    properties:
+      agent_name:
+        type: string
+      blocked_by:
+        type: string
+      context_id:
+        type: string
+      identity_mode:
+        type: string
+      identity_subject_kind:
+        type: string
+      method:
+        type: string
+      outcome:
+        type: string
+      protocol_version:
+        type: string
+      reason:
+        type: string
+      registry_id:
+        type: string
+      rpc_error_code:
+        type: integer
+      task_id:
+        type: string
+      task_state:
+        type: string
+      upstream_status:
+        type: integer
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt:
     properties:
       attempt:
@@ -3538,6 +3574,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event:
     properties:
+      a2a:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A'
       attempts:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt'
