@@ -14,14 +14,10 @@
 
 package a2a
 
-import (
-	"context"
-	"net/http"
-)
+import "net/http"
 
-// Upstream posts JSON-RPC requests to agents.
+// Upstream sends requests to agents.
 type Upstream interface {
-	// Post sends body to url with exactly header and returns the response
-	// with its body unread.
-	Post(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error)
+	// Do sends req as it is and returns the response with its body unread.
+	Do(req *http.Request) (*http.Response, error)
 }

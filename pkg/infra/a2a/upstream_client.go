@@ -15,8 +15,6 @@
 package a2a
 
 import (
-	"bytes"
-	"context"
 	"net/http"
 
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
@@ -38,11 +36,6 @@ func NewUpstreamClient() appa2a.Upstream {
 	return &upstreamClient{client: &http.Client{Transport: transport, CheckRedirect: netguard.CheckRedirect}}
 }
 
-func (u *upstreamClient) Post(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header = header
+func (u *upstreamClient) Do(req *http.Request) (*http.Response, error) {
 	return u.client.Do(req)
 }

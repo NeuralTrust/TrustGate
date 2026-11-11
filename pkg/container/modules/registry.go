@@ -17,6 +17,7 @@ package modules
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -147,13 +148,18 @@ func provideAgentCards(c *container.Container) error {
 	if err := c.Provide(func() appregistry.CardFetcher { return a2ainfra.NewCardFetcher(nil) }); err != nil {
 		return err
 	}
-	return c.Provide(func(provider appoauth.ProviderClient) appregistry.CardCredentials {
+	if err := c.Provide(a2ainfra.NewCloudSigner); err != nil {
+		return err
+	}
+	return c.Provide(func(provider appoauth.ProviderClient, signer *a2ainfra.CloudSigner) appregistry.CardCredentials {
 		return appregistry.NewCardCredentials(func(ctx context.Context, auth *domain.MCPAuth) (string, error) {
 			token, err := provider.ClientCredentials(ctx, auth)
 			if err != nil {
 				return "", err
 			}
 			return token.AccessToken, nil
+		}, func(ctx context.Context, t *domain.A2ATarget, req *http.Request) error {
+			return signer.Sign(ctx, t, "", req)
 		})
 	})
 }

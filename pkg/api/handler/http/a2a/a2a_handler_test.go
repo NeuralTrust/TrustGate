@@ -15,7 +15,6 @@
 package a2a_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -43,12 +42,7 @@ import (
 
 type httpUpstream struct{}
 
-func (httpUpstream) Post(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header = header
+func (httpUpstream) Do(req *http.Request) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
@@ -86,7 +80,7 @@ func newApp(t *testing.T, agentURL string) (*fiber.App, *registrydomain.Registry
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}
-	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(nil, nil, false), infraa2a.NewOwnershipStore(redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})), logger)
+	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(nil, nil, nil, false), infraa2a.NewOwnershipStore(redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})), logger)
 	h := a2ahttp.NewHandler(forwarder)
 	app := fiber.New()
 	withConsumer := func(c *fiber.Ctx) error {

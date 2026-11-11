@@ -55,6 +55,7 @@ func TestSpanOfACompletedCall(t *testing.T) {
 		Method:              "message/send",
 		RegistryID:          h.agent.ID.String(),
 		AgentName:           "Travel planner",
+		Provider:            "generic",
 		ProtocolVersion:     "0.3",
 		TaskID:              v03Task,
 		ContextID:           v03Context,

@@ -508,6 +508,7 @@ func foldA2ASpans(requestTrace *trace.RequestTrace) (*events.A2A, int64) {
 			Method:              attrs.Method,
 			RegistryID:          attrs.RegistryID,
 			AgentName:           attrs.AgentName,
+			Provider:            attrs.Provider,
 			ProtocolVersion:     attrs.ProtocolVersion,
 			TaskID:              attrs.TaskID,
 			ContextID:           attrs.ContextID,

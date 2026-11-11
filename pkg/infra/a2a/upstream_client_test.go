@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard/netguardtest"
@@ -37,7 +38,10 @@ func TestUpstreamClientSendsExactlyTheHeaderGiven(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	res, err := NewUpstreamClient().Post(context.Background(), srv.URL, http.Header{"X-Tenant": {"acme"}}, []byte(`{"a":1}`))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL, strings.NewReader(`{"a":1}`))
+	require.NoError(t, err)
+	req.Header = http.Header{"X-Tenant": {"acme"}}
+	res, err := NewUpstreamClient().Do(req)
 	require.NoError(t, err)
 	require.NoError(t, res.Body.Close())
 	assert.Equal(t, "acme", got.Get("X-Tenant"))
@@ -48,6 +52,8 @@ func TestUpstreamClientSendsExactlyTheHeaderGiven(t *testing.T) {
 func TestUpstreamClientRefusesPrivateAddresses(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(srv.Close)
-	_, err := NewUpstreamClient().Post(context.Background(), srv.URL, http.Header{}, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL, nil)
+	require.NoError(t, err)
+	_, err = NewUpstreamClient().Do(req)
 	require.Error(t, err)
 }

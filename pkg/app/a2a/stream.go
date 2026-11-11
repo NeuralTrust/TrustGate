@@ -90,7 +90,7 @@ func (x *Exchange) open(ctx context.Context) (*Stream, *RPCError) {
 		if err != nil {
 			return nil, upstreamFailure(err)
 		}
-		if _, rpcErr := x.decode(body, res.StatusCode); rpcErr != nil {
+		if _, rpcErr := x.provider.decode(x, res, body); rpcErr != nil {
 			return nil, rpcErr
 		}
 		return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
@@ -248,7 +248,7 @@ func (x *Exchange) cancelTask(task string) {
 	header.Set("Accept", "application/json")
 	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 	defer cancel()
-	res, err := x.f.upstream.Post(ctx, x.call.Agent.A2ATarget.Endpoint(), header, body)
+	res, err := x.do(ctx, header, body)
 	if err != nil {
 		x.f.logger.Warn("a2a task cancel failed", slog.String("registry_id", x.call.Agent.ID.String()), slog.String("error", err.Error()))
 		return

@@ -41,12 +41,7 @@ import (
 
 type httpUpstream struct{}
 
-func (httpUpstream) Post(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header = header
+func (httpUpstream) Do(req *http.Request) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
@@ -148,7 +143,7 @@ func newHarness(t *testing.T, v a2a.Version, url string, exec executorFunc) *har
 	rc := a2aConsumer(reg)
 	store := newMemStore()
 	return &harness{
-		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(nil, nil, false), store, logger),
+		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(nil, nil, nil, false), store, logger),
 		store:     store,
 		consumer:  rc,
 		agent:     reg,
