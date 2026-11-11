@@ -44,6 +44,27 @@ var hiddenCatalogSlugs = map[string]struct{}{
 	"tool_allowlist":  {},
 }
 
+// retiredCatalogSlugs are no longer offered but still run the policies that already name them,
+// so they stay in their group when policies are listed by category. trustguard serves every
+// organisation: TrustGuard answers it with the engine the organisation is on.
+var retiredCatalogSlugs = map[string]struct{}{
+	"trustguard_v2": {},
+}
+
+// RetiredCatalogSlugs returns, by catalog group, the slugs the catalog no longer offers but whose
+// policies still run.
+func RetiredCatalogSlugs() map[string][]string {
+	out := make(map[string][]string, len(retiredCatalogSlugs))
+	for slug := range retiredCatalogSlugs {
+		group := groupOther
+		if meta, ok := pluginCatalogMeta[slug]; ok && meta.group != "" {
+			group = meta.group
+		}
+		out[group] = append(out[group], slug)
+	}
+	return out
+}
+
 // catalogMeta is the curated, UI-facing metadata for a plugin slug. Stage data
 // is intentionally excluded; it is read from the plugin implementations so the
 // catalog cannot drift from the executor's behaviour.

@@ -54,13 +54,13 @@ func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewLevelGuard); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, engines appplugins.GatewayEngines) apppolicy.Creator {
-		return apppolicy.NewCreator(repo, levels, registryRepo, registry, manager, logger, sig.Signaler, apppolicy.WithGatewayEngines(engines))
+	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Creator {
+		return apppolicy.NewCreator(repo, levels, registryRepo, registry, manager, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, engines appplugins.GatewayEngines) apppolicy.Updater {
-		return apppolicy.NewUpdater(repo, consumers, levels, registryRepo, registry, manager, publisher, logger, sig.Signaler, apppolicy.WithGatewayEngines(engines))
+	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
+		return apppolicy.NewUpdater(repo, consumers, levels, registryRepo, registry, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
