@@ -148,7 +148,13 @@ type RequestContext struct {
 	ConsumerID string
 	// ConsumerName is the consumer's name, for the places an id alone reads as
 	// nothing: a guard that shows the application a request came from.
-	ConsumerName       string
+	ConsumerName string
+	// ConsumerAudience is who the consumer serves, application or personal (an
+	// LLM Store key), and ConsumerSynthetic marks a consumer that is never
+	// persisted, the MCP Store's. TrustGuard v2 inventories neither as an
+	// application.
+	ConsumerAudience   string
+	ConsumerSynthetic  bool
 	AuthID             string
 	OwnerID            string
 	ConsumerType       string
