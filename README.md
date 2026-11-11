@@ -495,11 +495,8 @@ the base URL and two headers — see Quick Start.
  
 **Does TrustGate govern MCP and agent-to-agent (A2A) traffic, or only LLM calls?**
 All three, each on its own plane: LLM calls on the proxy, MCP tool calls
-on the MCP plane and A2A agent calls on the agent plane. Each runs the
-consumer's policies and emits telemetry. On the agent plane the gateway
-pins each agent's card, binds tasks to the caller that created them and can
-send the agent a signed token naming the user and the application. See
-[docs/a2a.md](docs/a2a.md).
+on the MCP plane and A2A agent calls on the agent plane, each with the
+consumer's policies and telemetry. See [docs/a2a.md](docs/a2a.md).
  
 **Does TrustGate replace my existing API gateway (Kong, Apigee, AWS API Gateway)?**
 No. TrustGate governs AI-specific traffic and is built to layer
