@@ -15,6 +15,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	stderrors "errors"
 	"log/slog"
@@ -1071,6 +1072,27 @@ func TestLoadConfig_TrustGuardV2IgnoresOldNames(t *testing.T) {
 	if v2.BaseURL != "" || v2.ClientID != "" || v2.ClientSecret != "" ||
 		v2.Timeout != defaultTrustGuardTimeout {
 		t.Errorf("TrustGuard.V2 = %+v, want zero values", v2)
+	}
+}
+
+func TestLoadConfig_TrustGuardWarnsOnRemovedShadowSettings(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	minimumEnv(t)
+	t.Setenv("TRUSTGUARD_V2_SHADOW", "all")
+	t.Setenv("TRUSTGUARD_V2_GATEWAYS", "")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "env=TRUSTGUARD_V2_SHADOW") {
+		t.Errorf("log = %q, want a warning for TRUSTGUARD_V2_SHADOW", out)
+	}
+	if strings.Contains(out, "env=TRUSTGUARD_V2_GATEWAYS") {
+		t.Errorf("log = %q, want no warning for an empty TRUSTGUARD_V2_GATEWAYS", out)
 	}
 }
 

@@ -217,7 +217,6 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 		tokens.useV2()
 		p.name = PluginNameV2
 		p.v2 = true
-		return p
 	}
 	return p
 }
