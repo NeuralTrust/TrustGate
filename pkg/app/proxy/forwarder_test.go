@@ -661,8 +661,9 @@ func TestForward_RecordsLLMSpanWithUsage(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	spans := rt.Spans()
+	spans := spansOfType(rt, trace.SpanLLM)
 	require.Len(t, spans, 1, "one LLM span per attempt")
+	require.Len(t, spansOfType(rt, trace.SpanRouting), 1, "the load balancer decision is timed once")
 	assert.Equal(t, trace.SpanLLM, spans[0].Type)
 	require.NotNil(t, spans[0].LLM)
 	assert.Equal(t, "openai", spans[0].LLM.Provider)
@@ -1462,4 +1463,14 @@ func TestForward_StoreModelMissPointsAtTheStoreListing(t *testing.T) {
 	require.ErrorIs(t, err, routingdomain.ErrNoRegistryServesModel)
 	assert.Contains(t, err.Error(), "GET /store/v1/models")
 	assert.NotContains(t, err.Error(), "pers0001")
+}
+
+func spansOfType(rt *trace.RequestTrace, spanType trace.SpanType) []*trace.Span {
+	var out []*trace.Span
+	for _, span := range rt.Spans() {
+		if span.Type == spanType {
+			out = append(out, span)
+		}
+	}
+	return out
 }
