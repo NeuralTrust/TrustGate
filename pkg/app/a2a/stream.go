@@ -62,9 +62,17 @@ type sseEvent struct {
 // Open sends a streaming call and returns the agent's event stream. An agent
 // that answers with a single JSON-RPC response has its error returned.
 func (x *Exchange) Open(ctx context.Context) (*Stream, *RPCError) {
+	s, rpcErr := x.open(ctx)
+	if rpcErr != nil {
+		x.finish(rpcErr)
+	}
+	return s, rpcErr
+}
+
+func (x *Exchange) open(ctx context.Context) (*Stream, *RPCError) {
 	ctx, cancel := context.WithCancel(ctx)
 	opening := time.AfterFunc(streamIdleTimeout, cancel)
-	res, err := x.f.upstream.Post(ctx, x.call.Agent.A2ATarget.Endpoint(), x.header, x.call.Body)
+	res, err := x.post(ctx, x.header, x.call.Body)
 	if !opening.Stop() {
 		if err == nil {
 			_ = res.Body.Close()
@@ -82,7 +90,7 @@ func (x *Exchange) Open(ctx context.Context) (*Stream, *RPCError) {
 		if err != nil {
 			return nil, upstreamFailure(err)
 		}
-		if _, rpcErr := decodeResponse(body, res.StatusCode); rpcErr != nil {
+		if _, rpcErr := x.decode(body, res.StatusCode); rpcErr != nil {
 			return nil, rpcErr
 		}
 		return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
@@ -103,6 +111,8 @@ func (s *Stream) Deadline() time.Time {
 // when the agent stays silent for too long or the stream reaches its maximum
 // duration. Returning closes the upstream request.
 func (s *Stream) Run(ctx context.Context, id json.RawMessage, emit func([]byte) error) {
+	var ended *RPCError
+	defer func() { s.x.finish(ended) }()
 	defer s.cancel()
 	defer func() { _ = s.body.Close() }()
 	done := make(chan struct{})
@@ -114,7 +124,10 @@ func (s *Stream) Run(ctx context.Context, id json.RawMessage, emit func([]byte) 
 	defer idle.Stop()
 	end := time.NewTimer(time.Until(s.deadline))
 	defer end.Stop()
-	fail := func(rpcErr *RPCError) { _ = emit(Response(id, nil, rpcErr)) }
+	fail := func(rpcErr *RPCError) {
+		ended = rpcErr
+		_ = emit(Response(id, nil, rpcErr))
+	}
 	for {
 		select {
 		case ev, ok := <-events:
@@ -147,13 +160,12 @@ func (s *Stream) Run(ctx context.Context, id json.RawMessage, emit func([]byte) 
 // relay checks one event: its content against the policies and the task and
 // context it names against their owners.
 func (s *Stream) relay(ctx context.Context, data []byte) (json.RawMessage, *RPCError) {
-	result, rpcErr := decodeResponse(data, http.StatusOK)
+	result, rpcErr := s.x.decode(data, http.StatusOK)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	content, err := ResultContent(s.x.version, result)
-	if err != nil {
-		rpcErr, _ := err.(*RPCError)
+	content, rpcErr := s.x.resultContent(result)
+	if rpcErr != nil {
 		return nil, rpcErr
 	}
 	if content.TaskID != "" {
