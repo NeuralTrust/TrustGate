@@ -122,8 +122,11 @@ path is given, it MUST also fetch it. The response MUST carry only:
 - the version;
 - the latency.
 
-The response MUST NOT contain the secret value. For a local store the endpoint
-MUST answer 409 `test_runs_on_data_plane`.
+The response MUST NOT contain the secret value. For a local store, the admin
+endpoint MUST answer 409 `test_runs_on_data_plane`. The data plane MUST serve the
+same test, with the same response contract, at
+`POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`. That route
+MUST be authorized by the diagnostics token used for registry test-connection.
 
 #### Scenario: Successful test
 

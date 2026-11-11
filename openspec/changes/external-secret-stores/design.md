@@ -61,7 +61,7 @@
 
 | # | Decision | Rejected | Rationale |
 |---|---|---|---|
-| D1 | **Resolution happens on the data plane.** The control plane stores and distributes references only. The control plane also resolves, through the same port, for its own uses: test-connection, catalog live availability, the Bedrock model lister and the label classifier. | Resolve once in the compiler and ship values in the snapshot (the LiteLLM model). | With compile-time resolution the value is still in our snapshot, a SaaS control plane cannot reach a private vault, and rotation needs polling plus a recompile. G3 rules it out. |
+| D1 | **Resolution happens on the data plane.** The control plane stores and distributes references only. Admin features that use a credential keep running on the plane that runs them today. **Hybrid:** the console already calls the data plane's `/__diagnostics/...` routes for test-connection and model listing (`app/server/lib/gateway/registryModelCatalog.ts`, `testRegistryConnectionAction.ts`), so they resolve there. **Hosted and dedicated:** the admin runs them (`POST …/registries/test-connection`, `GET /v1/models-catalog`) and resolves **managed** stores through the same port. The traffic-label classifier runs on the `worker` plane and resolves like a data plane. | Resolve once in the compiler and ship values in the snapshot (the LiteLLM model). | With compile-time resolution the value is still in our snapshot, a SaaS control plane cannot reach a private vault, and rotation needs polling plus a recompile. G3 rules it out. |
 | D2 | **The reference is a string with a URI grammar,** `secret://store/path?version=v#field`. It is recognised **only at declared secret locations**; anywhere else it is inert text. | A structured `{"secret_ref":{…}}` object in every DTO. | Every secret field is already a string, whether typed or inside plugin `map[string]any`. A string needs no change to any DTO, snapshot JSON or masking helper, and it matches Kong and LiteLLM. Restricting where references are recognised stops a reference planted in a prompt template or a non-secret header from pulling a secret out. |
 | D3 | **Two locations, `managed` and `local`.** Local stores are declared in the API with a name and type only. Their address, auth and allowed paths live in `SECRET_STORES_FILE` on the data plane. Ambient identity, `env` and `file` are local-only. A plane honours local stores only when `SECRET_STORES_ALLOW_LOCAL=true`, and the admin API accepts them only for gateways whose `Entitlements.DataPlane` is hybrid or dedicated. | Let the API configure ambient identity, as `MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY` does. Discover local stores from Heartbeat with no declaration. | Whoever can use the pod identity must be whoever runs the pod. Otherwise a console admin could aim the pod's Kubernetes SA token or IMDS credentials at their own host, or read NeuralTrust's environment on a shared plane. Declaring the name keeps admin-time validation deterministic. |
 | D4 | **A store belongs to exactly one gateway.** Its name is a unique slug within the gateway. `allowed_paths` is **required**, and `*` must be written explicitly. | Tenant-wide stores shared across gateways. Empty means allow all. | Gateways are the isolation unit for config, snapshots and authorization. Requiring a prefix makes the blast radius a conscious choice. Sharing across gateways can be added later as a grant without breaking this model. |
@@ -435,7 +435,7 @@ All routes are under `/v1/gateways/:gateway_id/secret-stores` and guarded by
 | `GET /`, `GET /:id` | List / get. Secret fields are masked. Local stores include their health from the latest heartbeat of each connected data plane. |
 | `PUT /:id` | Update. Merge-on-omit for secret fields. D12 applies when the destination changes. |
 | `DELETE /:id` | 409 `secret_store_in_use` with the usages when the store is still referenced. |
-| `POST /:id/test` | Managed stores only. Logs in, and when `{path, field?, version?}` is given, also fetches. Returns `{auth, read, version, latency_ms}` and **never** the value. For local stores it returns 409 `test_runs_on_data_plane`; their health comes from the heartbeat. |
+| `POST /:id/test` | Managed stores only. Logs in, and when `{path, field?, version?}` is given, also fetches. Returns `{auth, read, version, latency_ms}` and **never** the value. For local stores it returns 409 `test_runs_on_data_plane`. The console instead calls the data plane's diagnostics route `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`, with the same diagnostics token as registry test-connection. Background health comes from the heartbeat. |
 | `GET /:id/usages` | `[{entity, id, name, field, reference}]`, built by the collector. |
 
 Example create (managed HashiCorp Vault):
@@ -500,9 +500,9 @@ Swagger.
 |---|---|---|
 | `consumer.DataFinder.load` | `pkg/app/consumer/data_finder.go` | Materialize registries, auths and policies per gateway (D5). |
 | `registry.Finder` | `pkg/app/registry/finder.go:48-62` | Materialize the registry before caching. |
-| Catalog live availability / Bedrock lister | `pkg/container/modules/catalog.go:139,187` | Read through `registry.Finder`, or call `Materializer.Registry`. |
+| Catalog live availability / Bedrock lister | `pkg/container/modules/catalog.go:139,187`. Admin `GET /v1/models-catalog` serves hosted and dedicated gateways, plus the hybrid fallback. Data plane `GET /__diagnostics/gateways/:id/registries/:rid/models` serves hybrid. | Read through `registry.Finder`, or call `Materializer.Registry`, on both planes. A local reference cannot resolve on the admin, so the hybrid fallback lists the whole catalog: the degradation it already applies when the data plane does not answer. |
 | Traffic-label classifier | `pkg/infra/labelllm/classifier.go:117` | Same. |
-| Test connection (by `registry_id`) | `pkg/app/registry` test use case | Materialize; on a failure, report `secret_unavailable` with the class. |
+| Test connection (by `registry_id`) | `pkg/app/registry` test use case. Admin route for hosted and dedicated; data-plane `/__diagnostics/.../test-connection` for hybrid. | Materialize on whichever plane runs it; on a failure, report `secret_unavailable` with the class. |
 | MCP static target / credential resolver | `pkg/app/mcp/target.go`, `credentials.go` | Fed by materialized registries; add the dial-revision hash. |
 | Telemetry exporter construction | `pkg/infra/telemetry` | Phase 3: `Materializer.Telemetry`. |
 | Consumer embedding (semantic LB) | `pkg/domain/consumer/lb_config.go` | Phase 3. |
@@ -666,9 +666,10 @@ values again; the usages endpoint lists them.
   values in the encrypted LKG, so they survive a restart while the vault is
   down? The default stays off (G3). This would be an explicit operator flag if
   customers ask for it.
-- **OQ3. On-demand test of local stores.** A `ServerMessage.TestSecretStore`
-  answered in the next heartbeat would make the console "Test" button work for
-  local stores. Planned for Phase 3 if heartbeat health proves insufficient.
+- **OQ3 (resolved). On-demand test of local stores.** Reuse the data-plane
+  diagnostics routes that the console already calls for hybrid test-connection
+  and model listing, through a new `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`.
+  No config-sync message is needed.
 - **OQ4. Packaging.** LiteLLM, Kong and Portkey gate this as Enterprise. Do we
   gate managed cloud backends behind a plan entitlement (`tenant_entitlements`),
   and keep `env`/`file` open? Product decision, independent of the design.

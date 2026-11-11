@@ -57,6 +57,16 @@ AAD-bound). E3, E6, E7 and E8 are plaintext.
   `Heartbeat` already reports `deployment_type` and the TrustGuard client id,
   never its secret. It is the natural channel for a data plane to report the
   health of its secret stores.
+- **Admin features that need a credential already follow the deployment mode.**
+  - **Hybrid gateways:** the console calls the data plane directly. It uses
+    `POST /__diagnostics/gateways/:id/registries/test-connection` and
+    `GET /__diagnostics/gateways/:id/registries/:rid/models`, with a diagnostics
+    token it mints (`pkg/server/router/proxy_router.go:25-32`;
+    `app/[locale]/v2/features/registry/actions/testRegistryConnectionAction.ts`;
+    `app/server/lib/gateway/registryModelCatalog.ts`). Model listing falls back
+    to the admin's `/v1/models-catalog` if the data plane does not answer.
+  - **Hosted and dedicated gateways:** the same features run on the admin
+    (`POST /v1/gateways/:id/registries/test-connection`, `GET /v1/models-catalog`).
 
 ### 1.3 The hot-path read model
 
