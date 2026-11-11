@@ -89,6 +89,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize container: %v", err)
 	}
+	if err := c.Invoke(func(cfg *config.Config, logger *slog.Logger) {
+		cfg.WarnAgentHostWithoutSaaS(logger)
+	}); err != nil {
+		log.Fatalf("failed to read config: %v", err)
+	}
 
 	if err := c.Invoke(modules.StartCacheJanitor); err != nil {
 		log.Fatalf("failed to start cache janitor: %v", err)
