@@ -234,6 +234,58 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.False(t, evt.IsFlagged)
 }
 
+func routingSpan(name string, latency time.Duration) *trace.Span {
+	span := &trace.Span{Type: trace.SpanRouting, Name: name}
+	span.SetLatency(latency)
+	return span
+}
+
+func TestBuilder_RouteSelectionCountsAsRoutingNotGateway(t *testing.T) {
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	start := time.UnixMilli(1_000_000)
+
+	t.Run("refused before the provider", func(t *testing.T) {
+		rt := trace.New("trace-routing-block", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(routingSpan("smart-routing", 1310*time.Millisecond))
+		_ = rt.AddSpan(pluginSpan("trustguard",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "block"}, 403, 869*time.Millisecond, "blocked"))
+		resp := &infracontext.ResponseContext{StatusCode: 403, Body: []byte(`{"error":"blocked"}`)}
+
+		got := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(2186*time.Millisecond)).Latency
+
+		assert.Nil(t, got.ProviderMs)
+		assert.Equal(t, int64(1310), got.RoutingMs)
+		assert.Equal(t, int64(7), got.GatewayMs, "the scoring call is routing time, not gateway overhead")
+		assert.Equal(t, got.TotalMs, got.PoliciesMs+got.RoutingMs+got.GatewayMs)
+	})
+
+	t.Run("re-routed between attempts", func(t *testing.T) {
+		rt := trace.New("trace-routing-failover", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(routingSpan("smart-routing", 40*time.Millisecond))
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "error"},
+			503, 100*time.Millisecond, "unavailable"))
+		_ = rt.AddSpan(routingSpan("smart-routing", 30*time.Millisecond))
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 2, Outcome: "success"},
+			200, 200*time.Millisecond, ""))
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		got := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(380*time.Millisecond)).Latency
+
+		require.NotNil(t, got.ProviderMs)
+		assert.Equal(t, int64(300), *got.ProviderMs)
+		assert.Equal(t, int64(70), got.RoutingMs, "every route selection of the request is summed")
+		assert.Equal(t, int64(10), got.GatewayMs)
+	})
+}
+
 func TestBuilder_PostResponsePoliciesCountAsPoliciesButNotAgainstGateway(t *testing.T) {
 	rt := trace.New("trace-async", trace.Metadata{GatewayID: "gw-1"})
 	_ = rt.AddSpan(pluginSpan("rate_limiter",
