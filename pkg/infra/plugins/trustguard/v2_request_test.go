@@ -15,40 +15,58 @@
 package trustguard
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-func TestToV2RequestApplicationMarkers(t *testing.T) {
-	t.Parallel()
+const (
+	appConsumerID      = "3f0c1d2e-0000-4000-8000-000000000001"
+	personalConsumerID = "3f0c1d2e-0000-4000-8000-000000000002"
+)
+
+type consumerMarkerCase struct {
+	name    string
+	request *infracontext.RequestContext
+	// consumer is attributes.consumer of the v1 body, application attributes.application of
+	// the v2 body; empty means the object is not sent.
+	consumer    string
+	application string
+}
+
+func consumerMarkerCases() []consumerMarkerCase {
 	storeID := consumerdomain.StoreConsumerID().String()
-	tests := []struct {
-		name        string
-		request     *infracontext.RequestContext
-		application string
-	}{
+	return []consumerMarkerCase{
 		{
 			name: "application consumer",
 			request: &infracontext.RequestContext{
-				ConsumerID:       "3f0c1d2e-0000-4000-8000-000000000001",
+				ConsumerID:       appConsumerID,
 				ConsumerName:     "Support Bot",
 				ConsumerAudience: string(consumerdomain.AudienceApplication),
 			},
+			consumer:    `{"id":"` + appConsumerID + `","name":"Support Bot","audience":"application"}`,
 			application: `{"name":"Support Bot","audience":"application"}`,
 		},
 		{
 			name: "personal key",
 			request: &infracontext.RequestContext{
-				ConsumerID:       "3f0c1d2e-0000-4000-8000-000000000002",
+				ConsumerID:       personalConsumerID,
 				ConsumerName:     "alice's key",
 				ConsumerAudience: string(consumerdomain.AudiencePersonal),
 			},
+			consumer:    `{"id":"` + personalConsumerID + `","name":"alice's key","audience":"personal"}`,
 			application: `{"name":"alice's key","audience":"personal"}`,
 		},
 		{
@@ -60,14 +78,13 @@ func TestToV2RequestApplicationMarkers(t *testing.T) {
 				ConsumerSynthetic: true,
 				MCP:               true,
 			},
+			consumer:    `{"id":"` + storeID + `","name":"MCP Store","audience":"application","synthetic":true}`,
 			application: `{"name":"MCP Store","audience":"application","synthetic":true}`,
 		},
 		{
-			name: "marker without a name",
-			request: &infracontext.RequestContext{
-				ConsumerID:       "3f0c1d2e-0000-4000-8000-000000000003",
-				ConsumerAudience: string(consumerdomain.AudiencePersonal),
-			},
+			name:        "marker without a name",
+			request:     &infracontext.RequestContext{ConsumerAudience: string(consumerdomain.AudiencePersonal)},
+			consumer:    `{"audience":"personal"}`,
 			application: `{"audience":"personal"}`,
 		},
 		{
@@ -78,16 +95,23 @@ func TestToV2RequestApplicationMarkers(t *testing.T) {
 			name: "no request context",
 		},
 	}
-	for _, tt := range tests {
+}
+
+func markedBody(req *infracontext.RequestContext) GuardRequest {
+	body := GuardRequest{Direction: directionInput, Protocol: protocolLLM, request: req}
+	if req != nil {
+		body.ConsumerID = req.ConsumerID
+	}
+	body.Attributes.Consumer = guardConsumer(req)
+	return body
+}
+
+func TestToV2RequestApplicationMarkers(t *testing.T) {
+	t.Parallel()
+	for _, tt := range consumerMarkerCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			body := GuardRequest{Direction: directionInput, Protocol: protocolLLM}
-			if tt.request != nil {
-				body.ConsumerID = tt.request.ConsumerID
-				body.Attributes.Consumer = guardConsumer(tt.request.ConsumerID, tt.request.ConsumerName)
-			}
-
-			raw, err := json.Marshal(toV2Request(body, tt.request))
+			raw, err := json.Marshal(toV2Request(markedBody(tt.request), tt.request))
 			require.NoError(t, err)
 			var wire struct {
 				ApplicationID string `json:"application_id"`
@@ -108,21 +132,57 @@ func TestToV2RequestApplicationMarkers(t *testing.T) {
 	}
 }
 
-func TestWithInventoryLeavesTheConsumerAttributesAlone(t *testing.T) {
+// The trustguard plugin posts the v1 body to /v2/evaluate, where TrustGuard maps
+// attributes.consumer onto attributes.application, markers included.
+func TestV1BodyCarriesConsumerMarkers(t *testing.T) {
 	t.Parallel()
-	req := &infracontext.RequestContext{
-		ConsumerID:        consumerdomain.StoreConsumerID().String(),
-		ConsumerName:      consumerdomain.StoreConsumerName,
-		ConsumerAudience:  string(consumerdomain.AudiencePersonal),
-		ConsumerSynthetic: true,
-	}
-	body := GuardRequest{
-		ConsumerID: req.ConsumerID,
-		Attributes: GuardAttributes{Consumer: guardConsumer(req.ConsumerID, req.ConsumerName)},
-		request:    req,
-	}
+	for _, tt := range consumerMarkerCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bodies := make(chan []byte, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				bodies <- raw
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"allow"}`))
+			}))
+			t.Cleanup(srv.Close)
 
-	raw, err := json.Marshal(withInventory(body).Attributes.Consumer)
+			_, err := newClient(5*time.Second).Guard(context.Background(), srv.URL, "tok", "", markedBody(tt.request), false)
+			require.NoError(t, err)
+			var wire struct {
+				Attributes struct {
+					Consumer    json.RawMessage `json:"consumer"`
+					Application json.RawMessage `json:"application"`
+				} `json:"attributes"`
+			}
+			require.NoError(t, json.Unmarshal(<-bodies, &wire))
+
+			assert.Nil(t, wire.Attributes.Application, "the v1 body keeps v1's names")
+			if tt.consumer == "" {
+				assert.Nil(t, wire.Attributes.Consumer, "no consumer object without a consumer")
+				return
+			}
+			assert.JSONEq(t, tt.consumer, string(wire.Attributes.Consumer))
+		})
+	}
+}
+
+func TestExecuteSendsTheConsumerMarkers(t *testing.T) {
+	t.Parallel()
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	req := requestContext()
+	req.ConsumerID = personalConsumerID
+	req.ConsumerName = "alice's key"
+	req.ConsumerAudience = string(consumerdomain.AudiencePersonal)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	_, err := p.Execute(context.Background(), in)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"id":"`+req.ConsumerID+`","name":"MCP Store"}`, string(raw))
+
+	got := f.captured().Attributes.Consumer
+	require.NotNil(t, got)
+	assert.Equal(t, GuardConsumer{ID: personalConsumerID, Name: "alice's key", Audience: "personal"}, *got)
 }
