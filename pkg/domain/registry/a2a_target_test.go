@@ -238,7 +238,108 @@ func TestValidateSharedDataPlane(t *testing.T) {
 
 	role.CloudAuth.AWS.ExternalID = "nt-7f3a"
 	assert.NoError(t, role.ValidateSharedDataPlane())
-	assert.NoError(t, (&A2ATarget{CloudAuth: &A2ACloudAuth{AWS: &A2AAWSAuth{}}}).ValidateSharedDataPlane())
+}
+
+func TestValidateSharedDataPlaneCloudCredentials(t *testing.T) {
+	t.Parallel()
+	staticKeys := AWSAuth{AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "wJalrEXAMPLE"}
+	servicePrincipal := AzureAuth{TenantID: "tenant", ClientID: "client", ClientSecret: "s3cret"}
+	serviceAccount := `{"type":"service_account"}`
+
+	for name, tc := range map[string]struct {
+		cloud   *A2ACloudAuth
+		wantErr string
+	}{
+		"no cloud auth": {cloud: nil},
+		"aws static keys": {
+			cloud: &A2ACloudAuth{AWS: &A2AAWSAuth{AWSAuth: staticKeys}},
+		},
+		"aws role with external id": {
+			cloud: &A2ACloudAuth{AWS: &A2AAWSAuth{AWSAuth: AWSAuth{UseRole: true, Role: "arn:aws:iam::123456789012:role/tg"}, ExternalID: "nt-7f3a"}},
+		},
+		"azure service principal": {
+			cloud: &A2ACloudAuth{Azure: &servicePrincipal},
+		},
+		"gcp service account key": {
+			cloud: &A2ACloudAuth{GCP: &A2AGCPAuth{ServiceAccountJSON: serviceAccount}},
+		},
+		"aws default credential chain": {
+			cloud:   &A2ACloudAuth{AWS: &A2AAWSAuth{}},
+			wantErr: "cloud_auth.aws",
+		},
+		"aws keys without secret fall back to the chain": {
+			cloud:   &A2ACloudAuth{AWS: &A2AAWSAuth{AWSAuth: AWSAuth{AccessKeyID: "AKIAEXAMPLE"}}},
+			wantErr: "cloud_auth.aws",
+		},
+		"aws role without external id": {
+			cloud:   &A2ACloudAuth{AWS: &A2AAWSAuth{AWSAuth: AWSAuth{UseRole: true, Role: "arn:aws:iam::123456789012:role/tg"}}},
+			wantErr: "external_id",
+		},
+		"azure managed identity": {
+			cloud:   &A2ACloudAuth{Azure: &AzureAuth{UseManagedIdentity: true}},
+			wantErr: "managed identity",
+		},
+		"azure managed identity with partial principal": {
+			cloud:   &A2ACloudAuth{Azure: &AzureAuth{UseManagedIdentity: true, TenantID: "tenant", ClientID: "client", ClientSecret: "s3cret"}},
+			wantErr: "managed identity",
+		},
+		"azure without a credential": {
+			cloud:   &A2ACloudAuth{Azure: &AzureAuth{}},
+			wantErr: "cloud_auth.azure",
+		},
+		"gcp application default credentials": {
+			cloud:   &A2ACloudAuth{GCP: &A2AGCPAuth{}},
+			wantErr: "service_account_json is required",
+		},
+		"gcp impersonation": {
+			cloud:   &A2ACloudAuth{GCP: &A2AGCPAuth{ImpersonateServiceAccount: "victim@other-project.iam.gserviceaccount.com"}},
+			wantErr: "impersonate_service_account",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := (&A2ATarget{CloudAuth: tc.cloud}).ValidateSharedDataPlane()
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, ErrInvalidRegistry)
+			assert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+	assert.NoError(t, (*A2ATarget)(nil).ValidateSharedDataPlane())
+}
+
+func TestValidateDoesNotApplyTheSharedDataPlaneRules(t *testing.T) {
+	t.Parallel()
+	for name, target := range map[string]*A2ATarget{
+		"aws default chain": {
+			Provider: A2AProviderBedrockAgentCore, BedrockAgentCore: &AgentCoreLocator{RuntimeARN: "arn:aws:bedrock-agentcore:eu-west-1:123456789012:runtime/travel-abc"},
+			Auth: &MCPAuth{Mode: A2AAuthModeCloud}, CloudAuth: &A2ACloudAuth{AWS: &A2AAWSAuth{}},
+		},
+		"azure managed identity": {
+			Provider:     A2AProviderAzureFoundry,
+			AzureFoundry: &FoundryLocator{ProjectEndpoint: "https://acct.services.ai.azure.com/api/projects/p", AgentName: "travel"},
+			Auth:         &MCPAuth{Mode: A2AAuthModeCloud}, CloudAuth: &A2ACloudAuth{Azure: &AzureAuth{UseManagedIdentity: true}},
+		},
+		"gcp application default credentials": {
+			Provider:          A2AProviderVertexAgentEngine,
+			VertexAgentEngine: &VertexLocator{Project: "acme-agents", Location: "europe-west1", ReasoningEngineID: "1234567890"},
+			Auth:              &MCPAuth{Mode: A2AAuthModeCloud}, CloudAuth: &A2ACloudAuth{GCP: &A2AGCPAuth{}},
+		},
+		"gcp impersonation": {
+			Provider:          A2AProviderVertexAgentEngine,
+			VertexAgentEngine: &VertexLocator{Project: "acme-agents", Location: "europe-west1", ReasoningEngineID: "1234567890"},
+			Auth:              &MCPAuth{Mode: A2AAuthModeCloud}, CloudAuth: &A2ACloudAuth{GCP: &A2AGCPAuth{ImpersonateServiceAccount: "sa@acme-agents.iam.gserviceaccount.com"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			target.Normalize()
+			require.NoError(t, target.Validate())
+			require.Error(t, target.ValidateSharedDataPlane())
+		})
+	}
 }
 
 func TestA2ATargetResolveSecretsFrom(t *testing.T) {

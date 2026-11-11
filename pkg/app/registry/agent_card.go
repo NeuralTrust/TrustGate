@@ -133,6 +133,9 @@ func (a *agentCard) Refresh(ctx context.Context, gatewayID ids.GatewayID, id ids
 		return nil, err
 	}
 	pinned := reg.A2ATarget
+	if err := validateSharedDataPlane(ctx, a.shared, gatewayID, pinned); err != nil {
+		return nil, err
+	}
 	fetched, err := a.cards.fetch(ctx, pinned, false)
 	if err != nil {
 		return nil, err
@@ -160,6 +163,9 @@ func (a *agentCard) Approve(ctx context.Context, gatewayID ids.GatewayID, id ids
 	}
 	if digest == reg.A2ATarget.CardDigest {
 		return reg, nil
+	}
+	if err := validateSharedDataPlane(ctx, a.shared, gatewayID, reg.A2ATarget); err != nil {
+		return nil, err
 	}
 	fetched, err := a.cards.fetch(ctx, reg.A2ATarget, false)
 	if err != nil {
