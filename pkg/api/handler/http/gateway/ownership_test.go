@@ -66,7 +66,7 @@ func TestGetGatewayHandler_TenantMismatch_ReturnsNotFound(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("globex"))
-	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local").Handle)
+	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/"+id.String(), nil), -1)
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestGetGatewayHandler_SameTenant_ReturnsOK(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local").Handle)
+	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/"+id.String(), nil), -1)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestGetGatewayHandler_PlatformAdmin_SeesTenantGateway(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local").Handle)
+	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/"+id.String(), nil), -1)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestUpdateGatewayHandler_TenantMismatch_ReturnsNotFound(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("globex"))
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPut, "/"+id.String(), strings.NewReader(`{"status":"paused"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -174,7 +174,7 @@ func TestListGatewayHandler_TenantCaller_FiltersByTenant(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local").Handle)
+	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil), -1)
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestCreateGatewayHandler_PlatformAdmin_UsesBodyTenantID(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
 		`{"slug":"prod","tenant_id":"acme","entitlements":{"tier":"standard","burst_per_min":300,"quota_per_month":100000,"max_instances":5}}`,
@@ -215,7 +215,7 @@ func TestCreateGatewayHandler_PlatformAdmin_MissingBodyTenant_Rejected(t *testin
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"slug":"prod"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -238,7 +238,7 @@ func TestCreateGatewayHandler_PlatformAdmin_MissingEntitlements_Rejected(t *test
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"slug":"prod","tenant_id":"acme"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -254,7 +254,7 @@ func TestCreateGatewayHandler_TenantJWT_BodyTenantMismatch_Rejected(t *testing.T
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
 		`{"slug":"prod","tenant_id":"globex"}`,
@@ -279,7 +279,7 @@ func TestCreateGatewayHandler_TenantJWT_MatchingBodyTenant_Allowed(t *testing.T)
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
 		`{"slug":"prod","tenant_id":"acme"}`,

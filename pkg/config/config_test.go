@@ -668,6 +668,7 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	t.Setenv("DB_MAX_CONNS", "50")
 	t.Setenv("LOG_LEVEL", "DEBUG")
 	t.Setenv("MCP_EXTRA_BASE_DOMAINS", "a.example,b.example, c.example ")
+	t.Setenv("AGENT_BASE_DOMAIN", "agents.example")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -687,6 +688,9 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	}
 	if cfg.Server.MCPExtraBaseDomains[2] != "c.example" {
 		t.Errorf("Server.MCPExtraBaseDomains[2] = %q, want trimmed %q", cfg.Server.MCPExtraBaseDomains[2], "c.example")
+	}
+	if cfg.Server.AgentBaseDomain != "agents.example" {
+		t.Errorf("Server.AgentBaseDomain = %q, want agents.example", cfg.Server.AgentBaseDomain)
 	}
 }
 

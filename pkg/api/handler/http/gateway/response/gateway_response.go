@@ -49,13 +49,15 @@ type GatewayResponse struct {
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
-// plane: Proxy for the LLM proxy and MCP for the Model Context Protocol server.
+// plane: Proxy for the LLM proxy, MCP for the Model Context Protocol server and
+// Agent for the A2A agent plane, absent when AGENT_BASE_DOMAIN is not set.
 type GatewayHosts struct {
 	Proxy string `json:"proxy,omitempty"`
 	MCP   string `json:"mcp,omitempty"`
+	Agent string `json:"agent,omitempty"`
 }
 
-func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) GatewayResponse {
+func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDomain string) GatewayResponse {
 	if g == nil {
 		return GatewayResponse{}
 	}
@@ -68,6 +70,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		Hosts: GatewayHosts{
 			Proxy: proxyHost(g, proxyBaseDomain),
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
+			Agent: subdomainHost(g.Slug, agentBaseDomain),
 		},
 		Metadata:        g.Metadata,
 		StoreMode:       g.StoreMode(),

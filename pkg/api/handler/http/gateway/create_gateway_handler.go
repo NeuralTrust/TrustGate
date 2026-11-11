@@ -29,13 +29,14 @@ import (
 )
 
 type CreateGatewayHandler struct {
-	creator       appgateway.Creator
-	baseDomain    string
-	mcpBaseDomain string
+	creator         appgateway.Creator
+	baseDomain      string
+	mcpBaseDomain   string
+	agentBaseDomain string
 }
 
-func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDomain string) *CreateGatewayHandler {
-	return &CreateGatewayHandler{creator: creator, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
+func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDomain, agentBaseDomain string) *CreateGatewayHandler {
+	return &CreateGatewayHandler{creator: creator, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain, agentBaseDomain: agentBaseDomain}
 }
 
 // Handle godoc
@@ -82,7 +83,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain, h.agentBaseDomain))
 }
 
 // resolveCreateTenantID picks ownership tenant: a tenant caller always creates
