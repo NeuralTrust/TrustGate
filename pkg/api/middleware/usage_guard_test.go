@@ -138,4 +138,18 @@ func TestUsageGuard(t *testing.T) {
 		assert.Equal(t, mcpUsageExhaustedCode, rpc.Error.Code)
 		assert.Equal(t, ErrCodeInsufficientFunds, rpc.Error.Data["code"])
 	})
+	t.Run("agent plane answers plan_unavailable in JSON-RPC", func(t *testing.T) {
+		t.Parallel()
+		status, body := call(t, guardApp(t, NewUsageGuardMiddleware(checker, on).ForAgent(), "free", nil), "/bot/agents/x")
+		assert.Equal(t, fiber.StatusPaymentRequired, status)
+		var rpc struct {
+			Error struct {
+				Code int               `json:"code"`
+				Data map[string]string `json:"data"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(body, &rpc), string(body))
+		assert.Equal(t, -32092, rpc.Error.Code)
+		assert.Equal(t, "plan_unavailable", rpc.Error.Data["reason"])
+	})
 }

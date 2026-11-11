@@ -15,6 +15,7 @@
 package router_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,7 @@ import (
 func TestAgentRouter_HealthRoutes(t *testing.T) {
 	recorder := &routerOpsRecorder{}
 	r := router.NewAgentRouter(
+		middleware.NewTransport(),
 		middleware.NewTransport(),
 		apihandler.NewHealthHandler(),
 		middleware.NewOpsMetricsMiddleware(recorder, o11y.PlaneAgent),
@@ -50,4 +52,41 @@ func TestAgentRouter_HealthRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+type denyAll struct{}
+
+func (denyAll) Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if c.Get("X-Allow") == "" {
+			return fiber.ErrUnauthorized
+		}
+		return c.Next()
+	}
+}
+
+func TestAgentRouter_RPCRouteRunsTheAuthTransport(t *testing.T) {
+	r := router.NewAgentRouter(
+		middleware.NewTransport(),
+		middleware.NewTransport(denyAll{}),
+		apihandler.NewHealthHandler(),
+		nil,
+	)
+	app := fiber.New()
+	require.NoError(t, r.BuildRoutes(app))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/app/agents/research", nil))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req := httptest.NewRequest(http.MethodPost, "/app/agents/research", nil)
+	req.Header.Set("X-Allow", "1")
+	resp, err = app.Test(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.JSONEq(t, `{"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"Method not found"}}`, string(body))
 }
