@@ -6,10 +6,10 @@ Inputs: [`proposal.md`](./proposal.md) (binding), [`design.md`](./design.md) (D1
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | Hand-written ≈4,500: production ≈2,600, tests ≈1,900. Generated ≈600 (swagger/openapi, mocks). openspec ≈700, outside the budget. |
+| Estimated changed lines | TrustGate hand-written ≈4,700: production ≈2,700, tests ≈2,000. app hand-written ≈1,350: production ≈900, tests ≈450. Generated ≈600 (swagger/openapi, mocks). openspec ≈850, outside the budget. |
 | 400-line budget risk | High in total. Most slices are ≤ ≈450 hand-written lines; S1, S5b and S5c1 are over and are flagged below. |
 | Chained PRs recommended | Yes |
-| Suggested split | S1 → S2 → S3a → S3b. S4 and S5a run in parallel with S1. S5b after S1. S5c1 after S2 + S5a + S5b. S5c2 after S4 + S5c1. S6 after S5c1. S7 after S5c2 + S6. S8 last. |
+| Suggested split | S1 → S2 → S3a → S3b. S4 and S5a run in parallel with S1. S5b after S1. S5c1 after S2 + S5a + S5b. S5c2 after S4 + S5c1. S6 after S5c1. S7 after S5c2 + S6. S8 last. In app, A0 can ship any time; A1 after the TrustGate PR is deployed; then A2 → A3. |
 | Delivery strategy | **Integration branch.** Slice PRs target `feat/a2a-plane`; one final PR `feat/a2a-plane → develop` with `size:exception`. |
 
 Why an integration branch rather than slices straight into `develop`: from S5c1 until S6 and S5c2 land, the gateway would forward A2A traffic without task ownership or policies. That intermediate state must never reach an environment. The repo has done this before (ENG-1618).
@@ -25,8 +25,8 @@ How to measure the budget (excludes openspec/ and generated files):
 |------|------|------------|-------------|
 | S1 | Domain: `TypeA2A`, `A2ATarget`, card validation, digest, `ChangedFields` | — | ≈300 / ≈200 ⚠ |
 | S2 | Storage: migration, repository, secrets, snapshot round trip | S1 | ≈115 / ≈100 |
-| S3a | Admin: card fetcher (port and netguard adapter), pin on create and update | S2 | ≈155 / ≈120 |
-| S3b | Admin: `refresh` and `approve` use case, handlers, routes, swagger | S3a | ≈250 / ≈130 |
+| S3a | Admin: card fetcher (port and netguard adapter), version detection, pin on create and update | S2 | ≈180 / ≈140 |
+| S3b | Admin: `preview`, `refresh` and `approve` use case, handlers, routes, swagger | S3a | ≈320 / ≈170 |
 | S4 | Policies: associator fix, A2A plan filter, plugin declarations, TrustGuard A2A payload, mask → block | — | ≈165 / ≈150 |
 | S5a | MCP plane: generalise `resolveMCPConsumer` and dispatch by type, A2A still answers 404 | — | ≈60 / ≈40 |
 | S5b | `pkg/app/a2a` protocol core: version tables, part normalisation, card view, errors | S1 | ≈330 / ≈250 ⚠ |
@@ -35,6 +35,10 @@ How to measure the budget (excludes openspec/ and generated files):
 | S6 | Task ownership: port, Redis adapter, checks and records in the forwarder | S5c1 | ≈180 / ≈150 |
 | S7 | Streaming: per-event inspection, block and cancel, idle timeout | S5c2, S6 | ≈180 / ≈150 |
 | S8 | Functional suite (0.3 and 1.0 fake agents, Postgres and DB-less), `docs/a2a.md`, README, `make docs` | all | ≈150 / ≈300 |
+| A0 | app: `slugToProtocols` stops claiming A2A for policies the catalog does not list (wrong today: it puts an A2A chip on them) | — | ≈5 / ≈20 |
+| A1 | app: Registry Agents tab, add panel with preview, agent card section with diff and approve | S3b deployed | ≈550 / ≈220 ⚠ |
+| A2 | app: the Agents plane in Applications (types, General routing, add modal, Connect, Policies, keyring) | A1 | ≈300 / ≈150 |
+| A3 | app: A2A kind filters in Requests and Activity, one badge colour, copy pass | A2 | ≈40 / ≈40 |
 
 ⚠ Over 400 hand-written lines. In each, tests are most of the excess. Split further only if review asks.
 
@@ -57,14 +61,14 @@ How to measure the budget (excludes openspec/ and generated files):
 
 - [ ] 3a.1 `pkg/app/registry/card_fetcher.go`: `CardFetcher` port with `//go:generate mockery`.
 - [ ] 3a.2 `pkg/infra/a2a/card_fetcher.go`: `netguard.NewHTTPClient`, `CheckRedirect`, 1 MiB cap, JSON object check.
-- [ ] 3a.3 `creator.go` and `updater.go`: fetch, `ValidateCard`, store card, digest and timestamp. Client-sent `card*` fields are ignored. Update re-pins only on a change of `card_url` or version.
-- [ ] 3a.4 Tests: private IP refused, wrong version → 422 with nothing stored, update without URL change does not fetch.
+- [ ] 3a.3 `creator.go` and `updater.go`: fetch, `DetectVersion` when `protocol_version` is empty (D16), `ValidateCard`, store card, digest and timestamp. Client-sent `card*` fields are ignored. Update re-pins only on a change of `card_url` or version.
+- [ ] 3a.4 Tests: private IP refused, wrong version → 422 with nothing stored, omitted version → 1.0 when offered else 0.3, update without URL change does not fetch.
 
-### S3b — Refresh and approve
+### S3b — Preview, refresh and approve
 
-- [ ] 3b.1 `pkg/app/registry/agent_card.go`: `AgentCard{Refresh, Approve}`. Approve re-fetches, compares, stores, then `invalidation.GatewayData` and `Signal`; equal digest → no-op.
-- [ ] 3b.2 Handler and DTOs under `pkg/api/handler/http/registry/` (one DTO per file), swagger annotations, routes under `RequireGatewayAccess` for registries, DI in `modules/registry.go`.
-- [ ] 3b.3 Tests: spec scenarios (new skill, digest moved between refresh and approve → 409, other gateway → 404, non-A2A → 422). `docs/openapi_test.go` asserts both routes.
+- [ ] 3b.1 `pkg/app/registry/agent_card.go`: `AgentCard{Preview, Refresh, Approve}` (D15). Preview returns card, digest and `versions`. Approve re-fetches, compares, stores, then `invalidation.GatewayData` and `Signal`; equal digest → no-op.
+- [ ] 3b.2 Handler and DTOs under `pkg/api/handler/http/registry/` (one DTO per file), swagger annotations, routes under `RequireGatewayAccess` for registries (preview with the create permission), DI in `modules/registry.go`.
+- [ ] 3b.3 Tests: spec scenarios (preview with two versions, preview of a gRPC-only card → `versions: []`, new skill, digest moved between refresh and approve → 409, other gateway → 404, non-A2A → 422). `docs/openapi_test.go` asserts the three routes.
 
 ### S4 — Policies
 
@@ -120,6 +124,31 @@ How to measure the budget (excludes openspec/ and generated files):
 - [ ] 8.3 README: FAQ answers and comparison table describe what ships. Delegation and trace linking are listed as coming, not as shipped.
 - [ ] 8.4 `make docs`; manual interop smoke with the a2a-sdk 1.x client recorded in the PR body.
 
+### A0 — Policy protocol fallback (app)
+
+- [ ] A0.1 `policies/constants/policies.constants.ts`: `slugToProtocols` never returns `A2A` (C5). Test: a slug missing from the catalog shows LLM and MCP only.
+
+### A1 — Registry Agents tab (app)
+
+- [ ] A1.1 `REGISTRY_TABS` gains the `a2a` entry, labelled *Agents* with action *Add agent*; `isRegistryTabId` and the product tour accept it.
+- [ ] A1.2 `AddAgentSidePanel`: card URL → `previewAgentCardAction` → card summary (name, description, skills, versions, the auth the agent asks for) → name, version (highest preselected), sign-in mode (none, static header, OAuth client credentials) → **Pin and add**. A card with `versions: []` explains why it cannot be added.
+- [ ] A1.3 `AgentCardSection` on the agent's detail: pinned card, **Check for changes** → diff in words (`agentCardDiff.ts`) → **Approve new card** or **Keep current**; a 409 reloads the diff.
+- [ ] A1.4 Tests: preview → create with the preselected version; gRPC-only card; diff wording for added and removed skills, endpoint and security; approve 409.
+
+### A2 — Agents plane in Applications (app)
+
+- [ ] A2.1 `PLANES` includes `A2A` (C2, order C3), so `planeOf` stops dropping A2A consumers; every `Record<Plane, …>` filled; `ApplicationGeneralTab` and `AddToApplicationModal` plane-generic.
+- [ ] A2.2 General: Agents routing section with the empty state that creates the consumer; rows without sub-selection (C4).
+- [ ] A2.3 Connect: card URL per agent and the a2a-sdk snippet with `X-AG-API-Key`.
+- [ ] A2.4 Policies: `PLANE_PROTOCOL.A2A`; the TrustGuard line that says mask blocks on agents. Keyring chips and panel tones.
+- [ ] A2.5 Tests: an application with three planes groups, creates and attaches keys; `policiesForPlanes` puts `ratelimit` on Agents and keeps `tokenratelimit` off it.
+
+### A3 — Filters, badges, copy (app)
+
+- [ ] A3.1 Re-add A2A to the protocol and kind filters (`gateway/constants/protocol.ts`, `requests.constants.ts`, `runtimeActivity.constants.ts`), closing the ENG-1203 note.
+- [ ] A3.2 One A2A badge tone (C6), checked next to status badges.
+- [ ] A3.3 Copy pass in `messages/en`: *Agents* everywhere a plane is named; "A2A" only as a protocol badge.
+
 ## Verification (every slice)
 
 - `go build ./...`, `go vet ./...`, `make lint`, `make test-race`; `go vet -tags functional ./tests/...` when `tests/` changes.
@@ -127,7 +156,10 @@ How to measure the budget (excludes openspec/ and generated files):
 - Comment policy: exported doc comments only, swagger annotations kept, no narrative comments or TODOs.
 - CI `functional-tests` green.
 
+For app units: the repo's typecheck, lint and Vitest suites, and a manual pass in the console against a gateway running the TrustGate PR.
+
 ## PR rules
 
 - Bare titles with the Linear id once it exists, e.g. `feat(a2a): pin agent cards on registry create (RUN-####)`.
 - Slice PRs target `feat/a2a-plane`. The final PR to `develop` carries `size:exception` and the measured line breakdown.
+- app: A0 is its own small PR to `develop`. A1, A2 and A3 are one PR each, merged only after the TrustGate PR is deployed.

@@ -1,6 +1,6 @@
 # Proposal: A2A plane MVP
 
-Linear: pending (no issue yet). Repo: TrustGate (Go). Base branch: `develop`.
+Linear: pending (no issue yet). Repos: TrustGate (Go) and app (Next.js console). Base branch: `develop` in both.
 Exploration: [`exploration.md`](./exploration.md).
 
 ## Intent
@@ -15,11 +15,14 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 
 ### In scope
 
+#### TrustGate
+
 **Registry and admin**
 
-- New registry type `A2A` with an `a2a_target`: `card_url`, `protocol_version` (`"0.3"` or `"1.0"`, required), optional `url` override, static `headers` (encrypted like MCP headers), `auth` (reusing `MCPAuth`, modes `none`, `static` and `client_credentials` only), optional `allowed_methods`, and read-only `card`, `card_digest` and `card_pinned_at`.
+- New registry type `A2A` with an `a2a_target`: `card_url`, `protocol_version` (`"0.3"` or `"1.0"`; when omitted, detected from the card: 1.0 if it offers it, else 0.3), optional `url` override, static `headers` (encrypted like MCP headers), `auth` (reusing `MCPAuth`, modes `none`, `static` and `client_credentials` only), optional `allowed_methods`, and read-only `card`, `card_digest` and `card_pinned_at`.
 - Migration: `registries_type_check` accepts `'A2A'`.
 - **Card pinning.** On create (and on an update that changes `card_url` or `protocol_version`) the admin plane fetches the card through `netguard`, validates it against the pinned version, and stores it with a digest. The data plane serves and routes from the pinned copy only.
+- `POST /v1/gateways/{gw}/agent-cards/preview` with `{card_url}` fetches a card under the same rules and returns it, its digest and the wire versions it offers, without writing anything. The console's add panel shows the card before anything is stored.
 - `POST /v1/gateways/{gw}/registries/{id}/agent-card/refresh` fetches the live card and reports whether it changed and which top-level fields differ. It writes nothing.
 - `POST /v1/gateways/{gw}/registries/{id}/agent-card/approve` with `{digest}` re-fetches the card and pins it only if it still has that digest (409 otherwise).
 
@@ -54,6 +57,33 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 - One `a2a` span per JSON-RPC call (registry, agent, method, wire version, task id, context id, final task state, upstream status, block reason). New telemetry attributes follow `telemetry-event-contract.mdc`: additive only, in the schema descriptor.
 - `docs/a2a.md`, plus README FAQ and comparison table rewritten to describe what ships.
 
+#### app (console)
+
+Audited at `origin/develop` @ `1fb4d0be`; paths are under `app/[locale]/v2/features`. The console already carries A2A in its types (`RegistryType`, `ConsumerProtocol`, `PolicyProtocol`, `GatewayProtocol`), copy (`v2Registry.tabs.a2a`, `actions.addA2a`, `card.descriptionA2a`), and topology node kinds. Registry even fetches A2A rows (`useRegistryScreen.ts`), but `REGISTRY_TABS` does not render the tab. What is missing is the plane in Applications: `PLANES = ['MCP', 'LLM']` (`applications/types.ts:4`).
+
+The product rule is the applications model's (`TrustGate/docs/applications-model.md`, which leaves A2A open in §10): agents are a third plane, called **Agents**, next to Tools and Models. Nobody is asked "A2A or not". The plane is born when the first agent is added, and the Application's keys reach it like the others.
+
+- **Registry → Agents tab.** Render the existing `a2a` tab, labelled *Agents*.
+  - **Add agent** side panel: card URL → preview (name, description, skills, versions offered, the auth the agent asks for) → name, wire version (preselected), and how the gateway signs in to the agent (none, static header, OAuth client credentials) → **Pin and add**.
+  - **Agent card** section on the agent's detail: the pinned card (skills, version, pinned at), and **Check for changes** (`refresh`), which opens a per-field diff with **Approve new card** (`approve` with the digest) or **Keep current**.
+- **Applications.** `PLANES` gains `A2A`, shown as *Agents*.
+  - **General:** a third routing section whose rows are agents, with no tool or model sub-selection. Its empty state ("This application calls no other agents through the gateway.") is how the plane is added.
+  - **Add modal:** a third tab, *Agents*, picking from registered agents, as servers and providers are picked today.
+  - **Connect:** per agent, the card URL (`consumerBaseUrl(connection, 'mcp', slug)` + `/agents/{registry_id}/.well-known/agent-card.json`) and an a2a-sdk snippet that sends `X-AG-API-Key` when it resolves the card.
+  - **Policies:** `PLANE_PROTOCOL` gains `A2A`, so a policy lands on the agents consumer only when the catalog's `supported_protocols` lists A2A. TrustGuard says, on agents, that mask blocks.
+  - **Auth:** the key's plane chips include Agents.
+  - **Analytics:** `consumerIdsOf` includes the agents consumer. Agents are measured in calls, task states, blocks and refused methods, never tokens or cost.
+- **Fixes this exposes in the console:**
+  - `planeOf` (`applications/lib/groupApplications.ts`) drops any consumer that is not MCP or LLM. Today an A2A consumer created through the API vanishes from Applications, against the model's "no orphans" rule.
+  - `slugToProtocols` (`policies/constants/policies.constants.ts`) falls back to LLM + MCP + A2A for most slugs the catalog does not list. With a real A2A plane, that offers policies the gateway refuses with 422. The fallback must not claim A2A.
+  - `ApplicationGeneralTab` hard-codes two plane drafts (`plane === 'LLM' ? llm : mcp`), and `AddToApplicationModal` seeds `{ MCP: '', LLM: '' }`. Both go plane-generic.
+  - The A2A badge has three colours: dark-yellow in Registry and Activity, yellow in Policies, lila in Topology. Pick one.
+  - Requests and Activity leave out the A2A kind filter until traffic exists (ENG-1203). Re-add it.
+- **Not shown, because the MVP does not do it:**
+  - per-user accounts for agents (the Tools "Accounts for these servers" control has no agent counterpart until delegation);
+  - cost per agent;
+  - an agent's own model calls inside its trace.
+
 ### Out of scope (follow-ups)
 
 | Follow-up | Why later |
@@ -64,12 +94,12 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 | Extended card (`agent/getAuthenticatedExtendedCard`, `GetExtendedAgentCard`) | Depends on per-caller upstream auth, which is the delegation follow-up. |
 | `ListTasks` filtered to the caller's tasks | Filtering a paginated upstream list breaks page sizes and tokens. Refused until designed. |
 | Verifying upstream card signatures; re-signing the served card with the gateway JWKS | Pinning already stops silent drift. Signatures add provenance, not the MVP's protection. |
-| Periodic drift detection with alerts | Refresh/approve covers it manually. |
+| Periodic drift detection with alerts, and an automatic "card changed" badge in the console | Refresh/approve covers it manually; the console shows a **Check for changes** button instead. |
 | Protocol bridges (LangGraph, Bedrock AgentCore, Vertex Agent Engine, Foundry) and `/chat/completions` with `a2a/` models | Breadth play with lossy translations and high upkeep. |
 | gRPC and HTTP+JSON bindings | JSON-RPC is the binding every SDK speaks. |
-| Agent search and discovery listing | No demand yet. |
+| Agent search and discovery, an "Agent Store" like the MCP Store | No demand yet. |
 | Per-call pricing on agents | Real cost comes from the delegation follow-up. |
-| Console (app repo): A2A registry form, A2A consumer type, card diff and approve | Separate repo and PR. The API is complete without it. |
+| An `agents` host alias for the data-plane URLs | Ingress only (`k8s/overlays/*` HTTPRoutes, DNS, certificates). Until then agent URLs live on the MCP host. |
 
 ## Decisions
 
@@ -86,6 +116,12 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 | Q9 | Owner identity | Consumer plus principal subject when the caller has one, else consumer plus auth id. |
 | Q10 | Global policies whose plugin lacks A2A | Excluded from A2A plans. The filter is applied to A2A plans only, so LLM and MCP behaviour does not move in this change. |
 | Q11 | Card digest | SHA-256 over the card with `signatures` removed, re-marshalled with sorted keys. It is internal and never presented as a JWS. |
+| Q12 | Where an agent is registered in the console | The Registry screen's Agents tab, like servers and providers. Applications only pick from registered agents, which is how the add modal already works. |
+| Q13 | How the add panel shows a card before it is stored | A new read-only `agent-cards/preview` endpoint. `refresh` needs a registry that already exists. |
+| Q14 | Must an admin choose the wire version? | No. `protocol_version` is optional and detected (1.0 when offered, else 0.3). The panel preselects it and lets an admin pin 0.3 when the card offers both. |
+| Q15 | How the console knows a card changed | A **Check for changes** button calling `refresh`. There is no automatic badge until the periodic check ships. |
+| Q16 | Which host agent URLs use | The MCP host (`mcpHost`), because the plane is the MCP plane. An `agents` alias is an ingress-only follow-up. |
+| Q17 | Labels | *Agents* in Applications and Registry. "A2A" appears only as a protocol badge. |
 
 ## Open questions (need an owner)
 
@@ -98,7 +134,10 @@ Ship the MVP behind real demand: validate with two or three customers running A2
 1. Ship on admin and MCP planes together. An older MCP plane keeps answering 404 to A2A consumers, which is today's behaviour.
 2. The migration only widens a CHECK, so it is safe on a live database. Rolling back to an older binary keeps any `A2A` registry rows, which an older binary can neither read nor serve. Before a rollback, list them with `SELECT id, gateway_id, name FROM registries WHERE type = 'A2A'` and delete them through the API, or accept that the A2A consumers they serve go dark.
 3. No feature flag: an A2A consumer does nothing until an admin attaches an A2A registry to it.
+4. The console's Agents tab (A1) and plane (A2) deploy only after the TrustGate PR is live on admin and MCP planes. An older TrustGate answers 404 to `agent-cards/preview` and 422 to an `A2A` registry, which the console would surface as a failed save.
 
 ## Delivery
 
-About 2,600 production and 1,900 test lines, well over the 400-line budget. [`tasks.md`](./tasks.md) splits it into twelve slices on an integration branch (`feat/a2a-plane`) with one final PR to `develop`. Intermediate states (forwarding before ownership and policies land) must never reach an environment, so slices do not merge into `develop` one by one.
+TrustGate: about 2,700 production and 2,000 test lines, well over the 400-line budget. [`tasks.md`](./tasks.md) splits it into twelve slices on an integration branch (`feat/a2a-plane`) with one final PR to `develop`. Intermediate states (forwarding before ownership and policies land) must never reach an environment, so slices do not merge into `develop` one by one.
+
+app: about 900 production and 450 test lines in four units. A1 (Registry Agents tab) ships after the TrustGate PR is deployed. A2 (the Agents plane in Applications, which also fixes `planeOf`) and A3 (filters, badges) follow. The `slugToProtocols` fix (A0) can ship ahead of everything, since it is wrong today.

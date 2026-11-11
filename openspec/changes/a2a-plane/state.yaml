@@ -1,10 +1,16 @@
 change: a2a-plane
 linear: pending
 branch: feat/a2a-plane
+repos: [TrustGate, app]
 base:
   branch: origin/develop
   commit: de098c6f
   audited_at: 2026-11-11
+app_base:
+  branch: origin/develop
+  commit: 1fb4d0be
+  audited_at: 2026-11-11
+  units: [A0, A1, A2, A3]
 phases:
   explore: done
   propose: draft

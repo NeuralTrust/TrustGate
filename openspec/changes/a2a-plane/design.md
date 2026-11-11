@@ -33,6 +33,8 @@ Nothing here touches the LLM proxy or the MCP request path, beyond the dispatch 
 | D12 | Ownership in Redis as `a2a:own:{gateway}:{registry}:t:{taskId}` and `…:c:{contextId}`, value `{consumer_id, principal}`, written `SET NX` with TTL, read `GET` plus `EXPIRE` on hit | Postgres table | Data planes may be DB-less. Redis is required on every plane, and the data is a cache of facts the agent already holds. |
 | D13 | Streams: the handler reads upstream SSE with `bufio.Scanner` (1 MiB max line), decodes each `data:` payload, runs `pre_response` only on content events, writes, and flushes. On a block it writes an error event, closes, and fires `CancelTask` in a goroutine bounded by `A2A_UPSTREAM_TIMEOUT` and the server's shutdown context | Buffer the whole stream | Agents stream for minutes. Per-event inspection keeps latency at one guard call per content event. |
 | D14 | Gateway error codes `-32090` (blocked), `-32091` (rate limited), `-32092` (unavailable or upstream failure), defined in `pkg/app/a2a/errors.go` | Reuse MCP's `-32001`, `-32004` and `-32005` | They collide with A2A's `TaskNotFoundError` (`-32001`) and `UnsupportedOperationError` (`-32004`). |
+| D15 | `agent-cards/preview` is a gateway-scoped admin route served by the same `AgentCard` use case (`Preview(ctx, gatewayID, cardURL)`), sharing the fetcher and `ValidateCard`. Its permission is the registry create permission | A dry-run flag on registry create | A dry run would need every create field and would run the auth and name validations the panel has not reached yet. The preview only answers "what is behind this URL". |
+| D16 | Version detection lives in the domain (`registry.DetectVersion(card) ([]A2AProtocolVersion)`). The creator uses the highest one when `protocol_version` is empty, and the preview returns the list | Detect in the console | The gateway must accept an API client that omits the version, and one rule in one place keeps the console's preselection identical to what the gateway would pick. |
 
 ### Methods by version
 
@@ -67,7 +69,9 @@ client ──POST /{consumer}/agents/{agent}──▶ MCP plane
   ◀── JSON-RPC result | error, or SSE events
 ```
 
-Admin flow: create or update an A2A registry → `CardFetcher.Fetch(card_url)` → validate for the version → store card, digest and timestamp → `invalidation.GatewayData` → `Signal` (snapshot recompile). `refresh` reads only. `approve` re-fetches, compares digests, and stores.
+Admin flow: create or update an A2A registry → `CardFetcher.Fetch(card_url)` → detect the version when none was sent (D16) → validate for the version → store card, digest and timestamp → `invalidation.GatewayData` → `Signal` (snapshot recompile). `preview` and `refresh` read only. `approve` re-fetches, compares digests, and stores.
+
+Console flow (Registry → Agents → **Add agent**): `preview(card_url)` → the panel shows the card and preselects the highest of `versions` → **Pin and add** sends create with that `protocol_version`. On the agent's detail, **Check for changes** → `refresh` → per-field diff → **Approve new card** → `approve(fetched_digest)`; a 409 reloads the diff.
 
 ## File changes
 
@@ -81,9 +85,10 @@ Admin flow: create or update an A2A registry → `CardFetcher.Fetch(card_url)` �
 | | `pkg/infra/repository/registry/repository.go`, `secrets.go` | Read and write `a2a_target`; encrypt headers and auth like `mcp_target` | 70 |
 | Admin | `pkg/app/registry/creator.go`, `updater.go` | Fetch and pin on create, and on change of `card_url` or version | 60 |
 | | `pkg/app/registry/card_fetcher.go` (new) | `CardFetcher` port with mockery | 25 |
-| | `pkg/app/registry/agent_card.go` (new) | `AgentCard{Refresh, Approve}` use case | 110 |
+| | `pkg/app/registry/agent_card.go` (new) | `AgentCard{Preview, Refresh, Approve}` use case (D15) | 140 |
+| | `pkg/domain/registry/a2a_card.go` | `DetectVersion` (D16) | 25 |
 | | `pkg/infra/a2a/card_fetcher.go` (new) | netguard client, 1 MiB cap, JSON check | 70 |
-| | `pkg/api/handler/http/registry/agent_card_handler.go` + request/response DTOs | Two endpoints with swagger annotations | 120 |
+| | `pkg/api/handler/http/registry/agent_card_handler.go` + request/response DTOs | Three endpoints (preview, refresh, approve) with swagger annotations | 160 |
 | | `pkg/server/router/admin_router.go`, `pkg/container/modules/registry.go` | Routes and wiring | 20 |
 | Policies | `pkg/app/consumer/associator.go:224` | Include `TypeA2A` | 2 |
 | | `pkg/app/consumer/data_finder.go` | A2A-only protocol filter (D9) | 35 |
@@ -107,6 +112,43 @@ Admin flow: create or update an A2A registry → `CardFetcher.Fetch(card_url)` �
 | Docs | `docs/a2a.md` (new), `README.md` FAQ and comparison table, `make docs` | | 150 + generated |
 
 Unit tests sit next to each file. They come to about 60% of the hand lines above and are counted in the forecast in `tasks.md`.
+
+## app (console)
+
+Audited at `origin/develop` @ `1fb4d0be`. `$F` = `app/[locale]/v2/features`. Binding: the applications model (`TrustGate/docs/applications-model.md`): a plane is born when its first thing is added, the keyring reaches every plane, and the console never asks which plane.
+
+### Decisions
+
+| # | Decision | Alternatives rejected | Rationale |
+|---|---|---|---|
+| C1 | Agents are registered in Registry (the hidden `a2a` tab), and Applications pick from them | A card-URL field inside the application's add modal | Servers and providers already work this way (`AddToApplicationModal` picks a `registryId`). One agent serves several applications, and pinning and approving a card is gateway-level work. |
+| C2 | `PLANES = ['MCP', 'LLM', 'A2A']`, with every `Record<Plane, …>` filled in and the two-plane literals replaced by maps over `PLANES` | A2A as a sub-kind of the Tools plane | It is its own consumer type in the gateway. Folding it into Tools would break `planeOf`, policies routing and analytics scoping, which all key on the consumer type. |
+| C3 | Plane order in every list: Models, Tools, Agents | Alphabetical | Matches how a team adds them. Agents is the newest and least used, so it goes last. |
+| C4 | The agents routing row has no sub-selection: a row is a registry, nothing more | Let an application narrow an agent's skills | The gateway has nothing to enforce it with. `allowed_methods` is a registry-level setting. |
+| C5 | The policy protocol fallback (`slugToProtocols`) never returns `A2A`. Only the catalog's `supported_protocols` can put a policy on Agents | Keep the heuristic and add exceptions | The gateway answers 422 to a plugin without A2A (`a2a-policy-chain`). The console should only offer what the catalog says. |
+| C6 | One A2A badge colour everywhere: `lila`, from Topology | Keep per-screen tones | Three tones for one protocol read as three things. Check in A3 that lila does not collide with a status badge next to it, as cyan was chosen over green for MCP. |
+
+### File changes
+
+| Area | File | Change | Lines |
+|---|---|---|---|
+| Registry | `$F/registry/constants/registry.constants.ts` | Add the `a2a` tab entry (label *Agents*, action *Add agent*) | 10 |
+| | `$F/registry/components/add-registry-side-panel/AddAgentSidePanel.tsx` (new) | URL → preview → version, auth → create | 200 |
+| | `$F/registry/components/AgentCardSection.tsx` (new) | Pinned card summary, Check for changes, diff, approve or keep | 160 |
+| | `$F/registry/actions/{previewAgentCard,createA2aRegistry,refreshAgentCard,approveAgentCard}Action.ts` (new) | Server actions over the TrustGate endpoints | 120 |
+| | `$F/registry/lib/agentCardDiff.ts` (new) | Changed fields in words (skills added and removed, endpoint, security) | 60 |
+| Applications | `$F/applications/types.ts` | `PLANES` (C2) | 2 |
+| | `$F/applications/lib/groupApplications.ts` | `planeOf` keeps A2A consumers | 2 |
+| | `$F/applications/components/ApplicationGeneralTab.tsx`, `ApplicationPlaneRouting.tsx` | Plane-generic drafts; Agents section with no sub-selection (C4) | 90 |
+| | `$F/applications/components/AddToApplicationModal.tsx` | Seed from `PLANES`; *Agents* tab | 10 |
+| | `$F/applications/components/ApplicationConnectTab.tsx`, `lib/applicationConnectSnippets.ts` | Card URL per agent and the a2a-sdk snippet | 80 |
+| | `$F/applications/lib/applicationPolicies.ts` | `PLANE_PROTOCOL.A2A` | 2 |
+| | `$F/applications/components/ApplicationDetailSidePanel.tsx`, `ApplicationKeyringSection.tsx` | Plane tones and chips | 10 |
+| Policies | `$F/policies/constants/policies.constants.ts` | C5, C6 | 10 |
+| Filters, badges | `$F/gateway/constants/protocol.ts`, `$F/requests/constants/requests.constants.ts`, `$F/runtime-activity/constants/runtimeActivity.constants.ts`, `$F/registry/components/RegistryAccessTab.tsx` | Re-add A2A to the filters (ENG-1203); C6 | 20 |
+| Copy | `messages/en/v2Registry.json`, `v2Applications.json`, `v2Policies.json` | English only | 60 |
+
+Tests follow the repo's `__tests__/v2/...` layout: `groupApplications` keeps an A2A consumer, `policiesForPlanes` routes by catalog protocol and never by fallback, the add panel walks preview → create with the preselected version, the diff names added and removed skills, and approve handles a 409 by reloading.
 
 ## Configuration
 
