@@ -40,10 +40,8 @@ const (
 type consumerMarkerCase struct {
 	name    string
 	request *infracontext.RequestContext
-	// consumer is attributes.consumer of the v1 body, application attributes.application of
-	// the v2 body; empty means the object is not sent.
-	consumer    string
-	application string
+	// consumer is attributes.consumer on the wire; empty means it is not sent.
+	consumer string
 }
 
 func consumerMarkerCases() []consumerMarkerCase {
@@ -56,8 +54,7 @@ func consumerMarkerCases() []consumerMarkerCase {
 				ConsumerName:     "Support Bot",
 				ConsumerAudience: string(consumerdomain.AudienceApplication),
 			},
-			consumer:    `{"id":"` + appConsumerID + `","name":"Support Bot","audience":"application"}`,
-			application: `{"name":"Support Bot","audience":"application"}`,
+			consumer: `{"id":"` + appConsumerID + `","name":"Support Bot","audience":"application"}`,
 		},
 		{
 			name: "personal key",
@@ -66,8 +63,7 @@ func consumerMarkerCases() []consumerMarkerCase {
 				ConsumerName:     "alice's key",
 				ConsumerAudience: string(consumerdomain.AudiencePersonal),
 			},
-			consumer:    `{"id":"` + personalConsumerID + `","name":"alice's key","audience":"personal"}`,
-			application: `{"name":"alice's key","audience":"personal"}`,
+			consumer: `{"id":"` + personalConsumerID + `","name":"alice's key","audience":"personal"}`,
 		},
 		{
 			name: "MCP Store",
@@ -78,14 +74,12 @@ func consumerMarkerCases() []consumerMarkerCase {
 				ConsumerSynthetic: true,
 				MCP:               true,
 			},
-			consumer:    `{"id":"` + storeID + `","name":"MCP Store","audience":"application","synthetic":true}`,
-			application: `{"name":"MCP Store","audience":"application","synthetic":true}`,
+			consumer: `{"id":"` + storeID + `","name":"MCP Store","audience":"application","synthetic":true}`,
 		},
 		{
-			name:        "marker without a name",
-			request:     &infracontext.RequestContext{ConsumerAudience: string(consumerdomain.AudiencePersonal)},
-			consumer:    `{"audience":"personal"}`,
-			application: `{"audience":"personal"}`,
+			name:     "marker without a name",
+			request:  &infracontext.RequestContext{ConsumerAudience: string(consumerdomain.AudiencePersonal)},
+			consumer: `{"audience":"personal"}`,
 		},
 		{
 			name:    "no consumer",
@@ -104,32 +98,6 @@ func markedBody(req *infracontext.RequestContext) GuardRequest {
 	}
 	body.Attributes.Consumer = guardConsumer(req)
 	return body
-}
-
-func TestToV2RequestApplicationMarkers(t *testing.T) {
-	t.Parallel()
-	for _, tt := range consumerMarkerCases() {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			raw, err := json.Marshal(toV2Request(markedBody(tt.request), tt.request))
-			require.NoError(t, err)
-			var wire struct {
-				ApplicationID string `json:"application_id"`
-				Attributes    struct {
-					Application json.RawMessage `json:"application"`
-				} `json:"attributes"`
-			}
-			require.NoError(t, json.Unmarshal(raw, &wire))
-
-			if tt.application == "" {
-				assert.Nil(t, wire.Attributes.Application, "no application object without a consumer")
-				assert.Empty(t, wire.ApplicationID)
-				return
-			}
-			assert.Equal(t, tt.request.ConsumerID, wire.ApplicationID)
-			assert.JSONEq(t, tt.application, string(wire.Attributes.Application))
-		})
-	}
 }
 
 // The trustguard plugin posts the v1 body to /v2/evaluate, where TrustGuard maps
