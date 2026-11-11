@@ -67,6 +67,7 @@ const (
 	attrA2AMethod              = "trustgate.a2a.method"
 	attrA2ARegistryID          = "trustgate.a2a.registry_id"
 	attrA2AAgentName           = "trustgate.a2a.agent_name"
+	attrA2AProvider            = "trustgate.a2a.provider"
 	attrA2AProtocolVersion     = "trustgate.a2a.protocol_version"
 	attrA2ATaskID              = "trustgate.a2a.task_id"
 	attrA2AContextID           = "trustgate.a2a.context_id"
@@ -226,6 +227,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrA2AMethod, evt.A2A.Method)
 		appendStr(attrA2ARegistryID, evt.A2A.RegistryID)
 		appendStr(attrA2AAgentName, evt.A2A.AgentName)
+		appendStr(attrA2AProvider, evt.A2A.Provider)
 		appendStr(attrA2AProtocolVersion, evt.A2A.ProtocolVersion)
 		appendStr(attrA2ATaskID, evt.A2A.TaskID)
 		appendStr(attrA2AContextID, evt.A2A.ContextID)

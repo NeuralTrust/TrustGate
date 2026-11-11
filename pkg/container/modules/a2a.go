@@ -31,8 +31,8 @@ func A2A(c *container.Container) error {
 	for _, provider := range []any{
 		infraa2a.NewUpstreamClient,
 		appa2a.NewPluginRunner,
-		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, signer *infrasts.Signer) *appa2a.Credentials {
-			return appa2a.NewCredentials(exchanger, provider, signer.Ephemeral())
+		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud *infraa2a.CloudSigner, signer *infrasts.Signer) *appa2a.Credentials {
+			return appa2a.NewCredentials(exchanger, provider, cloud, signer.Ephemeral())
 		},
 		func(cc cache.Client) appa2a.OwnershipStore {
 			return infraa2a.NewOwnershipStore(cc.RedisClient())

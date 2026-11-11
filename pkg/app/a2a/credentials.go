@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ const (
 	ReasonIdentityExchangeFailed  = "identity_exchange_failed"
 	ReasonSigningKeyUnavailable   = "signing_key_unavailable"
 	ReasonClientCredentialsFailed = "client_credentials_failed"
+	ReasonCloudAuthFailed         = "cloud_auth_failed"
 )
 
 // Subject kinds of IdentityTrace.
@@ -56,10 +58,20 @@ type IdentityTrace struct {
 	SubjectKind string
 }
 
+// CloudSigner signs requests to a hosted agent with its cloud credential.
+type CloudSigner interface {
+	// Sign sets the credential of t.CloudAuth on req, and refuses a request
+	// that is not https to the host of t's endpoint. A non-empty key keeps
+	// the credential under it for the next requests; an empty one keeps
+	// nothing.
+	Sign(ctx context.Context, t *registrydomain.A2ATarget, key string, req *http.Request) error
+}
+
 // Credentials builds the credential an A2A registry's auth mode sends.
 type Credentials struct {
 	exchanger    sts.Exchanger
 	provider     appoauth.ProviderClient
+	cloud        CloudSigner
 	ephemeralKey bool
 
 	tokens sync.Map
@@ -75,11 +87,12 @@ type cachedToken struct {
 // NewCredentials builds the agent plane's credentials. With ephemeralKey the
 // gateway's signing key is not shared between pods, so delegation, whose
 // tokens another pod could not verify, is refused.
-func NewCredentials(exchanger sts.Exchanger, provider appoauth.ProviderClient, ephemeralKey bool) *Credentials {
-	return &Credentials{exchanger: exchanger, provider: provider, ephemeralKey: ephemeralKey}
+func NewCredentials(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud CloudSigner, ephemeralKey bool) *Credentials {
+	return &Credentials{exchanger: exchanger, provider: provider, cloud: cloud, ephemeralKey: ephemeralKey}
 }
 
 // For returns the headers that carry the credential of a call by p to reg.
+// Auth mode cloud carries none: Sign signs each request instead.
 func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, p *identity.Principal) (http.Header, IdentityTrace, *RPCError) {
 	auth := reg.A2ATarget.Auth
 	app := consumerdomain.AppSubject(rc.Consumer.ID)
@@ -90,6 +103,9 @@ func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	header := http.Header{}
 	switch auth.Mode {
 	case registrydomain.MCPAuthModeNone:
+		return header, trace, nil
+	case registrydomain.A2AAuthModeCloud:
+		trace.Mode = cloudMode(reg.A2ATarget.CloudAuth)
 		return header, trace, nil
 	case registrydomain.MCPAuthModeStatic:
 		header.Set(auth.Header, auth.Value)
@@ -133,6 +149,29 @@ func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer,
 		return header, trace, nil
 	}
 	return nil, trace, GatewayFailure(ReasonAuthUnsupported)
+}
+
+// Sign signs req with reg's cloud credential when its auth mode is cloud.
+func (c *Credentials) Sign(ctx context.Context, reg *registrydomain.Registry, req *http.Request) error {
+	if reg.A2ATarget.Auth.Mode != registrydomain.A2AAuthModeCloud {
+		return nil
+	}
+	return c.cloud.Sign(ctx, reg.A2ATarget, reg.ID.String()+"|"+strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10), req)
+}
+
+// cloudMode names the credential a cloud_auth signs with, as the span
+// records it.
+func cloudMode(c *registrydomain.A2ACloudAuth) string {
+	switch {
+	case c == nil:
+		return string(registrydomain.A2AAuthModeCloud)
+	case c.AWS != nil:
+		return "aws_sigv4"
+	case c.Azure != nil:
+		return "azure_entra"
+	default:
+		return "gcp_oauth"
+	}
 }
 
 // clientCredentials returns the registry's client_credentials token, cached

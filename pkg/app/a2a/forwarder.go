@@ -63,14 +63,15 @@ type Call struct {
 
 // Exchange is a call that passed the gateway's checks, ready to be sent.
 type Exchange struct {
-	f       *Forwarder
-	call    *Call
-	version Version
-	kind    Kind
-	content Content
-	owner   Owner
-	session string
-	header  http.Header
+	f        *Forwarder
+	call     *Call
+	provider provider
+	version  Version
+	kind     Kind
+	content  Content
+	owner    Owner
+	session  string
+	header   http.Header
 
 	span       *trace.Span
 	attrs      trace.A2AAttrs
@@ -83,11 +84,12 @@ type Exchange struct {
 // the owner of the task or context it names, the policies on the request,
 // and the credential.
 func (f *Forwarder) Prepare(ctx context.Context, call *Call) (*Exchange, *RPCError) {
-	x := &Exchange{f: f, call: call, version: Version(call.Agent.A2ATarget.ProtocolVersion), owner: ownerOf(call)}
+	x := &Exchange{f: f, call: call, provider: providerOf(call.Agent.A2ATarget), version: Version(call.Agent.A2ATarget.ProtocolVersion), owner: ownerOf(call)}
 	x.attrs = trace.A2AAttrs{
 		Method:          call.Request.Method,
 		RegistryID:      call.Agent.ID.String(),
 		AgentName:       call.Agent.Name,
+		Provider:        string(call.Agent.A2ATarget.Provider),
 		ProtocolVersion: string(x.version),
 	}
 	if rt := trace.FromContext(ctx); rt != nil {
@@ -150,21 +152,21 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 	defer func() { x.finish(rpcErr) }()
 	ctx, cancel := context.WithTimeout(ctx, upstreamTimeout)
 	defer cancel()
-	res, err := x.post(ctx, x.header, x.call.Body)
-	if err != nil {
-		return nil, upstreamFailure(err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, upstreamFailure(err)
-	}
-	if len(body) > maxResponseBytes {
-		return nil, GatewayFailure(ReasonResponseTooLarge)
-	}
-	result, rpcErr = x.decode(body, res.StatusCode)
-	if rpcErr != nil {
-		return nil, rpcErr
+	for attempt := 0; ; attempt++ {
+		result, rpcErr = x.attempt(ctx)
+		if rpcErr == nil {
+			break
+		}
+		wait, again := x.provider.retry(rpcErr, attempt)
+		if !again {
+			return nil, rpcErr
+		}
+		x.agentError = false
+		select {
+		case <-ctx.Done():
+			return nil, upstreamFailure(ctx.Err())
+		case <-time.After(wait):
+		}
 	}
 	content, rpcErr := x.resultContent(result)
 	if rpcErr != nil {
@@ -181,15 +183,46 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 	return result, nil
 }
 
+// attempt sends a buffered call once and decodes the agent's answer.
+func (x *Exchange) attempt(ctx context.Context) (json.RawMessage, *RPCError) {
+	res, err := x.post(ctx, x.header, x.call.Body)
+	if err != nil {
+		return nil, upstreamFailure(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, upstreamFailure(err)
+	}
+	if len(body) > maxResponseBytes {
+		return nil, GatewayFailure(ReasonResponseTooLarge)
+	}
+	return x.provider.decode(x, res, body)
+}
+
 // post sends body to the agent and records when it went and how the agent
 // answered.
 func (x *Exchange) post(ctx context.Context, header http.Header, body []byte) (*http.Response, error) {
 	x.sentAt = time.Now()
-	res, err := x.f.upstream.Post(ctx, x.call.Agent.A2ATarget.Endpoint(), header, body)
+	res, err := x.do(ctx, header, body)
 	if err == nil {
 		x.attrs.UpstreamStatus = res.StatusCode
 	}
 	return res, err
+}
+
+// do sends a JSON-RPC body to the agent as its provider takes it, signed with
+// the registry's cloud credential.
+func (x *Exchange) do(ctx context.Context, header http.Header, body []byte) (*http.Response, error) {
+	req, err := x.provider.request(ctx, x.call.Agent.A2ATarget.Endpoint(), header.Clone(), body)
+	if err != nil {
+		return nil, err
+	}
+	if err := x.f.credentials.Sign(ctx, x.call.Agent, req); err != nil {
+		x.f.logger.WarnContext(ctx, "a2a cloud credential failed", slog.String("registry_id", x.call.Agent.ID.String()), slog.String("error", err.Error()))
+		return nil, errCloudAuth
+	}
+	return x.f.upstream.Do(req)
 }
 
 // decode reads a JSON-RPC response: its result, or the error the agent
@@ -319,10 +352,20 @@ func (x *Exchange) upstreamHeader(ctx context.Context, credential http.Header) h
 	if rt := trace.FromContext(ctx); rt != nil {
 		h.Set("X-AG-Trace-Id", rt.TraceID())
 	}
+	x.provider.header(x, h)
 	return h
 }
 
+var errCloudAuth = errors.New("a2a: cloud credential failed")
+
 func upstreamFailure(err error) *RPCError {
+	var rpcErr *RPCError
+	if errors.As(err, &rpcErr) {
+		return rpcErr
+	}
+	if errors.Is(err, errCloudAuth) {
+		return GatewayFailure(ReasonCloudAuthFailed)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return GatewayFailure(ReasonUpstreamTimeout)
 	}

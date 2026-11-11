@@ -162,14 +162,18 @@ type MCP struct {
 // A2A describes an A2A call on the agent plane. Outcome is ok, blocked,
 // refused, not_found, upstream_error or upstream_timeout; Reason is the
 // gateway's reason for it (not_owner, policy_blocked, mask_unsupported, the
-// -32092 reasons). IdentityMode is the registry's identity mode (none,
-// static, client_credentials, delegation, obo, token_exchange) and
+// -32092 reasons). Provider is where the agent is hosted (generic,
+// bedrock_agentcore, azure_foundry, vertex_agent_engine). IdentityMode is the
+// registry's identity mode (none, static, client_credentials, delegation,
+// obo, token_exchange, or the cloud credential aws_sigv4, azure_entra,
+// gcp_oauth) and
 // IdentitySubjectKind is user or app. Neither the token nor the subject is
 // recorded here.
 type A2A struct {
 	Method              string `json:"method"`
 	RegistryID          string `json:"registry_id,omitempty"`
 	AgentName           string `json:"agent_name,omitempty"`
+	Provider            string `json:"provider,omitempty"`
 	ProtocolVersion     string `json:"protocol_version,omitempty"`
 	TaskID              string `json:"task_id,omitempty"`
 	ContextID           string `json:"context_id,omitempty"`

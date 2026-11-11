@@ -115,6 +115,7 @@ type A2AAttrs struct {
 	Method              string
 	RegistryID          string
 	AgentName           string
+	Provider            string
 	ProtocolVersion     string
 	TaskID              string
 	ContextID           string

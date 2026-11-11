@@ -75,7 +75,7 @@ func bearer(t *testing.T, value string) string {
 func TestDelegationClaims(t *testing.T) {
 	t.Parallel()
 	signer := newSigner(t)
-	creds := a2a.NewCredentials(sts.NewExchanger(signer, nil, nil), nil, false)
+	creds := a2a.NewCredentials(sts.NewExchanger(signer, nil, nil), nil, nil, false)
 	reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
 	reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeDelegation}
 	rc := a2aConsumer(reg)
@@ -128,7 +128,7 @@ func TestDelegationClaims(t *testing.T) {
 
 func TestDelegationTokenIsCachedPerAudience(t *testing.T) {
 	t.Parallel()
-	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, false)
+	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, nil, false)
 	reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
 	reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeDelegation}
 	rc := a2aConsumer(reg)
@@ -148,7 +148,7 @@ func TestDelegationTokenIsCachedPerAudience(t *testing.T) {
 
 func TestDelegationRefusedOnAnEphemeralKey(t *testing.T) {
 	t.Parallel()
-	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, true)
+	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, nil, true)
 	reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
 	reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeDelegation}
 	_, _, rpcErr := creds.For(context.Background(), a2aConsumer(reg), reg, &identity.Principal{Subject: "u-42"})
@@ -158,7 +158,7 @@ func TestDelegationRefusedOnAnEphemeralKey(t *testing.T) {
 
 func TestUserTokenPatternsNeedAnIdPUser(t *testing.T) {
 	t.Parallel()
-	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, false)
+	creds := a2a.NewCredentials(sts.NewExchanger(newSigner(t), nil, nil), nil, nil, false)
 	for _, pattern := range []registrydomain.MCPExchangePattern{registrydomain.ExchangeOBO, registrydomain.ExchangeTokenExchange} {
 		reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
 		reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: pattern, Scope: "api://travel/.default"}
@@ -182,7 +182,7 @@ func TestClientCredentialsTokenIsCachedUntilTheRegistryChanges(t *testing.T) {
 		Return(&appoauth.ProviderToken{AccessToken: "cc-1", ExpiresAt: time.Now().Add(time.Hour)}, nil).Once()
 	provider.EXPECT().ClientCredentials(mock.Anything, mock.Anything).
 		Return(&appoauth.ProviderToken{AccessToken: "cc-2"}, nil).Once()
-	creds := a2a.NewCredentials(nil, provider, false)
+	creds := a2a.NewCredentials(nil, provider, nil, false)
 	reg := a2aRegistry(t, a2a.Version03, "https://travel.example/a2a")
 	reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s", TokenURL: "https://idp.example/token"}
 	rc := a2aConsumer(reg)

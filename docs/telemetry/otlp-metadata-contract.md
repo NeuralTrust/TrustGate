@@ -104,6 +104,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.a2a.method` | `a2a.method` (A2A JSON-RPC method as the caller sent it, e.g. `message/send` or `SendMessage`). The `trustgate.a2a.*` attributes appear only on `kind = a2a` records |
 | `trustgate.a2a.registry_id` | `a2a.registry_id` (the A2A registry the call went to) |
 | `trustgate.a2a.agent_name` | `a2a.agent_name` (the registry's name) |
+| `trustgate.a2a.provider` | `a2a.provider` (where the agent is hosted: `generic`, `bedrock_agentcore`, `azure_foundry` or `vertex_agent_engine`) |
 | `trustgate.a2a.protocol_version` | `a2a.protocol_version` (`0.3` or `1.0`, the version the registry is pinned to) |
 | `trustgate.a2a.task_id` | `a2a.task_id` (the task the call named or the agent answered with; omitted when none) |
 | `trustgate.a2a.context_id` | `a2a.context_id` (likewise for the context) |
@@ -112,7 +113,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.a2a.outcome` | `a2a.outcome`: `ok`, `blocked` (a policy or a rate limit), `refused` (method, parameters or identity refused before the agent), `not_found` (a task or context the caller does not own), `upstream_error` (the agent answered an error, an invalid or oversize answer, or the gateway could not complete the call) or `upstream_timeout` (no answer in time, or a stream left silent). A stream the gateway closed at its maximum duration is `ok` with reason `stream_max_duration` |
 | `trustgate.a2a.reason` | `a2a.reason`: the `error.data.reason` of a gateway error (`policy_blocked`, `mask_unsupported`, `identity_required`, `identity_exchange_failed`, `signing_key_unavailable`, `ownership_unavailable`, `ownership_conflict`, `invalid_upstream_response`, `response_too_large`, …), `rate_limited`, or what the caller never sees: `not_owner` and `not_registered` behind a `TaskNotFound`, and `ownership_write_failed` on a delivered answer whose owner could not be recorded |
 | `trustgate.a2a.blocked_by` | `a2a.blocked_by` (the plugin that blocked; omitted otherwise) |
-| `trustgate.a2a.identity_mode` | `a2a.identity_mode` (`none`, `static`, `client_credentials`, `delegation`, `obo`, `token_exchange`; the token itself is never recorded) |
+| `trustgate.a2a.identity_mode` | `a2a.identity_mode` (`none`, `static`, `client_credentials`, `delegation`, `obo`, `token_exchange`, or for auth mode `cloud` the credential: `aws_sigv4`, `azure_entra`, `gcp_oauth`; the token itself is never recorded) |
 | `trustgate.a2a.identity_subject_kind` | `a2a.identity_subject_kind` (`user` or `app`) |
 | `trustgate.a2a.rpc_error_code` | `a2a.rpc_error_code` (int; the JSON-RPC error code the caller received, the gateway's or the agent's; omitted on success) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
