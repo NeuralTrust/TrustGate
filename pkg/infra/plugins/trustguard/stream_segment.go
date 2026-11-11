@@ -141,7 +141,6 @@ func (p *Plugin) inspectSegment(
 		body,
 		requestHasPlaygroundToken(in.Request),
 	)
-	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		return p.segmentFailure(ctx, in, cfg, seg, err)
 	}

@@ -34,13 +34,29 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
+// v2WireRequest is TrustGuard's /v2/evaluate decoder: unknown fields are a 400.
+type v2WireRequest struct {
+	OriginalRequest *struct {
+		IP      string              `json:"ip,omitempty"`
+		Headers map[string][]string `json:"headers,omitempty"`
+	} `json:"original_request,omitempty"`
+	Payload        json.RawMessage `json:"payload"`
+	Direction      string          `json:"direction"`
+	Protocol       string          `json:"protocol"`
+	GatewayID      string          `json:"gateway_id"`
+	IntegrationKey string          `json:"integration_key"`
+	SessionID      string          `json:"session_id"`
+	ApplicationID  string          `json:"application_id"`
+	Attributes     map[string]any  `json:"attributes"`
+}
+
 // fakeV2Engine is TrustGuard's /v2: its token endpoint and an evaluate endpoint that
 // decodes the body as strictly as the engine does (an unknown field, consumer_id or
 // agent_id among them, is a 400) and answers with raw.
 type fakeV2Engine struct {
 	mu            sync.Mutex
 	tokens        []map[string]any
-	requests      []v2ShadowWireRequest
+	requests      []v2WireRequest
 	headers       []http.Header
 	paths         []string
 	status        int
@@ -75,7 +91,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 			}
 			dec := json.NewDecoder(r.Body)
 			dec.DisallowUnknownFields()
-			var body v2ShadowWireRequest
+			var body v2WireRequest
 			if err := dec.Decode(&body); err != nil {
 				f.mu.Lock()
 				f.invalid++
@@ -107,10 +123,10 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 	}
 }
 
-func (f *fakeV2Engine) seen() []v2ShadowWireRequest {
+func (f *fakeV2Engine) seen() []v2WireRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]v2ShadowWireRequest(nil), f.requests...)
+	return append([]v2WireRequest(nil), f.requests...)
 }
 
 func (f *fakeV2Engine) tokenRequests() []map[string]any {
@@ -153,7 +169,6 @@ func TestV2PluginIdentity(t *testing.T) {
 	p := newV2TestPlugin(t, "http://unused")
 	assert.Equal(t, "trustguard_v2", p.Name())
 	assert.Equal(t, "trustguard", newTestPlugin(t, adapter.NewRegistry(), "http://unused").Name())
-	assert.Nil(t, p.v2Shadow, "trustguard_v2 is the evaluation, it copies nothing")
 	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedStages(), p.SupportedStages())
 	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedProtocols(), p.SupportedProtocols())
 	assert.True(t, p.MutatesRequestBody())
