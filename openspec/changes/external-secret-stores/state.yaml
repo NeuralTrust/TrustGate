@@ -1,0 +1,16 @@
+change: external-secret-stores
+linear: null
+parent: null
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: pending
+open_questions:
+  OQ1: default max_stale (24h vs 1h)
+  OQ2: opt-in LKG persistence of resolved values on hybrid planes
+  OQ3: on-demand test of local stores over config sync
+  OQ4: packaging / plan entitlement
+  OQ5: federation issuer for Phase 4
