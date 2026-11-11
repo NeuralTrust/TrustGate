@@ -29,6 +29,10 @@ import (
 // streamed legs, so the caller never sees which vendor made the call.
 const DefaultBlockMessage = "This content violates our usage policy."
 
+// TypeMaskUnsupported is the PluginError type of a block a plugin answers
+// because it cannot apply a mask on the call's protocol (A2A).
+const TypeMaskUnsupported = "mask_unsupported"
+
 // PluginError is returned by a plugin to reject a request and short-circuit the
 // chain with a specific HTTP status (e.g. rate limit 429, request too large 413).
 type PluginError struct {
