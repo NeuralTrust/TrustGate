@@ -31,7 +31,12 @@ import (
 )
 
 const (
-	evaluatePath           = "/v1/evaluate"
+	evaluatePath = "/v2/evaluate"
+	// engineHeader is how TrustGuard names the engine that answered: an organisation's collector is
+	// served by v1 until the organisation is cut over to v2.
+	engineHeader           = "X-TrustGuard-Engine"
+	engineV1               = "v1"
+	engineV2               = "v2"
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
 	// maxResponseBytes is the floor of the answer a call reads, and the most the
@@ -192,18 +197,16 @@ func answerLimit(payloadBytes int) int {
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
-	var wire any = body
-	path := evaluatePath
+	var wire any = withInventory(body)
 	if c.v2 {
 		wire = toV2Request(body, body.request)
-		path = v2EvaluatePath
 	}
 	payload, err := marshalNoEscape(wire)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
 	limit := answerLimit(len(payload))
-	endpoint := strings.TrimRight(baseURL, "/") + path
+	endpoint := strings.TrimRight(baseURL, "/") + evaluatePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: build request: %w", err)
@@ -238,6 +241,11 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: read response: %w", err)
 	}
+	plugin := PluginName
+	if c.v2 {
+		plugin = PluginNameV2
+	}
+	recordEvaluation(ctx, plugin, res.Header.Get(engineHeader), res.StatusCode)
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
 	}
@@ -269,9 +277,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("trustguard: decode response: %w", err)
 	}
-	if c.v2 {
-		normalizeV2Response(&out)
-	}
+	// Any answer may be v2's: TrustGuard answers a collector with v2 once its organisation is cut
+	// over. A v1 answer already names its detector, which normalizeV2Response leaves alone.
+	normalizeV2Response(&out)
 	return &out, nil
 }
 

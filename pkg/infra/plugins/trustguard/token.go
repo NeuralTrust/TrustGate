@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	tokenPath          = "/v1/token"
+	tokenPath          = "/v2/token"
 	grantType          = "client_credentials"
 	tokenScopePlatform = "platform"
 	tokenRefreshSkew   = 30 * time.Second
@@ -77,22 +77,20 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
-	// ActiveVersion is the TrustGuard version serving the gateway's tenant ("v1" or "v2"), only on a v2 platform token.
-	ActiveVersion string `json:"active_version,omitempty"`
 }
 
 type tokenEntry struct {
-	token         string
-	expiresAt     time.Time
-	activeVersion string
+	token     string
+	expiresAt time.Time
 }
 
 type tokenManager struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
-	// v2 asks /v2/token and names the integration as it does, integration_id,
-	// where /v1/token reads collector_id.
+	// v2 names the policy's id as the v2 integration (integration_id). Otherwise it is the v1
+	// collector_id, for which TrustGuard issues the v1 platform token and routes the
+	// evaluations to the engine the collector's organisation is on.
 	v2 bool
 
 	mu    sync.Mutex
@@ -101,7 +99,7 @@ type tokenManager struct {
 	group singleflight.Group
 }
 
-// useV2 points the manager at TrustGuard's /v2/token.
+// useV2 makes the manager name the integration (integration_id) instead of a v1 collector.
 func (m *tokenManager) useV2() { m.v2 = true }
 
 func newTokenManager(httpClient *http.Client, clientID, clientSecret string) *tokenManager {
@@ -179,19 +177,6 @@ func (m *tokenManager) fetchOnce(ctx context.Context, key string, params tokenPa
 	}
 }
 
-// gatewayVersion asks TrustGuard v2 which version serves the gateway's tenant. It never reads the token cache, which would
-// outlive a cutover; the caller caches the answer for a shorter time.
-func (m *tokenManager) gatewayVersion(ctx context.Context, params tokenParams) (string, error) {
-	v, err, _ := m.group.Do("version\x00"+params.cacheKey(), func() (any, error) {
-		entry, err := m.fetch(context.WithoutCancel(ctx), params)
-		return entry.activeVersion, err
-	})
-	if err != nil {
-		return "", err
-	}
-	return v.(string), nil
-}
-
 func (m *tokenManager) cachedToken(key string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,11 +198,7 @@ func (m *tokenManager) invalidate(params tokenParams) {
 }
 
 func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntry, error) {
-	path := tokenPath
-	if m.v2 {
-		path = v2TokenPath
-	}
-	tokenURL := strings.TrimRight(params.baseURL, "/") + path
+	tokenURL := strings.TrimRight(params.baseURL, "/") + tokenPath
 	body := tokenRequest{
 		GrantType:    grantType,
 		ClientID:     m.clientID,
@@ -265,13 +246,13 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 	if ttl < tokenMinTTL {
 		ttl = tokenMinTTL
 	}
-	return tokenEntry{token: out.AccessToken, expiresAt: time.Now().Add(ttl), activeVersion: out.ActiveVersion}, nil
+	return tokenEntry{token: out.AccessToken, expiresAt: time.Now().Add(ttl)}, nil
 }
 
 // tokenStatusError sorts a non-2xx token answer. 400, 401 and 403 are the
 // endpoint refusing these credentials: TrustGuard answers a wrong platform
 // secret with 400 invalid_scope and empty ones with 401 invalid_client. They
-// are typed as the same rejection a 401/403 from /v1/evaluate is, so both legs
+// are typed as the same rejection a 401/403 from /v2/evaluate is, so both legs
 // report reason unauthorized and fail open the same way. Every other
 // status stays on the transport path: 5xx and 429 are transient, and a 404 or
 // 421 is an ingress or a wrong base URL answering rather than the guard. It is

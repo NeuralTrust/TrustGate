@@ -55,7 +55,8 @@ func TestResolveListSlugs(t *testing.T) {
 		if !restricted {
 			t.Fatal("expected restricted")
 		}
-		assertStrings(t, slugs, []string{"openai_moderation", "trustguard"})
+		// trustguard_v2 is no longer offered, but its policies still run and stay in their group.
+		assertStrings(t, slugs, []string{"openai_moderation", "trustguard", "trustguard_v2"})
 	})
 
 	t.Run("type only", func(t *testing.T) {

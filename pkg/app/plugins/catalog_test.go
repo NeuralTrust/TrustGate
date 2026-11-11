@@ -858,3 +858,23 @@ func TestGuardrailSchemasExposeNoFailureControls(t *testing.T) {
 		assert.Contains(t, pluginCatalogMeta[slug].description, "fail", slug)
 	}
 }
+
+// trustguard_v2 is no longer offered: trustguard serves every organisation. Its existing policies
+// still run, so its group knows it when policies are listed by category.
+func TestCatalogService_RetiredSlugIsNotOfferedButKeepsItsGroup(t *testing.T) {
+	reg := NewRegistry()
+	for _, name := range []string{"trustguard", "trustguard_v2"} {
+		require.NoError(t, reg.Register(&stagePlugin{
+			name:      name,
+			mandatory: []policy.Stage{policy.StagePreRequest},
+			supported: []policy.Stage{policy.StagePreRequest},
+		}))
+	}
+	catalog := NewCatalogService(reg).Catalog()
+	require.Len(t, catalog.Groups, 1)
+	require.Len(t, catalog.Groups[0].Items, 1)
+	assert.Equal(t, "trustguard", catalog.Groups[0].Items[0].Slug)
+	_, registered := reg.Get("trustguard_v2")
+	assert.True(t, registered, "it still runs the policies that name it")
+	assert.Contains(t, RetiredCatalogSlugs()[groupGuardrails], "trustguard_v2")
+}

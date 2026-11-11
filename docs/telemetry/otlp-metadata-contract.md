@@ -769,19 +769,28 @@ at most a 64 KiB tail window, so a timeout is not driven by the length of the re
 |------------------|-------|
 | `transport` | The call failed, or returned a non-2xx status other than the ones below. `failure_class: availability` |
 | `timeout` | The call did not answer within the deployment-wide `TRUSTGUARD_TIMEOUT` |
-| `unauthorized` | `/v1/evaluate` answered 401 (after one token refresh) or 403, or `/v1/token` answered 400, 401 or 403 |
-| `entitlements_unavailable` | `/v1/evaluate` answered 503 |
+| `unauthorized` | `/v2/evaluate` answered 401 (after one token refresh) or 403, or `/v2/token` answered 400, 401 or 403 |
+| `entitlements_unavailable` | `/v2/evaluate` answered 503 |
 | `credentials_missing` | The gateway has no `TRUSTGUARD_CLIENT_ID` / `TRUSTGUARD_CLIENT_SECRET` |
 | `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
 | `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed (`transform_no_payload`, `transform_unsupported_path`, `transform_encode_failed`). `failure_class: input`: a mode that blocks refuses the call, and a stream is cut (`decision: blocked`). Observe applies no transform and never reaches it |
-| `payload_too_large` | `/v1/evaluate` answered 413, or the gateway refused buffered text above 8 MiB (counted unescaped, attachments excluded) before the call: the body is too large for what it carries. `failure_class: input` |
+| `payload_too_large` | `/v2/evaluate` answered 413, or the gateway refused buffered text above 8 MiB (counted unescaped, attachments excluded) before the call: the body is too large for what it carries. `failure_class: input` |
 | `stream_block_too_large` | A streamed block above the 65,536-byte evaluate window, refused before any call (detail `chunk_limit`). It replaces `payload_too_large` for this case. `failure_class: input` |
-| `response_too_large` | `/v1/evaluate` answered 2xx with a body above what the gateway reads for the call: twice the payload sent plus 64 KiB, and at least 1 MiB. A faithful echo of the payload, attachments included, fits it, so an answer beyond it is not the payload coming back. `failure_class: input` |
-| `attachment_rejected` | `/v1/evaluate` answered 400 with the error `invalid attachment` even after the attachments sent as a URL were left out of a second call: an attachment sent as data could not be decoded. A URL TrustGuard could not fetch is not this: the text is evaluated without it (`verdict_incomplete`). `failure_class: input` |
+| `response_too_large` | `/v2/evaluate` answered 2xx with a body above what the gateway reads for the call: twice the payload sent plus 64 KiB, and at least 1 MiB. A faithful echo of the payload, attachments included, fits it, so an answer beyond it is not the payload coming back. `failure_class: input` |
+| `attachment_rejected` | `/v2/evaluate` answered 400 with the error `invalid attachment` even after the attachments sent as a URL were left out of a second call: an attachment sent as data could not be decoded. A URL TrustGuard could not fetch is not this: the text is evaluated without it (`verdict_incomplete`). `failure_class: input` |
 | `verdict_incomplete` | With `failure_detail: attachment_not_fetched`: an attachment sent as a URL that TrustGuard could not fetch, so the text was evaluated without it, or, when too little of the budget was left for that second call, not evaluated. A verdict that comes back is applied; the call is recorded as a failure so it alerts. `failure_class: availability` |
 | `config_invalid` | The stored settings could not be parsed. Always `failed_open` |
 | `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
 | `payload_unreadable` | The gateway could not read the body. `failure_class: input` |
+
+**Changed in ENG-3214.** The `trustguard` plugin calls TrustGuard's `/v2/token` (with its
+`collector_id`) and `/v2/evaluate`. TrustGuard answers each collector with the engine its
+organisation is on, v1 until the organisation is cut over to v2, and names it in the
+`X-TrustGuard-Engine` response header. `trustguard_evaluations_total{plugin, engine, status_class}`
+counts every answer: `plugin` is `trustguard` or `trustguard_v2`, `engine` is `v1`, `v2` or
+`unknown` (an answer without the header), and `status_class` is the HTTP class (`2xx`, `4xx`,
+`5xx`). A failure before any answer (timeout, transport) is only in
+`trustguard_evaluate_failures_total`.
 
 On a streamed response leg the plugin resolves a failure itself: it allows the block, so
 later policies in the chain still inspect it, and the

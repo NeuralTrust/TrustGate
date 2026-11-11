@@ -74,6 +74,15 @@ type GuardAttributes struct {
 type GuardMCPServer struct {
 	ID   string `json:"id"`
 	Code string `json:"code,omitempty"`
+	// Name and Tool are for TrustGuard v2's inventory: the registry's display name and the
+	// upstream-native tool the call is bound to. TrustGuard v1 ignores them.
+	Name string     `json:"name,omitempty"`
+	Tool *GuardTool `json:"tool,omitempty"`
+}
+
+// GuardTool is the upstream-native tool of a tools/call.
+type GuardTool struct {
+	Name string `json:"name"`
 }
 
 // GuardConsumer names the application a request came from. TrustGuard stores
@@ -115,6 +124,9 @@ type GuardStream struct {
 type GuardModel struct {
 	Name     string `json:"name,omitempty"`
 	Provider string `json:"provider,omitempty"`
+	// ServedName is the model the upstream was sent, for TrustGuard v2's inventory; Name stays
+	// the client's ref, which TrustGuard v1 matches rules on. TrustGuard v1 ignores it.
+	ServedName string `json:"served_name,omitempty"`
 }
 
 type GuardResponse struct {

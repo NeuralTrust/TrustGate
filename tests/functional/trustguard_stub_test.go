@@ -79,7 +79,7 @@ type trustGuardStub struct {
 }
 
 // trustGuardEvaluateTraceHeader is the header pkg/infra/plugins/trustguard/client.go
-// sets on every /v1/evaluate call, carrying the same gateway trace id the
+// sets on every /v2/evaluate call, carrying the same gateway trace id the
 // proxy echoes to the client as X-AG-Trace-Id. Capturing it lets a test
 // correlate a buffered call to the one request it is waiting on.
 const trustGuardEvaluateTraceHeader = "X-Trace-ID"
@@ -192,7 +192,7 @@ func (s *trustGuardStub) TokenHits() int { return int(atomic.LoadInt64(&s.tokenH
 
 func (s *trustGuardStub) GuardHits() int { return int(atomic.LoadInt64(&s.guardHits)) }
 
-// SetGuardDelay fixes the latency of every /v1/evaluate answer, which is what
+// SetGuardDelay fixes the latency of every /v2/evaluate answer, which is what
 // makes the number of events a clock-closed block holds deterministic rather
 // than a function of how loaded the machine is.
 func (s *trustGuardStub) SetGuardDelay(d time.Duration) {
@@ -201,7 +201,7 @@ func (s *trustGuardStub) SetGuardDelay(d time.Duration) {
 	s.mu.Unlock()
 }
 
-// BlockOnCall makes the /v1/evaluate answer for stream sequence n of a
+// BlockOnCall makes the /v2/evaluate answer for stream sequence n of a
 // response-stage streamed evaluation a block verdict, and leaves every other
 // call allowed, so a test picks which point of a stream the violation
 // surfaces at: n == 1 is the head, n > 1 is mid-stream.
@@ -346,9 +346,9 @@ func newTrustGuardStubServer() *trustGuardStub {
 	s := &trustGuardStub{}
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/token":
+		case "/v2/token":
 			s.handleToken(w, r)
-		case "/v1/evaluate":
+		case "/v2/evaluate":
 			s.handleGuard(w, r)
 		default:
 			http.NotFound(w, r)
@@ -494,7 +494,7 @@ func trustGuardStubToken(t *testing.T, s *trustGuardStub) {
 		"collector_id":  trustGuardFunctionalCollectorID,
 		"gateway_id":    "stub-reset-gateway",
 	})
-	resp, err := http.Post(s.URL()+"/v1/token", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(s.URL()+"/v2/token", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -512,7 +512,7 @@ func trustGuardStubEvaluate(t *testing.T, s *trustGuardStub) {
 			"stream": map[string]any{"id": "stub-reset-stream", "seq": 1, "final": true, "truncated": true},
 		},
 	})
-	req, err := http.NewRequest(http.MethodPost, s.URL()+"/v1/evaluate", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, s.URL()+"/v2/evaluate", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+trustGuardFunctionalAccessToken)
