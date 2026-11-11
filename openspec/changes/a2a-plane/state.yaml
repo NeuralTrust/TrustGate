@@ -16,7 +16,7 @@ phases:
   spec: draft
   design: draft
   tasks: draft
-  apply: not_started
+  apply: implemented (pending: 12.4 interop smoke, 16.1 recorded Vertex exchange)
 artifacts_done: [exploration, proposal, specs, design, tasks]
 specs:
   trustgate: [a2a-agent-registry, a2a-agent-plane, a2a-task-ownership, a2a-policy-chain, a2a-delegated-identity, a2a-whoami-agents, a2a-hosted-agents]
