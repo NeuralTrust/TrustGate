@@ -1526,6 +1526,84 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AAWSAuthRequest:
+    properties:
+      access_key_id:
+        type: string
+      external_id:
+        type: string
+      region:
+        type: string
+      role:
+        type: string
+      secret_access_key:
+        description: '#nosec G117'
+        type: string
+      session_token:
+        description: '#nosec G117'
+        type: string
+      use_role:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest:
+    properties:
+      aws:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AAWSAuthRequest'
+      azure:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest'
+      gcp:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AGCPAuthRequest'
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AGCPAuthRequest:
+    properties:
+      impersonate_service_account:
+        type: string
+      service_account_json:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest:
+    properties:
+      allowed_methods:
+        items:
+          type: string
+        type: array
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest'
+      azure_foundry:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator'
+      bedrock_agentcore:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator'
+      card_auth:
+        enum:
+        - same
+        - client_credentials
+        - cloud
+        type: string
+      card_url:
+        type: string
+      cloud_auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      protocol_version:
+        enum:
+        - "0.3"
+        - "1.0"
+        type: string
+      provider:
+        enum:
+        - generic
+        - bedrock_agentcore
+        - azure_foundry
+        - vertex_agent_engine
+        type: string
+      url:
+        type: string
+      vertex_agent_engine:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator'
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest:
     properties:
       api_key:
@@ -1559,6 +1637,11 @@ definitions:
       use_role:
         type: boolean
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ApproveAgentCardRequest:
+    properties:
+      digest:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest:
     properties:
       api_key:
@@ -1580,6 +1663,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.CreateRegistryRequest:
     properties:
+      a2a_target:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest'
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest'
       description:
@@ -1692,6 +1777,49 @@ definitions:
       spec_url:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest:
+    properties:
+      allowed_methods:
+        items:
+          type: string
+        type: array
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest'
+      azure_foundry:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator'
+      bedrock_agentcore:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator'
+      card_auth:
+        enum:
+        - same
+        - client_credentials
+        - cloud
+        type: string
+      card_url:
+        type: string
+      cloud_auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      protocol_version:
+        enum:
+        - "0.3"
+        - "1.0"
+        type: string
+      provider:
+        enum:
+        - generic
+        - bedrock_agentcore
+        - azure_foundry
+        - vertex_agent_engine
+        type: string
+      url:
+        type: string
+      vertex_agent_engine:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator'
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest:
     properties:
       cache_read:
@@ -1790,6 +1918,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest:
     properties:
+      a2a_target:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest'
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest'
       description:
@@ -1809,6 +1939,83 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AAWSAuthResponse:
+    properties:
+      access_key_id:
+        type: string
+      external_id:
+        type: string
+      region:
+        type: string
+      role:
+        type: string
+      secret_access_key:
+        description: '#nosec G117'
+        type: string
+      session_token:
+        description: '#nosec G117'
+        type: string
+      use_role:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse:
+    properties:
+      aws:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AAWSAuthResponse'
+      azure:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AzureAuthResponse'
+      gcp:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AGCPAuthResponse'
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AGCPAuthResponse:
+    properties:
+      impersonate_service_account:
+        type: string
+      service_account_json:
+        description: '#nosec G117 -- masked before serialization'
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse:
+    properties:
+      allowed_methods:
+        items:
+          type: string
+        type: array
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse'
+      azure_foundry:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator'
+      bedrock_agentcore:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator'
+      card:
+        type: object
+      card_auth:
+        type: string
+      card_digest:
+        type: string
+      card_pinned_at:
+        type: string
+      card_url:
+        type: string
+      cloud_auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse'
+      endpoint:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      protocol_version:
+        type: string
+      provider:
+        type: string
+      resolved_card_url:
+        type: string
+      url:
+        type: string
+      vertex_agent_engine:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.APIKeyAuthResponse:
     properties:
@@ -1842,6 +2049,29 @@ definitions:
         type: string
       use_role:
         type: boolean
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AgentCardRefreshResponse:
+    properties:
+      changed:
+        type: boolean
+      changed_fields:
+        items:
+          type: string
+        type: array
+      fetched_card:
+        type: object
+      fetched_digest:
+        type: string
+      pinned_digest:
+        type: string
+      skills_added:
+        items:
+          type: string
+        type: array
+      skills_removed:
+        items:
+          type: string
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AzureAuthResponse:
     properties:
@@ -1980,6 +2210,21 @@ definitions:
       spec_url:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PreviewAgentCardResponse:
+    properties:
+      card:
+        type: object
+      card_digest:
+        type: string
+      default_version:
+        type: string
+      resolved_card_url:
+        type: string
+      versions:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse:
     properties:
       cache_read:
@@ -2017,6 +2262,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse:
     properties:
+      a2a_target:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse'
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse'
       created_at:
@@ -3156,6 +3403,29 @@ definitions:
     - StagePostRequest
     - StagePreResponse
     - StagePostResponse
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator:
+    properties:
+      qualifier:
+        type: string
+      runtime_arn:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator:
+    properties:
+      agent_name:
+        type: string
+      project_endpoint:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator:
+    properties:
+      location:
+        type: string
+      project:
+        type: string
+      reasoning_engine_id:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig:
     properties:
       class:
@@ -6696,6 +6966,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a backend
@@ -6833,9 +7107,107 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a backend
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/agent-card/approve:
+    post:
+      consumes:
+      - application/json
+      description: Reads the live card again and pins it only if its digest is the
+        one sent. Approving the pinned digest changes nothing.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Reviewed digest
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ApproveAgentCardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The live card no longer has that digest
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Pin a reviewed agent card
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/agent-card/refresh:
+    post:
+      description: Reads the live card of an A2A registry and reports whether it changed,
+        which top-level fields and which skills. Writes nothing.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AgentCardRefreshResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Compare an agent's live card with the pinned one
       tags:
       - registries
   /v1/gateways/{gateway_id}/registries/{id}/shared-account:
@@ -7053,6 +7425,50 @@ paths:
       security:
       - BearerAuth: []
       summary: Materialise a catalog MCP server
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/preview-agent-card:
+    post:
+      consumes:
+      - application/json
+      description: Resolves and reads the agent card an a2a_target names, and returns
+        it with its digest and the A2A versions it offers. Writes nothing; credentials
+        in the body are used for this read only.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Agent to read
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PreviewAgentCardResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Preview an agent card
       tags:
       - registries
   /v1/gateways/{gateway_id}/registries/test-connection:
