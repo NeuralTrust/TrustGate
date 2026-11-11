@@ -69,7 +69,7 @@ func TestUpdateGatewayHandler_Platform_ActsAcrossTenantsWithPlatformPowers(t *te
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPut, "/"+id.String(), stampedBody)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -91,7 +91,7 @@ func TestUpdateGatewayHandler_TenantCaller_StaysScoped(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPut, "/"+id.String(), `{"status":"paused"}`)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -112,7 +112,7 @@ func TestUpdateGatewayHandler_ServiceCaller_StaysScoped(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(serviceCaller("acme", id))
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPut, "/"+id.String(), `{"status":"paused"}`)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -127,7 +127,7 @@ func TestUpdateGatewayHandler_NonPlatformCallerWithoutTenantStaysScoped(t *testi
 
 	app := fiber.New()
 	app.Use(untenantedHuman())
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPut, "/"+id.String(), stampedBody)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
@@ -143,7 +143,7 @@ func TestUpdateGatewayHandler_HumanWithoutTenant_CannotClaimUntenantedGateway(t 
 
 	app := fiber.New()
 	app.Use(untenantedHuman())
-	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "").Handle)
+	app.Put("/:id", gatewayhttp.NewUpdateGatewayHandler(updater, finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPut, "/"+id.String(), `{"status":"paused"}`)
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
@@ -190,7 +190,7 @@ func TestGetGatewayHandler_NonPlatformCallerWithoutTenantStaysScoped(t *testing.
 
 	app := fiber.New()
 	app.Use(untenantedHuman())
-	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
+	app.Get("/:id", gatewayhttp.NewGetGatewayHandler(finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodGet, "/"+id.String(), "")
 	require.Equal(t, fiber.StatusNotFound, resp.StatusCode)
@@ -208,7 +208,7 @@ func TestListGatewayHandler_Platform_ListsEveryTenant(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(platformCaller())
-	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
+	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodGet, "/", "")
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -220,7 +220,7 @@ func TestListGatewayHandler_HumanWithoutTenant_IsRefused(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(untenantedHuman())
-	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local", "").Handle)
+	app.Get("/", gatewayhttp.NewListGatewayHandler(finder, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodGet, "/", "")
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
@@ -233,7 +233,7 @@ func TestCreateGatewayHandler_HumanWithoutTenant_CannotStampBodyTenant(t *testin
 
 	app := fiber.New()
 	app.Use(untenantedHuman())
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPost, "/",
 		`{"slug":"prod","tenant_id":"acme","entitlements":{"tier":"standard","burst_per_min":300,"quota_per_month":100000,"max_instances":5}}`)
@@ -253,7 +253,7 @@ func TestCreateGatewayHandler_TenantCaller_IsNotPlatform(t *testing.T) {
 
 	app := fiber.New()
 	app.Use(humanCaller("acme"))
-	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "").Handle)
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local", "", "").Handle)
 
 	resp := doJSON(t, app, http.MethodPost, "/", `{"slug":"prod"}`)
 	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
