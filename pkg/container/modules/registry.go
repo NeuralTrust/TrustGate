@@ -210,6 +210,17 @@ func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(registryhttp.NewValidateOpenAPIHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, save registrySaveParams) appregistry.AgentCard {
+		return appregistry.NewAgentCard(repo, manager, publisher, logger, sig.Signaler, save.options(nil)...)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewPreviewAgentCardHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewAgentCardHandler); err != nil {
+		return err
+	}
 	return nil
 }
 
