@@ -16,7 +16,6 @@ package middleware
 
 import (
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 
@@ -72,7 +71,7 @@ func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 		if !slices.Contains(rc.Consumer.AuthIDs, id.AuthID) {
 			return fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 		}
-		if !admitsPrincipal(rc.Consumer, id.Principal) {
+		if !consumerdomain.AdmitsPrincipal(rc.Consumer, id.Principal) {
 			return fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 		}
 		principal, err := agentPrincipal(rc.Consumer, id.Principal, strings.TrimSpace(c.Get(consumerdomain.EndUserHeader)))
@@ -87,53 +86,19 @@ func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-// admitsPrincipal applies the consumer's auth binding, as the MCP plane does:
-// a bearer token must come from an allowed client and a certificate must
-// carry an allowed subject.
-func admitsPrincipal(cons *consumerdomain.Consumer, p *identity.Principal) bool {
-	switch {
-	case p == nil:
-		return true
-	case p.Method.IsBearerToken():
-		return cons.AuthBinding.AllowsClient(p.Claims)
-	case p.Method == identity.MethodMTLS:
-		return cons.AuthBinding.AllowsCertificateClaims(p.Claims)
-	default:
-		return true
-	}
-}
-
-// agentPrincipal is who the call runs as. A token keeps its own subject. An
-// api key or a certificate proves only the application, so the call runs as
-// the application, or as the end user it names in the end-user header,
-// namespaced by the consumer. This mirrors the MCP plane.
+// agentPrincipal is who the call runs as, as on the MCP plane. A token keeps
+// its own subject. An api key or a certificate proves only the application,
+// so the call runs as the application, or as the end user it names in the
+// end-user header.
 func agentPrincipal(cons *consumerdomain.Consumer, caller *identity.Principal, endUser string) (*identity.Principal, error) {
 	if caller == nil || (caller.Method != identity.MethodAPIKey && caller.Method != identity.MethodMTLS) {
 		return caller, nil
 	}
 	if endUser == "" {
-		p := *caller
-		p.Subject = consumerdomain.AppSubject(cons.ID)
-		p.Claims = maps.Clone(caller.Claims)
-		if p.Claims == nil {
-			p.Claims = map[string]any{}
-		}
-		p.Claims["consumer_id"] = cons.ID.String()
-		if caller.Subject != "" {
-			p.Claims[identity.ClaimCredentialSubject] = caller.Subject
-		}
-		return &p, nil
+		return consumerdomain.AppPrincipal(cons, caller), nil
 	}
 	if err := consumerdomain.ValidateEndUser(endUser); err != nil {
 		return nil, err
 	}
-	p := &identity.Principal{
-		Subject: consumerdomain.EndUserSubject(cons.ID, endUser),
-		Method:  caller.Method,
-		Claims:  map[string]any{"end_user": endUser, "consumer_id": cons.ID.String()},
-	}
-	if caller.Subject != "" {
-		p.Claims["app_subject"] = caller.Subject
-	}
-	return p, nil
+	return consumerdomain.EndUserPrincipal(cons, caller, endUser), nil
 }

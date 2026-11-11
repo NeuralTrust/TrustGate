@@ -117,21 +117,15 @@ func main() {
 		return
 	}
 
-	if plane == serverMCP {
+	if plane == serverMCP || plane == serverAgent {
 		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
 			log.Fatalf("failed to start metrics worker: %v", err)
 		}
-		if err := c.Invoke(runMCP); err != nil {
-			log.Fatalf("failed to start application: %v", err)
+		var run any = runMCP
+		if plane == serverAgent {
+			run = runAgent
 		}
-		return
-	}
-
-	if plane == serverAgent {
-		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
-			log.Fatalf("failed to start metrics worker: %v", err)
-		}
-		if err := c.Invoke(runAgent); err != nil {
+		if err := c.Invoke(run); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -232,9 +226,9 @@ type proxyParam struct {
 	OpsSDK        *o11y.SDK
 }
 
-type mcpParam struct {
+// planeParam is what the mcp and agent planes run with besides their server.
+type planeParam struct {
 	dig.In
-	Srv          server.Server `name:"mcp"`
 	Worker       appmetrics.Worker
 	UsageRecords *usageinfra.Emitter
 	Conn         *database.Connection
@@ -244,16 +238,16 @@ type mcpParam struct {
 	OpsSDK       *o11y.SDK
 }
 
+type mcpParam struct {
+	dig.In
+	Srv   server.Server `name:"mcp"`
+	Plane planeParam
+}
+
 type agentParam struct {
 	dig.In
-	Srv          server.Server `name:"agent"`
-	Worker       appmetrics.Worker
-	UsageRecords *usageinfra.Emitter
-	Conn         *database.Connection
-	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
-	RateLimit    rateLimitParams
-	OpsSDK       *o11y.SDK
+	Srv   server.Server `name:"agent"`
+	Plane planeParam
 }
 
 type allParam struct {
@@ -302,17 +296,14 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
-	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
-	defer flushOpsTelemetry(p.OpsSDK, logger)
-	defer closeResources(p.Conn, logger)
-	defer p.UsageRecords.Close()
-	defer p.Worker.Shutdown()
-	defer stopWorker()
-	defer startRateLimit(p.RateLimit, logger)()
-	runServer(p.Srv, serverMCP, logger)
+	runPlane(p.Plane, p.Srv, serverMCP, logger)
 }
 
 func runAgent(p agentParam, logger *slog.Logger) {
+	runPlane(p.Plane, p.Srv, serverAgent, logger)
+}
+
+func runPlane(p planeParam, srv server.Server, name string, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
@@ -320,7 +311,7 @@ func runAgent(p agentParam, logger *slog.Logger) {
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
-	runServer(p.Srv, serverAgent, logger)
+	runServer(srv, name, logger)
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {
