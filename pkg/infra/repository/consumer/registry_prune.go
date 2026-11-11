@@ -91,6 +91,7 @@ func lockGatewayRoutingReferences(
 		       COALESCE((SELECT array_agg(cb.registry_id) FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[]
 		  FROM consumers c
 		 WHERE c.gateway_id = $1
+		   AND c.deleted_at IS NULL
 		 ORDER BY c.id
 		 FOR UPDATE`
 	rows, err := tx.Query(ctx, query, gatewayID)
@@ -157,7 +158,7 @@ func updateConsumerRoutingReferences(ctx context.Context, tx pgx.Tx, consumer *d
 	const query = `
 		UPDATE consumers
 		   SET lb_config = $2, fallback = $3, model_policies = $4, toolkit = $5, updated_at = NOW()
-		 WHERE id = $1`
+		 WHERE id = $1 AND deleted_at IS NULL`
 	if _, err := tx.Exec(ctx, query, consumer.ID, lbConfigBytes, fallbackBytes, modelPoliciesBytes, toolkitBytes); err != nil {
 		return mapPgError(err)
 	}
