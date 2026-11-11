@@ -28,6 +28,14 @@ const (
 	ReasonOwnershipConflict    = "ownership_conflict"
 )
 
+// Reasons ownership records on the span only: the caller sees TaskNotFound,
+// or its answer.
+const (
+	ReasonNotOwner             = "not_owner"
+	ReasonNotRegistered        = "not_registered"
+	ReasonOwnershipWriteFailed = "ownership_write_failed"
+)
+
 // ownershipTTL is how long a task or context stays bound to its owner after
 // the last call that used it.
 const ownershipTTL = 7 * 24 * time.Hour
@@ -91,7 +99,12 @@ func (x *Exchange) checkOwner(ctx context.Context) *RPCError {
 			x.f.logger.WarnContext(ctx, "a2a ownership read failed", slog.String("registry_id", key.RegistryID.String()), slog.String("error", err.Error()))
 			return GatewayFailure(ReasonOwnershipUnavailable)
 		}
-		if owner == nil || !owner.is(x.owner) {
+		if owner == nil {
+			x.attrs.Reason = ReasonNotRegistered
+			return TaskNotFound(x.version)
+		}
+		if !owner.is(x.owner) {
+			x.attrs.Reason = ReasonNotOwner
 			return TaskNotFound(x.version)
 		}
 		if key.Scope == ScopeContext {
@@ -117,6 +130,7 @@ func (x *Exchange) recordOwner(ctx context.Context, c Content) *RPCError {
 			err = x.f.ownership.Touch(ctx, key, ownershipTTL)
 		}
 		if err != nil {
+			x.attrs.Reason = ReasonOwnershipWriteFailed
 			x.f.logger.WarnContext(ctx, "a2a ownership write failed", slog.String("registry_id", key.RegistryID.String()), slog.String("error", err.Error()))
 		}
 	}

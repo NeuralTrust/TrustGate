@@ -17,6 +17,7 @@ package a2a
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -82,6 +84,7 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 		header.Add(string(name), string(value))
 	}
 	ctx := c.UserContext()
+	stampTrace(ctx, rc)
 	x, rpcErr := h.forwarder.Prepare(ctx, &appa2a.Call{
 		Consumer:  rc,
 		Agent:     agent,
@@ -114,10 +117,17 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 		return send(c, id, nil, rpcErr)
 	}
 	_ = c.Context().SetWriteDeadline(s.Deadline().Add(streamWriteGrace))
+	rt := trace.FromContext(ctx)
+	if rt != nil {
+		rt.AddAsync()
+	}
 	c.Set(fiber.HeaderContentType, "text/event-stream")
 	c.Set(fiber.HeaderCacheControl, "no-cache, no-store")
 	c.Set("X-Accel-Buffering", "no")
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		if rt != nil {
+			defer rt.Done()
+		}
 		s.Run(ctx, id, func(frame []byte) error {
 			_, _ = w.WriteString("data: ")
 			_, _ = w.Write(frame)
@@ -126,6 +136,22 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 		})
 	})
 	return nil
+}
+
+// stampTrace records on the request's trace the consumer, the credential and
+// the principal the call runs as.
+func stampTrace(ctx context.Context, rc *appconsumer.RoutableConsumer) {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return
+	}
+	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+	if authID, ok := appconsumer.AuthIDFromContext(ctx); ok {
+		rt.SetAuthID(authID.String())
+	}
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
+	}
 }
 
 func resolve(c *fiber.Ctx) (*appconsumer.RoutableConsumer, *registrydomain.Registry, bool) {

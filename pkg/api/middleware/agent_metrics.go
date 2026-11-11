@@ -18,11 +18,9 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/gofiber/fiber/v2"
 )
-
-// kindA2A is the telemetry kind of agent plane requests.
-const kindA2A = "a2a"
 
 // AgentMetricsMiddleware traces agent plane requests as the MCP plane traces
 // its own, under kind a2a, and returns the trace id in X-AG-Trace-Id.
@@ -33,7 +31,7 @@ type AgentMetricsMiddleware struct {
 // NewAgentMetricsMiddleware builds the agent plane's metrics middleware.
 func NewAgentMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRecorder, cfg *config.Config) *AgentMetricsMiddleware {
 	m := NewMCPMetricsMiddleware(worker, usage, cfg)
-	m.kind = kindA2A
+	m.kind = events.KindA2A
 	return &AgentMetricsMiddleware{metrics: m}
 }
 

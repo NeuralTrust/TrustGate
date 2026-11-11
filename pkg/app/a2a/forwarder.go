@@ -71,6 +71,11 @@ type Exchange struct {
 	owner   Owner
 	session string
 	header  http.Header
+
+	span       *trace.Span
+	attrs      trace.A2AAttrs
+	sentAt     time.Time
+	agentError bool
 }
 
 // Prepare checks a call before anything reaches the agent: the method of the
@@ -78,39 +83,59 @@ type Exchange struct {
 // the owner of the task or context it names, the policies on the request,
 // and the credential.
 func (f *Forwarder) Prepare(ctx context.Context, call *Call) (*Exchange, *RPCError) {
-	target := call.Agent.A2ATarget
-	v := Version(target.ProtocolVersion)
-	kind, ok := MethodKind(v, call.Request.Method)
+	x := &Exchange{f: f, call: call, version: Version(call.Agent.A2ATarget.ProtocolVersion), owner: ownerOf(call)}
+	x.attrs = trace.A2AAttrs{
+		Method:          call.Request.Method,
+		RegistryID:      call.Agent.ID.String(),
+		AgentName:       call.Agent.Name,
+		ProtocolVersion: string(x.version),
+	}
+	if rt := trace.FromContext(ctx); rt != nil {
+		x.span = rt.StartSpan(trace.SpanA2A, call.Request.Method)
+	}
+	if rpcErr := x.prepare(ctx); rpcErr != nil {
+		x.finish(rpcErr)
+		return nil, rpcErr
+	}
+	return x, nil
+}
+
+func (x *Exchange) prepare(ctx context.Context) *RPCError {
+	target := x.call.Agent.A2ATarget
+	kind, ok := MethodKind(x.version, x.call.Request.Method)
 	if !ok {
-		return nil, MethodNotFound()
+		return MethodNotFound()
 	}
-	if refusal := kind.Refusal(v); refusal != nil {
-		return nil, refusal
+	x.kind = kind
+	if refusal := kind.Refusal(x.version); refusal != nil {
+		return refusal
 	}
-	if len(target.AllowedMethods) > 0 && !slices.Contains(target.AllowedMethods, call.Request.Method) {
-		return nil, MethodNotFound()
+	if len(target.AllowedMethods) > 0 && !slices.Contains(target.AllowedMethods, x.call.Request.Method) {
+		return MethodNotFound()
 	}
 	if kind.Streams() && !Streaming(target.Card) {
-		return nil, UnsupportedOperation(v)
+		return UnsupportedOperation(x.version)
 	}
-	content, err := RequestContent(v, kind, call.Request.Params)
+	content, err := RequestContent(x.version, kind, x.call.Request.Params)
 	if err != nil {
 		rpcErr, _ := err.(*RPCError)
-		return nil, rpcErr
+		return rpcErr
 	}
-	x := &Exchange{f: f, call: call, version: v, kind: kind, content: content, owner: ownerOf(call)}
+	x.content = content
+	x.attrs.TaskID, x.attrs.ContextID = content.TaskID, content.ContextID
 	if rpcErr := x.checkOwner(ctx); rpcErr != nil {
-		return nil, rpcErr
+		return rpcErr
 	}
-	if blocked := f.runner.PreRequest(ctx, x); blocked != nil {
-		return nil, blocked
+	if blocked := x.f.runner.PreRequest(ctx, x); blocked != nil {
+		return blocked
 	}
-	credential, _, rpcErr := f.credentials.For(ctx, call.Consumer, call.Agent, call.Principal)
+	credential, sent, rpcErr := x.f.credentials.For(ctx, x.call.Consumer, x.call.Agent, x.call.Principal)
+	x.attrs.IdentityMode, x.attrs.IdentitySubjectKind = sent.Mode, sent.SubjectKind
 	if rpcErr != nil {
-		return nil, rpcErr
+		return rpcErr
 	}
 	x.header = x.upstreamHeader(ctx, credential)
-	return x, nil
+	return nil
 }
 
 // Streams reports whether the agent answers the call with an event stream.
@@ -121,10 +146,11 @@ func (x *Exchange) Streams() bool {
 // Send sends a buffered call and returns the agent's result, after the
 // policies ran on its parts. An error the agent answered comes back as the
 // *RPCError.
-func (x *Exchange) Send(ctx context.Context) (json.RawMessage, *RPCError) {
+func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RPCError) {
+	defer func() { x.finish(rpcErr) }()
 	ctx, cancel := context.WithTimeout(ctx, upstreamTimeout)
 	defer cancel()
-	res, err := x.f.upstream.Post(ctx, x.call.Agent.A2ATarget.Endpoint(), x.header, x.call.Body)
+	res, err := x.post(ctx, x.header, x.call.Body)
 	if err != nil {
 		return nil, upstreamFailure(err)
 	}
@@ -136,13 +162,12 @@ func (x *Exchange) Send(ctx context.Context) (json.RawMessage, *RPCError) {
 	if len(body) > maxResponseBytes {
 		return nil, GatewayFailure(ReasonResponseTooLarge)
 	}
-	result, rpcErr := decodeResponse(body, res.StatusCode)
+	result, rpcErr = x.decode(body, res.StatusCode)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	content, err := ResultContent(x.version, result)
-	if err != nil {
-		rpcErr, _ := err.(*RPCError)
+	content, rpcErr := x.resultContent(result)
+	if rpcErr != nil {
 		return nil, rpcErr
 	}
 	if x.kind != KindCancel && len(content.Parts) > 0 {
@@ -154,6 +179,111 @@ func (x *Exchange) Send(ctx context.Context) (json.RawMessage, *RPCError) {
 		return nil, rpcErr
 	}
 	return result, nil
+}
+
+// post sends body to the agent and records when it went and how the agent
+// answered.
+func (x *Exchange) post(ctx context.Context, header http.Header, body []byte) (*http.Response, error) {
+	x.sentAt = time.Now()
+	res, err := x.f.upstream.Post(ctx, x.call.Agent.A2ATarget.Endpoint(), header, body)
+	if err == nil {
+		x.attrs.UpstreamStatus = res.StatusCode
+	}
+	return res, err
+}
+
+// decode reads a JSON-RPC response: its result, or the error the agent
+// answered. A body that is not one answers -32092.
+func (x *Exchange) decode(body []byte, status int) (json.RawMessage, *RPCError) {
+	o, ok := decodeObject(body)
+	if ok {
+		if o.has("error") {
+			var rpcErr RPCError
+			if json.Unmarshal(o["error"], &rpcErr) == nil {
+				x.agentError = true
+				return nil, &rpcErr
+			}
+		} else if o.has("result") {
+			return o["result"], nil
+		}
+	}
+	if status < 200 || status > 299 {
+		return nil, GatewayFailure(ReasonUpstreamError)
+	}
+	return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
+}
+
+// resultContent reads a result or an event and records the task it names.
+func (x *Exchange) resultContent(result json.RawMessage) (Content, *RPCError) {
+	content, err := ResultContent(x.version, result)
+	if err != nil {
+		rpcErr, _ := err.(*RPCError)
+		return Content{}, rpcErr
+	}
+	if content.TaskID != "" {
+		x.attrs.TaskID = content.TaskID
+	}
+	if content.ContextID != "" {
+		x.attrs.ContextID = content.ContextID
+	}
+	if content.State != "" {
+		x.attrs.TaskState = content.State
+	}
+	return content, nil
+}
+
+// Outcomes of an A2A call, as its span records them.
+const (
+	OutcomeOK              = "ok"
+	OutcomeBlocked         = "blocked"
+	OutcomeRefused         = "refused"
+	OutcomeNotFound        = "not_found"
+	OutcomeUpstreamError   = "upstream_error"
+	OutcomeUpstreamTimeout = "upstream_timeout"
+)
+
+// finish ends the call's span with how the call ended.
+func (x *Exchange) finish(rpcErr *RPCError) {
+	if x.span == nil {
+		return
+	}
+	a := &x.attrs
+	a.Outcome = OutcomeOK
+	if rpcErr != nil {
+		var data struct {
+			Reason string `json:"reason"`
+			Plugin string `json:"plugin"`
+		}
+		_ = json.Unmarshal(rpcErr.Data, &data)
+		if data.Reason != "" {
+			a.Reason = data.Reason
+		}
+		a.RPCErrorCode = int(rpcErr.Code)
+		switch {
+		case x.agentError:
+			a.Outcome = OutcomeUpstreamError
+		case rpcErr.Code == CodePolicyBlocked:
+			a.Outcome, a.BlockedBy = OutcomeBlocked, data.Plugin
+		case rpcErr.Code == CodeRateLimited:
+			a.Outcome, a.Reason = OutcomeBlocked, "rate_limited"
+		case rpcErr.Code == CodeTaskNotFound:
+			a.Outcome = OutcomeNotFound
+		case rpcErr.Code != CodeGatewayFailure:
+			a.Outcome = OutcomeRefused
+		case data.Reason == ReasonUpstreamTimeout || data.Reason == ReasonStreamIdle:
+			a.Outcome = OutcomeUpstreamTimeout
+		case data.Reason != ReasonStreamMaxDuration:
+			a.Outcome = OutcomeUpstreamError
+		}
+		x.span.SetError(rpcErr.Message)
+	}
+	x.span.SetA2A(*a)
+	if x.sentAt.IsZero() {
+		x.span.SetLatency(0)
+	} else {
+		x.span.SetLatency(time.Since(x.sentAt))
+	}
+	x.span.End()
 }
 
 func ownerOf(call *Call) Owner {
@@ -190,26 +320,6 @@ func (x *Exchange) upstreamHeader(ctx context.Context, credential http.Header) h
 		h.Set("X-AG-Trace-Id", rt.TraceID())
 	}
 	return h
-}
-
-// decodeResponse reads a JSON-RPC response: its result, or the error the
-// agent answered. A body that is not one answers -32092.
-func decodeResponse(body []byte, status int) (json.RawMessage, *RPCError) {
-	o, ok := decodeObject(body)
-	if ok {
-		if o.has("error") {
-			var rpcErr RPCError
-			if json.Unmarshal(o["error"], &rpcErr) == nil {
-				return nil, &rpcErr
-			}
-		} else if o.has("result") {
-			return o["result"], nil
-		}
-	}
-	if status < 200 || status > 299 {
-		return nil, GatewayFailure(ReasonUpstreamError)
-	}
-	return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
 }
 
 func upstreamFailure(err error) *RPCError {

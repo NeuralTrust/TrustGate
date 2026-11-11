@@ -1,0 +1,93 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package metrics
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBuilder_A2AFoldsTheCall(t *testing.T) {
+	rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", ConsumerID: "c-1", Kind: events.KindA2A})
+	span := rt.StartSpan(trace.SpanA2A, "message/send")
+	span.SetA2A(trace.A2AAttrs{
+		Method:              "message/send",
+		RegistryID:          "reg-1",
+		AgentName:           "Travel planner",
+		ProtocolVersion:     "0.3",
+		TaskID:              "t-1",
+		ContextID:           "c-1",
+		TaskState:           "working",
+		UpstreamStatus:      http.StatusOK,
+		Outcome:             "upstream_timeout",
+		Reason:              "upstream_timeout",
+		IdentityMode:        "delegation",
+		IdentitySubjectKind: "user",
+		RPCErrorCode:        -32092,
+	})
+	span.SetLatency(150 * time.Millisecond)
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/bot/agents/reg-1"}
+	resp := &infracontext.ResponseContext{StatusCode: http.StatusOK}
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(200*time.Millisecond))
+
+	assert.Equal(t, events.KindA2A, evt.Kind)
+	assert.Nil(t, evt.MCP)
+	assert.Equal(t, &events.A2A{
+		Method:              "message/send",
+		RegistryID:          "reg-1",
+		AgentName:           "Travel planner",
+		ProtocolVersion:     "0.3",
+		TaskID:              "t-1",
+		ContextID:           "c-1",
+		TaskState:           "working",
+		UpstreamStatus:      http.StatusOK,
+		Outcome:             "upstream_timeout",
+		Reason:              "upstream_timeout",
+		IdentityMode:        "delegation",
+		IdentitySubjectKind: "user",
+		RPCErrorCode:        -32092,
+	}, evt.A2A)
+	assert.True(t, evt.Status.IsTimeout)
+	require.NotNil(t, evt.Latency.ProviderMs)
+	assert.Equal(t, int64(150), *evt.Latency.ProviderMs)
+	assert.Equal(t, int64(50), evt.Latency.GatewayMs)
+	assert.Nil(t, evt.Usage)
+}
+
+// LLM and MCP events carry no a2a block.
+func TestBuilder_OtherKindsCarryNoA2A(t *testing.T) {
+	for _, kind := range []string{events.KindLLM, events.KindMCP} {
+		rt := trace.New("trace", trace.Metadata{GatewayID: "gw-1", Kind: kind})
+		req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+		resp := &infracontext.ResponseContext{StatusCode: http.StatusOK}
+		start := time.UnixMilli(2_000_000)
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+		raw, err := json.Marshal(evt)
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), `"a2a"`, kind)
+	}
+}
