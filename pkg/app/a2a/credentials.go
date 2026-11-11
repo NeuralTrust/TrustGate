@@ -23,6 +23,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -73,6 +74,7 @@ type Credentials struct {
 	provider     appoauth.ProviderClient
 	cloud        CloudSigner
 	ephemeralKey bool
+	sharedPlane  bool
 
 	tokens sync.Map
 	flight singleflight.Group
@@ -87,8 +89,23 @@ type cachedToken struct {
 // NewCredentials builds the agent plane's credentials. With ephemeralKey the
 // gateway's signing key is not shared between pods, so delegation, whose
 // tokens another pod could not verify, is refused.
-func NewCredentials(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud CloudSigner, ephemeralKey bool) *Credentials {
-	return &Credentials{exchanger: exchanger, provider: provider, cloud: cloud, ephemeralKey: ephemeralKey}
+func NewCredentials(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud CloudSigner, ephemeralKey bool, opts ...CredentialsOption) *Credentials {
+	c := &Credentials{exchanger: exchanger, provider: provider, cloud: cloud, ephemeralKey: ephemeralKey}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// CredentialsOption configures Credentials.
+type CredentialsOption func(*Credentials)
+
+// WithSharedDataPlane marks the deployment as the shared SaaS one: a cloud
+// credential is signed for a gateway only when its cloud_auth passes
+// A2ATarget.ValidateSharedDataPlane, unless the gateway is positively known to
+// be served by a data plane of its own.
+func WithSharedDataPlane() CredentialsOption {
+	return func(c *Credentials) { c.sharedPlane = true }
 }
 
 // For returns the headers that carry the credential of a call by p to reg.
@@ -155,6 +172,13 @@ func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer,
 func (c *Credentials) Sign(ctx context.Context, reg *registrydomain.Registry, req *http.Request) error {
 	if reg.A2ATarget.Auth.Mode != registrydomain.A2AAuthModeCloud {
 		return nil
+	}
+	if c.sharedPlane {
+		if gw, ok := appgateway.FromContext(ctx); !ok || !gw.ServedByOwnDataPlane() {
+			if err := reg.A2ATarget.ValidateSharedDataPlane(); err != nil {
+				return err
+			}
+		}
 	}
 	return c.cloud.Sign(ctx, reg.A2ATarget, reg.ID.String()+"|"+strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10), req)
 }
