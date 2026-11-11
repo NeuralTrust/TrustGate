@@ -330,7 +330,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()
 	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListProvidersCatalog.Handle)
 	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListModelsCatalog.Handle)
-	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListPoliciesCatalog.Handle)
+	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.AdminAuthz.RequireGatewayQueryAccess(), r.deps.ListPoliciesCatalog.Handle)
 	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListMCPServersCatalog.Handle)
 
 	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), interactive, r.deps.GetTrace.Handle)
