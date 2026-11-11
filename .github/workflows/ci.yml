@@ -107,16 +107,16 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Install service check tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client redis-tools
-
+      # psql and redis-cli run inside the service containers, so the job does not
+      # depend on the Ubuntu package mirrors being reachable from the runner.
       - name: Wait for services to be ready
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          REDIS_CONTAINER: ${{ job.services.redis.id }}
         run: |
           echo "Waiting for PostgreSQL to be ready..."
           for i in {1..120}; do
-            if PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1;" > /dev/null 2>&1; then
+            if docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c "SELECT 1;" > /dev/null 2>&1; then
               echo "PostgreSQL is ready!"
               break
             fi
@@ -130,7 +130,7 @@ jobs:
 
           echo "Waiting for Redis to be ready..."
           for i in {1..120}; do
-            if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
+            if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
               echo "Redis is ready!"
               break
             fi
@@ -155,13 +155,17 @@ jobs:
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
 
       - name: Create repository integration test database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
             -c "CREATE DATABASE trustgate_repo_test;" || true
 
       - name: Create sensible exporter integration test database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
             -c "CREATE DATABASE sensible_pg_test;" || true
 
       - name: Run Functional tests
