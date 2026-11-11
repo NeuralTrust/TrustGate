@@ -75,6 +75,41 @@ func (m *AdminAuthzMiddleware) RequireGatewayAccess(resource AdminResource) fibe
 	}
 }
 
+// RequireGatewayQueryAccess guards routes that take an optional ?gateway_id=
+// (the policies catalog). Without one the route is not gateway-scoped and the
+// caller passes. With one, a console caller must belong to the tenant that owns
+// that gateway, answered 404 otherwise like RequireGatewayAccess, so another
+// tenant's gateway cannot be probed and the route never resolves (or caches)
+// state for it on the caller's behalf. A service credential may only name the
+// gateway it is bound to.
+func (m *AdminAuthzMiddleware) RequireGatewayQueryAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		raw := strings.TrimSpace(c.Query("gateway_id"))
+		if raw == "" {
+			return c.Next()
+		}
+		identity := AdminIdentityFromContext(c)
+		gatewayID, err := ids.Parse[ids.GatewayKind](raw)
+		if err != nil {
+			return httpio.WriteError(c, httpio.ErrInvalidUUIDParam)
+		}
+		if identity.IsService() && identity.GatewayID != gatewayID.String() {
+			return m.forbidden(c, identity, "credential is bound to another gateway")
+		}
+		if identity.Kind == AdminIdentityPlatform {
+			return c.Next()
+		}
+		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if g.TenantID() != identity.TenantID {
+			return m.notFound(c, identity)
+		}
+		return c.Next()
+	}
+}
+
 // RequireGatewayCollectionAccess guards the /v1/gateways collection and the
 // single-gateway routes. Tenant ownership on those routes is already enforced by
 // the handlers; what is added here is that a service credential may only ever
