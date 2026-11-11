@@ -38,8 +38,13 @@ type provider interface {
 	retry(rpcErr *RPCError, attempt int) (time.Duration, bool)
 }
 
-func providerOf(*registrydomain.A2ATarget) provider {
-	return jsonrpc{}
+func providerOf(t *registrydomain.A2ATarget) provider {
+	switch t.Provider {
+	case registrydomain.A2AProviderAzureFoundry:
+		return foundry{}
+	default:
+		return jsonrpc{}
+	}
 }
 
 // jsonrpc is an agent that speaks the JSON-RPC binding: the body goes as it
@@ -63,4 +68,12 @@ func (jsonrpc) decode(x *Exchange, res *http.Response, body []byte) (json.RawMes
 
 func (jsonrpc) retry(*RPCError, int) (time.Duration, bool) {
 	return 0, false
+}
+
+// foundry is a Microsoft Foundry agent: JSON-RPC, with the pinned version
+// always named, since Foundry serves 0.3 to a request that names none.
+type foundry struct{ jsonrpc }
+
+func (foundry) header(x *Exchange, h http.Header) {
+	h.Set("A2A-Version", string(x.version))
 }
