@@ -61,9 +61,9 @@ func TestForward_StreamedTrustGuardBlockMatchesBufferedBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/v1/token":
+		case "/v2/token":
 			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
-		case "/v1/evaluate":
+		case "/v2/evaluate":
 			var req struct {
 				Direction string `json:"direction"`
 			}
@@ -172,9 +172,9 @@ func forwardTrustGuardRateLimit(t *testing.T, mode policy.Mode) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/v1/token":
+		case "/v2/token":
 			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
-		case "/v1/evaluate":
+		case "/v2/evaluate":
 			var req struct {
 				Direction string `json:"direction"`
 			}
