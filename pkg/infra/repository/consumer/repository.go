@@ -111,7 +111,7 @@ func (r *Repository) withConsumerMarkedTx(ctx context.Context, consumerID ids.Co
 // Marks the consumer's gateway, or nothing when the consumer is gone.
 func markConsumerGateway(ctx context.Context, tx pgx.Tx, marks *outbox.Marks, consumerID ids.ConsumerID) error {
 	var gatewayID ids.GatewayID
-	err := tx.QueryRow(ctx, `SELECT gateway_id FROM consumers WHERE id = $1`, consumerID).Scan(&gatewayID)
+	err := tx.QueryRow(ctx, `SELECT gateway_id FROM consumers WHERE id = $1 AND deleted_at IS NULL`, consumerID).Scan(&gatewayID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The consumer is gone and its links went with it, so the write changed
 		// nothing; the delete that removed it already marked its gateway.
@@ -239,7 +239,7 @@ func (r *Repository) Update(
 		       identity         = $13,
 		       auth_binding     = $14,
 		       description      = $15
-		 WHERE id = $1 AND gateway_id = $12`
+		 WHERE id = $1 AND gateway_id = $12 AND deleted_at IS NULL`
 	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
@@ -273,7 +273,7 @@ func (r *Repository) UpdateLabelSets(ctx context.Context, c *domain.Consumer) er
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal label_sets: %w", err)
 	}
-	const query = `UPDATE consumers SET label_sets = $3, updated_at = $4 WHERE id = $1 AND gateway_id = $2`
+	const query = `UPDATE consumers SET label_sets = $3, updated_at = $4 WHERE id = $1 AND gateway_id = $2 AND deleted_at IS NULL`
 	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, c.ID, c.GatewayID, labelSetsBytes, c.UpdatedAt)
 		if err != nil {
@@ -353,7 +353,18 @@ func replaceAuthLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, auths 
 }
 
 func lockConsumerRow(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) error {
-	const query = `SELECT 1 FROM consumers WHERE id = $1 FOR UPDATE`
+	return lockLiveConsumer(ctx, tx, consumerID, "FOR UPDATE")
+}
+
+// lockLiveConsumerForLink is what refuses a link to a deleted consumer: its row
+// stays, so the foreign key no longer does. The lock waits for a delete in
+// flight, which holds the row FOR UPDATE, and then sees its deleted_at.
+func lockLiveConsumerForLink(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) error {
+	return lockLiveConsumer(ctx, tx, consumerID, "FOR KEY SHARE")
+}
+
+func lockLiveConsumer(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID, strength string) error {
+	query := `SELECT 1 FROM consumers WHERE id = $1 AND deleted_at IS NULL ` + strength
 	var exists int
 	if err := tx.QueryRow(ctx, query, consumerID).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -408,6 +419,9 @@ func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.Consumer
 			INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 			ON CONFLICT (consumer_id, registry_id) DO NOTHING`
 		return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
+			if err := lockLiveConsumerForLink(ctx, tx, consumerID); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, query, consumerID, registryID, domain.DefaultRegistryWeight); err != nil {
 				return mapPgError(err)
 			}
@@ -418,6 +432,9 @@ func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.Consumer
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
 	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
+		if err := lockLiveConsumerForLink(ctx, tx, consumerID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, query, consumerID, registryID, clampRegistryWeight(*weight)); err != nil {
 			return mapPgError(err)
 		}
@@ -538,13 +555,13 @@ func (r *Repository) DetachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 // The consumer row is locked before the policy row, FOR KEY SHARE as the
 // foreign key would lock it anyway: a registry delete locks the consumers and
 // then the policies, so taking them in the other order could deadlock with it.
+// A deleted consumer answers ErrNotFound.
 func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
-	const lockConsumer = `SELECT 1 FROM consumers WHERE id = $1 FOR KEY SHARE`
 	const lockPolicy = `SELECT mcp_wide FROM policies WHERE id = $1 FOR SHARE`
 	const query = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return r.withConsumerMarkedTx(ctx, consumerID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, lockConsumer, consumerID); err != nil {
-			return fmt.Errorf("consumer repository: lock consumer: %w", err)
+		if err := lockLiveConsumerForLink(ctx, tx, consumerID); err != nil {
+			return err
 		}
 		var mcpWide bool
 		err := tx.QueryRow(ctx, lockPolicy, policyID).Scan(&mcpWide)
@@ -571,15 +588,36 @@ func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID
 	})
 }
 
+// consumerUnlinkStatements remove what makes a consumer usable: its keys,
+// registries and policies. The row and its descriptive fields stay as history.
+var consumerUnlinkStatements = []string{
+	`DELETE FROM consumer_auth     WHERE consumer_id = $1`,
+	`DELETE FROM consumer_registry WHERE consumer_id = $1`,
+	`DELETE FROM consumer_policy   WHERE consumer_id = $1`,
+}
+
+// Delete soft-deletes the consumer: it stamps deleted_at and drops its links in
+// one transaction, so a key never outlives the consumer it opened. The row is
+// locked FOR UPDATE first, which waits for a link being added and makes a later
+// one find the consumer deleted.
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error {
-	const query = `DELETE FROM consumers WHERE id = $1 AND gateway_id = $2`
+	const lock = `SELECT 1 FROM consumers WHERE id = $1 AND gateway_id = $2 AND deleted_at IS NULL FOR UPDATE`
+	const softDelete = `UPDATE consumers SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`
 	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id, gatewayID)
-		if err != nil {
-			return mapPgDeleteError(err)
+		var exists int
+		if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&exists); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("consumer repository: lock consumer: %w", err)
 		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
+		for _, stmt := range consumerUnlinkStatements {
+			if _, err := tx.Exec(ctx, stmt, id); err != nil {
+				return fmt.Errorf("consumer repository: unlink consumer: %w", err)
+			}
+		}
+		if _, err := tx.Exec(ctx, softDelete, id); err != nil {
+			return fmt.Errorf("consumer repository: soft delete: %w", err)
 		}
 		return nil
 	})
@@ -587,7 +625,8 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 
 func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
 	query := consumerSelectFrom + `
-		 WHERE c.id = $1`
+		 WHERE c.id = $1
+		   AND c.deleted_at IS NULL`
 	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
 	c, err := scanConsumer(row)
 	if err != nil {
@@ -600,7 +639,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.C
 }
 
 func (r *Repository) FindSummaryByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
-	const query = `SELECT id, gateway_id, type, audience, active FROM consumers WHERE id = $1`
+	const query = `SELECT id, gateway_id, type, audience, active FROM consumers WHERE id = $1 AND deleted_at IS NULL`
 	c := &domain.Consumer{}
 	var consumerType, audience string
 	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id).Scan(&c.ID, &c.GatewayID, &consumerType, &audience, &c.Active); err != nil {
@@ -634,7 +673,8 @@ func (r *Repository) ListIDsByAuthID(ctx context.Context, authID ids.AuthID) ([]
 func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain.Consumer, error) {
 	query := consumerSelectFrom + `
 		 WHERE c.slug = $1
-		   AND c.active = TRUE`
+		   AND c.active = TRUE
+		   AND c.deleted_at IS NULL`
 	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, strings.TrimSpace(slug))
 	c, err := scanConsumer(row)
 	if err != nil {
@@ -657,7 +697,8 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM consumers c
-		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
+		 WHERE c.deleted_at IS NULL
+		   AND ($1::uuid IS NULL OR c.gateway_id = $1)
 		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
 		   AND ($3 = '' OR c.type = $3)
 		   AND ($4::boolean IS NULL OR c.active = $4)
@@ -669,7 +710,8 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	listQuery := consumerSelectFrom + `
-		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
+		 WHERE c.deleted_at IS NULL
+		   AND ($1::uuid IS NULL OR c.gateway_id = $1)
 		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
 		   AND ($3 = '' OR c.type = $3)
 		   AND ($4::boolean IS NULL OR c.active = $4)
@@ -700,6 +742,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Consumer, error) {
 	query := consumerSelectFrom + `
 		 WHERE c.gateway_id = $1
+		   AND c.deleted_at IS NULL
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, gatewayID)
 	if err != nil {
@@ -723,7 +766,8 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 
 func (r *Repository) ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*domain.Consumer, error) {
 	query := consumerSelectFrom + `
-		 WHERE EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
+		 WHERE c.deleted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
 		 ORDER BY c.created_at DESC, c.id`
 	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, authID)
 	if err != nil {
@@ -750,6 +794,7 @@ func lockConsumerRoutingReferences(ctx context.Context, tx pgx.Tx, consumerID id
 		SELECT id, gateway_id, fallback, model_policies, lb_config
 		  FROM consumers
 		 WHERE id = $1
+		   AND deleted_at IS NULL
 		 FOR UPDATE`
 	consumer := &domain.Consumer{}
 	var fallbackRaw, modelPoliciesRaw, lbConfigRaw []byte
@@ -1103,15 +1148,6 @@ func mapPgError(err error) error {
 				return policydomain.ErrNotFound
 			}
 			return domain.ErrInvalidGatewayID
-		}
-	}
-	return err
-}
-
-func mapPgDeleteError(err error) error {
-	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
-		if pgErr.Code == pgForeignKeyViolation {
-			return domain.ErrHasDependents
 		}
 	}
 	return err
