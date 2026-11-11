@@ -15,12 +15,12 @@
 package router_test
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -35,6 +35,7 @@ func TestAgentRouter_HealthRoutes(t *testing.T) {
 		middleware.NewTransport(),
 		apihandler.NewHealthHandler(),
 		middleware.NewOpsMetricsMiddleware(recorder, o11y.PlaneAgent),
+		a2ahttp.NewHandler(nil),
 	)
 	app := fiber.New()
 	require.NoError(t, r.BuildRoutes(app))
@@ -65,28 +66,30 @@ func (denyAll) Middleware() fiber.Handler {
 	}
 }
 
-func TestAgentRouter_RPCRouteRunsTheAuthTransport(t *testing.T) {
+func TestAgentRouter_AgentRoutesRunTheAuthTransport(t *testing.T) {
 	r := router.NewAgentRouter(
 		middleware.NewTransport(),
 		middleware.NewTransport(denyAll{}),
 		apihandler.NewHealthHandler(),
 		nil,
+		a2ahttp.NewHandler(nil),
 	)
 	app := fiber.New()
 	require.NoError(t, r.BuildRoutes(app))
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/app/agents/research", nil))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/app/agents/research", nil),
+		httptest.NewRequest(http.MethodGet, "/app/agents/research/.well-known/agent-card.json", nil),
+	} {
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
-	req := httptest.NewRequest(http.MethodPost, "/app/agents/research", nil)
-	req.Header.Set("X-Allow", "1")
-	resp, err = app.Test(req)
-	require.NoError(t, err)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.JSONEq(t, `{"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"Method not found"}}`, string(body))
+		req.Header.Set("X-Allow", "1")
+		resp, err = app.Test(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusNotFound, resp.StatusCode, "no A2A consumer on the context")
+	}
 }

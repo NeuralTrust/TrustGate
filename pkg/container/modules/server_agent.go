@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -104,6 +105,7 @@ type agentRouterParams struct {
 	AuthTransport *middleware.Transport `name:"agentAuth"`
 	OpsMetrics    *o11y.Provider
 	HealthHandler *apihandler.HealthHandler
+	A2AHandler    *a2ahttp.Handler
 }
 
 type agentServerParams struct {
@@ -130,7 +132,7 @@ func ServerAgent(c *container.Container) error {
 	if err := c.Provide(
 		func(p agentRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAgent)
-			return router.NewAgentRouter(p.BaseTransport, p.AuthTransport, p.HealthHandler, ops)
+			return router.NewAgentRouter(p.BaseTransport, p.AuthTransport, p.HealthHandler, ops, p.A2AHandler)
 		},
 		dig.Name("agent"),
 	); err != nil {

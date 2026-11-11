@@ -112,14 +112,14 @@ func Decode(body []byte) (*Request, error) {
 	}
 	o, ok := decodeObject(body)
 	if !ok {
-		return nil, invalidRequest()
+		return nil, InvalidRequest()
 	}
 	req := &Request{Method: o.str("method"), Params: o["params"]}
 	if id := bytes.TrimSpace(o["id"]); len(id) > 0 && (id[0] == '"' || id[0] == '-' || (id[0] >= '0' && id[0] <= '9')) {
 		req.ID = id
 	}
 	if o.str("jsonrpc") != "2.0" || req.Method == "" || req.ID == nil {
-		return req, invalidRequest()
+		return req, InvalidRequest()
 	}
 	return req, nil
 }
