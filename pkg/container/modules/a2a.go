@@ -19,6 +19,7 @@ import (
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	infraa2a "github.com/NeuralTrust/TrustGate/pkg/infra/a2a"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -31,8 +32,12 @@ func A2A(c *container.Container) error {
 	for _, provider := range []any{
 		infraa2a.NewUpstreamClient,
 		appa2a.NewPluginRunner,
-		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud *infraa2a.CloudSigner, signer *infrasts.Signer) *appa2a.Credentials {
-			return appa2a.NewCredentials(exchanger, provider, cloud, signer.Ephemeral())
+		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud *infraa2a.CloudSigner, signer *infrasts.Signer, cfg *config.Config) *appa2a.Credentials {
+			var opts []appa2a.CredentialsOption
+			if cfg.ConfigSync.DeploymentType == config.InstanceDeploymentSaaS {
+				opts = append(opts, appa2a.WithSharedDataPlane())
+			}
+			return appa2a.NewCredentials(exchanger, provider, cloud, signer.Ephemeral(), opts...)
 		},
 		func(cc cache.Client) appa2a.OwnershipStore {
 			return infraa2a.NewOwnershipStore(cc.RedisClient())

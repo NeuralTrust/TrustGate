@@ -367,16 +367,35 @@ func (t *A2ATarget) validateCloudAuth() error {
 	return t.CloudAuth.validate()
 }
 
-// ValidateSharedDataPlane adds the rule of a gateway served by the shared SaaS
-// data plane: an assumed AWS role needs an external id, or anyone who knows
-// another organisation's role ARN could have the gateway assume it.
+// ValidateSharedDataPlane adds the rules of a gateway served by the shared
+// SaaS data plane. The gateway's own cloud identity is never a tenant's
+// credential there, so cloud_auth must carry one the tenant supplies: AWS
+// static keys, or a role with the external id its trust policy requires; an
+// Azure service principal; a GCP service-account key. Ambient credentials (the
+// AWS default chain, Azure managed identity, GCP Application Default
+// Credentials and GCP impersonation) are refused.
 func (t *A2ATarget) ValidateSharedDataPlane() error {
-	if t == nil || t.CloudAuth == nil || t.CloudAuth.AWS == nil || !t.CloudAuth.AWS.UseRole {
+	if t == nil || t.CloudAuth == nil {
 		return nil
 	}
-	if strings.TrimSpace(t.CloudAuth.AWS.ExternalID) == "" {
-		return fmt.Errorf("%w: cloud_auth.aws.external_id is required to assume a role: "+
-			"set the external id configured in the role's trust policy", ErrInvalidRegistry)
+	c := t.CloudAuth
+	if c.AWS != nil {
+		if err := c.AWS.validateSharedDataPlane(); err != nil {
+			return err
+		}
+	}
+	if c.Azure != nil && (c.Azure.UseManagedIdentity || !c.Azure.hasClientSecretCredential()) {
+		return fmt.Errorf("%w: cloud_auth.azure must use a service principal (tenant_id, client_id, client_secret); "+
+			"managed identity is not available on the shared data plane", ErrInvalidRegistry)
+	}
+	if c.GCP != nil {
+		if c.GCP.ImpersonateServiceAccount != "" {
+			return fmt.Errorf("%w: cloud_auth.gcp.impersonate_service_account is not available on the shared data plane: "+
+				"provide service_account_json", ErrInvalidRegistry)
+		}
+		if strings.TrimSpace(c.GCP.ServiceAccountJSON) == "" {
+			return fmt.Errorf("%w: cloud_auth.gcp.service_account_json is required on the shared data plane", ErrInvalidRegistry)
+		}
 	}
 	return nil
 }

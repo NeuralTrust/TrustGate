@@ -175,6 +175,24 @@ type A2AGCPAuth struct {
 	ImpersonateServiceAccount string `json:"impersonate_service_account,omitempty"`
 }
 
+func (a *AzureAuth) hasClientSecretCredential() bool {
+	return strings.TrimSpace(a.TenantID) != "" && strings.TrimSpace(a.ClientID) != "" && a.ClientSecret != ""
+}
+
+func (a *A2AAWSAuth) validateSharedDataPlane() error {
+	switch {
+	case a.UseRole:
+		if strings.TrimSpace(a.ExternalID) == "" {
+			return fmt.Errorf("%w: cloud_auth.aws.external_id is required to assume a role: "+
+				"set the external id configured in the role's trust policy", ErrInvalidRegistry)
+		}
+	case strings.TrimSpace(a.AccessKeyID) == "" || a.SecretAccessKey == "":
+		return fmt.Errorf("%w: cloud_auth.aws must use static keys (access_key_id, secret_access_key) or a role with an external id "+
+			"on the shared data plane", ErrInvalidRegistry)
+	}
+	return nil
+}
+
 func (c *A2ACloudAuth) kind() string {
 	switch {
 	case c.AWS != nil && c.Azure == nil && c.GCP == nil:
