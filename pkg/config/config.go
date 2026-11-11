@@ -40,6 +40,7 @@ const (
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
 	defaultServerMCPPort      = 8082
+	defaultServerAgentPort    = 8084
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
@@ -455,6 +456,7 @@ type ServerConfig struct {
 	AdminPort         int
 	ProxyPort         int
 	MCPPort           int
+	AgentPort         int
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
@@ -927,6 +929,7 @@ func getServerConfig() ServerConfig {
 		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
 		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
 		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
+		AgentPort:    getEnvInt("SERVER_AGENT_PORT", defaultServerAgentPort),
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),

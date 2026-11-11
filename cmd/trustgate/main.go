@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Command trustgate starts a server selected by argv[1] (default proxy):
-// "admin", "proxy", "mcp", or "run" (admin + proxy together in one process).
+// "admin", "proxy", "mcp", "agent", or "run" (admin + proxy together in one process).
 //
 // @title                       TrustGate Admin API
 // @version                     1.0
@@ -65,6 +65,7 @@ const (
 	serverAdmin  = modules.PlaneAdmin
 	serverProxy  = modules.PlaneProxy
 	serverMCP    = modules.PlaneMCP
+	serverAgent  = modules.PlaneAgent
 	serverRun    = modules.PlaneRun
 	serverWorker = modules.PlaneWorker
 )
@@ -126,6 +127,16 @@ func main() {
 		return
 	}
 
+	if plane == serverAgent {
+		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
+			log.Fatalf("failed to start metrics worker: %v", err)
+		}
+		if err := c.Invoke(runAgent); err != nil {
+			log.Fatalf("failed to start application: %v", err)
+		}
+		return
+	}
+
 	if plane == serverWorker {
 		if err := c.Invoke(runLabelWorker); err != nil {
 			log.Fatalf("failed to start application: %v", err)
@@ -166,7 +177,7 @@ func serverType() string {
 }
 
 func isDataPlane(plane string) bool {
-	return plane == serverProxy || plane == serverMCP || plane == serverWorker
+	return plane == serverProxy || plane == serverMCP || plane == serverAgent || plane == serverWorker
 }
 
 func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
@@ -233,6 +244,18 @@ type mcpParam struct {
 	OpsSDK       *o11y.SDK
 }
 
+type agentParam struct {
+	dig.In
+	Srv          server.Server `name:"agent"`
+	Worker       appmetrics.Worker
+	UsageRecords *usageinfra.Emitter
+	Conn         *database.Connection
+	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit    rateLimitParams
+	OpsSDK       *o11y.SDK
+}
+
 type allParam struct {
 	dig.In
 	Admin          server.Server `name:"admin"`
@@ -287,6 +310,17 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
 	runServer(p.Srv, serverMCP, logger)
+}
+
+func runAgent(p agentParam, logger *slog.Logger) {
+	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
+	defer closeResources(p.Conn, logger)
+	defer p.UsageRecords.Close()
+	defer p.Worker.Shutdown()
+	defer stopWorker()
+	defer startRateLimit(p.RateLimit, logger)()
+	runServer(p.Srv, serverAgent, logger)
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {
