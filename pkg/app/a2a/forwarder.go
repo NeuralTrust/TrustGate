@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -36,17 +37,18 @@ const (
 )
 
 // Forwarder sends A2A calls to agents through the gateway's checks: the
-// method gate, the policies and the registry's credential.
+// method gate, task ownership, the policies and the registry's credential.
 type Forwarder struct {
 	upstream    Upstream
 	runner      *PluginRunner
 	credentials *Credentials
+	ownership   OwnershipStore
 	logger      *slog.Logger
 }
 
 // NewForwarder builds the agent plane's forwarder.
-func NewForwarder(upstream Upstream, runner *PluginRunner, credentials *Credentials, logger *slog.Logger) *Forwarder {
-	return &Forwarder{upstream: upstream, runner: runner, credentials: credentials, logger: logger}
+func NewForwarder(upstream Upstream, runner *PluginRunner, credentials *Credentials, ownership OwnershipStore, logger *slog.Logger) *Forwarder {
+	return &Forwarder{upstream: upstream, runner: runner, credentials: credentials, ownership: ownership, logger: logger}
 }
 
 // Call is a JSON-RPC request to an agent, as the caller sent it.
@@ -66,12 +68,15 @@ type Exchange struct {
 	version Version
 	kind    Kind
 	content Content
+	owner   Owner
+	session string
 	header  http.Header
 }
 
 // Prepare checks a call before anything reaches the agent: the method of the
 // pinned version and the registry's allowed methods, streaming on the card,
-// the policies on the request, and the credential.
+// the owner of the task or context it names, the policies on the request,
+// and the credential.
 func (f *Forwarder) Prepare(ctx context.Context, call *Call) (*Exchange, *RPCError) {
 	target := call.Agent.A2ATarget
 	v := Version(target.ProtocolVersion)
@@ -93,7 +98,10 @@ func (f *Forwarder) Prepare(ctx context.Context, call *Call) (*Exchange, *RPCErr
 		rpcErr, _ := err.(*RPCError)
 		return nil, rpcErr
 	}
-	x := &Exchange{f: f, call: call, version: v, kind: kind, content: content}
+	x := &Exchange{f: f, call: call, version: v, kind: kind, content: content, owner: ownerOf(call)}
+	if rpcErr := x.checkOwner(ctx); rpcErr != nil {
+		return nil, rpcErr
+	}
 	if blocked := f.runner.PreRequest(ctx, x); blocked != nil {
 		return nil, blocked
 	}
@@ -142,7 +150,18 @@ func (x *Exchange) Send(ctx context.Context) (json.RawMessage, *RPCError) {
 			return nil, blocked
 		}
 	}
+	if rpcErr := x.recordOwner(ctx, content); rpcErr != nil {
+		return nil, rpcErr
+	}
 	return result, nil
+}
+
+func ownerOf(call *Call) Owner {
+	o := Owner{ConsumerID: call.Consumer.Consumer.ID, Subject: consumerdomain.AppSubject(call.Consumer.Consumer.ID)}
+	if call.Principal != nil && call.Principal.Subject != "" {
+		o.Subject = call.Principal.Subject
+	}
+	return o
 }
 
 func (x *Exchange) upstreamHeader(ctx context.Context, credential http.Header) http.Header {

@@ -21,17 +21,21 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	infraa2a "github.com/NeuralTrust/TrustGate/pkg/infra/a2a"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 )
 
 // A2A provides the agent plane's forwarding: upstream client, policies,
-// credentials, forwarder and handler.
+// credentials, task ownership, forwarder and handler.
 func A2A(c *container.Container) error {
 	for _, provider := range []any{
 		infraa2a.NewUpstreamClient,
 		appa2a.NewPluginRunner,
 		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, signer *infrasts.Signer) *appa2a.Credentials {
 			return appa2a.NewCredentials(exchanger, provider, signer.Ephemeral())
+		},
+		func(cc cache.Client) appa2a.OwnershipStore {
+			return infraa2a.NewOwnershipStore(cc.RedisClient())
 		},
 		appa2a.NewForwarder,
 		a2ahttp.NewHandler,
