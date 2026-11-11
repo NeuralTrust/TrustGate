@@ -32,6 +32,7 @@ type UpdateRegistryRequest struct {
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+	A2ATarget       *A2ATargetRequest    `json:"a2a_target,omitempty"`
 }
 
 func (r *UpdateRegistryRequest) Normalize() {
