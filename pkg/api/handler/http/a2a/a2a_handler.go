@@ -15,11 +15,13 @@
 package a2a
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -92,10 +94,38 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 		return send(c, req.ID, nil, rpcErr)
 	}
 	if x.Streams() {
-		return send(c, req.ID, nil, appa2a.GatewayFailure("streaming_unavailable"))
+		return stream(c, req.ID, x)
 	}
 	result, rpcErr := x.Send(ctx)
 	return send(c, req.ID, result, rpcErr)
+}
+
+// streamWriteGrace is how long past a stream's deadline its last event may
+// take to write.
+const streamWriteGrace = 10 * time.Second
+
+// stream answers with the agent's events as server-sent events, flushed one
+// by one. A failed write, a caller that left, ends the stream and the
+// upstream call.
+func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
+	ctx := c.UserContext()
+	s, rpcErr := x.Open(ctx)
+	if rpcErr != nil {
+		return send(c, id, nil, rpcErr)
+	}
+	_ = c.Context().SetWriteDeadline(s.Deadline().Add(streamWriteGrace))
+	c.Set(fiber.HeaderContentType, "text/event-stream")
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store")
+	c.Set("X-Accel-Buffering", "no")
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		s.Run(ctx, id, func(frame []byte) error {
+			_, _ = w.WriteString("data: ")
+			_, _ = w.Write(frame)
+			_, _ = w.WriteString("\n\n")
+			return w.Flush()
+		})
+	})
+	return nil
 }
 
 func resolve(c *fiber.Ctx) (*appconsumer.RoutableConsumer, *registrydomain.Registry, bool) {
