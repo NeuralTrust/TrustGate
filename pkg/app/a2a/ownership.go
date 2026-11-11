@@ -51,8 +51,8 @@ const (
 type Owner struct {
 	ConsumerID ids.ConsumerID `json:"consumer_id"`
 	Subject    string         `json:"subject"`
-	// UpstreamSession is the provider session a context runs in. It is read
-	// only once the owner matched.
+	// UpstreamSession is the provider session a task or context runs in. It
+	// is read only once the owner matched.
 	UpstreamSession string `json:"upstream_session,omitempty"`
 }
 
@@ -107,7 +107,7 @@ func (x *Exchange) checkOwner(ctx context.Context) *RPCError {
 			x.attrs.Reason = ReasonNotOwner
 			return TaskNotFound(x.version)
 		}
-		if key.Scope == ScopeContext {
+		if owner.UpstreamSession != "" {
 			x.session = owner.UpstreamSession
 		}
 	}
@@ -120,7 +120,9 @@ func (x *Exchange) checkOwner(ctx context.Context) *RPCError {
 // cannot be written is logged and the answer is kept.
 func (x *Exchange) recordOwner(ctx context.Context, c Content) *RPCError {
 	for _, key := range x.ownershipKeys(c) {
-		claimed, existing, err := x.f.ownership.Claim(ctx, key, x.owner, ownershipTTL)
+		o := x.owner
+		o.UpstreamSession = x.session
+		claimed, existing, err := x.f.ownership.Claim(ctx, key, o, ownershipTTL)
 		if err == nil && !claimed && existing != nil {
 			if !existing.is(x.owner) {
 				x.f.logger.WarnContext(ctx, "a2a agent answered with a task or context of another caller",
