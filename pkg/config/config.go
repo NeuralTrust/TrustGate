@@ -1326,6 +1326,11 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func getTrustGuardConfig() TrustGuardConfig {
+	for _, name := range []string{"TRUSTGUARD_V2_SHADOW", "TRUSTGUARD_V2_GATEWAYS"} {
+		if getEnv(name, "") != "" {
+			slog.Warn("ignoring removed TrustGuard setting; TrustGuard shadows v1 to v2 itself", slog.String("env", name))
+		}
+	}
 	baseURL := getEnv("TRUSTGUARD_BASE_URL", "")
 	timeout := getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout)
 	return TrustGuardConfig{
