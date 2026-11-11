@@ -85,6 +85,7 @@ up: env ## Bring up Postgres, Redis and all TrustGate planes in Docker
 	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
 	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
 	@echo "    MCP    -> http://localhost:8082  (healthz: /healthz)"
+	@echo "    Agent  -> http://localhost:8084  (healthz: /healthz)"
 	@echo "  Tail logs with 'make logs', tear down with 'make down'."
 
 down: ## Tear down the full stack and remove volumes

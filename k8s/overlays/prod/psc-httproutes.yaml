@@ -52,3 +52,27 @@ spec:
     backendRefs:
     - name: agentgateway-mcp-psc
       port: 8082
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-agent-psc-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: agent
+    neuraltrust.ai/exposure: psc
+spec:
+  parentRefs:
+  - name: psc-gateway
+    namespace: gateway-psc
+  hostnames:
+  - "*.agents.neuraltrust.ai"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-agent-psc
+      port: 8084
