@@ -9,8 +9,9 @@ call with the registry's own credential.
 The plane speaks JSON-RPC only, A2A versions 0.3 and 1.0. Each registry is
 pinned to one version and the gateway never translates between them.
 
-This page covers agents you host yourself (`a2a_target.provider` `generic`,
-the default).
+Everything below applies to every agent. Agents hosted on Amazon Bedrock
+AgentCore, Microsoft Foundry or Google Vertex AI Agent Engine differ only as
+described in [Hosted agents](#hosted-agents).
 
 ## Running the plane
 
@@ -373,7 +374,8 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 `upstream_error`, `invalid_upstream_response`, `response_too_large`,
 `stream_idle`, `stream_max_duration`, `ownership_unavailable`,
 `ownership_conflict`, `client_credentials_failed`,
-`identity_exchange_failed`, `signing_key_unavailable`, `plan_unavailable`.
+`identity_exchange_failed`, `signing_key_unavailable`, `plan_unavailable`,
+`cloud_auth_failed` and `upstream_auth_failed` (hosted agents).
 
 An error the agent itself answers is relayed as it came.
 
@@ -382,3 +384,34 @@ context ids, task state, the agent's HTTP status, outcome (`ok`, `blocked`,
 `refused`, `not_found`, `upstream_error`, `upstream_timeout`), the blocking
 plugin, the reason, and the identity mode and subject kind (`user` or `app`),
 never the token.
+
+## Hosted agents
+
+`a2a_target.provider` is `bedrock_agentcore`, `azure_foundry` or
+`vertex_agent_engine`. The agent is located by the provider's own ids, never a
+URL; the gateway derives the card URL and the endpoint and sends cloud
+credentials only to that host over HTTPS.
+
+| | `bedrock_agentcore` | `azure_foundry` | `vertex_agent_engine` |
+|---|---|---|---|
+| Locator | `runtime_arn`, `qualifier` (default `DEFAULT`) | `project_endpoint` (`*.services.ai.azure.com`), `agent_name` | `project`, `location`, `reasoning_engine_id` |
+| `auth.mode` | `cloud` (`cloud_auth.aws`: keys, `use_role` + `role` + `external_id`, or the pod's identity), `client_credentials`, `exchange` `obo`/`token_exchange` | `cloud` (`cloud_auth.azure`: service principal or managed identity), `exchange` `obo` | `cloud` (`cloud_auth.gcp`: `service_account_json`, `impersonate_service_account`, or ADC) |
+| Gateway sends | SigV4 (`bedrock-agentcore`) or a Bearer token | Entra token, scope `https://ai.azure.com/.default`, and `A2A-Version` on every call | Google token, scope `cloud-platform` |
+| Versions | From the card | 1.0 (default) and 0.3 | 0.3 |
+| Streaming | As the card says | No | No |
+
+- The card is read with the registry's credential. With `obo` or
+  `token_exchange` there is no user at registration, so `card_auth`
+  (`client_credentials` on AgentCore, `cloud` on Foundry) names the
+  application credential that reads it.
+- On SaaS gateways an assumed AWS role needs `external_id` (422 otherwise).
+- AgentCore: the gateway generates `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`
+  per context and keeps it with the context's owner. JSON-RPC errors are read
+  from non-2xx answers; `-32054` "Session operation in progress" is retried
+  twice (100 ms, 400 ms) on buffered calls; 401 is `-32093` and a bare 403 is
+  `-32092` `upstream_auth_failed`.
+- Vertex speaks HTTP+JSON. Callers still use JSON-RPC 0.3 (`message/send`,
+  `tasks/get`, `tasks/cancel`); the gateway calls `/v1/message:send`,
+  `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`. Not yet verified against a
+  deployed Agent Engine.
+- A credential the gateway cannot obtain answers `-32092` `cloud_auth_failed`.
