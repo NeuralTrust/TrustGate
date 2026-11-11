@@ -43,9 +43,11 @@ AAD-bound). E3, E6, E7 and E8 are plaintext.
   Each registry is a JSON blob **that includes the plaintext `auth`**
   (`pkg/infra/configsnapshot/codec.go:109`), and
   `codec_secret_test.go:17-68` asserts that this survives.
-- **Hybrid and dedicated gateways** (`Entitlements.DataPlane`,
+- **Hybrid gateways** (`Entitlements.DataPlane`,
   `pkg/domain/gateway/entitlements.go:40-54`) run their data plane in the
-  customer's environment. It pulls a scoped snapshot over gRPC
+  customer's environment. **Dedicated** gateways get a data plane that
+  NeuralTrust runs for that gateway alone, so for this feature they behave like
+  hosted. It pulls a scoped snapshot over gRPC
   (`pkg/infra/configsync/grpc`). **Today every upstream credential of a hybrid
   gateway is stored in NeuralTrust's database and travels from the SaaS control
   plane to the customer's network.** This is the strongest argument for the
@@ -219,7 +221,7 @@ only some of them. Sources: `litellm/secret_managers/*.py`, https://docs.litellm
    explicit reference that carries store, path, field and version, references
    accepted only in fields declared as secret, background refresh, and
    stale-on-error.
-2. **Resolve on the data plane.** For hybrid and dedicated gateways this
+2. **Resolve on the data plane.** For hybrid gateways this
    removes the customer's credentials from our DB and our snapshot entirely.
    LiteLLM has no equivalent, since it has no control-plane/data-plane split.
 3. **Separate who chooses the store from who references it.**

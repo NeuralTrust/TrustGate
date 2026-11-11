@@ -7,7 +7,7 @@ gateway to an external secret manager.
 - A **managed** store is configured entirely through the Admin API and works on
   any plane.
 - A **local** store is declared by name through the API and configured on a
-  hybrid, dedicated or self-hosted data plane. It may use that plane's ambient
+  hybrid or self-hosted data plane. It may use that plane's ambient
   identity, environment or files.
 
 ## Requirements
@@ -56,7 +56,7 @@ otherwise it MUST be refused.
 ### Requirement: Local stores never run on shared planes
 
 The admin API MUST accept `location: local` only for gateways whose data plane
-is hybrid or dedicated. A data plane MUST honour local stores only when
+is hybrid. A data plane MUST honour local stores only when
 `SECRET_STORES_ALLOW_LOCAL=true`. A data plane MUST NOT use ambient identity
 (cloud metadata, workload identity, Kubernetes service account token), process
 environment or files on behalf of a managed store.
