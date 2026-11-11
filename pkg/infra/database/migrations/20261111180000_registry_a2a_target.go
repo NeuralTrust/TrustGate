@@ -24,7 +24,7 @@ import (
 
 func init() {
 	database.RegisterMigration(database.Migration{
-		ID:   "20261111120000_registry_a2a_target",
+		ID:   "20261111180000_registry_a2a_target",
 		Name: "add registry type A2A and a2a_target",
 		Up:   upRegistryA2ATarget,
 		Down: downRegistryA2ATarget,
