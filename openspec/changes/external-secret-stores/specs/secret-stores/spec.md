@@ -2,134 +2,174 @@
 
 ## Purpose
 
-The lifecycle of a secret store. A store is a named connection from one
-gateway to an external secret manager.
-- A **managed** store is configured entirely through the Admin API and works on
-  any plane.
-- A **local** store is declared by name through the API and configured on a
-  hybrid or self-hosted data plane. It may use that plane's ambient
-  identity, environment or files.
+What a secret store is and where it is configured. A store is a named
+connection from a hybrid data plane to the customer's secret manager. It is
+configured on the data plane itself (Helm values rendered into
+`SECRET_STORES_FILE`) and reported to the control plane. NeuralTrust never
+receives a store's address, auth configuration or credentials.
 
 ## Requirements
 
-### Requirement: Store scope and identity
+### Requirement: Store file
 
-A store MUST belong to exactly one gateway, and its name MUST be unique within
-that gateway, compared case-insensitively.
-- A managed store MUST declare at least one `allowed_paths` prefix. The value
-  `*` means all paths and MUST be given explicitly.
-- Store types are `hashicorp_vault`, `aws_secrets_manager`,
-  `gcp_secret_manager`, `azure_key_vault`, `env` and `file`.
-- `env` and `file` MUST be local.
+A data plane with `SECRET_STORES_ENABLED=true` and `SECRET_STORES_FILE` set MUST
+load its stores from that file at boot.
+- Each store MUST have:
+  - a unique name matching the store-name grammar;
+  - a type, one of `hashicorp_vault`, `aws_secrets_manager`,
+    `gcp_secret_manager`, `azure_key_vault`, `file` or `env`;
+  - a non-empty `allowed_paths`, in which `*` means all paths and MUST be
+    written explicitly.
+- Decoding MUST be strict: an unknown key MUST fail the load.
+- The file MUST NOT carry a credential inline. Vault `token`, `secret_id` and
+  `jwt` MUST be given as `*_file` paths, and an inline value MUST fail the load.
 
-#### Scenario: Duplicate name
+#### Scenario: Inline secret is refused
 
-- GIVEN gateway G has a store named `corp-vault`
-- WHEN a store named `Corp-Vault` is created in G
-- THEN the response is 409
+- GIVEN a store file whose Vault store has `auth: { method: approle, role_id: r, secret_id: s3cr3t }`
+- WHEN the data plane boots
+- THEN loading fails with an error that names the store and the offending key, and the data plane does not start
 
-#### Scenario: Managed store without allowed paths
+#### Scenario: Missing allowed paths
 
-- WHEN a managed store is created with no `allowed_paths`
-- THEN the response is 400
+- GIVEN a store without `allowed_paths`
+- WHEN the file is loaded
+- THEN loading fails
 
-### Requirement: Store credentials are sealed and masked
+### Requirement: Store file reload
 
-A managed store's credential fields MUST be sealed at rest with `FieldSealer`
-under purpose `secret-stores/v1`. The fields are:
-- Vault `token` and AppRole `secret_id`;
-- AWS `secret_access_key`;
-- GCP `service_account_json`;
-- Azure `client_secret`.
+The data plane MUST watch the store file.
+- On a valid change, it MUST swap the stores atomically and refresh the entries
+  of the stores that changed.
+- On an invalid change, it MUST keep the previous stores, log the error, and
+  report state `config_error` for the affected stores.
 
-These fields MUST be masked in every response. On update, an omitted value or
-an echoed mask MUST keep the stored value. If the address, vault URL, region,
-endpoint or auth method changes, the update MUST re-enter the credential;
-otherwise it MUST be refused.
+#### Scenario: Broken edit keeps serving
 
-#### Scenario: Address change without re-entering the secret
+- GIVEN a running data plane with store `corp-vault`
+- WHEN the file is replaced with invalid YAML
+- THEN references to `corp-vault` keep resolving, and the next heartbeat reports `config_error`
 
-- GIVEN managed Vault store S with address `https://vault-a.example.com` and AppRole credentials
-- WHEN S is updated to address `https://attacker.example.net` and `secret_id` echoes the mask
-- THEN the update is refused and the stored `secret_id` is unchanged
+### Requirement: Local stores never run on NeuralTrust planes
 
-### Requirement: Local stores never run on shared planes
+Three guards MUST hold independently:
+1. A data plane with `INSTANCE_DEPLOYMENT_TYPE=saas` MUST refuse to start when
+   `SECRET_STORES_FILE` is set.
+2. A data plane MUST use its stores only to resolve references of gateways
+   whose entitlements say `data_plane=hybrid`. Any other reference MUST stay
+   unresolved, with class `not_allowed`.
+3. The admin API MUST refuse references on gateways that are not hybrid (see
+   `secret-references`).
 
-The admin API MUST accept `location: local` only for gateways whose data plane
-is hybrid. A data plane MUST honour local stores only when
-`SECRET_STORES_ALLOW_LOCAL=true`. A data plane MUST NOT use ambient identity
-(cloud metadata, workload identity, Kubernetes service account token), process
-environment or files on behalf of a managed store.
+#### Scenario: SaaS plane with a store file
 
-#### Scenario: Local store on a hosted gateway
+- GIVEN `INSTANCE_DEPLOYMENT_TYPE=saas` and `SECRET_STORES_FILE=/etc/trustgate/secret-stores.yaml`
+- WHEN the data plane boots
+- THEN it exits with a configuration error
 
-- GIVEN gateway G is hosted
-- WHEN a local store is created in G
-- THEN the response is 422 `secret_store_local_not_allowed`
+#### Scenario: Non-hybrid gateway on a plane with stores
 
-#### Scenario: Shared plane ignores a local store
+- GIVEN a data plane with store `env` and a snapshot gateway G stamped `data_plane=hosted` whose registry holds `secret://env/TG_SECRET_X`
+- WHEN G's runtime data is built
+- THEN the reference is unresolved with class `not_allowed` and no environment variable is read
 
-- GIVEN a hosted data plane without `SECRET_STORES_ALLOW_LOCAL`
-- WHEN it receives a snapshot that declares a local store
-- THEN no reference to that store resolves, and every such reference reports state `not_allowed`
+### Requirement: Backend authentication
 
-### Requirement: Local store configuration
+| Type | Methods the store MUST support |
+|---|---|
+| `hashicorp_vault` | `kubernetes` (the pod's ServiceAccount token), `jwt`, `approle` and `token` |
+| `aws_secrets_manager` | the SDK default credential chain, with an optional assume-role |
+| `gcp_secret_manager` | Application Default Credentials |
+| `azure_key_vault` | workload identity or managed identity |
 
-A data plane with local stores enabled MUST load them from `SECRET_STORES_FILE`
-at boot and on file change. A store in that file whose name matches a managed
-store of the same gateway MUST NOT resolve, and MUST report state
-`name_conflict`. A `file` store MUST refuse any path that, once cleaned and
-with symlinks evaluated, falls outside its `root`. An `env` store MUST refuse a
-variable without its configured `prefix`.
+A Vault client token MUST be renewed before its lease expires. The data plane
+MUST log in again when renewal fails or Vault answers 403.
 
-#### Scenario: File store path traversal
+#### Scenario: Vault Kubernetes auth
 
-- GIVEN local file store `k8s` with root `/var/run/tg-secrets`
+- GIVEN store `corp-vault` with `auth.method: kubernetes`, `role: trustgate`
+- WHEN the first reference to it is resolved
+- THEN the data plane logs in at `auth/kubernetes/login` with its projected ServiceAccount token, and reads the secret with the returned client token
+
+### Requirement: File and env stores are confined
+
+- A `file` store MUST refuse any path that, once cleaned and with symlinks
+  evaluated, falls outside its `root`.
+- An `env` store MUST refuse any variable that does not start with its
+  `prefix`.
+- `allowed_paths` MUST apply to both.
+
+#### Scenario: Path traversal
+
+- GIVEN file store `k8s` with root `/var/run/trustgate/secrets`
 - WHEN `secret://k8s/../../etc/passwd` is resolved
 - THEN resolution fails with class `invalid_payload` and no file outside the root is read
 
-### Requirement: Outbound hardening for managed stores
+#### Scenario: Env prefix
 
-On a plane where `OUTBOUND_ALLOW_PRIVATE_NETWORKS` is not set:
-- a managed Vault address MUST use HTTPS and MUST be dialed through `netguard`;
-- a managed Azure `vault_url` MUST match a Key Vault DNS suffix;
-- a managed AWS store MUST NOT set a custom endpoint.
+- GIVEN env store `env` with prefix `TG_SECRET_`
+- WHEN `secret://env/SERVER_SECRET_KEY` is resolved
+- THEN resolution fails with class `path_not_allowed` and the variable is not read
 
-#### Scenario: Vault address on a private network
+### Requirement: Stores are reported in the heartbeat
 
-- GIVEN a hosted plane
-- WHEN a managed Vault store with address `https://10.0.0.5:8200` is resolved
-- THEN the dial is blocked and the store reports `unavailable`
+Every heartbeat of a data plane with stores MUST carry, for each store:
+- name;
+- type;
+- `allowed_paths`;
+- state (`ok`, `auth_failed`, `unavailable`, `config_error` or `not_allowed`);
+- the last error class;
+- the time of the last check.
 
-### Requirement: Delete protection and usages
+State MUST combine two inputs:
+- a credential-level probe that needs no secret permission, run every
+  `SECRET_STORES_PROBE_INTERVAL`: Vault token lookup-self, AWS
+  `GetCallerIdentity`, token acquisition for GCP and Azure, or readability of
+  the root or prefix;
+- the outcome of the last real fetch.
 
-`GET /secret-stores/:id/usages` MUST list every entity field in the gateway that
-references the store. `DELETE` on a referenced store MUST be refused with 409
-`secret_store_in_use` and the same list.
+The heartbeat MUST NOT carry addresses, credentials or secret values. The admin
+MUST persist the latest report on the connection's `config_sync_connections`
+row.
 
-#### Scenario: Deleting a store in use
+#### Scenario: Report contents
 
-- GIVEN registry R references `secret://corp-vault/ai-gateway/openai#api_key`
-- WHEN store `corp-vault` is deleted
-- THEN the response is 409 `secret_store_in_use` and lists R with field `auth.api_key.api_key`
+- GIVEN store `corp-vault` whose last login succeeded
+- WHEN the data plane sends a heartbeat
+- THEN it lists `corp-vault` with type, allowed paths and state `ok`, and nothing else about the store
 
-### Requirement: Testing a managed store never reveals the value
+### Requirement: Admin listing and usages
 
-`POST /secret-stores/:id/test` MUST authenticate against the backend. When a
-path is given, it MUST also fetch it. The response MUST carry only:
-- the auth outcome;
-- the read outcome and its error class;
-- the version;
-- the latency.
+`GET /v1/gateways/:gateway_id/secret-stores` MUST return the union of stores
+reported by the gateway's live connections. For each store it MUST return:
+- the per-instance state;
+- `consistent=false` when instances disagree on the type or the allowed paths;
+- the usages count.
 
-The response MUST NOT contain the secret value. For a local store, the admin
-endpoint MUST answer 409 `test_runs_on_data_plane`. The data plane MUST serve the
-same test, with the same response contract, at
-`POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`. That route
-MUST be authorized by the diagnostics token used for registry test-connection.
+A store that is referenced but reported by no live connection MUST appear with
+status `not_reported`.
+
+`GET …/secret-stores/:name/usages` MUST list every entity field of the gateway
+that references the store. Both routes MUST require `secret_stores:read`.
+
+#### Scenario: Two instances, one degraded
+
+- GIVEN gateway G with two live data-plane instances, where one reports `corp-vault` as `ok` and the other as `auth_failed`
+- WHEN the stores of G are listed
+- THEN `corp-vault` has status `degraded` and both instance states are shown
+
+### Requirement: Diagnostics test on the data plane
+
+The data plane MUST serve `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`.
+- It MUST be authorized by the same diagnostics token as registry
+  test-connection.
+- It MUST enforce `allowed_paths`.
+- It MUST answer with the auth outcome, the read outcome or error class, the
+  version and the latency.
+- The response MUST NOT contain the secret value.
 
 #### Scenario: Successful test
 
-- GIVEN managed store S and a secret at `ai-gateway/openai` with field `api_key`
-- WHEN S is tested with that path and field
-- THEN the response has `auth: ok`, `read: ok` and the version, and no field holds the secret
+- GIVEN store `corp-vault` and a secret at `ai-gateway/openai` with field `api_key`
+- WHEN the console tests that path and field on the data plane
+- THEN the response has `auth: ok`, `read: ok` and the version, and the secret string does not appear in the body

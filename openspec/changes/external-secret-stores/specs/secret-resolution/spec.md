@@ -2,20 +2,21 @@
 
 ## Purpose
 
-How a plane turns references into values at runtime. This covers:
+How a hybrid data plane turns references into values at runtime. This covers:
 - where values may live;
 - cache, refresh and stale behaviour;
 - reaction to rotation;
-- what happens when a reference cannot be resolved.
+- what happens when a reference cannot be resolved;
+- what is observable.
 
 ## Requirements
 
-### Requirement: Values never leave process memory
+### Requirement: Values never leave data-plane memory
 
 A resolved secret value MUST NOT be written to Postgres, Redis, the config
-snapshot, the LKG file, logs, metrics labels or any API response. The control
-plane MUST store and distribute references only. The snapshot compiler MUST NOT
-resolve references.
+snapshot, the LKG file, the heartbeat, logs, metric labels or any API response.
+The control plane MUST NOT resolve references. The snapshot compiler MUST copy
+them verbatim.
 
 #### Scenario: Snapshot carries the reference
 
@@ -25,23 +26,18 @@ resolve references.
 
 ### Requirement: Materialization in the runtime read model
 
-Every plane MUST substitute references with values where a gateway's runtime
-model is built: `consumer.DataFinder` and `registry.Finder`. Other runtime
-readers of credential-bearing entities MUST do the same through the
-materializer. The admin read path MUST NOT materialize. Materialization MUST
-NOT mutate the repository or snapshot copy of the entity.
+The data plane MUST substitute references with values where a gateway's
+runtime model is built: `consumer.DataFinder` and `registry.Finder`.
+- Other runtime readers of credential-bearing entities MUST do the same through
+  the materializer.
+- Materialization MUST NOT mutate the snapshot copy of the entity.
+- The admin read path MUST NOT materialize.
 
 #### Scenario: Provider receives the value
 
 - GIVEN registry R references a secret whose value is `sk-live-123`
-- WHEN a request is routed to R
+- WHEN a request is routed to R on the hybrid data plane
 - THEN the upstream receives `Authorization: Bearer sk-live-123`
-
-#### Scenario: Admin read is not materialized
-
-- GIVEN the same registry R
-- WHEN R is read through the Admin API on a `run` plane
-- THEN the response holds the reference, not `sk-live-123`
 
 ### Requirement: An unresolved reference is never sent upstream
 
@@ -51,7 +47,8 @@ When a reference cannot be resolved and no stale value is allowed:
 - the invoker MUST fail with 503 `secret_unavailable` before contacting the
   upstream, unless failover selects another registry.
 
-The reference string MUST NOT be sent upstream.
+The reference string MUST NOT be sent upstream. The client-facing error MUST
+NOT name the store or the path.
 
 #### Scenario: Missing secret
 
@@ -61,20 +58,20 @@ The reference string MUST NOT be sent upstream.
 
 ### Requirement: Cache, refresh and stale-on-error
 
-Each plane MUST cache fetched payloads in memory, keyed by store, path and
+The data plane MUST cache fetched payloads in memory, keyed by store, path and
 version. The cache MUST follow the store's policy:
 - **TTL:** default 5 min, minimum 30 s.
 - **Refresh-ahead:** from 80 % of the TTL, with jitter, for entries used in the
   last hour.
-- **Stale-on-error:** when a fetch fails with a transient class (`unavailable`,
-  `auth_failed`), the last good value MUST be served until `ttl + max_stale`
-  (default 24 h). After that, resolution MUST fail.
+- **Stale-on-error:** when a fetch fails with `unavailable` or `auth_failed`,
+  the last good value MUST be served until `ttl + max_stale` (default 24 h).
+  After that, resolution MUST fail.
 - **Negative cache:** `not_found`, `access_denied`, `field_not_found` and
   `invalid_payload` MUST be cached for `negative_ttl` (default 30 s).
 - **Singleflight:** concurrent misses for the same key MUST share one fetch.
 - **Timeout:** a fetch MUST time out after `SECRET_STORES_FETCH_TIMEOUT`
   (default 2 s).
-- **Pinned versions:** a reference with an explicit `version` MUST NOT be
+- **Pinned versions:** a reference with an explicit version MUST NOT be
   refreshed.
 
 #### Scenario: Vault outage
@@ -98,8 +95,8 @@ version. The cache MUST follow the store's policy:
 ### Requirement: Rotation propagates without an admin write
 
 When a refresh returns a payload whose hash differs from the cached one, the
-plane MUST invalidate the runtime data of every gateway that used it. The next
-request MUST be served with the new value. Cached clients keyed on credentials
+data plane MUST invalidate the runtime data of every gateway that used it, and
+the next request MUST use the new value. Cached clients keyed on credentials
 (the Bedrock runtime pool, the MCP dial revision) MUST change key when the value
 changes.
 
@@ -112,32 +109,45 @@ changes.
 ### Requirement: Forced refresh on upstream rejection
 
 When an upstream answers 401 or 403 and the registry's credential came from a
-reference, the plane MUST force a refresh of that reference. This MUST happen
-at most once per reference every 30 s. If the value changed, the plane MUST
-retry the request once on the same registry, provided nothing has been streamed
-to the client yet.
+reference, the data plane MUST force a refresh of that reference. This MUST
+happen at most once per reference every 30 s. If the value changed, the data
+plane MUST retry the request once on the same registry, provided nothing has
+been streamed to the client yet.
 
-#### Scenario: Rotated key, first request after rotation
+#### Scenario: First request after a rotation
 
 - GIVEN the cache still holds K1 and the provider has revoked K1 in favour of K2
 - WHEN a request receives 401 from the provider
-- THEN the plane fetches K2, retries once, and the client receives the successful response
+- THEN the data plane fetches K2, retries once, and the client receives the successful response
+
+### Requirement: Prewarm
+
+After a snapshot apply or a store-file reload, the data plane MUST resolve every
+reference of its gateways in the background with bounded concurrency. With
+`SECRET_STORES_READINESS_GATE=true`, readiness MUST wait until every reference
+has either resolved or failed with a non-transient class.
+
+#### Scenario: Readiness gate
+
+- GIVEN `SECRET_STORES_READINESS_GATE=true` and a vault that answers after 3 s
+- WHEN the data plane starts
+- THEN it reports ready only after the references have been fetched
 
 ### Requirement: Observability
 
-Every plane MUST export:
-- `trustgate_secret_fetch_total{store_type,location,result}`;
+The data plane MUST export:
+- `trustgate_secret_fetch_total{store_type,result}`;
 - `trustgate_secret_fetch_duration_seconds{store_type}`;
 - `trustgate_secret_stale_served_total{store_type}`;
 - `trustgate_secret_forced_refresh_total{changed}`;
 - `trustgate_secret_unresolved_references` (gauge).
 
-Labels MUST NOT include the path, the field or any value. A data plane MUST
-report the state of its local stores in the config-sync heartbeat. From Phase 3
-it MUST also report its failing references, capped at 50.
+Labels MUST NOT include the path, the field or any value. From Phase 2 the
+heartbeat MUST carry its failing references, capped at 50, each with gateway,
+store, path, field and error class.
 
 #### Scenario: Unresolved reference is visible
 
-- GIVEN a hybrid data plane with a reference to a missing local store
-- WHEN the next heartbeat is sent
-- THEN it reports that store with state `store_missing`, and the console shows the store as unhealthy
+- GIVEN a reference whose secret was deleted from the vault
+- WHEN the next heartbeat is sent (Phase 2)
+- THEN it lists that reference with class `not_found`, and the console flags the entity that uses it

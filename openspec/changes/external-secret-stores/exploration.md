@@ -224,13 +224,13 @@ only some of them. Sources: `litellm/secret_managers/*.py`, https://docs.litellm
 2. **Resolve on the data plane.** For hybrid gateways this
    removes the customer's credentials from our DB and our snapshot entirely.
    LiteLLM has no equivalent, since it has no control-plane/data-plane split.
-3. **Separate who chooses the store from who references it.**
-   - Ambient pod identity (IRSA, GKE Workload Identity, Azure MI, Vault
-     Kubernetes auth), `env` and `file` stores are safe only when the store is
-     declared by whoever runs the data plane, and only on a data plane that is
-     not shared.
-   - Managed stores (created through the Admin API) carry explicit credentials
-     or, later, federated identity bound to the gateway.
+3. **Separate who chooses the store from who references it.** Ambient pod
+   identity (IRSA, GKE/AKS Workload Identity, Vault Kubernetes auth), `env` and
+   `file` stores are safe only when the store is declared by whoever runs the
+   data plane, and only on a plane that is not shared. That is a **hybrid**
+   data plane, so hybrid is where the feature delivers its full value.
+   Hosted and dedicated planes are NeuralTrust's, and would need keyless
+   federation bound to the gateway.
 4. **Fail static, fail loud.** Serve the last good value through a backend
    outage. Never send a reference string upstream. Expose metrics and report
    health to the console.
@@ -240,7 +240,9 @@ only some of them. Sources: `litellm/secret_managers/*.py`, https://docs.litellm
 
 ## 5. Open questions (resolved in design.md)
 
+- Which gateways first? → hybrid only in phases 1–2. Hosted and dedicated come in phase 3, with federation (D1).
+- Where is a store configured? → on the data plane (Helm values → `SECRET_STORES_FILE`), never in NeuralTrust (D2).
+- How does the console know the stores? → the data plane reports them in the heartbeat (D3).
 - Where to substitute: at each call site, or once in the read model? → once, in the runtime finders (D6).
-- How a hybrid data plane gets vault credentials without the SaaS seeing them → local stores (D3).
-- Whether to carry the list of references in the snapshot → no; a walker computes it (D9).
-- Should resolved values survive a data-plane restart while the vault is down (LKG)? → no by default; kept as an open question (OQ2).
+- Whether to carry the list of references in the snapshot → no; a walker computes it (D10).
+- Should resolved values survive a data-plane restart while the vault is down (LKG)? → no by default (OQ2).

@@ -1,47 +1,65 @@
-# Tasks: External secret stores (vault references)
+# Tasks: External secret stores for hybrid gateways
 
 Linear: _pending_. Base: `origin/develop`.
 
 Chain strategy:
-- Stacked PRs to `develop`, one branch per slice (`feat/<issue>-sN-<slug>`).
+- TrustGate slices are stacked PRs to `develop`, one branch per slice
+  (`feat/<issue>-sN-<slug>`).
 - Every TrustGate slice is inert until `SECRET_STORES_ENABLED=true`.
-- Console slices (`NeuralTrust/app`) go to `develop` in that repo once the API
-  slices they depend on are deployed to dev.
+- The chart change (H1) goes to the neuraltrust-platform chart repo once the
+  key names are agreed (OQ3).
+- Console slices go to `develop` in `NeuralTrust/app`, behind a console feature
+  flag, once the API slices they need are deployed to dev.
 
 ## Review Workload Forecast
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | ~5,000 total (tests included): TrustGate Phase 1 ~2,600, Phase 2 ~1,000, Phase 3 ~800; console ~1,300 |
+| Estimated changed lines | ~4,800 total, tests included: TrustGate Phase 1 ~2,700, Phase 2 ~900; chart ~150; console ~1,100 |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | S1 → S2 → S3 → S4 → S5 (Phase 1) → S6 → S7 (Phase 2) → S8 → S9 (Phase 3); A1 after S2, A2 after S4, A3 after S6 |
+| Suggested split | S1 → S2 → S3 → S4 → S5 → S6 (Phase 1) → S7 → S8 → S9 (Phase 2); H1 after S3; A1/A2 after S5 and S6; A3 after S5; A4 after S9 |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | stacked PRs to `develop` |
 
-Decision needed before apply: **Yes**. Approve the scope and the open
-questions (OQ1 default `max_stale`, OQ4 packaging) first.
+Decision needed before apply: **Yes**.
+- Approve hybrid-first scope (D1).
+- Agree chart keys (OQ3).
+- Decide default `max_stale` (OQ1) and packaging (OQ4).
 
-## Work units
+## Phase 1: hybrid MVP
 
 | Unit | Goal | Lines | Depends on |
 |------|------|-------|------------|
-| S1 | Domain: `secretref` (grammar, `Locations`, fuzz), `secretstore` (entity, typed config/auth, ports, errors), `ids.SecretStoreID`, config flags in `pkg/config` + `.env.example` | ~450 | — |
-| S2 | Persistence + Admin API: migration `secret_stores`, Postgres repository with `FieldSealer` (`secret-stores/v1`), use cases (create/update/delete/get/list), DTOs, `ResourceSecretStores` scope, routes, Swagger | ~650 (split S2a repo / S2b API if asked) | S1 |
-| S3 | Resolver core + first backends: cache (TTL, refresh-ahead, stale, negative, singleflight, eviction), refresher lifecycle in DI, error classes, metrics; HashiCorp Vault (KV v1/v2, token, AppRole, renew) over our HTTP client + netguard; AWS Secrets Manager (static keys, assume-role) | ~700 | S1 |
-| S4 | Wiring Phase 1: snapshot `secret_stores` field + codec + compiler + snapshot adapter; `Materializer` + `Collector`; `DataFinder.load` / `registry.Finder` integration + reverse-index invalidation; §9 readers; masking pass-through in `pkg/common/secret`; write-time validation for E1/E2/E4; `CredentialUnavailable` → `secret_unavailable`; Bedrock pool key + MCP revision hash | ~700 | S2, S3 |
-| S5 | Operations: forced refresh on 401/403 with one retry; `POST /:id/test`; `GET /:id/usages`; delete protection; `data_plane_too_old` gate; e2e test (DB-less proxy + fake vault + httptest upstream); `docs/secret-stores.md` | ~500 | S4 |
-| S6 | Local stores: `SECRET_STORES_FILE` loader (+ reload on change), `SECRET_STORES_ALLOW_LOCAL`, `env` and `file` backends, Vault Kubernetes/JWT auth, AWS default chain; data-plane diagnostics route `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`; `location: local` in the API (hybrid only); heartbeat `local_secret_stores`; name-conflict handling; compose/k8s examples | ~650 | S5 |
-| S7 | GCP Secret Manager (REST + `gcpauth`: SA JSON; ADC/impersonation on local stores) and Azure Key Vault (`azsecrets`: client secret; managed/workload identity on local stores; URL suffix allowlist) | ~450 | S3 (S6 for local identities) |
-| S8 | Remaining reference sites: inbound IdP secrets (E5), plugin `CredentialPaths()` incl. destination rule (E6), consumer embedding auth (E7), telemetry exporters (E8), health-check headers (E3) | ~550 | S4 |
-| S9 | Per-reference health: heartbeat `secret_refs`, persistence with the connection record, exposure on entity/store responses; `SECRET_STORES_READINESS_GATE` | ~300 | S6 |
-| A1 | Console: Gateway Settings → "Secret stores" tab (list, type-specific create/edit, local YAML snippet, test, usages, delete with usages), server actions + audit, i18n | ~600 | S2 (S5 for test/usages) |
-| A2 | Console: `SecretInput` (Value / Secret store) in `RegistrySchemaFieldRenderer`, MCP config panel, policy credential fields; "from <store>" badges | ~500 | S4 |
-| A3 | Console: health surfacing (store health, unresolved reference warnings on cards) | ~200 | S6 / S9 |
+| S1 | **Domain.** `secretref` (grammar, `Locations`, `FuzzParse`); `secretstore` (store model, typed config, `Backend`/`Catalog` ports, error classes); config variables in `pkg/config` + `.env.example` | ~400 | — |
+| S2 | **Resolver core.** Cache (TTL, refresh-ahead, stale, negative, singleflight, eviction), refresher and probe loops in DI, forced-refresh API, metrics. Tests with a fake clock and fake backend, `-race`. | ~550 | S1 |
+| S3 | **Local stores + backends.** `localfile` loader (strict decode, no inline secrets, `saas` guard, fsnotify reload); Vault/OpenBao (Kubernetes, JWT, AppRole, token; KV v1/v2; renew) over our HTTP client; AWS Secrets Manager (default chain, assume-role, VPC endpoint); `file` (confined root); `env` (prefix) | ~700 | S1, S2 |
+| S4 | **Materialization.** `Materializer` + `Collector`; `DataFinder.load` / `registry.Finder` integration + reverse-index invalidation; hybrid-only guard (D13b); §6 readers; `CredentialUnavailable` → `secret_unavailable`; forced refresh + one retry on 401/403; Bedrock pool key + MCP revision hash; codec test that the reference survives | ~600 | S2 |
+| S5 | **Discovery + admin.** Heartbeat `secret_stores` (proto, client, hub); migration `config_sync_connections.secret_stores`; `MarkHeartbeat`; `ResourceSecretStores`; `GET /secret-stores` + `/:name/usages`; write-time validator (hybrid only, reported store, allowed paths, version, scope) wired into the registry create/update and MCP target paths; masking pass-through in `pkg/common/secret`; `secret_reference_set` event; Swagger | ~650 | S1, S4 |
+| S6 | **Diagnostics + e2e + docs.** `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`; prewarm + `SECRET_STORES_READINESS_GATE`; e2e (hybrid plane + fake Vault + `httptest` upstream: serve, rotate, 401 retry, outage, no value in logs or snapshot); `docs/secret-stores.md`; compose example | ~500 | S3, S4, S5 |
 
-Phase 4 (keyless federation for hosted gateways: OIDC issuer, AWS
-`AssumeRoleWithWebIdentity`, GCP WIF, Azure FIC, Vault JWT) is a **separate
-change**, with its own design review (OQ5).
+## Phase 2: complete hybrid coverage
+
+| Unit | Goal | Lines | Depends on |
+|------|------|-------|------------|
+| S7 | GCP Secret Manager (REST + `gcpauth`, ADC/Workload Identity) and Azure Key Vault (`azsecrets`, workload or managed identity); generator entries in the console | ~400 | S3 |
+| S8 | Remaining locations: health-check headers (E3), IdP secrets (E5), plugin `CredentialPaths()` with the destination rule (E6), consumer embedding (E7), telemetry exporters (E8) | ~450 | S4, S5 |
+| S9 | Per-reference health: heartbeat `secret_refs`, persistence, exposure on entity responses | ~250 | S5 |
+
+## Chart (neuraltrust-platform, outside these repos)
+
+| Unit | Goal | Lines | Depends on |
+|------|------|-------|------------|
+| H1 | `agentgateway.secretStores` values: render the store file into a ConfigMap; mount the referenced Secrets (`caCert`, `secretIdSecret`, `tokenSecret`, `file.secrets`) and rewrite them into `*_file` paths; set `SECRET_STORES_ENABLED`, `SECRET_STORES_FILE`, readiness gate; `serviceAccount.annotations` passthrough | ~150 | S3 (file format frozen) |
+
+## Console (`NeuralTrust/app`)
+
+| Unit | Goal | Lines | Depends on |
+|------|------|-------|------------|
+| A1 | **"Secret stores" tab** in `app/[locale]/v2/features/settings/components/gateway/` (hybrid only): list, row detail with per-instance state and error-class hints, usages, "Test a secret" through a server action calling the data-plane diagnostics route (`mintDiagnosticsToken`, like `testRegistryConnectionAction`); i18n | ~400 | S5, S6 |
+| A2 | **"Add a secret store" generator:** type-specific forms (no secret inputs), values snippet (reusing `privateDeployValues.ts` helpers), least-privilege prerequisite templates (Vault policy and role, IAM policy, `gcloud`, `az`), `helm upgrade` command, "waiting for report" poller | ~400 | S5, H1 keys |
+| A3 | **`SecretInput`:** Value / From secret store; store selector with status, path with allowed-prefix check, key, version, preview, Test; round-trip parse of stored references; integrated in `RegistrySchemaFieldRenderer`, `GcpServiceAccountField` and `McpServerConfigPanel`; "from `<store>`" badges; audit through `logV2AuditEvent` | ~350 | S5, S6 |
+| A4 | Failing-reference warnings on cards; `SecretInput` in policy and telemetry forms | ~150 | S8, S9 |
 
 ## Common verification (every TrustGate slice)
 
@@ -49,8 +67,8 @@ change**, with its own design review (OQ5).
 go build ./...
 go vet ./...
 go test -race ./pkg/domain/secretref/... ./pkg/domain/secretstore/... ./pkg/app/secretref/... ./pkg/app/secretstore/... ./pkg/infra/secretstore/...
-go test -race ./pkg/app/consumer/... ./pkg/app/registry/... ./pkg/infra/configsnapshot/... ./pkg/runtimeconfig/...
-go generate ./pkg/domain/secretstore/... ./pkg/app/secretstore/...   # mocks are up to date (no diff)
+go test -race ./pkg/app/consumer/... ./pkg/app/registry/... ./pkg/infra/configsnapshot/... ./pkg/infra/configsync/... ./pkg/runtimeconfig/...
+go generate ./pkg/domain/secretstore/... ./pkg/app/secretref/... ./pkg/app/secretstore/...   # mocks up to date (no diff)
 golangci-lint run ./...
 ```
 
@@ -59,10 +77,12 @@ before pushing.
 
 ## Definition of done (Phase 1)
 
-- [ ] The success criteria in `proposal.md` that apply to managed stores pass
-  in the e2e test.
-- [ ] The codec test proves the snapshot holds references, not values.
-- [ ] No log line or metric label contains a resolved value. A grep-based test
-  over captured logs in the e2e checks this.
-- [ ] `docs/secret-stores.md` covers backends, least-privilege vault policies
-  and migration from literal values.
+- [ ] The e2e test covers the proposal's success criteria for Vault (Kubernetes
+  auth), AWS (default chain) and `file`.
+- [ ] The snapshot, the LKG file, the heartbeat, the logs and the diagnostics
+  responses never contain a resolved value. Tests assert this.
+- [ ] A `saas` plane refuses `SECRET_STORES_FILE`, and non-hybrid gateways
+  cannot hold or resolve references.
+- [ ] `docs/secret-stores.md` covers keyless setup per backend,
+  least-privilege policies, migration from literal values, and troubleshooting
+  by error class.
