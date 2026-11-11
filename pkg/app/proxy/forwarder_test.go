@@ -148,18 +148,27 @@ func TestForward_PoolFailoverOn503(t *testing.T) {
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
 		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
+			req.ResolvedModel = "first-provider-model"
+		}).
 		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
 		Once()
+	var servedProvider string
 	invoker.EXPECT().
 		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Run(func(_ context.Context, reg *registrydomain.Registry, req *infracontext.RequestContext) {
+			assert.Empty(t, req.ResolvedModel)
+			servedProvider = reg.Provider()
+		}).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), SentModel: "fallback-model"}, nil).
 		Once()
 
 	fwd := newTestForwarder(t, invoker)
+	req := &infracontext.RequestContext{}
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{},
+		Request:   req,
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -167,6 +176,31 @@ func TestForward_PoolFailoverOn503(t *testing.T) {
 	if res.StatusCode != 200 || string(res.Body) != "ok" {
 		t.Fatalf("expected failover to 200/ok, got %d/%q", res.StatusCode, string(res.Body))
 	}
+	assert.Equal(t, "fallback-model", req.SentModel)
+	assert.Equal(t, servedProvider, req.Provider)
+}
+
+func TestForward_ExhaustedBudgetKeepsLastResponseIdentity(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	first := backendFor(gatewayID, "openai")
+	fallback := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, first)
+	rc.Consumer.Fallback = enabledFallback(fallback.ID)
+	rc.Consumer.Fallback.Budget.MaxAttempts = 1
+	rc.FallbackBackends = []*registrydomain.Registry{fallback}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().Invoke(mock.Anything, first, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down"), SentModel: "gpt-4o"}, nil).Once()
+	req := &infracontext.RequestContext{}
+	res, err := newTestForwarder(t, invoker).Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID, Consumer: rc, Request: req,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 503, res.StatusCode)
+	assert.Equal(t, "openai", req.Provider)
+	assert.Equal(t, first.ID.String(), req.RegistryID)
+	assert.Equal(t, "gpt-4o", req.SentModel)
 }
 
 func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
@@ -681,7 +715,7 @@ func TestForward_RecordsSessionTurnWhenStreamCompletes(t *testing.T) {
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
 		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream, ResponseID: "resp_stream"}, nil).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream, ResponseID: "resp_stream", SentModel: "gpt-4"}, nil).
 		Once()
 
 	store := &fakeSessionStore{}
@@ -689,17 +723,18 @@ func TestForward_RecordsSessionTurnWhenStreamCompletes(t *testing.T) {
 
 	rt := trace.New("trace-1", trace.Metadata{})
 	ctx := trace.NewContext(context.Background(), rt)
+	req := &infracontext.RequestContext{
+		GatewayID: gatewayID.String(), SessionID: "sess-stream",
+		Body: []byte(`{"model":"gpt-4","stream":true}`),
+	}
 	res, err := fwd.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request: &infracontext.RequestContext{
-			GatewayID: gatewayID.String(),
-			SessionID: "sess-stream",
-			Body:      []byte(`{"model":"gpt-4","stream":true}`),
-		},
+		Request:   req,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res.Stream)
+	assert.Equal(t, "gpt-4", req.SentModel)
 	assert.Empty(t, store.recorded, "the turn is recorded once the stream is drained")
 
 	for _, err := range res.Stream {

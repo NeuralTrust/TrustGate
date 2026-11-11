@@ -85,12 +85,19 @@ var streamingDefaults = pluginutil.StreamingDefaults{
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
+	return parseConfigFor(settings, false)
+}
+
+// parseConfigFor parses the settings of the v1 plugin or, with v2, of trustguard_v2. The two
+// share every key; trustguard_v2 does not require collector_id, because /v2/token resolves the
+// integration from the gateway when none is named.
+func parseConfigFor(settings map[string]any, v2 bool) (Settings, error) {
 	cfg, err := pluginutil.Parse[Settings](settings)
 	if err != nil {
 		return Settings{}, err
 	}
 	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(v2); err != nil {
 		return Settings{}, err
 	}
 	return cfg, nil
@@ -127,7 +134,7 @@ func failureModeFromRaw(settings map[string]any) string {
 // failClosed reports whether this policy refuses what TrustGuard cannot evaluate.
 func (s Settings) failClosed() bool { return s.FailureMode == failureModeClosed }
 
-func (s *Settings) validate() error {
+func (s *Settings) validate(v2 bool) error {
 	switch s.Direction {
 	case legRequest, legResponse, legRequestResponse:
 	default:
@@ -138,13 +145,20 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("trustguard: failure_mode must be one of open, closed")
 	}
+	name := PluginName
+	if v2 {
+		name = PluginNameV2
+	}
 	if strings.TrimSpace(s.CollectorID) == "" {
-		return fmt.Errorf("trustguard: collector_id is required")
+		if !v2 {
+			return fmt.Errorf("trustguard: collector_id is required")
+		}
+		return s.Streaming.Validate(name)
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
-		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
+		return fmt.Errorf("%s: collector_id must be a valid UUID", name)
 	}
-	return s.Streaming.Validate(PluginName)
+	return s.Streaming.Validate(name)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {

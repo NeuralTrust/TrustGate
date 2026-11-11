@@ -207,7 +207,7 @@ func (r *Repository) SealStoredSecrets(ctx context.Context) (sealed, failed int,
 		return 0, 0, crypto.ErrEncryptedWritesOff
 	}
 	const candidates = `SELECT id FROM auths WHERE config::text LIKE '%client_secret%' ORDER BY id`
-	rows, err := r.conn.Pool.Query(ctx, candidates)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, candidates)
 	if err != nil {
 		return 0, 0, fmt.Errorf("auth repository: list configs: %w", err)
 	}

@@ -54,7 +54,10 @@ type connection struct {
 	scope      string
 	identity   configsyncrevocation.Identity
 	instanceID string
-	notices    chan string
+	// layered says the data plane pulls layered snapshots, so it is notified
+	// of manifest versions instead of single-blob versions.
+	layered    bool
+	notices    chan notice
 	revoked    chan struct{}
 	revokeOnce sync.Once
 
@@ -77,11 +80,16 @@ func NewHub(logger *slog.Logger, store ConnectionStore) *Hub {
 }
 
 func (h *Hub) register(id configsyncrevocation.Identity, instanceID string) *connection {
+	return h.registerStream(id, instanceID, false)
+}
+
+func (h *Hub) registerStream(id configsyncrevocation.Identity, instanceID string, layered bool) *connection {
 	conn := &connection{
 		scope:      id.Scope,
 		identity:   id,
 		instanceID: instanceID,
-		notices:    make(chan string, 1),
+		layered:    layered,
+		notices:    make(chan notice, 1),
 		revoked:    make(chan struct{}),
 	}
 	h.mu.Lock()
@@ -130,7 +138,7 @@ func (h *Hub) Broadcast(version string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for conn := range h.conns {
-		conn.enqueue(version)
+		conn.enqueue(notice{version: version})
 	}
 }
 
@@ -140,12 +148,25 @@ func (h *Hub) Broadcast(version string) {
 // undisturbed. An empty scope targets the in-cluster shared/composite data
 // planes that serve the global snapshot.
 func (h *Hub) BroadcastScope(scope, version string) {
+	h.BroadcastScopeLayered(scope, version, "")
+}
+
+// BroadcastScopeLayered is BroadcastScope for a publish that also has a
+// layered snapshot: connections that pull layered snapshots are notified of
+// layeredVersion, every other connection of version. An empty layeredVersion
+// notifies every connection of version.
+func (h *Hub) BroadcastScopeLayered(scope, version, layeredVersion string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for conn := range h.conns {
-		if conn.scope == scope {
-			conn.enqueue(version)
+		if conn.scope != scope {
+			continue
 		}
+		if conn.layered && layeredVersion != "" {
+			conn.enqueue(notice{version: layeredVersion, layered: true})
+			continue
+		}
+		conn.enqueue(notice{version: version})
 	}
 }
 
@@ -176,9 +197,16 @@ func (h *Hub) ConnectionCount() int {
 	return len(h.conns)
 }
 
-func (c *connection) enqueue(version string) {
+// notice is one pending version for a connection; layered says it names a
+// manifest rather than a single-blob snapshot.
+type notice struct {
+	version string
+	layered bool
+}
+
+func (c *connection) enqueue(n notice) {
 	select {
-	case c.notices <- version:
+	case c.notices <- n:
 		return
 	default:
 	}
@@ -187,7 +215,7 @@ func (c *connection) enqueue(version string) {
 	default:
 	}
 	select {
-	case c.notices <- version:
+	case c.notices <- n:
 	default:
 	}
 }

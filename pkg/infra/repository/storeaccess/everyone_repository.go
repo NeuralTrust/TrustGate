@@ -47,16 +47,8 @@ func NewEveryoneRepository(conn *database.Connection, appender outbox.Appender) 
 	return &EveryoneRepository{conn: conn, outbox: appender}
 }
 
-func (r *EveryoneRepository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		if r.outbox == nil {
-			return nil
-		}
-		return r.outbox.AppendTx(ctx, tx)
-	})
+func (r *EveryoneRepository) withGatewayMarkedTx(ctx context.Context, gatewayID ids.GatewayID, fn func(pgx.Tx) error) error {
+	return outbox.WithGatewayMarkedTx(ctx, r.conn, r.outbox, gatewayID, fn)
 }
 
 // GetEveryone returns the gateway's object, or nil when it has none.
@@ -98,7 +90,7 @@ func (r *EveryoneRepository) UpsertEveryone(ctx context.Context, e *domain.Every
 			    grants          = EXCLUDED.grants,
 			    excluded_groups = EXCLUDED.excluded_groups,
 			    updated_at      = EXCLUDED.updated_at`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, e.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, e.GatewayID, e.Mode, grants, excluded, created, now); err != nil {
 			return mapEveryonePgError(err)
 		}
@@ -108,7 +100,7 @@ func (r *EveryoneRepository) UpsertEveryone(ctx context.Context, e *domain.Every
 
 // DeleteEveryone removes the gateway's object; missing is not an error.
 func (r *EveryoneRepository) DeleteEveryone(ctx context.Context, gatewayID ids.GatewayID) error {
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM store_everyone WHERE gateway_id = $1`, gatewayID); err != nil {
 			return mapEveryonePgError(err)
 		}
@@ -119,7 +111,7 @@ func (r *EveryoneRepository) DeleteEveryone(ctx context.Context, gatewayID ids.G
 // PruneRegistry drops registryID's instance grants under a row lock, so a
 // concurrent replace of the object is never overwritten by a stale copy.
 func (r *EveryoneRepository) PruneRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error {
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+	return r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		var (
 			e                domain.Everyone
 			grants, excluded []byte
@@ -164,7 +156,7 @@ func (r *EveryoneRepository) ListEveryone(ctx context.Context, page, size int) (
 		size = 100
 	}
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM store_everyone`).Scan(&total); err != nil {
+	if err := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, `SELECT COUNT(*) FROM store_everyone`).Scan(&total); err != nil {
 		return nil, 0, mapEveryonePgError(err)
 	}
 	items, err := r.queryEveryone(ctx, selectEveryoneColumns+` ORDER BY gateway_id LIMIT $1 OFFSET $2`, size, (page-1)*size)
@@ -175,7 +167,7 @@ func (r *EveryoneRepository) ListEveryone(ctx context.Context, page, size int) (
 }
 
 func (r *EveryoneRepository) queryEveryone(ctx context.Context, query string, args ...any) ([]*domain.Everyone, error) {
-	rows, err := r.conn.Pool.Query(ctx, query, args...)
+	rows, err := database.Reader(ctx, r.conn.Pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, mapEveryonePgError(err)
 	}

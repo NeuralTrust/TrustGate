@@ -43,9 +43,14 @@ import (
 
 const compilerPageSize = 100
 
+// compilerGatewayPageSize is the page size for one gateway's listings. A
+// gateway can hold tens of thousands of keys, and every page is its own
+// query, so the pages are large.
+const compilerGatewayPageSize = 2000
+
 // compilerBulkPageSize is the page size for the bulk collect path's
 // whole-table scans, where fewer round-trips matter more than page weight.
-const compilerBulkPageSize = 500
+const compilerBulkPageSize = 2000
 
 // compilerConcurrency bounds how many gateways are collected from the database
 // at once on the per-gateway fallback path. Each gateway costs several
@@ -80,6 +85,9 @@ type Compiler struct {
 	playgroundTokenKeys []readmodel.VerificationKey
 
 	tenantCaps ratelimitdomain.TenantCapsLister
+	// reader runs a compile's reads against one database snapshot; nil reads
+	// straight from the repositories.
+	reader ConsistentReader
 	// lastCaps is the last caps listing that succeeded. It is replaced whole and
 	// never mutated, so readers can use it without holding the lock.
 	capsMu   sync.Mutex
@@ -180,6 +188,28 @@ func WithUsageEnforcement(enabled bool) CompilerOption {
 
 // WithTenantCaps stamps each snapshot with the plan caps of the tenants whose
 // gateways it carries.
+// ConsistentReader runs fn with a context whose repository reads all see the
+// database as of one instant.
+type ConsistentReader interface {
+	ReadConsistent(ctx context.Context, fn func(context.Context) error) error
+}
+
+// WithConsistentReads makes every compile read one snapshot of the database.
+// Without it, a compile's paged scans can skip or repeat rows that concurrent
+// writes insert or delete while it reads.
+func WithConsistentReads(r ConsistentReader) CompilerOption {
+	return func(c *Compiler) { c.reader = r }
+}
+
+// ReadConsistent runs fn against one snapshot of the database when a reader is
+// wired, and against the live repositories otherwise.
+func (c *Compiler) ReadConsistent(ctx context.Context, fn func(context.Context) error) error {
+	if c.reader == nil {
+		return fn(ctx)
+	}
+	return c.reader.ReadConsistent(ctx, fn)
+}
+
 func WithTenantCaps(r ratelimitdomain.TenantCapsLister) CompilerOption {
 	return func(c *Compiler) { c.tenantCaps = r }
 }
@@ -309,12 +339,28 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 // once and appends the encoded bytes to every snapshot it publishes, instead
 // of re-encoding the same catalog per gateway on every compile.
 func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
+	return c.compileAllStaged(ctx, nil)
+}
+
+func (c *Compiler) compileAllStaged(ctx context.Context, stages *compileStages) (global *readmodel.Snapshot, scoped map[string]*readmodel.Snapshot, catalog *readmodel.Snapshot, err error) {
+	err = c.ReadConsistent(ctx, func(ctx context.Context) error {
+		var cerr error
+		global, scoped, catalog, cerr = c.compileAllStagedRead(ctx, stages)
+		return cerr
+	})
+	return global, scoped, catalog, err
+}
+
+func (c *Compiler) compileAllStagedRead(ctx context.Context, stages *compileStages) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
+	readStart := time.Now()
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
+		stages.since(stageRead, readStart)
 		return nil, nil, nil, err
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
+	stages.since(stageRead, readStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -356,9 +402,11 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 
 	// Plan caps follow the gateways in each flavor: the global snapshot carries
 	// the tenants of the gateways it carries, and a scoped one only its own.
+	sharedStart := time.Now()
 	caps := c.listTenantCaps(ctx)
 	stampTenantCaps(&global, caps)
 	revocations, err := c.listSessionRevocations(ctx)
+	stages.since(stageRead, sharedStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -370,10 +418,14 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		bucket.UsageEnforcement = c.usageEnforcement
 	}
 
+	catalogStart := time.Now()
 	cat, err := c.collectCatalogData(ctx)
+	stages.since(stageRead, catalogStart)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	buildStart := time.Now()
+	defer stages.since(stageBuild, buildStart)
 	catData := readmodel.Data{}
 	mergeCatalog(&catData, cat)
 	sortData(&catData)
@@ -889,6 +941,14 @@ func (c *Compiler) collectGatewaysEach(ctx context.Context, gateways []gatewaydo
 }
 
 func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, data *readmodel.Data) error {
+	return c.collectGatewayData(ctx, gatewayID, data, false)
+}
+
+// collectGatewayData loads one gateway's config. strictPolicies reads the
+// gateway's policies with their unreadable-row count and applies the mass-skip
+// breaker to them, for callers that read a gateway on its own without the
+// whole-table check the bulk path runs.
+func (c *Compiler) collectGatewayData(ctx context.Context, gatewayID ids.GatewayID, data *readmodel.Data, strictPolicies bool) error {
 	consumers, err := c.consumers.ListByGateway(ctx, gatewayID)
 	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
 		return fmt.Errorf("configsnapshot: list consumers for gateway %s: %w", gatewayID, err)
@@ -909,9 +969,9 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		c.attachSharedOAuth(&data.Registries[i])
 	}
 
-	policies, err := c.policies.ListByGateway(ctx, gatewayID)
-	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
-		return fmt.Errorf("configsnapshot: list policies for gateway %s: %w", gatewayID, err)
+	policies, err := c.listGatewayPolicies(ctx, gatewayID, strictPolicies)
+	if err != nil {
+		return err
 	}
 	for _, p := range policies {
 		if p == nil {
@@ -974,6 +1034,26 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 	return nil
 }
 
+func (c *Compiler) listGatewayPolicies(ctx context.Context, gatewayID ids.GatewayID, strict bool) ([]*policydomain.Policy, error) {
+	if !strict {
+		policies, err := c.policies.ListByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return nil, fmt.Errorf("configsnapshot: list policies for gateway %s: %w", gatewayID, err)
+		}
+		return policies, nil
+	}
+	policies, total, err := listAllSkipping(ctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
+		return c.policies.List(ctx, policydomain.ListFilter{GatewayID: gatewayID, Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUnreadablePolicies(len(policies), total); err != nil {
+		return nil, err
+	}
+	return policies, nil
+}
+
 // attachSharedOAuth works on the snapshot's own copy of a registry: it swaps in
 // a new target rather than writing through the one it shares with the
 // repository's result.
@@ -1008,7 +1088,7 @@ func (c *Compiler) attachSharedOAuth(reg *registrydomain.Registry) {
 func (c *Compiler) listRegistries(ctx context.Context, gatewayID ids.GatewayID) ([]registrydomain.Registry, error) {
 	out := make([]registrydomain.Registry, 0)
 	for page := 1; ; page++ {
-		items, _, err := c.registries.List(ctx, registrydomain.ListFilter{GatewayID: gatewayID, Page: page, Size: compilerPageSize})
+		items, _, err := c.registries.List(ctx, registrydomain.ListFilter{GatewayID: gatewayID, Page: page, Size: compilerGatewayPageSize})
 		if err != nil {
 			if errors.Is(err, commonerrors.ErrNotFound) {
 				return out, nil
@@ -1021,7 +1101,7 @@ func (c *Compiler) listRegistries(ctx context.Context, gatewayID ids.GatewayID) 
 			}
 			out = append(out, *r)
 		}
-		if len(items) < compilerPageSize {
+		if len(items) < compilerGatewayPageSize {
 			return out, nil
 		}
 	}
@@ -1030,7 +1110,7 @@ func (c *Compiler) listRegistries(ctx context.Context, gatewayID ids.GatewayID) 
 func (c *Compiler) listAuths(ctx context.Context, gatewayID ids.GatewayID) ([]authdomain.Auth, error) {
 	out := make([]authdomain.Auth, 0)
 	for page := 1; ; page++ {
-		items, _, err := c.auths.List(ctx, authdomain.ListFilter{GatewayID: gatewayID, Page: listing.Page{Number: page, Size: compilerPageSize}})
+		items, _, err := c.auths.List(ctx, authdomain.ListFilter{GatewayID: gatewayID, Page: listing.Page{Number: page, Size: compilerGatewayPageSize}})
 		if err != nil {
 			if errors.Is(err, commonerrors.ErrNotFound) {
 				return out, nil
@@ -1043,7 +1123,7 @@ func (c *Compiler) listAuths(ctx context.Context, gatewayID ids.GatewayID) ([]au
 			}
 			out = append(out, *a)
 		}
-		if len(items) < compilerPageSize {
+		if len(items) < compilerGatewayPageSize {
 			return out, nil
 		}
 	}
