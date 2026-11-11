@@ -150,7 +150,7 @@ Order on the integration branch: S1 → S2 → S3a → S3b, with S4, S5a and S5c
 - [ ] 14.3 Tests: the Foundry scenarios; recorded card fixtures for v1.0 and v0.3.
 
 ### S15 — Amazon Bedrock AgentCore
-- [ ] 15.1 `providers/agentcore.go`: ARN-escaped URLs with the qualifier; SigV4 (`infra/a2a/sigv4.go` over the Bedrock credential loader, service `bedrock-agentcore`).
+- [ ] 15.1 `providers/agentcore.go`: ARN-escaped URLs with the qualifier; `AssumeRole` with `ExternalId` (required in SaaS); SigV4 (`infra/a2a/sigv4.go` over the Bedrock credential loader, service `bedrock-agentcore`).
 - [ ] 15.2 Session id: `Owner.UpstreamSession`, generate and record, reuse only after the owner matches.
 - [ ] 15.3 Non-2xx JSON-RPC decode, 401/403 mapping, `-32054` retry for buffered kinds.
 - [ ] 15.4 Tests: SigV4 test vectors; session reuse across two turns; foreign owner never reaches the session; retry then success; SSE through SigV4.

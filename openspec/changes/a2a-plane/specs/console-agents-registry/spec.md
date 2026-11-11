@@ -172,7 +172,7 @@ Con un proveedor, el orden MUST ser **Location → Sign-in → Card → Settings
 
 | Proveedor | Opciones |
 |---|---|
-| AgentCore | "AWS IAM (SigV4)", con claves, rol o "Use the gateway's AWS identity"; "OAuth client credentials"; "As the user, through your identity provider" |
+| AgentCore | "AWS IAM (SigV4)", con claves, rol (con "External ID", obligatorio en SaaS) o "Use the gateway's AWS identity" (solo híbrido y dedicado); "OAuth client credentials"; "As the user, through your identity provider" |
 | Foundry | "Microsoft Entra ID", con service principal o "Use the gateway's managed identity"; "As the user, through Microsoft Entra (on-behalf-of)" |
 | Vertex | "Google service account", con JSON (`GcpServiceAccountField`), "Impersonate a service account" o "Use the gateway's Google identity" |
 

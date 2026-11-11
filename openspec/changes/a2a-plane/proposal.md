@@ -166,7 +166,8 @@ In more detail:
 | `delegation` (TrustGate-signed token) to AgentCore | AgentCore's JWT authorizer needs an OIDC discovery URL, and `STS_ISSUER` is not an HTTPS issuer with one today. It needs a published issuer per environment. |
 | Google ID tokens for A2A agents on Cloud Run (`generic` + Google auth) | Cloud Run agents already work through `static` or `client_credentials` in front of IAP. A native ID-token mode can follow the first request. |
 | Vertex's cross-project Agent Gateway (`a2a-agent-gateway.vertexai.cloud.goog`) and Gemini Enterprise (Discovery Engine) agents | Preview surfaces with their own resource model |
-| Foundry `AgentOnBehalfOfUser` and OAuth identity passthrough; reusing credentials from an existing LLM registry; importing agents by listing an AWS, Azure or GCP account | Each needs its own UX. Plain OBO and per-registry credentials cover the first customers. |
+| Foundry `AgentOnBehalfOfUser` and OAuth identity passthrough | Plain OBO covers the first customers |
+| **Discovering agents** from an AWS, Azure or GCP account, and a shared **Cloud connection** that registries reference | Decided 2026-11-11: agents are added one at a time, with credentials on each registry (as LiteLLM does). Discovery needs extra read permissions, a different listing per cloud, and a shared credential entity. Revisit if customers register many agents per account. |
 
 ## Decisions
 
@@ -197,6 +198,7 @@ In more detail:
 | Q23 | Vertex is HTTP+JSON only | The gateway adapts the binding upstream. Callers still speak JSON-RPC 0.3, so there is one inspection path. Streaming is refused. |
 | Q24 | AgentCore sessions | Gateway-generated, stored with the context owner, never taken from the caller |
 | Q25 | Ship all three together? | Yes, in this change. Order: Foundry, then AgentCore, then Vertex. Vertex merges only after a recorded exchange with a real Agent Engine, because its docs disagree on the request body. |
+| Q26 | Discovery and shared cloud credentials? | No. Agents are added one at a time and each registry carries its own credentials. `external_id` is required on assumed AWS roles in SaaS. |
 
 ## Open questions (need an owner)
 

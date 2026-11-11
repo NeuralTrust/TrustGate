@@ -1,6 +1,6 @@
 # Design: A2A agent plane
 
-Inputs: [`proposal.md`](./proposal.md) (decisions Q1–Q25), [`exploration.md`](./exploration.md), and the specs:
+Inputs: [`proposal.md`](./proposal.md) (decisions Q1–Q26), [`exploration.md`](./exploration.md), and the specs:
 
 - TrustGate: `a2a-agent-registry`, `a2a-agent-plane`, `a2a-task-ownership`, `a2a-policy-chain`, `a2a-delegated-identity`, `a2a-whoami-agents`, `a2a-hosted-agents`.
 - app: `console-agents-registry`, `console-agents-plane`.
@@ -459,7 +459,7 @@ Spec `a2a-hosted-agents`. All three speak A2A, so each provider is a small adapt
 | # | Decision | Rejected | Why |
 |---|---|---|---|
 | D23 | `a2a_target.provider` plus one locator object per provider. The gateway derives the card URL and the endpoint | A pasted URL plus a "this is Foundry" flag | Credentials can only go to a host the gateway built. No hand-escaped ARNs. |
-| D24 | `auth.mode: cloud` + `a2a_target.cloud_auth{aws\|azure\|gcp}`, reusing `registry.AWSAuth`, `registry.AzureAuth` and a small `A2AGCPAuth{ServiceAccountJSON, ImpersonateServiceAccount}` | New `MCPAuth` modes | `MCPAuth` belongs to MCP. LLM registries already validate, encrypt and mask these shapes. |
+| D24 | `auth.mode: cloud` + `a2a_target.cloud_auth{aws\|azure\|gcp}`, reusing `registry.AWSAuth` (plus an A2A-only `ExternalID`, required in SaaS when a role is assumed), `registry.AzureAuth` and a small `A2AGCPAuth{ServiceAccountJSON, ImpersonateServiceAccount}` | New `MCPAuth` modes | `MCPAuth` belongs to MCP. LLM registries already validate, encrypt and mask these shapes. |
 | D25 | A `Provider` port in `pkg/app/a2a/provider.go`, with one implementation per provider and `generic` as the identity | `switch` statements in the forwarder | The forwarder stays one path, and each provider is testable alone |
 | D26 | Vertex: adapt the binding upstream. Callers keep JSON-RPC 0.3 | Expose HTTP+JSON to callers | One inspection and ownership path. Vertex has three methods, so the mapping is small. |
 | D27 | The AgentCore session id lives in the context's ownership record | A deterministic hash of owner + `contextId` | The first message has no `contextId`, and a hash would split the first and second turns into different sessions |

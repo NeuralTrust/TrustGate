@@ -29,6 +29,7 @@ decisions_2026-11-11:
   identity: "phase 1 (delegation, obo, token_exchange) in this change; agent chain is a separate change (a2a-delegation-chain)"
   pinning: "parity with LiteLLM, not a differentiator"
   hosted_agents: "AgentCore, Foundry and Vertex in scope as provider presets on A2A (all three serve A2A natively); Vertex gated on a recorded exchange"
+  discovery: "no; agents added one at a time with per-registry credentials; external_id required on assumed AWS roles in SaaS"
 delivery:
   strategy: integration-branch (proposed, not approved)
   integration_branch: feat/a2a-plane
