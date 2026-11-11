@@ -17,14 +17,16 @@ package a2a
 import (
 	"bytes"
 	"encoding/json"
+
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 // Version is an A2A protocol version a registry is pinned to.
-type Version string
+type Version = registrydomain.A2AProtocolVersion
 
 const (
-	Version03 Version = "0.3"
-	Version10 Version = "1.0"
+	Version03 = registrydomain.A2AVersion03
+	Version10 = registrydomain.A2AVersion10
 )
 
 // Kind is what a method does, whatever its name in the version.
@@ -319,6 +321,14 @@ func decodeObject(raw json.RawMessage) (object, bool) {
 		return nil, false
 	}
 	return o, true
+}
+
+// decodeMap reads a JSON object keeping numbers as they were written.
+func decodeMap(raw []byte) (map[string]any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var m map[string]any
+	return m, dec.Decode(&m) == nil && m != nil
 }
 
 func (o object) has(key string) bool {

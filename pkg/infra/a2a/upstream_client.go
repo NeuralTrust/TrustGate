@@ -21,21 +21,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
-var _ appa2a.Upstream = (*upstreamClient)(nil)
-
-type upstreamClient struct {
-	client *http.Client
-}
-
 // NewUpstreamClient posts to agents through the shared network guard. The
 // caller's context bounds each call: an agent answers a buffered call only
 // once the task is done, so there is no response header timeout.
 func NewUpstreamClient() appa2a.Upstream {
 	transport := netguard.NewTransport()
 	transport.ResponseHeaderTimeout = 0
-	return &upstreamClient{client: &http.Client{Transport: transport, CheckRedirect: netguard.CheckRedirect}}
-}
-
-func (u *upstreamClient) Do(req *http.Request) (*http.Response, error) {
-	return u.client.Do(req)
+	return &http.Client{Transport: transport, CheckRedirect: netguard.CheckRedirect}
 }

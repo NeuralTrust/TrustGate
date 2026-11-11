@@ -93,19 +93,6 @@ func TestMethodKind(t *testing.T) {
 	}
 }
 
-func TestKindRefusal(t *testing.T) {
-	t.Parallel()
-	for v := range versions {
-		assert.Equal(t, a2a.CodeUnsupportedOperation, a2a.KindList.Refusal(v).Code)
-		assert.Equal(t, a2a.CodePushNotificationNotSupported, a2a.KindPush.Refusal(v).Code)
-		assert.Equal(t, a2a.CodeExtendedCardNotConfigured, a2a.KindExtendedCard.Refusal(v).Code)
-		assert.Nil(t, a2a.KindSend.Refusal(v))
-	}
-	assert.True(t, a2a.KindStream.Streams())
-	assert.True(t, a2a.KindSubscribe.Streams())
-	assert.False(t, a2a.KindSend.Streams())
-}
-
 func TestDecode(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

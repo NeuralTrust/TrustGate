@@ -51,7 +51,7 @@ func (h *Handler) Card(c *fiber.Ctx) error {
 	}
 	target := agent.A2ATarget
 	endpoint := c.BaseURL() + "/" + rc.Consumer.Slug + "/agents/" + agent.ID.String()
-	card, err := appa2a.RenderCard(target.Card, appa2a.Version(target.ProtocolVersion), endpoint,
+	card, err := appa2a.RenderCard(target.Card, target.ProtocolVersion, endpoint,
 		target.Provider == registrydomain.A2AProviderVertexAgentEngine)
 	if err != nil {
 		return err

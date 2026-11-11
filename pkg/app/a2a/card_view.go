@@ -17,6 +17,7 @@ package a2a
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 )
 
 const (
@@ -34,11 +35,9 @@ const (
 // additionalInterfaces out of a 0.3 card, for an agent whose own card
 // advertises HTTP+JSON (Vertex).
 func RenderCard(card []byte, v Version, endpoint string, jsonrpcOnly bool) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(card))
-	dec.UseNumber()
-	var c map[string]any
-	if err := dec.Decode(&c); err != nil {
-		return nil, err
+	c, ok := decodeMap(card)
+	if !ok {
+		return nil, errors.New("a2a: the pinned card is not a JSON object")
 	}
 	caps, _ := c["capabilities"].(map[string]any)
 	if caps == nil {

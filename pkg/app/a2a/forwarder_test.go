@@ -107,7 +107,7 @@ func a2aRegistry(t *testing.T, v a2a.Version, url string) *registrydomain.Regist
 		Enabled: true,
 		A2ATarget: &registrydomain.A2ATarget{
 			Provider:        registrydomain.A2AProviderGeneric,
-			ProtocolVersion: registrydomain.A2AProtocolVersion(v),
+			ProtocolVersion: v,
 			URL:             url,
 			Card:            readFixture(t, "card."+versions[v]+".json"),
 			Auth:            &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeNone},

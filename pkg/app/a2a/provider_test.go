@@ -84,7 +84,7 @@ func (h *hostedHarness) sent() []string {
 
 func newHostedHarness(t *testing.T, ag *agent, v a2a.Version, target *registrydomain.A2ATarget, card string) *hostedHarness {
 	t.Helper()
-	target.ProtocolVersion = registrydomain.A2AProtocolVersion(v)
+	target.ProtocolVersion = v
 	target.Card = []byte(card)
 	target.Normalize()
 	reg := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), Name: "Hosted", Type: registrydomain.TypeA2A, Enabled: true, A2ATarget: target}
