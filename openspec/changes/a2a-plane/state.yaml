@@ -10,7 +10,6 @@ app_base:
   branch: origin/develop
   commit: 1fb4d0be
   audited_at: 2026-11-11
-  units: [A0, A1, A2, A3]
 phases:
   explore: done
   propose: draft
@@ -19,6 +18,16 @@ phases:
   tasks: draft
   apply: not_started
 artifacts_done: [exploration, proposal, specs, design, tasks]
+specs:
+  trustgate: [a2a-agent-registry, a2a-agent-plane, a2a-task-ownership, a2a-policy-chain, a2a-delegated-identity, a2a-whoami-agents]
+  app: [console-agents-registry, console-agents-plane]
+units:
+  trustgate: [S1, S2, S3a, S3b, S4, S5a, S5b, S5c, S6, S7, S8, S9, S10, S11, S12]
+  app: [A0, A1, A2, A3, A4]
+decisions_2026-11-11:
+  plane: "separate agent plane (reversed from serving on the MCP plane)"
+  identity: "phase 1 (delegation, obo, token_exchange) in this change; agent chain is a separate change (a2a-delegation-chain)"
+  pinning: "parity with LiteLLM, not a differentiator"
 delivery:
   strategy: integration-branch (proposed, not approved)
   integration_branch: feat/a2a-plane
@@ -26,4 +35,5 @@ delivery:
 open_questions:
   - "TrustGuard v1 evaluates protocol a2a? v2 skips it (owner: TrustGuard team) - blocks GA of inspection"
   - "Authenticated-only agent card acceptable for first customers' clients?"
+  - "Agents hosts per environment: DNS and certificates (owner: platform)"
   - "Linear issue, owner, and delivery strategy approval"

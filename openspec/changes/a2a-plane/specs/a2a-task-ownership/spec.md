@@ -6,11 +6,17 @@ Cambio `a2a-plane`. Capability nueva: el gateway liga cada tarea y cada contexto
 
 ### Requirement: Quién es el dueño
 
-El dueño de una tarea o de un contexto MUST ser el par (consumer, principal), donde principal es el subject del principal autenticado cuando la llamada lo tiene, y el id de la auth (API key) cuando no.
+El dueño de una tarea o de un contexto MUST ser el par (consumer, sujeto del principal) que fija `a2a-agent-plane`:
+
+- el `sub` del IdP;
+- `EndUserSubject` para un usuario nombrado por la aplicación;
+- `AppSubject` para la aplicación misma.
+
+Dos keys de la misma aplicación sin usuario comparten, por tanto, sus tareas. Dos usuarios de la misma aplicación, no.
 
 #### Scenario: Dos usuarios con la misma app
 
-- GIVEN un consumer A2A con OAuth y dos usuarios, U1 y U2
+- GIVEN un consumer A2A cuya aplicación nombra a dos usuarios, U1 y U2, con `X-NeuralTrust-End-User`
 - WHEN U1 crea una tarea
 - THEN su dueño es (consumer, U1), y U2 no es su dueño
 

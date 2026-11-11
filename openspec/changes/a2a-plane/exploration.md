@@ -29,7 +29,7 @@ The README already sells A2A as a shipped feature: "multi-protocol gateway engin
 
 | Need | Existing piece |
 |---|---|
-| JSON-RPC over HTTP with SSE, consumer resolution by path, caller auth (API key, gateway OAuth AS, default IdP), principal admission | MCP plane: `mcp_router.go:190-194`, `mcp_handler.go:226` (`MatchPath`, `hasAuth`, `consumerAdmitsPrincipal`) |
+| Caller identity resolution (API key, mTLS/XFCC, external IdP JWT), principal admission, end-user header | MCP plane: `ChainIdentityResolver` (`middleware/auth_chain.go`), `mcp_handler.go:593-752` (`hasAuth`, `consumerAdmitsPrincipal`, `endUserPrincipal`, `appPrincipal`). The resolver is reusable with a new path scope. The MCP auth *transport* is not: it is bound to `/mcp` paths (`SlugFromMCPPath`), MCP metrics (`KindMCP`), MCP usage codes (`-32005`) and the MCP protected-resource handler. |
 | Running a plugin chain over a JSON-RPC call with a synthetic request body, and mapping a block to a JSON-RPC error | `pkg/app/mcp/plugin_runner.go:132` (`PreRequest`), `:216` (`PreResponse`), `:376` (`buildRequestContext`) |
 | Upstream auth modes, static headers encrypted at rest | `registry.MCPAuth` (`mcp_target.go:69-74,108`: `none`, `static`, `passthrough`, `exchange`, `forwarded`, `client_credentials`; exchange patterns `obo`, `delegation`, `token_exchange`), `secrets_rewrite.go`, `UnreadableHeaders` |
 | SSRF-safe outbound HTTP | `pkg/infra/netguard` (`NewHTTPClient`, `CheckRedirect`) |
@@ -49,9 +49,22 @@ The README already sells A2A as a shipped feature: "multi-protocol gateway engin
 - `ListTasks` MUST return only tasks visible to the authenticated client, and servers SHOULD NOT tell "not found" from "not authorized". A gateway that calls the agent with one shared credential collapses every caller into one identity at the agent, so **task ids leak across callers unless the gateway binds them**.
 - Push notifications make the agent call a client-supplied webhook directly: the traffic bypasses the gateway, and the URL is a client-controlled outbound target on the agent's network.
 
-## How LiteLLM does it (for contrast)
+## How LiteLLM does it (for contrast, checked 2026-11-11)
 
-Registry of agents, JSON-RPC proxy at `/a2a/{agent_id}`, card URL rewrite, virtual-key and team permissions, per-agent spend (estimated), optional trace-id requirement, iteration budgets, and two protocol bridges (A2A client → LangGraph/AgentCore/Vertex/Foundry/Pydantic AI, and OpenAI `/chat/completions` with `model: a2a/<agent>`). Only `message/send` and `message/stream` run through its pipeline. Task methods and push-notification config are forwarded unchanged, and the caller's identity is not propagated to sub-agents.
+- **Registration.** Manual, one agent at a time: UI, `POST /v1/agents` or `config.yaml`. Given a base URL, it probes `/.well-known/agent-card.json`, `/.well-known/agent.json` and `/agentCard/v1.0`.
+- **Card.** Stored in the database and served from the stored copy with the URL rewritten. The admin can choose which skills and fields to expose. A "Re-sync from upstream" button shows a diff and accepts changes field by field. Signatures are not verified. **Pinning is therefore parity, not a differentiator.**
+- **Discovery.** No automatic discovery of agents (no scan, no import from AgentCore, Vertex or Foundry). Callers find registered agents through:
+  - the AI Hub (`GET /public/agent_hub`);
+  - `GET /v1/agents`, filtered by key, with semantic search on `?query=`;
+  - an `agent_search` virtual MCP tool.
+- **Traffic.** JSON-RPC proxy at `/a2a/{agent_id}`, with virtual-key and team permissions and per-agent spend (estimated). Only `message/send` and `message/stream` run through its pipeline. Task methods and push config are forwarded unchanged.
+- **Bridges.** Two protocol bridges: an A2A client to LangGraph, AgentCore, Vertex, Foundry or Pydantic AI, and OpenAI `/chat/completions` with `model: a2a/<agent>`.
+- **Identity to the agent.**
+  - Static API key, SigV4 or provider-native auth.
+  - Plain `X-LiteLLM-User-Id` / `X-LiteLLM-Team-Id` headers, unsigned.
+  - The caller's key and end user are not forwarded unless `extra_headers` or `x-a2a-{agent}-{header}` pass them.
+  - JWT signing (`mcp_jwt_signer`), OBO / RFC 8693 and Okta ID-JAG exist **for MCP only**.
+- **Chains.** `X-LiteLLM-Trace-Id` and `X-LiteLLM-Agent-Id` are trusted from the client. Iteration budgets (calls and $ per session) hang off that unauthenticated trace id.
 
 ## Approaches
 
@@ -59,6 +72,24 @@ Registry of agents, JSON-RPC proxy at `/a2a/{agent_id}`, card URL rewrite, virtu
 |---|---|---|---|
 | P1 | Serve A2A on the **MCP plane**, dispatched by consumer type after `MatchPath` | Same JSON-RPC + SSE shape, auth transport, principal admission and deployment as agent traffic already uses | The MCP handler grows a branch; the plane's name stops matching its scope |
 | P2 | Serve A2A on the **proxy plane** | One plane for "outbound to a model or agent" | The proxy is built around LLM provider adapters, model routing and token streams; none of it applies |
-| P3 | A new `a2a` **binary plane** | Clean separation, scales alone | One more pod, router, DI set and health surface for an MVP with no traffic yet |
+| P3 | A new `agent` **binary plane** | Clean separation; scales alone; MCP untouched; own host; deploy-gated | One more pod, router, DI set and health surface per environment |
 
-Recommendation: **P1**. Routing is by consumer type, so moving A2A to its own plane later is a router change, not a redesign.
+**Decision: P3**, a new `agent` plane. A first draft chose P1; the review reversed it:
+
+- P1 needed the riskiest refactor of the change inside the MCP handler, which serves production MCP traffic.
+- Agent calls last minutes and need their own scaling and limits.
+- A deployment per environment is a natural on/off switch for A2A.
+- A dedicated host avoids agent URLs under an `mcp` hostname.
+- Three planes match the console's model.
+
+The cost is one more Deployment per environment, and one more pod for hybrid customers who want A2A. The `worker` plane shows the wiring pattern.
+
+## Identity building blocks already in the code
+
+The MCP plane already has an STS (`pkg/app/identity/sts`):
+
+- **`delegation` and `impersonation`:** the gateway mints its own JWT (`sub`, `aud`, `orig_iss`, `scope`, and an `act` for delegation), signed by `TokenSigner` and published at `/.well-known/jwks.json` (`exchanger.go:154`).
+- **`obo`:** Entra on-behalf-of (`exchanger.go:175`).
+- **`token_exchange`:** RFC 8693 (`exchanger.go:193`).
+
+`Exchange` fails with `ErrNoUserIdentity` when there is no principal. `AppSubject` and `EndUserSubject` (`pkg/domain/consumer/identity.go`) already define the subjects for an application and for an end user it names. Phase 1 of delegated identity is mostly reuse.
