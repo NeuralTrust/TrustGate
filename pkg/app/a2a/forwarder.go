@@ -115,7 +115,7 @@ func (x *Exchange) prepare(ctx context.Context) *RPCError {
 	if len(target.AllowedMethods) > 0 && !slices.Contains(target.AllowedMethods, x.call.Request.Method) {
 		return MethodNotFound()
 	}
-	if kind.Streams() && !Streaming(target.Card) {
+	if kind.Streams() && (!Streaming(target.Card) || target.Provider == registrydomain.A2AProviderVertexAgentEngine) {
 		return UnsupportedOperation(x.version)
 	}
 	content, err := RequestContent(x.version, kind, x.call.Request.Params)

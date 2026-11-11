@@ -294,3 +294,128 @@ func TestAgentCoreStreamIsSignedInItsSession(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, sessionOf(t, ag, 0), owner.UpstreamSession)
 }
+
+// The Vertex exchanges below follow the a2a-sdk 0.3 REST handler, which
+// parses and writes the protobuf JSON form of the A2A objects. They are not
+// recorded from an Agent Engine.
+const (
+	vertexBase = "https://europe-west1-aiplatform.googleapis.com/v1beta1/projects/acme-agents/locations/europe-west1/reasoningEngines/1234567890/a2a"
+
+	vertexTask = `{"id":"t-1","contextId":"c-1","status":{"state":"TASK_STATE_COMPLETED","message":{"messageId":"m-2","role":"ROLE_AGENT",` +
+		`"content":[{"text":"1 USD = 0.92 EUR"}]},"timestamp":"2026-11-11T10:00:00Z"},` +
+		`"artifacts":[{"artifactId":"a-1","name":"rate","parts":[{"data":{"data":{"rate":0.92}}},{"file":{"fileWithUri":"gs://b/r.csv","mimeType":"text/csv"}}]}],` +
+		`"history":[{"messageId":"m-1","role":"ROLE_USER","content":[{"text":"USD to EUR?"}]}]}`
+
+	rpcVertexTask = `{"kind":"task","id":"t-1","contextId":"c-1","status":{"state":"completed","message":{"kind":"message","messageId":"m-2","role":"agent",` +
+		`"parts":[{"kind":"text","text":"1 USD = 0.92 EUR"}]},"timestamp":"2026-11-11T10:00:00Z"},` +
+		`"artifacts":[{"artifactId":"a-1","name":"rate","parts":[{"kind":"data","data":{"rate":0.92}},{"kind":"file","file":{"uri":"gs://b/r.csv","mimeType":"text/csv"}}]}],` +
+		`"history":[{"kind":"message","messageId":"m-1","role":"user","parts":[{"kind":"text","text":"USD to EUR?"}]}]}`
+)
+
+func vertexTarget() *registrydomain.A2ATarget {
+	return &registrydomain.A2ATarget{
+		Provider:          registrydomain.A2AProviderVertexAgentEngine,
+		VertexAgentEngine: &registrydomain.VertexLocator{Project: "acme-agents", Location: "europe-west1", ReasoningEngineID: "1234567890"},
+		Auth:              &registrydomain.MCPAuth{Mode: registrydomain.A2AAuthModeCloud},
+		CloudAuth:         &registrydomain.A2ACloudAuth{GCP: &registrydomain.A2AGCPAuth{}},
+	}
+}
+
+func newVertexHarness(t *testing.T, ag *agent) *hostedHarness {
+	t.Helper()
+	return newHostedHarness(t, ag, a2a.Version03, vertexTarget(), `{"name":"Rates","capabilities":{"streaming":true}}`)
+}
+
+func TestVertexSendsMessagesOverREST(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{"task":`+vertexTask+`}`)))
+	h := newVertexHarness(t, ag)
+	result, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"kind":"message","messageId":"m-1","role":"user",`+
+		`"parts":[{"kind":"text","text":"USD to EUR?"},{"kind":"file","file":{"bytes":"aGk=","mimeType":"text/plain","name":"n.txt"}},{"kind":"data","data":{"k":1}}],`+
+		`"metadata":{"source":"bot"}},"configuration":{"blocking":true,"historyLength":2,"pushNotificationConfig":{"url":"https://x"}}}`), nil)
+	require.Nil(t, rpcErr)
+
+	assert.Equal(t, []string{"POST " + vertexBase + "/v1/message:send"}, h.sent())
+	req, body := ag.request(0)
+	assert.Equal(t, "Bearer cloud-token", req.Header.Get("Authorization"))
+	assert.JSONEq(t, `{"message":{"messageId":"m-1","role":"ROLE_USER","metadata":{"source":"bot"},"content":[{"text":"USD to EUR?"},`+
+		`{"file":{"fileWithBytes":"YUdrPQ==","mimeType":"text/plain","name":"n.txt"}},{"data":{"data":{"k":1}}}]},`+
+		`"configuration":{"blocking":true,"historyLength":2}}`, string(body))
+	assert.JSONEq(t, rpcVertexTask, string(result))
+	_, owned := h.store.owner(h.harness, a2a.ScopeTask, "t-1")
+	assert.True(t, owned)
+}
+
+func TestVertexAnswersWithAMessage(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{"message":{"messageId":"m-2","role":"ROLE_AGENT","content":[{"text":"hello"}]}}`)))
+	h := newVertexHarness(t, ag)
+	result, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"messageId":"m-1","role":"user","parts":[{"kind":"text","text":"hi"}]}}`), nil)
+	require.Nil(t, rpcErr)
+	assert.JSONEq(t, `{"kind":"message","messageId":"m-2","role":"agent","parts":[{"kind":"text","text":"hello"}]}`, string(result))
+}
+
+func TestVertexGetsAndCancelsTasks(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(vertexTask)))
+	h := newVertexHarness(t, ag)
+	h.store.set(h.harness, a2a.ScopeTask, "t-1", h.owner())
+
+	result, rpcErr := h.send(t, rpcRequest("tasks/get", `{"id":"t-1","historyLength":2}`), nil)
+	require.Nil(t, rpcErr)
+	assert.JSONEq(t, rpcVertexTask, string(result))
+	_, rpcErr = h.send(t, rpcRequest("tasks/cancel", `{"id":"t-1"}`), nil)
+	require.Nil(t, rpcErr)
+
+	assert.Equal(t, []string{"GET " + vertexBase + "/v1/tasks/t-1?historyLength=2", "POST " + vertexBase + "/v1/tasks/t-1:cancel"}, h.sent())
+	_, body := ag.request(1)
+	assert.Empty(t, body)
+}
+
+func TestVertexErrorStatuses(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status int
+		method string
+		code   int64
+		reason string
+	}{
+		{status: http.StatusBadRequest, method: "message/send", code: a2a.CodeInvalidParams},
+		{status: http.StatusUnauthorized, method: "message/send", code: a2a.CodeIdentityRequired, reason: a2a.ReasonIdentityRequired},
+		{status: http.StatusForbidden, method: "message/send", code: a2a.CodeGatewayFailure, reason: a2a.ReasonUpstreamAuthFailed},
+		{status: http.StatusNotFound, method: "tasks/get", code: a2a.CodeTaskNotFound},
+		{status: http.StatusNotFound, method: "message/send", code: a2a.CodeGatewayFailure, reason: a2a.ReasonUpstreamError},
+		{status: http.StatusTooManyRequests, method: "message/send", code: a2a.CodeGatewayFailure, reason: a2a.ReasonUpstreamError},
+		{status: http.StatusServiceUnavailable, method: "tasks/get", code: a2a.CodeGatewayFailure, reason: a2a.ReasonUpstreamError},
+	}
+	for _, tc := range cases {
+		ag := newAgent(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"message":"refused"}`))
+		})
+		h := newVertexHarness(t, ag)
+		h.store.set(h.harness, a2a.ScopeTask, "t-1", h.owner())
+		params := `{"message":{"messageId":"m-1","role":"user","parts":[]}}`
+		if tc.method == "tasks/get" {
+			params = `{"id":"t-1"}`
+		}
+		_, rpcErr := h.send(t, rpcRequest(tc.method, params), nil)
+		require.NotNil(t, rpcErr, tc.status)
+		assert.Equal(t, tc.code, rpcErr.Code, tc.status)
+		if tc.reason != "" {
+			assert.Equal(t, tc.reason, reasonOf(t, rpcErr), tc.status)
+		}
+	}
+}
+
+func TestVertexStreamIsRefusedBeforeTheAgent(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{}`)))
+	h := newVertexHarness(t, ag)
+	for _, body := range [][]byte{streamRequest(a2a.Version03), rpcRequest("tasks/resubscribe", `{"id":"t-1"}`)} {
+		_, rpcErr := h.forwarder.Prepare(context.Background(), h.call(t, body, nil))
+		require.NotNil(t, rpcErr)
+		assert.Equal(t, a2a.UnsupportedOperation(a2a.Version03), rpcErr)
+	}
+	assert.Zero(t, ag.calls())
+}
