@@ -78,7 +78,7 @@ Un registry no puede cambiar de proveedor. El cambio MUST responder 422 y hay qu
 
 - `aws`: los mismos campos que `AWSAuth` de un registry LLM:
   - claves estáticas, con token de sesión opcional;
-  - o `use_role` con `role`;
+  - o `use_role` con `role` y, opcionalmente, `external_id`, que se pasa a `sts:AssumeRole`;
   - o ninguna de las dos, y entonces vale la credencial del pod (IRSA o Pod Identity).
 - `azure`: los mismos campos que `AzureAuth`:
   - service principal (`tenant_id`, `client_id`, `client_secret`);
@@ -129,11 +129,19 @@ Una credencial de nube MUST enviarse solo al host derivado del proveedor y solo 
 - WHEN el gateway llama al agente
 - THEN envía un token OBO de ese usuario con audiencia `https://ai.azure.com`
 
+En el SaaS, un rol asumido sin `external_id` MUST rechazarse con 422. Sin él, quien conozca el ARN del rol de otra organización podría hacer que el gateway lo asumiera (*confused deputy*). En híbrido y dedicado es opcional.
+
+#### Scenario: Rol sin external id en SaaS
+
+- GIVEN un gateway SaaS
+- WHEN se crea un registry `bedrock_agentcore` con `use_role: true` y sin `external_id`
+- THEN 422 que pide el external id configurado en la trust policy del rol
+
 #### Scenario: AgentCore con el rol del pod
 
-- GIVEN un registry `bedrock_agentcore` con `cloud_auth: {"aws": {"use_role": true, "role": "arn:aws:iam::123456789012:role/tg-agents"}}`
+- GIVEN un registry `bedrock_agentcore` con `cloud_auth: {"aws": {"use_role": true, "role": "arn:aws:iam::123456789012:role/tg-agents", "external_id": "nt-7f3a"}}`
 - WHEN el gateway llama al agente
-- THEN la petición va firmada con SigV4 con credenciales obtenidas al asumir ese rol
+- THEN la petición va firmada con SigV4 con credenciales obtenidas al asumir ese rol con ese external id
 
 ### Requirement: El card se descarga con credenciales
 
