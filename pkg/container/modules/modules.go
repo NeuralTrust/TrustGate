@@ -67,6 +67,7 @@ func fullModules() []container.Option {
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(A2A),
 		container.WithModule(ServerAgent),
 		container.WithModule(Usage),
 		container.WithModule(ControlConfigSync),
@@ -93,6 +94,7 @@ func dataPlaneModules() []container.Option {
 		container.WithModule(MCPVaultRedis),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(A2A),
 		container.WithModule(ServerAgent),
 		container.WithModule(ConfigSyncData),
 	}

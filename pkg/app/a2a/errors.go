@@ -49,6 +49,10 @@ const (
 	ReasonPlanUnavailable         = "plan_unavailable"
 	ReasonInvalidUpstreamResponse = "invalid_upstream_response"
 	ReasonStreamMaxDuration       = "stream_max_duration"
+	ReasonUpstreamTimeout         = "upstream_timeout"
+	ReasonUpstreamUnreachable     = "upstream_unreachable"
+	ReasonUpstreamError           = "upstream_error"
+	ReasonResponseTooLarge        = "response_too_large"
 )
 
 // RPCError is a JSON-RPC error object.
@@ -126,7 +130,8 @@ func parseError() *RPCError {
 	return &RPCError{Code: CodeParseError, Message: "Invalid JSON payload"}
 }
 
-func invalidRequest() *RPCError {
+// InvalidRequest is -32600.
+func InvalidRequest() *RPCError {
 	return &RPCError{Code: CodeInvalidRequest, Message: "Invalid Request"}
 }
 

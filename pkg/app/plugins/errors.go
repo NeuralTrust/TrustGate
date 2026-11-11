@@ -41,6 +41,9 @@ type PluginError struct {
 	Message    string
 	Headers    map[string][]string
 	Body       []byte
+	// Plugin is the name of the plugin that returned the error. The executor
+	// sets it.
+	Plugin string
 
 	// NotAVerdict marks a 403 that is not a policy stopping a leg of the
 	// exchange: a configuration or guard failure that happens to answer 403.
@@ -144,6 +147,18 @@ func (e *stampedError) As(target any) bool {
 		return true
 	}
 	return false
+}
+
+// stampPlugin names plugin on a *PluginError the plugin returned as it is. A
+// wrapped one comes back unchanged, chain and all.
+func stampPlugin(err error, plugin string) error {
+	pe, ok := err.(*PluginError)
+	if !ok || pe.Plugin != "" {
+		return err
+	}
+	stamped := *pe
+	stamped.Plugin = plugin
+	return &stamped
 }
 
 // stampBlockDirection returns err itself unless it is, or wraps, a 403
