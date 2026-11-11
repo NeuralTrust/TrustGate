@@ -46,6 +46,8 @@ func providerOf(t *registrydomain.A2ATarget) provider {
 		return foundry{}
 	case registrydomain.A2AProviderBedrockAgentCore:
 		return agentCore{}
+	case registrydomain.A2AProviderVertexAgentEngine:
+		return vertex{}
 	default:
 		return jsonrpc{}
 	}
