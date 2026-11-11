@@ -135,6 +135,7 @@ func a2aConsumer(regs ...*registrydomain.Registry) *appconsumer.RoutableConsumer
 
 type harness struct {
 	forwarder *a2a.Forwarder
+	store     *memStore
 	consumer  *appconsumer.RoutableConsumer
 	agent     *registrydomain.Registry
 	principal *identity.Principal
@@ -145,8 +146,10 @@ func newHarness(t *testing.T, v a2a.Version, url string, exec executorFunc) *har
 	logger := slog.New(slog.DiscardHandler)
 	reg := a2aRegistry(t, v, url)
 	rc := a2aConsumer(reg)
+	store := newMemStore()
 	return &harness{
-		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(nil, nil, false), logger),
+		forwarder: a2a.NewForwarder(httpUpstream{}, a2a.NewPluginRunner(exec, logger), a2a.NewCredentials(nil, nil, false), store, logger),
+		store:     store,
 		consumer:  rc,
 		agent:     reg,
 		principal: &identity.Principal{Subject: consumerdomain.AppSubject(rc.Consumer.ID), Method: identity.MethodAPIKey},
@@ -306,9 +309,11 @@ func TestForwarderPassesTheAgentErrorThrough(t *testing.T) {
 	t.Parallel()
 	ag := newAgent(t, answer(readFixture(t, "v10.task_not_found.response.json")))
 	h := newHarness(t, a2a.Version10, ag.URL, allow)
+	h.store.set(h, a2a.ScopeTask, "3cad155d-0af8-4d33-9734-4dc86c76004c", h.owner())
 	_, rpcErr := h.send(t, readFixture(t, "v10.get.request.json"), nil)
 	require.NotNil(t, rpcErr)
 	assert.Equal(t, a2a.CodeTaskNotFound, rpcErr.Code)
+	assert.Equal(t, 1, ag.calls())
 }
 
 func TestForwarderPolicies(t *testing.T) {

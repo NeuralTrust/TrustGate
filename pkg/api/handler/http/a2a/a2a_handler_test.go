@@ -32,8 +32,11 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	infraa2a "github.com/NeuralTrust/TrustGate/pkg/infra/a2a"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +86,7 @@ func newApp(t *testing.T, agentURL string) (*fiber.App, *registrydomain.Registry
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}
-	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(nil, nil, false), logger)
+	forwarder := appa2a.NewForwarder(httpUpstream{}, appa2a.NewPluginRunner(allowAll{}, logger), appa2a.NewCredentials(nil, nil, false), infraa2a.NewOwnershipStore(redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})), logger)
 	h := a2ahttp.NewHandler(forwarder)
 	app := fiber.New()
 	withConsumer := func(c *fiber.Ctx) error {
