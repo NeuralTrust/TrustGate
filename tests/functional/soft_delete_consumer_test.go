@@ -81,9 +81,8 @@ func TestSoftDeleteConsumer_KeyIsRefusedAndTheSlugStopsRouting(t *testing.T) {
 	status, _, body = proxyPost(t, route.apiKey, route.path, chatRequest(false))
 	assert.Equal(t, http.StatusNotFound, status, "a deleted consumer's slug must not route: %s", body)
 	whoStatus, who = whoAmIOnGateway(t, route.gatewayID, route.apiKey)
-	if whoStatus == http.StatusOK {
-		assert.Empty(t, who["consumers"], "a deleted consumer's key must reach no consumer: %v", who)
-	}
+	require.Equal(t, http.StatusOK, whoStatus, "body=%v", who)
+	assert.Empty(t, who["consumers"], "a deleted consumer's key must reach no consumer: %v", who)
 	assert.Equal(t, hits, upstream.Hits(), "nothing may reach the upstream through a deleted consumer")
 
 	status, delBody := sendRequest(t, http.MethodDelete,
