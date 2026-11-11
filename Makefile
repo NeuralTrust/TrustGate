@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover check-usagesync-contract test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-agent run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover check-usagesync-contract test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit mcp-catalog-probe \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -50,6 +50,10 @@ run-proxy: build ## Build and run the proxy server
 run-mcp: build ## Build and run the MCP server
 	@$(info $(M) Running $(APP_NAME) mcp ...)
 	./bin/$(APP_NAME) mcp
+
+run-agent: build ## Build and run the A2A agent server
+	@$(info $(M) Running $(APP_NAME) agent ...)
+	./bin/$(APP_NAME) agent
 
 mcp-catalog-probe: ## Probe curated MCP catalog URLs (see docs/mcp/testing-guide.md); add -apply to hide broken_*
 	@$(info $(M) Probing MCP catalog ...)
