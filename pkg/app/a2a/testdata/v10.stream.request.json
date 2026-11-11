@@ -1,0 +1,33 @@
+{
+  "id": "a5086fba-059b-46df-8f22-3560fa62c632",
+  "jsonrpc": "2.0",
+  "method": "SendStreamingMessage",
+  "params": {
+    "configuration": {},
+    "message": {
+      "contextId": "ctx-1",
+      "messageId": "m-1",
+      "parts": [
+        {
+          "text": "book a flight"
+        },
+        {
+          "data": {
+            "iban": "ES9121000418450200051332"
+          }
+        },
+        {
+          "filename": "a.pdf",
+          "mediaType": "application/pdf",
+          "url": "https://files.example.com/a.pdf"
+        },
+        {
+          "filename": "b.pdf",
+          "mediaType": "application/pdf",
+          "raw": "JVBERi0xLjc="
+        }
+      ],
+      "role": "ROLE_USER"
+    }
+  }
+}
