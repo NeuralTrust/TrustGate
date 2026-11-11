@@ -51,8 +51,12 @@ type v2Attributes struct {
 	Stream      *GuardStream   `json:"stream,omitempty"`
 }
 
+// v2Application describes the consumer a request came from. Audience and Synthetic tell
+// TrustGuard v2 not to inventory a personal key or the MCP Store as an application.
 type v2Application struct {
-	Name string `json:"name"`
+	Name      string `json:"name,omitempty"`
+	Audience  string `json:"audience,omitempty"`
+	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
 // v2MCPServer carries TrustGuard v2's canonical id of the server: the catalog code, or
@@ -99,10 +103,23 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 			}
 		}
 	}
-	if c := body.Attributes.Consumer; c != nil && c.Name != "" {
-		req.Attributes.Application = &v2Application{Name: c.Name}
-	}
+	req.Attributes.Application = v2ApplicationOf(body.Attributes.Consumer, request)
 	return req
+}
+
+func v2ApplicationOf(consumer *GuardConsumer, request *infracontext.RequestContext) *v2Application {
+	app := v2Application{}
+	if consumer != nil {
+		app.Name = consumer.Name
+	}
+	if request != nil {
+		app.Audience = strings.TrimSpace(request.ConsumerAudience)
+		app.Synthetic = request.ConsumerSynthetic
+	}
+	if app == (v2Application{}) {
+		return nil
+	}
+	return &app
 }
 
 // withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the
