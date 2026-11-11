@@ -6,7 +6,9 @@ Cambio `a2a-plane`. Capability nueva: el registry de tipo `A2A`, que apunta a un
 
 ### Requirement: Registry de tipo A2A
 
-La Admin API MUST aceptar `type: "A2A"` en la creación de un registry, con un `a2a_target` y sin `llm_target` ni `mcp_target`. `a2a_target` MUST llevar `card_url` (https, o http solo si la red privada está permitida como en `netguard`) y `protocol_version` igual a `"0.3"` o `"1.0"`; cualquier otro valor MUST responder 422. MAY llevar `url` (sustituye la URL de interfaz del card), `headers` estáticos, `auth` y `allowed_methods`.
+La Admin API MUST aceptar `type: "A2A"` en la creación de un registry, con un `a2a_target` y sin `llm_target` ni `mcp_target`. `a2a_target` MUST llevar `card_url` (https, o http solo si la red privada está permitida como en `netguard`). MAY llevar `url` (sustituye la URL de interfaz del card), `headers` estáticos, `auth` y `allowed_methods`.
+
+`protocol_version` MAY faltar. Si viene, MUST ser `"0.3"` o `"1.0"`, y cualquier otro valor MUST responder 422. Si falta, el gateway MUST elegirla del card descargado: `"1.0"` si el card ofrece una interfaz `JSONRPC` 1.0, si no `"0.3"` si ofrece 0.3, y 422 si no ofrece ninguna. La versión elegida MUST guardarse y devolverse como si la hubiera enviado el cliente.
 
 `auth.mode` MUST ser `none`, `static` o `client_credentials`. `passthrough` MUST responder 422 siempre: el token de quien llama nunca llega a un agente. `exchange` y `forwarded` MUST responder 422 en este cambio.
 
@@ -17,6 +19,12 @@ Los `headers` estáticos y los secretos de `auth` MUST cifrarse en reposo y enma
 - GIVEN un agente cuyo card en `https://agent.example.com/.well-known/agent-card.json` declara una interfaz `JSONRPC` con `protocolVersion: "1.0"`
 - WHEN se crea un registry `type: "A2A"` con ese `card_url` y `protocol_version: "1.0"`
 - THEN 201, con `a2a_target.card`, `card_digest` y `card_pinned_at` rellenos
+
+#### Scenario: Versión detectada
+
+- GIVEN un card que ofrece interfaces `JSONRPC` 0.3 y 1.0
+- WHEN se crea el registry sin `protocol_version`
+- THEN 201 con `protocol_version: "1.0"`
 
 #### Scenario: Passthrough rechazado
 
@@ -64,6 +72,24 @@ Un cliente MUST NOT poder escribir `card`, `card_digest` ni `card_pinned_at`: si
 - GIVEN `card_url` que resuelve a `10.0.0.5` y la red privada no está permitida
 - WHEN se crea el registry
 - THEN 422, y no se hace ninguna petición a esa IP
+
+### Requirement: Vista previa de un card antes de registrarlo
+
+`POST /v1/gateways/{gateway_id}/agent-cards/preview` con `{"card_url": "…"}` MUST descargar el card con las mismas reglas que el alta (cliente de `netguard`, 1 MiB, objeto JSON con `name`) y responder 200 con `card`, `card_digest` y `versions`, la lista de versiones (`"0.3"`, `"1.0"`) para las que el card ofrece una interfaz `JSONRPC`. MUST NOT escribir nada.
+
+Si la descarga falla o el card no es válido, MUST responder 422 con el motivo. Un card válido que no ofrece ninguna versión soportada MUST responder 200 con `versions: []`, para que la consola pueda explicar por qué no se puede registrar. El endpoint MUST exigir el mismo permiso que crear un registry en ese gateway.
+
+#### Scenario: Card con dos versiones
+
+- GIVEN un card que ofrece interfaces `JSONRPC` 0.3 y 1.0
+- WHEN se llama a `preview` con su URL
+- THEN 200 con `versions: ["0.3", "1.0"]`, y no existe ningún registry nuevo
+
+#### Scenario: Card sin JSON-RPC
+
+- GIVEN un card 1.0 que solo ofrece una interfaz `GRPC`
+- WHEN se llama a `preview`
+- THEN 200 con `versions: []`
 
 ### Requirement: Refresh no escribe; approve fija solo lo revisado
 
