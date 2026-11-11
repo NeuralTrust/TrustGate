@@ -19,9 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/google/uuid"
 )
 
 // provider is how the gateway talks to an agent where it is hosted. The
@@ -42,6 +44,8 @@ func providerOf(t *registrydomain.A2ATarget) provider {
 	switch t.Provider {
 	case registrydomain.A2AProviderAzureFoundry:
 		return foundry{}
+	case registrydomain.A2AProviderBedrockAgentCore:
+		return agentCore{}
 	default:
 		return jsonrpc{}
 	}
@@ -76,4 +80,54 @@ type foundry struct{ jsonrpc }
 
 func (foundry) header(x *Exchange, h http.Header) {
 	h.Set("A2A-Version", string(x.version))
+}
+
+// ReasonUpstreamAuthFailed is the -32092 reason of an agent that refused the
+// gateway's own credential.
+const ReasonUpstreamAuthFailed = "upstream_auth_failed"
+
+const (
+	agentCoreSessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+	agentCoreSessionBusy   = -32054
+)
+
+// agentCoreRetryWait is how long to wait before each retry of a call that
+// found its AgentCore session busy.
+var agentCoreRetryWait = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
+
+// agentCore is an Amazon Bedrock AgentCore runtime: JSON-RPC in a runtime
+// session, with errors carried by their real HTTP status.
+type agentCore struct{ jsonrpc }
+
+// header sends the session of the task or context the call names, or a new
+// one that the answer's task and context then keep.
+func (agentCore) header(x *Exchange, h http.Header) {
+	if x.session == "" {
+		x.session = "tgs-" + uuid.Must(uuid.NewV7()).String()
+	}
+	h.Set(agentCoreSessionHeader, x.session)
+}
+
+// decode reads a JSON-RPC answer whatever its status. A 401 that asks for
+// authentication is the user identity refused; a 403 without a JSON-RPC
+// error is the gateway's SigV4 signature refused.
+func (agentCore) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError) {
+	if res.StatusCode == http.StatusUnauthorized && res.Header.Get("WWW-Authenticate") != "" {
+		return nil, IdentityRequired()
+	}
+	result, rpcErr := x.decode(body, res.StatusCode)
+	if rpcErr != nil && !x.agentError && res.StatusCode == http.StatusForbidden {
+		return nil, GatewayFailure(ReasonUpstreamAuthFailed)
+	}
+	return result, rpcErr
+}
+
+// retry sends a call again while its session is busy: AgentCore did not
+// process it.
+func (agentCore) retry(rpcErr *RPCError, attempt int) (time.Duration, bool) {
+	if attempt >= len(agentCoreRetryWait) || rpcErr.Code != agentCoreSessionBusy ||
+		!strings.Contains(rpcErr.Message, "Session operation in progress") {
+		return 0, false
+	}
+	return agentCoreRetryWait[attempt], true
 }
