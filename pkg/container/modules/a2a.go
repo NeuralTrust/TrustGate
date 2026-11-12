@@ -33,11 +33,7 @@ func A2A(c *container.Container) error {
 		infraa2a.NewUpstreamClient,
 		appa2a.NewPluginRunner,
 		func(exchanger sts.Exchanger, provider appoauth.ProviderClient, cloud *infraa2a.CloudSigner, signer *infrasts.Signer, cfg *config.Config) *appa2a.Credentials {
-			var opts []appa2a.CredentialsOption
-			if cfg.ConfigSync.DeploymentType == config.InstanceDeploymentSaaS {
-				opts = append(opts, appa2a.WithSharedDataPlane())
-			}
-			return appa2a.NewCredentials(exchanger, provider, cloud, signer.Ephemeral(), opts...)
+			return appa2a.NewCredentials(exchanger, provider, cloud, signer.Ephemeral(), a2aCredentialOptions(cfg)...)
 		},
 		func(cc cache.Client) appa2a.OwnershipStore {
 			return infraa2a.NewOwnershipStore(cc.RedisClient())
@@ -48,6 +44,15 @@ func A2A(c *container.Container) error {
 		if err := c.Provide(provider); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// a2aCredentialOptions turns the shared data plane checks on for a saas
+// deployment. Save-time uses the same deployment type in registrySaveParams.
+func a2aCredentialOptions(cfg *config.Config) []appa2a.CredentialsOption {
+	if cfg != nil && cfg.ConfigSync.DeploymentType == config.InstanceDeploymentSaaS {
+		return []appa2a.CredentialsOption{appa2a.WithSharedDataPlane()}
 	}
 	return nil
 }

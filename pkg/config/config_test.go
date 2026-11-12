@@ -1439,6 +1439,37 @@ func TestLoadConfig_InstanceHeartbeat(t *testing.T) {
 	}
 }
 
+func TestWarnAgentHostWithoutSaaS(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	withHost := Config{Server: ServerConfig{AgentBaseDomain: "agents.example"}}
+
+	withHost.WarnAgentHostWithoutSaaS(log)
+	if !strings.Contains(buf.String(), "INSTANCE_DEPLOYMENT_TYPE") {
+		t.Fatalf("unset deployment type: log = %q", buf.String())
+	}
+	buf.Reset()
+
+	selfHosted := withHost
+	selfHosted.ConfigSync.DeploymentType = InstanceDeploymentSelfHosted
+	selfHosted.WarnAgentHostWithoutSaaS(log)
+	if !strings.Contains(buf.String(), "self-hosted") {
+		t.Fatalf("self-hosted: log = %q", buf.String())
+	}
+	buf.Reset()
+
+	saas := withHost
+	saas.ConfigSync.DeploymentType = InstanceDeploymentSaaS
+	saas.WarnAgentHostWithoutSaaS(log)
+	withoutHost := Config{ConfigSync: ConfigSyncConfig{DeploymentType: InstanceDeploymentSelfHosted}}
+	withoutHost.WarnAgentHostWithoutSaaS(log)
+	(*Config)(nil).WarnAgentHostWithoutSaaS(log)
+	withHost.WarnAgentHostWithoutSaaS(nil)
+	if buf.Len() != 0 {
+		t.Fatalf("saas and no agent host must stay quiet, log = %q", buf.String())
+	}
+}
+
 func TestLoadConfig_InstanceHeartbeatRejectsBadValues(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("INSTANCE_DEPLOYMENT_TYPE", "on-prem")
