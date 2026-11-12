@@ -1869,6 +1869,24 @@ func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
 }
 
+// WarnAgentHostWithoutSaaS logs when AGENT_BASE_DOMAIN is set and
+// INSTANCE_DEPLOYMENT_TYPE is not saas, so the shared data plane checks on
+// A2A cloud credentials are off. An empty INSTANCE_DEPLOYMENT_TYPE loads as
+// self-hosted. It does not stop the process: a self-hosted or customer data
+// plane sets that domain to publish its own agent host.
+func (c *Config) WarnAgentHostWithoutSaaS(logger *slog.Logger) {
+	if c == nil || logger == nil || strings.TrimSpace(c.Server.AgentBaseDomain) == "" {
+		return
+	}
+	if c.ConfigSync.DeploymentType == InstanceDeploymentSaaS {
+		return
+	}
+	logger.Warn("AGENT_BASE_DOMAIN is set and INSTANCE_DEPLOYMENT_TYPE is not saas: A2A cloud credentials are not checked against the shared data plane rules. Set INSTANCE_DEPLOYMENT_TYPE=saas on the shared data plane; a self-hosted or customer data plane that publishes its own agent host can ignore this",
+		slog.String("instance_deployment_type", c.ConfigSync.DeploymentType),
+		slog.String("agent_base_domain", c.Server.AgentBaseDomain),
+	)
+}
+
 func (c *Config) validateRedis() error {
 	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
 	switch c.Redis.Login {
