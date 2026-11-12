@@ -1,0 +1,16 @@
+{
+  "id": "942554ab-dd51-4003-aa65-cb126eaa8967",
+  "jsonrpc": "2.0",
+  "result": {
+    "message": {
+      "contextId": "263ba948-ae05-4d97-a610-a5f398ff2bbe",
+      "messageId": "03d54da5-4ef9-43c5-8111-f178bbdac73b",
+      "parts": [
+        {
+          "text": "hello back"
+        }
+      ],
+      "role": "ROLE_AGENT"
+    }
+  }
+}

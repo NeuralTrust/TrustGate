@@ -28,44 +28,44 @@ func TestConsumerAdmitsPrincipal(t *testing.T) {
 		AllowedCertificateSubjects: []string{"svc.internal"},
 	}}
 
-	if !consumerAdmitsPrincipal(open, nil) || !consumerAdmitsPrincipal(bound, nil) {
+	if !consumerdomain.AdmitsPrincipal(open, nil) || !consumerdomain.AdmitsPrincipal(bound, nil) {
 		t.Fatal("no principal (built-in provider bootstrap) has nothing to bind")
 	}
-	if consumerAdmitsPrincipal(nil, &identity.Principal{Method: identity.MethodJWT}) {
+	if consumerdomain.AdmitsPrincipal(nil, &identity.Principal{Method: identity.MethodJWT}) {
 		t.Fatal("no consumer admits nobody")
 	}
 
 	jwtFor := func(client string) *identity.Principal {
 		return &identity.Principal{Method: identity.MethodJWT, Subject: "user", Claims: map[string]any{"azp": client}}
 	}
-	if !consumerAdmitsPrincipal(open, jwtFor("anyone")) {
+	if !consumerdomain.AdmitsPrincipal(open, jwtFor("anyone")) {
 		t.Fatal("an unbound consumer admits any verified client")
 	}
-	if !consumerAdmitsPrincipal(bound, jwtFor("app-a")) || consumerAdmitsPrincipal(bound, jwtFor("app-b")) {
+	if !consumerdomain.AdmitsPrincipal(bound, jwtFor("app-a")) || consumerdomain.AdmitsPrincipal(bound, jwtFor("app-b")) {
 		t.Fatal("a bound consumer admits only tokens issued to its clients")
 	}
 	introspected := &identity.Principal{Method: identity.MethodIntrospection, Claims: map[string]any{"client_id": "app-b"}}
-	if consumerAdmitsPrincipal(bound, introspected) {
+	if consumerdomain.AdmitsPrincipal(bound, introspected) {
 		t.Fatal("introspected opaque tokens are bound by client_id too")
 	}
 
 	cert := func(cn string, dns ...string) *identity.Principal {
 		return &identity.Principal{Method: identity.MethodMTLS, Subject: cn, Claims: map[string]any{"common_name": cn, "dns_names": dns}}
 	}
-	if !consumerAdmitsPrincipal(bound, cert("svc.internal")) || !consumerAdmitsPrincipal(bound, cert("other", "svc.internal")) {
+	if !consumerdomain.AdmitsPrincipal(bound, cert("svc.internal")) || !consumerdomain.AdmitsPrincipal(bound, cert("other", "svc.internal")) {
 		t.Fatal("an allowed common name or SAN DNS name admits the certificate")
 	}
-	if consumerAdmitsPrincipal(bound, cert("other", "elsewhere")) {
+	if consumerdomain.AdmitsPrincipal(bound, cert("other", "elsewhere")) {
 		t.Fatal("a certificate naming none of the allowed subjects is refused")
 	}
 	// Claims decoded from JSON carry []any rather than []string.
 	decoded := &identity.Principal{Method: identity.MethodMTLS, Claims: map[string]any{"common_name": "other", "dns_names": []any{"svc.internal"}}}
-	if !consumerAdmitsPrincipal(bound, decoded) {
+	if !consumerdomain.AdmitsPrincipal(bound, decoded) {
 		t.Fatal("SAN names decoded as []any must still match")
 	}
 
 	apiKey := &identity.Principal{Method: identity.MethodAPIKey, Subject: "key"}
-	if !consumerAdmitsPrincipal(bound, apiKey) {
+	if !consumerdomain.AdmitsPrincipal(bound, apiKey) {
 		t.Fatal("an API key is bound to one consumer already; the binding does not apply")
 	}
 }
@@ -96,10 +96,10 @@ func TestConsumerAdmitsPrincipalBindsEveryBearerMethod(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			allowed := &identity.Principal{Method: tc.method, Subject: "user", Claims: map[string]any{"azp": "app-a"}}
 			refused := &identity.Principal{Method: tc.method, Subject: "user", Claims: map[string]any{"azp": "app-b"}}
-			if !consumerAdmitsPrincipal(bound, allowed) {
+			if !consumerdomain.AdmitsPrincipal(bound, allowed) {
 				t.Fatalf("%s naming an allowed client must be admitted", name)
 			}
-			if got := consumerAdmitsPrincipal(bound, refused); got == tc.bound {
+			if got := consumerdomain.AdmitsPrincipal(bound, refused); got == tc.bound {
 				t.Fatalf("%s naming a disallowed client: admitted=%v, want bound=%v", name, got, tc.bound)
 			}
 		})

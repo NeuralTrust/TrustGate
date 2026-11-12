@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -50,6 +51,7 @@ type UsageGuardMiddleware struct {
 	checker appusage.ExhaustionChecker
 	enabled func() bool
 	mcp     bool
+	agent   bool
 }
 
 // NewUsageGuardMiddleware builds the guard. A nil checker or enabled function
@@ -80,6 +82,14 @@ func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 	return &clone
 }
 
+// ForAgent returns a copy of the guard that answers in the agent plane's
+// JSON-RPC.
+func (m *UsageGuardMiddleware) ForAgent() *UsageGuardMiddleware {
+	clone := *m
+	clone.agent = true
+	return &clone
+}
+
 // Middleware returns the Fiber handler of the guard.
 func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -105,6 +115,18 @@ func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *UsageGuardMiddleware) body(c *fiber.Ctx, code string) []byte {
+	if m.agent {
+		out, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      nil,
+			"error": map[string]any{
+				"code":    appa2a.CodeGatewayFailure,
+				"message": usageBlockedMessage,
+				"data":    map[string]string{"reason": appa2a.ReasonPlanUnavailable},
+			},
+		})
+		return out
+	}
 	if m.mcp {
 		out, _ := json.Marshal(map[string]any{
 			"jsonrpc": "2.0",

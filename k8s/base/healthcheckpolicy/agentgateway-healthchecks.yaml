@@ -61,3 +61,23 @@ spec:
     group: ""
     kind: Service
     name: agentgateway-mcp
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: agentgateway-agent-healthcheck
+spec:
+  default:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8084
+        requestPath: /readyz
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-agent

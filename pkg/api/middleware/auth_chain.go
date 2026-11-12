@@ -49,7 +49,10 @@ type chainIdentityResolver struct {
 	session           appauth.SessionTokenVerifier
 	xfccPeers         []*net.IPNet
 	defaultIdPEnabled bool
-	now               func() time.Time
+	// agent leaves api keys out of the path scope: the agent plane refuses a
+	// key of another consumer with 403 once it has matched the consumer.
+	agent bool
+	now   func() time.Time
 }
 
 func NewChainIdentityResolver(
@@ -77,6 +80,25 @@ func NewChainIdentityResolver(
 		defaultIdPEnabled: defaultIdPEnabled,
 		now:               time.Now,
 	}
+}
+
+// NewAgentChainIdentityResolver is the chain resolver of the agent plane. Its
+// scope comes from agent paths, and it accepts neither the MCP session tokens
+// nor the default identity provider.
+func NewAgentChainIdentityResolver(
+	apiKeys appauth.APIKeyFinder,
+	credentials appauth.CredentialFinder,
+	paths appconsumer.PathResolver,
+	jwtValidator appauth.JWTValidator,
+	introValidator appauth.IntrospectionValidator,
+	mtlsValidator appauth.MTLSValidator,
+	certExtractor appauth.ClientCertificateExtractor,
+	trustXFCCFrom []string,
+) IdentityResolver {
+	r := NewChainIdentityResolver(apiKeys, credentials, paths, jwtValidator, introValidator,
+		mtlsValidator, certExtractor, nil, trustXFCCFrom, false).(*chainIdentityResolver)
+	r.agent = true
+	return r
 }
 
 func parseTrustedPeers(entries []string) []*net.IPNet {
@@ -394,7 +416,7 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 	if !a.IsApplicationKey(r.now().UTC()) {
 		return credentialRejected(ctx, slog.LevelWarn, "api key is disabled or expired", slog.String("auth_id", a.ID.String()))
 	}
-	if !scope.allows(a.ID) {
+	if !r.agent && !scope.allows(a.ID) {
 		return credentialRejected(ctx, slog.LevelWarn, "api key is not attached to the path", slog.String("auth_id", a.ID.String()))
 	}
 	principal := &identity.Principal{

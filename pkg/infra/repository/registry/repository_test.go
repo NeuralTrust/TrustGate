@@ -151,6 +151,7 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 		[]byte(nil),
 		time.Now().UTC(),
 		time.Now().UTC(),
+		[]byte(nil),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
@@ -189,6 +190,7 @@ func TestRepository_ScanPricing(t *testing.T) {
 		pricingJSON,
 		time.Now().UTC(),
 		time.Now().UTC(),
+		[]byte(nil),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)

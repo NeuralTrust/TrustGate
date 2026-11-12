@@ -425,3 +425,46 @@ func TestAPIKeyConsumers_CarryTheKeysOwnExpiry(t *testing.T) {
 	require.NotNil(t, got.Key.ExpiresAt)
 	require.Equal(t, expiry, *got.Key.ExpiresAt)
 }
+
+func a2aRegistry(gw ids.GatewayID, name string, enabled bool) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](), GatewayID: gw, Name: name, Type: registrydomain.TypeA2A, Enabled: enabled,
+		A2ATarget: &registrydomain.A2ATarget{ProtocolVersion: registrydomain.A2AVersion10},
+	}
+}
+
+func TestAPIKeyConsumers_ReportTheEnabledAgentsOfAnA2AConsumer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	travel := a2aRegistry(gatewayID, "Travel planner", true)
+	research := a2aRegistry(gatewayID, "Research", true)
+	agents := consumerWith(gatewayID, "research-bot", domain.TypeA2A, domain.Identity{}, authID)
+	agents.Registries = []*registrydomain.Registry{travel, a2aRegistry(gatewayID, "Disabled", false), research}
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		agents,
+		consumerWith(gatewayID, "empty-bot", domain.TypeA2A, domain.Identity{}, authID),
+		consumerWith(gatewayID, "tools", domain.TypeMCP, domain.Identity{}, authID),
+	})
+
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
+	keys := appauthmocks.NewAPIKeyFinder(t)
+	keys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(apiKey(gatewayID, authID), nil).Once()
+
+	service, err := appconsumer.NewAPIKeyConsumers(consumers, keys, nil)
+	require.NoError(t, err)
+	got, err := service.ForAPIKey(ctx, gatewayID, "ag_secret")
+
+	require.NoError(t, err)
+	require.Len(t, got.Consumers, 3)
+	require.Equal(t, "empty-bot", got.Consumers[0].Slug)
+	require.NotNil(t, got.Consumers[0].Agents)
+	require.Empty(t, got.Consumers[0].Agents)
+	require.Equal(t, []appconsumer.KeyAgent{
+		{ID: research.ID, Name: "Research", ProtocolVersion: registrydomain.A2AVersion10},
+		{ID: travel.ID, Name: "Travel planner", ProtocolVersion: registrydomain.A2AVersion10},
+	}, got.Consumers[1].Agents)
+	require.Nil(t, got.Consumers[2].Agents)
+}

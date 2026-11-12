@@ -90,6 +90,9 @@ func (b *Builder) Build(
 	if meta.Kind == events.KindMCP {
 		return b.buildMCP(evt, req, resp, requestTrace, startTime, endTime)
 	}
+	if meta.Kind == events.KindA2A {
+		return b.buildA2A(evt, req, resp, requestTrace, startTime, endTime)
+	}
 
 	// Clients that send no identity headers may still name their end user the
 	// way the OpenAI API defines it, in the request body. Headers win when both
@@ -470,6 +473,61 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 		}
 	}
 	return mcp, upstreamMs
+}
+
+func (b *Builder) buildA2A(
+	evt *events.Event,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	requestTrace *trace.RequestTrace,
+	startTime, endTime time.Time,
+) *events.Event {
+	evt.Kind = events.KindA2A
+	a2a, upstreamMs := foldA2ASpans(requestTrace)
+	evt.A2A = a2a
+
+	policies := b.foldPluginSpans(requestTrace)
+	evt.PolicyChain = policies.chain
+	evt.IsFlagged = policies.flagged
+	evt.Security = policies.security
+
+	totalMs := endTime.Sub(startTime).Milliseconds()
+	evt.Latency = events.Latency{
+		TotalMs:    totalMs,
+		ProviderMs: &upstreamMs,
+		PoliciesMs: policies.totalMs,
+		GatewayMs:  gatewayLatency(totalMs, upstreamMs, 0, policies),
+	}
+
+	b.fillRequest(evt, req, nil)
+	b.fillResponse(evt, resp, nil, totalMs)
+	b.fillStatus(evt, resp, nil, requestTrace)
+	if a2a != nil && a2a.Outcome == a2aOutcomeUpstreamTimeout {
+		evt.Status.IsTimeout = true
+	}
+	return evt
+}
+
+const a2aOutcomeUpstreamTimeout = "upstream_timeout"
+
+func foldA2ASpans(requestTrace *trace.RequestTrace) (*events.A2A, int64) {
+	if requestTrace == nil {
+		return nil, 0
+	}
+	var a2a *events.A2A
+	var upstreamMs int64
+	for _, span := range requestTrace.Spans() {
+		attrs, ok := span.A2AAttrsCopy()
+		if !ok {
+			continue
+		}
+		upstreamMs += span.Latency().Milliseconds()
+		// events.A2A has the fields of trace.A2AAttrs, so a change to one
+		// fails to build until the other follows.
+		a2aEvent := events.A2A(attrs)
+		a2a = &a2aEvent
+	}
+	return a2a, upstreamMs
 }
 
 func mcpPolicyScope(scope *trace.MCPPolicyScope) *events.MCPPolicyScope {

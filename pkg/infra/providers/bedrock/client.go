@@ -412,21 +412,31 @@ func buildAwsConfig(ctx context.Context, credentials providers.Credentials) (aws
 	secretKey := credentials.AwsBedrock.SecretKey
 	sessionToken := credentials.AwsBedrock.SessionToken
 
+	roleARN := ""
+	if credentials.AwsBedrock.UseRole {
+		roleARN = credentials.AwsBedrock.RoleARN
+	}
+	return LoadAWSConfig(ctx, accessKey, secretKey, sessionToken, region, roleARN, "")
+}
+
+// LoadAWSConfig loads the AWS config of region with static keys, or with the
+// default chain when they are empty. With roleARN it then assumes that role,
+// passing externalID to sts:AssumeRole when it is not empty.
+func LoadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, region, roleARN, externalID string) (aws.Config, error) {
 	awsCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
-	if err != nil {
-		return aws.Config{}, err
+	if err != nil || roleARN == "" {
+		return awsCfg, err
 	}
-
-	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
-		stsClient := sts.NewFromConfig(awsCfg)
-		provider := stscreds.NewAssumeRoleProvider(stsClient, credentials.AwsBedrock.RoleARN, func(o *stscreds.AssumeRoleOptions) {
-			o.RoleSessionName = "BedrockClientSession"
-		})
-		awsCfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
-			o.ExpiryWindow = credentialsExpiryWindow
-		})
-	}
-
+	stsClient := sts.NewFromConfig(awsCfg)
+	provider := stscreds.NewAssumeRoleProvider(stsClient, roleARN, func(o *stscreds.AssumeRoleOptions) {
+		o.RoleSessionName = "BedrockClientSession"
+		if externalID != "" {
+			o.ExternalID = aws.String(externalID)
+		}
+	})
+	awsCfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
+		o.ExpiryWindow = credentialsExpiryWindow
+	})
 	return awsCfg, nil
 }
 

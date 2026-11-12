@@ -1,0 +1,16 @@
+{
+  "id": "247ddd73-a7ff-47e1-b772-0aa672cb2b55",
+  "jsonrpc": "2.0",
+  "result": {
+    "contextId": "a2dcdf2e-968d-4b2f-9b73-b0ea8131f238",
+    "kind": "message",
+    "messageId": "f32a9929-14d8-4428-bd4f-3e85c3209d11",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "hello back"
+      }
+    ],
+    "role": "agent"
+  }
+}

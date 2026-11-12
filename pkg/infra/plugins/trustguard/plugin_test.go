@@ -1444,7 +1444,7 @@ func TestExecuteSendsTheConsumerOnAttributes(t *testing.T) {
 	if got == nil || got.ID != req.ConsumerID || got.Name != "MCP Store" {
 		t.Fatalf("attributes.consumer = %+v, want the Store's id and name", got)
 	}
-	if guardConsumer(" ", "") != nil {
+	if guardConsumer(&infracontext.RequestContext{ConsumerID: " "}) != nil {
 		t.Fatal("no consumer sends no consumer attribute")
 	}
 }

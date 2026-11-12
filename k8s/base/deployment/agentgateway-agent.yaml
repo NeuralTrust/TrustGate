@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-agent
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: agent
+    component: agent
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: agentgateway
+      app.kubernetes.io/component: agent
+      component: agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: agentgateway
+        app.kubernetes.io/component: agent
+        component: agent
+    spec:
+      terminationGracePeriodSeconds: 60
+      serviceAccountName: agentgateway
+      containers:
+      - name: agent
+        image: agentgateway
+        # Distroless image has no /bin/sh; secrets load via godotenv from /etc/secrets/.env.
+        workingDir: /app
+        args:
+        - agent
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: agentgateway-config
+        env:
+        # Run the agent plane as a DB-less data plane: no Postgres, config pulled from
+        # the admin control plane over the config-sync gRPC transport
+        # (CONFIG_SYNC_GRPC_ENDPOINT in config.env); task ownership lives in Redis.
+        - name: CONFIG_SYNC_DATA_PLANE_ENABLED
+          value: "true"
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "true"
+        ports:
+        - containerPort: 8084
+          name: http
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        volumeMounts:
+        - name: agentgateway-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        - name: config-sync-lkg
+          mountPath: /var/lib/trustgate
+        # Writable scratch space, since the root filesystem is read-only.
+        - name: tmp
+          mountPath: /tmp
+        # Same hardening as the neuraltrust-platform agentgateway chart.
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: agentgateway-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: agentgateway-secrets
+      # Encrypted last-known-good snapshot cache; survives control-plane outages
+      # within the pod lifetime (ephemeral: repopulated from the CP pull on restart).
+      - name: config-sync-lkg
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: component
+                operator: In
+                values:
+                - agent
+            topologyKey: kubernetes.io/hostname
