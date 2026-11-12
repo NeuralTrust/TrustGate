@@ -24,11 +24,12 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/mitchellh/mapstructure"
 )
 
 // ExporterName is the registered name of the OTLP exporter template.
-const ExporterName = "otlp"
+const ExporterName = telemetrydomain.ExporterTypeOTLP
 
 // Protocol selects the OTLP transport used to reach the Collector.
 type Protocol string

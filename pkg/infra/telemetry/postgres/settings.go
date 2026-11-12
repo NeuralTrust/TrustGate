@@ -19,13 +19,14 @@ import (
 	"os"
 	"strings"
 
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/mitchellh/mapstructure"
 )
 
 // ExporterName is the registered name of the postgres exporter template. It is
 // the only sink allowed to carry sensible data.
-const ExporterName = "postgres"
+const ExporterName = telemetrydomain.ExporterTypePostgres
 
 const defaultDSNEnv = "SENSIBLE_PG_DSN"
 
