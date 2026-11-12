@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	evaluatePath = "/v2/evaluate"
+	evaluatePath = "/v1/evaluate"
 	// engineHeader is how TrustGuard names the engine that answered: an organisation's collector is
 	// served by v1 until the organisation is cut over to v2.
 	engineHeader           = "X-TrustGuard-Engine"
@@ -146,7 +146,7 @@ func (e *authRejectedError) Error() string {
 
 type client struct {
 	http *http.Client
-	// v2 sends the asset-based /v2/evaluate request and reads its answer.
+	// v2 sends the asset-based request to /v1/evaluate and reads its answer.
 	v2 bool
 }
 

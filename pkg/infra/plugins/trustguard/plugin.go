@@ -171,7 +171,7 @@ type Plugin struct {
 	timeout time.Duration
 
 	// name is the slug this instance is registered under, and v2 says it speaks to
-	// TrustGuard's /v2 engine (asset-based request, /v2/token) and enforces its
+	// TrustGuard's /v2 engine (asset-based request, integration_id token) and enforces its
 	// answer. Everything else, the failure modes, the legs, streaming and MCP, is shared.
 	name string
 	v2   bool

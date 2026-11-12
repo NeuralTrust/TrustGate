@@ -89,8 +89,7 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 // parseConfigFor parses the settings of the v1 plugin or, with v2, of trustguard_v2. The two
-// share every key; trustguard_v2 does not require collector_id, because /v2/token resolves the
-// integration from the gateway when none is named.
+// share every key; trustguard_v2 names a v2 integration in collector_id (sent as integration_id).
 func parseConfigFor(settings map[string]any, v2 bool) (Settings, error) {
 	cfg, err := pluginutil.Parse[Settings](settings)
 	if err != nil {
@@ -150,10 +149,7 @@ func (s *Settings) validate(v2 bool) error {
 		name = PluginNameV2
 	}
 	if strings.TrimSpace(s.CollectorID) == "" {
-		if !v2 {
-			return fmt.Errorf("trustguard: collector_id is required")
-		}
-		return s.Streaming.Validate(name)
+		return fmt.Errorf("%s: collector_id is required", name)
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
 		return fmt.Errorf("%s: collector_id must be a valid UUID", name)

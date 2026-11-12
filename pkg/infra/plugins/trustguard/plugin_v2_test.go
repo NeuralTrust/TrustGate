@@ -34,7 +34,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-// v2WireRequest is TrustGuard's /v2/evaluate decoder: unknown fields are a 400.
+// v2WireRequest is TrustGuard's v2 evaluate decoder: unknown fields are a 400.
 type v2WireRequest struct {
 	OriginalRequest *struct {
 		IP      string              `json:"ip,omitempty"`
@@ -148,7 +148,7 @@ func newV2TestPlugin(t *testing.T, baseURL string) *Plugin {
 }
 
 func v2Settings(direction string) map[string]any {
-	s := map[string]any{}
+	s := map[string]any{"collector_id": testCollectorID}
 	if direction != "" {
 		s["direction"] = direction
 	}
@@ -186,13 +186,13 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	assert.Equal(t, []string{tokenPath, evaluatePath}, f.paths, "token on /v2/token, evaluation on /v2/evaluate, nothing on /v1")
+	assert.Equal(t, []string{tokenPath, evaluatePath}, f.paths, "token on /v1/token, evaluation on /v1/evaluate")
 	require.Len(t, f.tokens, 1)
 	assert.Equal(t, "test-v2-client", f.tokens[0]["client_id"])
 	assert.Equal(t, "test-v2-secret", f.tokens[0]["client_secret"])
 	assert.Equal(t, "platform", f.tokens[0]["scope"])
 	assert.Equal(t, "gw-test", f.tokens[0]["gateway_id"])
-	assert.NotContains(t, f.tokens[0], "integration_id", "no collector_id configured: TrustGuard resolves it from the gateway")
+	assert.Equal(t, testCollectorID, f.tokens[0]["integration_id"])
 	assert.NotContains(t, f.tokens[0], "collector_id")
 
 	require.Zero(t, f.invalid, "the engine decodes strictly")
@@ -426,7 +426,7 @@ func TestV2PluginRetriesOnceOn401(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.EqualValues(t, 2, atomic.LoadInt32(&f.evaluateCalls))
-	assert.Len(t, f.tokenRequests(), 2, "the 401 refreshes the token from /v2/token")
+	assert.Len(t, f.tokenRequests(), 2, "the 401 refreshes the token from /v1/token")
 	seen := f.seen()
 	require.Len(t, seen, 1)
 	f.mu.Lock()
@@ -541,10 +541,11 @@ func TestV2PluginConfig(t *testing.T) {
 	t.Parallel()
 	p := newV2TestPlugin(t, "http://unused")
 
-	t.Run("collector_id is optional", func(t *testing.T) {
-		require.NoError(t, p.ValidateConfig(map[string]any{}))
-		require.NoError(t, p.ValidateConfig(map[string]any{"direction": legRequest, "failure_mode": failureModeClosed}))
-		require.NoError(t, p.ValidateConfig(settings("")))
+	t.Run("collector_id (the integration) is required", func(t *testing.T) {
+		err := p.ValidateConfig(map[string]any{})
+		require.Error(t, err)
+		assert.True(t, strings.HasPrefix(err.Error(), "trustguard_v2:"), err.Error())
+		require.NoError(t, p.ValidateConfig(map[string]any{"collector_id": testCollectorID, "direction": legRequest, "failure_mode": failureModeClosed}))
 	})
 	t.Run("collector_id is required by v1", func(t *testing.T) {
 		v1 := newTestPlugin(t, adapter.NewRegistry(), "http://unused")
