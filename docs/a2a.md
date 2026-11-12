@@ -454,7 +454,7 @@ A2A 0.3, no streaming) and pins it like any other.
 | | `agentcore_harness` | `databricks_agent` |
 |---|---|---|
 | Locator | `harness_arn` (`arn:aws:bedrock-agentcore:{region}:{account}:harness/{name}-{id}`), `qualifier` (default `DEFAULT`) | `workspace_url`, and `serving_endpoint` (Model Serving) or `app_url` (`*.databricksapps.com`) |
-| `auth.mode` | `cloud` (`cloud_auth.aws`, as an AgentCore runtime) | `client_credentials` (a service principal; `token_url` defaults to `{workspace_url}/oidc/v1/token`, `scope` to `all-apis`), or `static` (`Authorization: Bearer` a personal access token) |
+| `auth.mode` | `cloud` (`cloud_auth.aws`, as an AgentCore runtime) | `client_credentials` (a service principal; `token_url` defaults to `{workspace_url}/oidc/v1/token`, `scopes` to `all-apis`), or `static` (`Authorization: Bearer` a personal access token) |
 | Gateway calls | `POST /harnesses/invoke` (InvokeHarness), SigV4 `bedrock-agentcore` | `POST {workspace_url}/serving-endpoints/{serving_endpoint}/invocations`, or `POST {app_url}/responses` |
 | Sends | `messages: [{role: user, content: [{text}]}]` | `input: [{role: user, content}]`, `context.conversation_id` |
 | Reads | The text deltas of the event stream's assistant messages | The `output_text` of the `message` output items |
