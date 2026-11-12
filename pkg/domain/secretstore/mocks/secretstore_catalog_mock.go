@@ -87,49 +87,94 @@ func (_c *Catalog_Get_Call) RunAndReturn(run func(string) (*secretstore.Store, s
 	return _c
 }
 
-// Statuses provides a mock function with no fields
-func (_m *Catalog) Statuses() []secretstore.Status {
+// LoadError provides a mock function with no fields
+func (_m *Catalog) LoadError() error {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for Statuses")
+		panic("no return value specified for LoadError")
 	}
 
-	var r0 []secretstore.Status
-	if rf, ok := ret.Get(0).(func() []secretstore.Status); ok {
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
 		r0 = rf()
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]secretstore.Status)
-		}
+		r0 = ret.Error(0)
 	}
 
 	return r0
 }
 
-// Catalog_Statuses_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Statuses'
-type Catalog_Statuses_Call struct {
+// Catalog_LoadError_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LoadError'
+type Catalog_LoadError_Call struct {
 	*mock.Call
 }
 
-// Statuses is a helper method to define mock.On call
-func (_e *Catalog_Expecter) Statuses() *Catalog_Statuses_Call {
-	return &Catalog_Statuses_Call{Call: _e.mock.On("Statuses")}
+// LoadError is a helper method to define mock.On call
+func (_e *Catalog_Expecter) LoadError() *Catalog_LoadError_Call {
+	return &Catalog_LoadError_Call{Call: _e.mock.On("LoadError")}
 }
 
-func (_c *Catalog_Statuses_Call) Run(run func()) *Catalog_Statuses_Call {
+func (_c *Catalog_LoadError_Call) Run(run func()) *Catalog_LoadError_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run()
 	})
 	return _c
 }
 
-func (_c *Catalog_Statuses_Call) Return(_a0 []secretstore.Status) *Catalog_Statuses_Call {
+func (_c *Catalog_LoadError_Call) Return(_a0 error) *Catalog_LoadError_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Catalog_Statuses_Call) RunAndReturn(run func() []secretstore.Status) *Catalog_Statuses_Call {
+func (_c *Catalog_LoadError_Call) RunAndReturn(run func() error) *Catalog_LoadError_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Stores provides a mock function with no fields
+func (_m *Catalog) Stores() []*secretstore.Store {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Stores")
+	}
+
+	var r0 []*secretstore.Store
+	if rf, ok := ret.Get(0).(func() []*secretstore.Store); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*secretstore.Store)
+		}
+	}
+
+	return r0
+}
+
+// Catalog_Stores_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stores'
+type Catalog_Stores_Call struct {
+	*mock.Call
+}
+
+// Stores is a helper method to define mock.On call
+func (_e *Catalog_Expecter) Stores() *Catalog_Stores_Call {
+	return &Catalog_Stores_Call{Call: _e.mock.On("Stores")}
+}
+
+func (_c *Catalog_Stores_Call) Run(run func()) *Catalog_Stores_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Catalog_Stores_Call) Return(_a0 []*secretstore.Store) *Catalog_Stores_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Catalog_Stores_Call) RunAndReturn(run func() []*secretstore.Store) *Catalog_Stores_Call {
 	_c.Call.Return(run)
 	return _c
 }
