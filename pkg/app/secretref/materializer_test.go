@@ -230,10 +230,10 @@ func TestFastPathReturnsTheInput(t *testing.T) {
 	byID := map[ids.RegistryID]*registry.Registry{plain.ID: plain}
 	m := newMat(t, MaterializerConfig{})
 	gw := ids.New[ids.GatewayKind]()
-	if got := m.Registries(context.Background(), gw, byID); reflect.ValueOf(got).Pointer() != reflect.ValueOf(byID).Pointer() {
+	if got := m.GatewayRegistries(context.Background(), gw, byID); reflect.ValueOf(got).Pointer() != reflect.ValueOf(byID).Pointer() {
 		t.Fatal("without references the input map must be returned as is")
 	}
-	allocs := testing.AllocsPerRun(100, func() { m.Registries(context.Background(), gw, byID) })
+	allocs := testing.AllocsPerRun(100, func() { m.GatewayRegistries(context.Background(), gw, byID) })
 	if allocs != 0 {
 		t.Fatalf("fast path allocates %v times", allocs)
 	}
@@ -325,7 +325,7 @@ func TestChangeDuringTheFirstLoadInvalidatesIt(t *testing.T) {
 	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
 	gw := ids.New[ids.GatewayKind]()
 	reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("k"))}}
-	m.Registries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
 	if got := inv.list(); len(got) != 1 || got[0] != gw {
 		t.Fatalf("a change during the first load must invalidate it, got %v", got)
 	}
@@ -350,8 +350,8 @@ func TestChangesInvalidateTheGatewaysThatUsedThem(t *testing.T) {
 	gwA, gwB := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
 	regA := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("shared#a"))}}
 	regB := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("other"))}}
-	m.Registries(context.Background(), gwA, map[ids.RegistryID]*registry.Registry{regA.ID: regA})
-	m.Registries(context.Background(), gwB, map[ids.RegistryID]*registry.Registry{regB.ID: regB})
+	m.GatewayRegistries(context.Background(), gwA, map[ids.RegistryID]*registry.Registry{regA.ID: regA})
+	m.GatewayRegistries(context.Background(), gwB, map[ids.RegistryID]*registry.Registry{regB.ID: regB})
 
 	r.fire([]domain.Ref{{Store: "vault", Path: "ai/shared"}})
 	if got := inv.list(); len(got) != 1 || got[0] != gwA {
@@ -359,7 +359,7 @@ func TestChangesInvalidateTheGatewaysThatUsedThem(t *testing.T) {
 	}
 
 	plain := &registry.Registry{ID: regA.ID, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth("sk")}}
-	m.Registries(context.Background(), gwA, map[ids.RegistryID]*registry.Registry{plain.ID: plain})
+	m.GatewayRegistries(context.Background(), gwA, map[ids.RegistryID]*registry.Registry{plain.ID: plain})
 	r.fire([]domain.Ref{{Store: "vault", Path: "ai/shared"}})
 	if got := inv.list(); len(got) != 1 {
 		t.Fatalf("a gateway that stopped using a payload was invalidated again: %v", got)
@@ -368,5 +368,30 @@ func TestChangesInvalidateTheGatewaysThatUsedThem(t *testing.T) {
 	m.StoresChanged([]string{"vault"})
 	if got := inv.list(); len(got) != 2 || got[1] != gwB {
 		t.Fatalf("after the store changed: %v", got)
+	}
+}
+
+// TestPartialReadersKeepTheGatewayIndex reads one registry of an indexed
+// gateway the way the runtime finder, the classifier, the Store scoper and a
+// refresh do, and requires that a change still reaches the gateway.
+func TestPartialReadersKeepTheGatewayIndex(t *testing.T) {
+	t.Parallel()
+	r := &markerResolver{}
+	inv := &invalidations{}
+	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
+	gw := ids.New[ids.GatewayKind]()
+	referenced := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("shared"))}}
+	literal := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth("sk")}}
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{referenced.ID: referenced, literal.ID: literal})
+
+	m.Registries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{literal.ID: literal})
+	other := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("other"))}}
+	m.Registries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{other.ID: other})
+	copied := m.Registries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{referenced.ID: referenced})[referenced.ID]
+	m.Refresh(context.Background(), copied)
+
+	r.fire([]domain.Ref{{Store: "vault", Path: "ai/shared"}})
+	if got := inv.list(); len(got) != 1 || got[0] != gw {
+		t.Fatalf("a partial read dropped the gateway from the index: invalidated %v", got)
 	}
 }

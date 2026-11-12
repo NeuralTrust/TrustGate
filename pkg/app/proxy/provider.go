@@ -768,6 +768,9 @@ func filesProviderConfig(bk *registry.Registry, authorization string) *providers
 func registryCredentials(bk *registry.Registry, authorization string) providers.Credentials {
 	creds := providers.CredentialsFromTargetAuth(bk.EffectiveAuth())
 	providers.ApplyIncomingBearer(&creds, bk.EffectiveAuth(), authorization)
+	if digest := bk.SecretDigest(); digest != "" {
+		creds.PoolKey = "ref:" + bk.ID.String() + ":" + digest
+	}
 	return creds
 }
 

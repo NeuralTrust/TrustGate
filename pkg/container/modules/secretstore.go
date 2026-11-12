@@ -22,10 +22,13 @@ import (
 	"go.uber.org/dig"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/backends"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/localfile"
@@ -58,7 +61,28 @@ func SecretStoresModule(c *container.Container) error {
 	if err := c.Provide(provideSecretStores); err != nil {
 		return err
 	}
-	return c.Provide(func(s *SecretStores) appsecretref.Materializer { return s.Materializer })
+	if err := c.Provide(func(s *SecretStores) appsecretref.Materializer { return s.Materializer }); err != nil {
+		return err
+	}
+	return c.Provide(func(f appregistry.Finder, m appsecretref.Materializer) appregistry.RuntimeFinder {
+		return appregistry.NewRuntimeFinder(f, m)
+	})
+}
+
+// runtimeRegistries resolves the references of registries read by id
+// alone, for readers that call the upstream outside a gateway's runtime
+// data, such as the traffic-label classifier.
+type runtimeRegistries struct {
+	repo registrydomain.Repository
+	m    appsecretref.Materializer
+}
+
+func (r runtimeRegistries) FindByID(ctx context.Context, id ids.RegistryID) (*registrydomain.Registry, error) {
+	reg, err := r.repo.FindByID(ctx, id)
+	if err != nil || r.m == nil {
+		return reg, err
+	}
+	return r.m.Registries(ctx, reg.GatewayID, map[ids.RegistryID]*registrydomain.Registry{id: reg})[id], nil
 }
 
 func provideSecretStores(p secretStoresParams) (*SecretStores, error) {

@@ -16,9 +16,14 @@ package secretref
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +51,12 @@ const (
 // Materializer turns the references held by a gateway's registries into
 // values for its runtime data.
 type Materializer interface {
+	// GatewayRegistries is Registries for the complete set of a gateway's
+	// registries, as its runtime data is built: it also records which
+	// payloads the gateway uses, replacing what it used before, so a change
+	// to any of them invalidates the gateway. Only the builder of a
+	// gateway's runtime data calls it.
+	GatewayRegistries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registry.Registry) map[ids.RegistryID]*registry.Registry
 	// Registries returns byID with every registry that holds a reference
 	// replaced by a copy carrying the resolved values. A reference that
 	// cannot be resolved is left empty and its copy is marked
@@ -57,6 +68,10 @@ type Materializer interface {
 	// one of the named stores, after the store file added, changed or
 	// removed them.
 	StoresChanged(names []string)
+	// Refresh re-reads the references of reg, a copy Registries built, after
+	// an upstream rejected its credential. It returns a new copy and true
+	// when a value changed, so the call can be retried once with it.
+	Refresh(ctx context.Context, reg *registry.Registry) (*registry.Registry, bool)
 }
 
 // GatewayFinder reads a gateway's entitlements for the eligibility check.
@@ -86,6 +101,10 @@ type MaterializerConfig struct {
 type materializer struct {
 	cfg        MaterializerConfig
 	unresolved metric.Int64Counter
+	// digestKey keys the fingerprints of resolved values. It is random per
+	// process, so a fingerprint cannot be checked against a guessed value
+	// outside this process.
+	digestKey []byte
 
 	mu sync.Mutex
 	// byPayload maps a payload key to the gateways whose runtime data used
@@ -107,6 +126,7 @@ func NewMaterializer(cfg MaterializerConfig) Materializer {
 	}
 	m := &materializer{
 		cfg:       cfg,
+		digestKey: []byte(rand.Text()),
 		byPayload: map[string]map[ids.GatewayID]struct{}{},
 		byGateway: map[ids.GatewayID][]string{},
 	}
@@ -131,8 +151,18 @@ type pending struct {
 	err        error
 }
 
-// Registries implements Materializer.
+// GatewayRegistries implements Materializer.
+func (m *materializer) GatewayRegistries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registry.Registry) map[ids.RegistryID]*registry.Registry {
+	return m.materialize(ctx, gatewayID, byID, true)
+}
+
+// Registries implements Materializer. It leaves the gateway's index alone:
+// its callers read a few registries, not the gateway's runtime data.
 func (m *materializer) Registries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registry.Registry) map[ids.RegistryID]*registry.Registry {
+	return m.materialize(ctx, gatewayID, byID, false)
+}
+
+func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registry.Registry, index bool) map[ids.RegistryID]*registry.Registry {
 	var refs []*pending
 	for id, r := range byID {
 		if !registryHasRef(r) {
@@ -150,20 +180,24 @@ func (m *materializer) Registries(ctx context.Context, gatewayID ids.GatewayID, 
 		}
 	}
 	if len(refs) == 0 {
-		m.index(gatewayID, nil)
+		if index {
+			m.index(gatewayID, nil)
+		}
 		return byID
 	}
 
 	// The gateway is indexed before anything is read: a value that changes
 	// while this load resolves must invalidate it, so the load is not cached
 	// with the old value.
-	var used []string
-	for _, p := range refs {
-		if p.parsed {
-			used = append(used, p.ref.PayloadKey())
+	if index {
+		var used []string
+		for _, p := range refs {
+			if p.parsed {
+				used = append(used, p.ref.PayloadKey())
+			}
 		}
+		m.index(gatewayID, used)
 	}
-	m.index(gatewayID, used)
 
 	m.resolveAll(ctx, gatewayID, refs)
 
@@ -187,7 +221,50 @@ func (m *materializer) Registries(ctx context.Context, gatewayID ids.GatewayID, 
 		}
 		setSlot(c, p.path, p.value)
 	}
+	for id, c := range copies {
+		c.BindSecrets(byID[id], m.digest(id, refs))
+	}
 	return out
+}
+
+// digest fingerprints the values resolved for registry id with a keyed hash.
+func (m *materializer) digest(id ids.RegistryID, refs []*pending) string {
+	var parts []string
+	for _, p := range refs {
+		if p.registryID == id && p.err == nil {
+			parts = append(parts, strings.Join(p.path, ".")+"\x00"+p.value)
+		}
+	}
+	sort.Strings(parts)
+	mac := hmac.New(sha256.New, m.digestKey)
+	for _, part := range parts {
+		mac.Write([]byte(part))
+		mac.Write([]byte{0})
+	}
+	return hex.EncodeToString(mac.Sum(nil)[:12])
+}
+
+// Refresh implements Materializer.
+func (m *materializer) Refresh(ctx context.Context, reg *registry.Registry) (*registry.Registry, bool) {
+	src := reg.SecretSource()
+	if src == nil || m.cfg.Resolver == nil {
+		return nil, false
+	}
+	var refs []domain.Ref
+	for _, s := range registrySlots(src) {
+		if ref, ok, err := domain.Parse(s.value); ok && err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	if len(refs) == 0 {
+		return nil, false
+	}
+	changed, _ := m.cfg.Resolver.ForceRefresh(ctx, refs)
+	if !changed {
+		return nil, false
+	}
+	fresh := m.Registries(ctx, src.GatewayID, map[ids.RegistryID]*registry.Registry{src.ID: src})[src.ID]
+	return fresh, true
 }
 
 // resolveAll checks and resolves every reference, reading distinct payloads
