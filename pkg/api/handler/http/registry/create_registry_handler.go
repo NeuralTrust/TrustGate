@@ -47,6 +47,7 @@ func NewCreateRegistryHandler(creator appregistry.Creator) *CreateRegistryHandle
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries [post]
 func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
@@ -71,6 +72,7 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Description: req.Description,
 		LLMTarget:   req.ToLLMTarget(),
 		MCPTarget:   req.ToMCPTarget(),
+		A2ATarget:   req.A2ATarget.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

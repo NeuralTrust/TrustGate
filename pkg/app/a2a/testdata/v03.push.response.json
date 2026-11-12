@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": -32003,
+    "data": null,
+    "message": "Push Notification is not supported"
+  },
+  "id": "r1",
+  "jsonrpc": "2.0"
+}

@@ -36,6 +36,7 @@ type MCPMetricsMiddleware struct {
 	telemetryEnabled    bool
 	enableRequestTraces bool
 	enablePluginTraces  bool
+	kind                string
 }
 
 func NewMCPMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRecorder, cfg *config.Config) *MCPMetricsMiddleware {
@@ -46,6 +47,7 @@ func NewMCPMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRec
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
 		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
+		kind:                events.KindMCP,
 	}
 }
 
@@ -103,7 +105,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
 		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
-		Kind:      events.KindMCP,
+		Kind:      m.kind,
 	}
 	if gw != nil {
 		meta.TenantID = gw.TenantID()

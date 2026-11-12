@@ -1,0 +1,51 @@
+{
+  "capabilities": {
+    "extendedAgentCard": false,
+    "pushNotifications": false,
+    "streaming": true
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "description": "Plans trips",
+  "name": "Travel planner",
+  "securityRequirements": [
+    {
+      "schemes": {
+        "gateway_api_key": {
+          "list": []
+        }
+      }
+    }
+  ],
+  "securitySchemes": {
+    "gateway_api_key": {
+      "apiKeySecurityScheme": {
+        "location": "header",
+        "name": "X-AG-API-Key"
+      }
+    }
+  },
+  "skills": [
+    {
+      "description": "Books flights",
+      "id": "flights",
+      "name": "Flights",
+      "tags": [
+        "travel"
+      ]
+    }
+  ],
+  "supportedInterfaces": [
+    {
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0",
+      "url": "https://acme.agents.example.com/research-bot/agents/0199a7c2-5d4e-7b8a-9c1d-2e3f4a5b6c7d"
+    }
+  ],
+  "version": "2.1.0",
+  "x-vendor-region": "eu"
+}

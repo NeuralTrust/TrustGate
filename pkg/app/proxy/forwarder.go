@@ -32,6 +32,7 @@ import (
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -593,6 +594,8 @@ func (f *forwarder) stampConsumerScope(in ForwardInput) {
 	in.Request.ConsumerID = in.Consumer.Consumer.ID.String()
 	in.Request.ConsumerName = in.Consumer.Consumer.Name
 	in.Request.ConsumerType = string(in.Consumer.Consumer.Type)
+	in.Request.ConsumerAudience = string(in.Consumer.Consumer.AudienceName())
+	in.Request.ConsumerSynthetic = consumerdomain.IsStoreConsumer(in.Consumer.Consumer)
 	if in.Request.GatewayID == "" {
 		in.Request.GatewayID = in.Consumer.Consumer.GatewayID.String()
 	}

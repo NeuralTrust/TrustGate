@@ -39,8 +39,9 @@ var ErrAPIKeyUnknown = errors.New("consumer: no consumer is reachable with this 
 
 // KeyConsumer is one consumer an api key reaches, as its holder may know it.
 //
-// It carries no identifiers: the caller holds the key, so the slugs and names
-// are already theirs, and the ids behind them are the gateway's business.
+// It carries no identifiers beyond its agents' ids, which address them on the
+// agent plane: the caller holds the key, so the slugs and names are already
+// theirs, and the ids behind them are the gateway's business.
 type KeyConsumer struct {
 	Slug   string
 	Name   string
@@ -51,6 +52,16 @@ type KeyConsumer struct {
 	// a plane that cannot read the vault — a client must not be told everything
 	// is connected by a gateway that did not look.
 	Upstreams []KeyUpstream
+	// Agents are the enabled A2A registries of an A2A consumer, sorted by
+	// name. Never nil for an A2A consumer, nil for any other.
+	Agents []KeyAgent
+}
+
+// KeyAgent is one A2A registry an A2A consumer reaches.
+type KeyAgent struct {
+	ID              ids.RegistryID
+	Name            string
+	ProtocolVersion registrydomain.A2AProtocolVersion
 }
 
 // KeyUpstreamAccount is whose account an instance reads: the one it holds for
@@ -194,6 +205,7 @@ func (s *apiKeyConsumers) ForAPIKey(
 			Type:      cons.Type,
 			Active:    cons.Active,
 			Upstreams: s.upstreams(ctx, gatewayID, &data.Consumers[i]),
+			Agents:    agentsOf(&data.Consumers[i]),
 		})
 	}
 	if len(described.Consumers) == 0 {
@@ -270,6 +282,26 @@ func (s *apiKeyConsumers) upstreams(
 		return nil
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Server < out[j].Server })
+	return out
+}
+
+func agentsOf(rc *RoutableConsumer) []KeyAgent {
+	if rc.Consumer.Type != domain.TypeA2A {
+		return nil
+	}
+	out := make([]KeyAgent, 0, len(rc.Registries))
+	for _, reg := range rc.Registries {
+		if reg == nil || !reg.Enabled || reg.Type != registrydomain.TypeA2A || reg.A2ATarget == nil {
+			continue
+		}
+		out = append(out, KeyAgent{ID: reg.ID, Name: reg.Name, ProtocolVersion: reg.A2ATarget.ProtocolVersion})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID.String() < out[j].ID.String()
+	})
 	return out
 }
 

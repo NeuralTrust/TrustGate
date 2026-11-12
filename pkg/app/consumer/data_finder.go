@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"log/slog"
+	"slices"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -219,7 +220,25 @@ func (f *dataFinder) plansFor(
 		return unscoped, f.buildPolicyPlan(unscoped), f.buildMCPPlans(c, unscoped, scoped)
 	}
 	policies := f.inertPolicies(c, unscoped, crossing)
+	if c.Type == domain.TypeA2A {
+		policies = f.supportingA2A(policies)
+	}
 	return policies, appplugins.NewInertStagePlan(f.pluginRegistry, policies, f.logger), nil
+}
+
+// supportingA2A drops the policies whose plugin does not declare A2A, globals
+// included. LLM and MCP plans are not filtered by protocol.
+func (f *dataFinder) supportingA2A(policies []*policydomain.Policy) []*policydomain.Policy {
+	out := make([]*policydomain.Policy, 0, len(policies))
+	if f.pluginRegistry == nil {
+		return out
+	}
+	for _, p := range policies {
+		if plugin, ok := f.pluginRegistry.Get(p.Slug); ok && slices.Contains(plugin.SupportedProtocols(), appplugins.ProtocolA2A) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // inertPolicies is the set a non-MCP consumer runs: its unscoped policies plus

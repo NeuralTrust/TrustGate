@@ -22,6 +22,7 @@ import (
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -31,12 +32,19 @@ type AuthLookup interface {
 	FindByID(ctx context.Context, id ids.AuthID) (*authdomain.Auth, error)
 }
 
+// GatewayLookup loads the gateway a registry belongs to.
+type GatewayLookup interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
+}
+
 // Option configures a registry Creator or Updater.
 type Option func(*options)
 
 type options struct {
-	openapi appopenapi.Compiler
-	auths   AuthLookup
+	openapi        appopenapi.Compiler
+	auths          AuthLookup
+	cards          agentCards
+	sharedGateways GatewayLookup
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.
@@ -48,6 +56,18 @@ func WithOpenAPICompiler(c appopenapi.Compiler) Option {
 // mcp_target.auth.identity_id. Without it such a target is refused.
 func WithAuthLookup(l AuthLookup) Option {
 	return func(o *options) { o.auths = l }
+}
+
+// WithAgentCards lets a save of an A2A registry read and pin its agent card.
+func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
+	return func(o *options) { o.cards = agentCards{fetcher: fetcher, credentials: credentials} }
+}
+
+// WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
+// an A2A registry on a gateway no data plane of its own serves applies
+// domain.A2ATarget.ValidateSharedDataPlane.
+func WithSharedDataPlane(gateways GatewayLookup) Option {
+	return func(o *options) { o.sharedGateways = gateways }
 }
 
 func applyOptions(opts []Option) options {
@@ -100,4 +120,18 @@ func validateExchangeIdentity(ctx context.Context, auths AuthLookup, gatewayID i
 			domain.ErrInvalidMCPTarget, id)
 	}
 	return nil
+}
+
+func validateSharedDataPlane(ctx context.Context, gateways GatewayLookup, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
+	if gateways == nil {
+		return nil
+	}
+	gw, err := gateways.FindByID(ctx, gatewayID)
+	if err != nil {
+		return err
+	}
+	if gw.ServedByOwnDataPlane() {
+		return nil
+	}
+	return t.ValidateSharedDataPlane()
 }
