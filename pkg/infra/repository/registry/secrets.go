@@ -40,9 +40,9 @@ const (
 	fieldA2AAuthValue         = "registries.a2a_target.auth.value"
 	fieldA2AAuthClient        = "registries.a2a_target.auth.client_secret"
 	fieldA2AHeaderPrefix      = "registries.a2a_target.headers."
-	fieldA2AAWSSecret         = "registries.a2a_target.cloud_auth.aws.secret_access_key"
-	fieldA2AAWSSession        = "registries.a2a_target.cloud_auth.aws.session_token"
-	fieldA2AAzureSecret       = "registries.a2a_target.cloud_auth.azure.client_secret"
+	fieldA2AAWSSecret         = "registries.a2a_target.cloud_auth.aws.secret_access_key" // #nosec G101 -- field path, not a credential
+	fieldA2AAWSSession        = "registries.a2a_target.cloud_auth.aws.session_token"     // #nosec G101 -- field path, not a credential
+	fieldA2AAzureSecret       = "registries.a2a_target.cloud_auth.azure.client_secret"   // #nosec G101 -- field path, not a credential
 	fieldA2AGCPKey            = "registries.a2a_target.cloud_auth.gcp.service_account_json"
 )
 
