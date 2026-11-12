@@ -23,7 +23,6 @@ import (
 	"time"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"github.com/google/uuid"
 )
 
 // provider is how the gateway talks to an agent where it is hosted. The
@@ -104,7 +103,6 @@ func (foundry) header(x *Exchange, h http.Header) {
 const ReasonUpstreamAuthFailed = "upstream_auth_failed"
 
 const (
-	agentCoreSessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 	// agentCoreSessionBusy and agentCoreSessionBusyMessage are how AgentCore
 	// answers a call that reached a session still running another one. The
 	// code alone also covers session errors that a retry does not fix.
@@ -124,9 +122,9 @@ type agentCore struct{ jsonrpc }
 // one that the answer's task and context then keep.
 func (agentCore) header(x *Exchange, h http.Header) {
 	if x.session == "" {
-		x.session = "tgs-" + uuid.Must(uuid.NewV7()).String()
+		x.session = registrydomain.NewAgentCoreSession()
 	}
-	h.Set(agentCoreSessionHeader, x.session)
+	h.Set(registrydomain.AgentCoreSessionHeader, x.session)
 }
 
 // decode reads a JSON-RPC answer whatever its status. A 401 that asks for
