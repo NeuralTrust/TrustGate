@@ -32,8 +32,10 @@ import (
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -133,6 +135,7 @@ type adminRouterParams struct {
 	StorePolicies  *storehttp.PoliciesHandler
 	StoreEveryone  *storehttp.EveryoneHandler
 	StorePrincipal *storehttp.PrincipalHandler
+	StoreLLMAvail  *storehttp.LLMAvailabilityHandler
 	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
 	StoreMaterialize *storehttp.MaterializeHandler
 	StoreLLMKey      *storehttp.LLMKeyHandler
@@ -152,6 +155,11 @@ func ServerAdmin(c *container.Container) error {
 	}
 	if err := c.Provide(func(repo *configsyncconnrepo.Repository) *configsynchttp.ListConnectionsHandler {
 		return configsynchttp.NewListConnectionsHandler(repo)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(gateways gatewaydomain.Repository, repo *configsyncconnrepo.Repository) *storehttp.LLMAvailabilityHandler {
+		return storehttp.NewLLMAvailabilityHandler(appstore.NewLLMAvailabilityService(gateways, repo, nil))
 	}); err != nil {
 		return err
 	}
@@ -226,6 +234,7 @@ func ServerAdmin(c *container.Container) error {
 				StorePolicies:             p.StorePolicies,
 				StoreEveryone:             p.StoreEveryone,
 				StorePrincipal:            p.StorePrincipal,
+				StoreLLMAvailability:      p.StoreLLMAvail,
 				StoreMaterialize:          p.StoreMaterialize,
 				StoreLLMKey:               p.StoreLLMKey,
 				KeyGroupBudgets:           p.KeyGroupBudgets,

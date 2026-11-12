@@ -4364,6 +4364,59 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/llm-availability": {
+            "get": {
+                "description": "Says whether the gateway's data planes serve the LLM Store (/store/v1 with personal keys). Hosted and dedicated gateways always do. A hybrid gateway does when every data-plane instance seen in the last five minutes reports min_version or later; otherwise reason is no_data_plane, version_unknown (no heartbeat, or a version that is not semver) or data_plane_outdated with the lowest version seen. Personal consumers and keys can be written either way; they take effect once the data plane is recent enough.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Get whether the gateway serves the LLM Store",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.LLMAvailability"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/principal": {
             "get": {
                 "description": "Returns what one user holds on the gateway's Store: installed and pending instances, plus per forwarded-auth source whether they linked their own account. Credential material is never returned.",
@@ -4836,7 +4889,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "An out-of-range expires_at, or a hybrid gateway",
+                        "description": "An out-of-range expires_at",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5468,7 +5521,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "An out-of-range expires_at, an owner_email that is not an address, a group_id without group_name (or the reverse), or a hybrid gateway",
+                        "description": "An out-of-range expires_at, an owner_email that is not an address, or a group_id without group_name (or the reverse)",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -10789,6 +10842,25 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.LLMAvailability": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "lowest_version": {
+                    "description": "LowestVersion is the oldest data-plane version seen, set only when outdated.",
+                    "type": "string"
+                },
+                "min_version": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is available, no_data_plane, version_unknown or data_plane_outdated.",
                     "type": "string"
                 }
             }

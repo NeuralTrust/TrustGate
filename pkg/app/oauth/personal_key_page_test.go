@@ -18,13 +18,11 @@ import (
 	"context"
 	"errors"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
 )
@@ -297,20 +295,6 @@ func TestPersonalKeyPage_RotatesAndRevokes(t *testing.T) {
 			tc.check(t, got, fx.issuer)
 		})
 	}
-}
-
-func TestPersonalKeyPage_SaysWhyAKeyCannotBeIssuedHere(t *testing.T) {
-	fx := newPersonalKeyFixture(t, nil)
-	fx.issuer.err = consumerdomain.ErrHybridPersonal
-	session, err := fx.signInAs(t, fx.alice())
-	require.NoError(t, err)
-	view, _, _ := fx.pages.Open(context.Background(), "https://gw.example", fx.ticket, session)
-
-	got, err := fx.pages.Act(context.Background(), fx.ticket, session, view.CSRF, PersonalKeyActionCreate)
-
-	require.NoError(t, err)
-	require.True(t, strings.Contains(got.Unavailable, "not available"))
-	require.False(t, got.Done)
 }
 
 // The Portal's budget: changes stop once one person has made too many.
