@@ -81,7 +81,7 @@ func (h *LLMKeyHandler) Get(c *fiber.Ctx) error {
 // @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
 // @Failure      404         {object}  httpio.ErrorBody  "No such gateway"
 // @Failure      409         {object}  httpio.ErrorBody  "The caller already holds a key on this gateway"
-// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at, or a hybrid gateway"
+// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at"
 // @Router       /v1/gateways/{gateway_id}/store/principal/llm-key [post]
 func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 	gatewayID, owner, err := selfScope(c)
@@ -121,7 +121,7 @@ func (h *LLMKeyHandler) Create(c *fiber.Ctx) error {
 // @Failure      403         {object}  httpio.ErrorBody  "Not a signed-in tenant user: service credential, platform token or no user id"
 // @Failure      404         {object}  httpio.ErrorBody  "No such gateway"
 // @Failure      409         {object}  httpio.ErrorBody  "The user already holds a key for this group on this gateway, or a personal key when no group is named"
-// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at, an owner_email that is not an address, a group_id without group_name (or the reverse), or a hybrid gateway"
+// @Failure      422         {object}  httpio.ErrorBody  "An out-of-range expires_at, an owner_email that is not an address, or a group_id without group_name (or the reverse)"
 // @Router       /v1/gateways/{gateway_id}/store/users/{user_id}/llm-key [post]
 func (h *LLMKeyHandler) CreateForUser(c *fiber.Ctx) error {
 	gatewayID, _, err := selfScope(c)

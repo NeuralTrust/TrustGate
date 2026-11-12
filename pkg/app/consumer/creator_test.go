@@ -288,7 +288,7 @@ func TestCreator_Create_PersonalRules(t *testing.T) {
 		gateway  *gatewaydomain.Gateway
 		wantErr  error
 	}{
-		{name: "personal on a hybrid gateway", audience: domain.AudiencePersonal, gateway: hybrid, wantErr: domain.ErrHybridPersonal},
+		{name: "personal on a hybrid gateway", audience: domain.AudiencePersonal, gateway: hybrid},
 		{name: "personal on a hosted gateway", audience: domain.AudiencePersonal, gateway: &gatewaydomain.Gateway{}},
 		{name: "application never reads the gateway", audience: domain.AudienceApplication},
 	} {

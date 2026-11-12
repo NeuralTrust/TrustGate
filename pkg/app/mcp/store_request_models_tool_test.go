@@ -183,12 +183,15 @@ func TestStoreRequestModels_AsksWhichRegistry(t *testing.T) {
 	}
 }
 
-func TestStoreRequestModels_NothingToAskForOnAHybridGateway(t *testing.T) {
-	f := newRequestModelsFixture(t, nil)
+func TestStoreRequestModels_AsksTheConsoleOnAHybridGateway(t *testing.T) {
+	f := newRequestModelsFixture(t, &appoauth.ModelAccessAnswer{
+		Status: appoauth.ModelAccessChooseRegistry, Name: "Mistral", Provider: "mistral",
+		Registries: []appoauth.ModelAccessChoice{{RegistryID: "reg-a", Name: "Mistral"}},
+	})
 	f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid
-	_, structured := f.call(t, `{"provider":"openai"}`)
-	if structured["available"] != false || len(f.console.asked) != 0 {
-		t.Fatalf("structured = %+v, asked = %d", structured, len(f.console.asked))
+	f.call(t, `{"provider":"mistral"}`)
+	if len(f.console.asked) != 1 {
+		t.Fatalf("asked = %d, want the console asked on a hybrid gateway", len(f.console.asked))
 	}
 }
 

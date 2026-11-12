@@ -90,12 +90,6 @@ func (t *storeTool) models(ctx context.Context, baseURL string) (json.RawMessage
 	if gw == nil {
 		return nil, fmt.Errorf("%w: no gateway on this request", ErrStoreToolUnavailable)
 	}
-	if !gw.AllowsPersonal() {
-		return marshalToolResult(
-			"Models through a personal key are not available on this gateway: it runs on the organisation's own infrastructure.",
-			map[string]any{"available": false, "providers": []storeModelsProvider{}},
-		)
-	}
 	key, err := t.callerKey(ctx, gw.ID, principal.Subject)
 	switch {
 	case errors.Is(err, authdomain.ErrNotFound):

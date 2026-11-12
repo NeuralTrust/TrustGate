@@ -60,12 +60,6 @@ func (t *storeTool) personalKey(ctx context.Context, rc *appconsumer.RoutableCon
 		return nil, ErrNoPrincipal
 	}
 	gw, _ := appgateway.FromContext(ctx)
-	if gw != nil && !gw.AllowsPersonal() {
-		return marshalToolResult(
-			"Personal keys are not available on this gateway: it runs on the organisation's own infrastructure.",
-			map[string]any{"available": false},
-		)
-	}
 	base, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
 		return nil, fmt.Errorf("%w: invalid public MCP base URL", ErrStoreToolUnavailable)
