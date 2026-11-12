@@ -119,6 +119,7 @@ const (
 	attrLatencyTotalMs       = "trustgate.latency.total_ms"
 	attrLatencyProviderMs    = "trustgate.latency.provider_ms"
 	attrLatencyPoliciesMs    = "trustgate.latency.policies_ms"
+	attrLatencyRoutingMs     = "trustgate.latency.routing_ms"
 	attrLatencyGatewayMs     = "trustgate.latency.gateway_ms"
 	attrIsFlagged            = "trustgate.is_flagged"
 	attrSecurity             = "trustgate.security"
@@ -296,6 +297,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	}
 	attrs = append(attrs,
 		attribute.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
+		attribute.Int64(attrLatencyRoutingMs, evt.Latency.RoutingMs),
 		attribute.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
 		attribute.Bool(attrIsFlagged, evt.IsFlagged),
 	)

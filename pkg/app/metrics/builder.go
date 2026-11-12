@@ -117,10 +117,12 @@ func (b *Builder) Build(
 
 	totalMs := endTime.Sub(startTime).Milliseconds()
 	providerMs := providerLatency(attempts, policies)
+	routingMs := routingLatency(requestTrace)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		PoliciesMs: policies.totalMs,
-		GatewayMs:  gatewayLatency(totalMs, providerMs, policies),
+		RoutingMs:  routingMs,
+		GatewayMs:  gatewayLatency(totalMs, providerMs, routingMs, policies),
 	}
 	// A pre-request refusal has no provider attempt. Leaving the pointer nil
 	// omits provider_ms. A real attempt is recorded even when it rounds to 0.
@@ -243,14 +245,30 @@ type pluginFold struct {
 }
 
 // gatewayLatency is what the gateway itself spent: the wall clock left once the
-// provider and the policies that blocked the response are removed. post_response
-// policies are excluded because they run after the client got its answer, so
-// counting them would make the remainder negative and clamp to zero.
+// provider, route selection and the policies that blocked the response are
+// removed. post_response policies are excluded because they run after the
+// client got its answer, so counting them would make the remainder negative and
+// clamp to zero.
 //
 // providerMs must already be net of the streamed share — see providerLatency.
-func gatewayLatency(totalMs, providerMs int64, policies pluginFold) int64 {
+func gatewayLatency(totalMs, providerMs, routingMs int64, policies pluginFold) int64 {
 	blockingPoliciesMs := policies.totalMs - policies.asyncMs
-	return maxInt64(0, totalMs-providerMs-blockingPoliciesMs)
+	return maxInt64(0, totalMs-providerMs-routingMs-blockingPoliciesMs)
+}
+
+// routingLatency sums every route selection of the request: the first one and
+// any taken again to fail over between attempts.
+func routingLatency(requestTrace *trace.RequestTrace) int64 {
+	if requestTrace == nil {
+		return 0
+	}
+	var ms int64
+	for _, span := range requestTrace.Spans() {
+		if span.Type == trace.SpanRouting {
+			ms += span.Latency().Milliseconds()
+		}
+	}
+	return ms
 }
 
 // providerLatency is the upstream's share of the wall clock, net of the time a
@@ -399,7 +417,7 @@ func (b *Builder) buildMCP(
 		TotalMs:    totalMs,
 		ProviderMs: &upstreamMs,
 		PoliciesMs: policies.totalMs,
-		GatewayMs:  gatewayLatency(totalMs, upstreamMs, policies),
+		GatewayMs:  gatewayLatency(totalMs, upstreamMs, 0, policies),
 	}
 
 	b.fillRequest(evt, req, nil)
@@ -478,7 +496,7 @@ func (b *Builder) buildA2A(
 		TotalMs:    totalMs,
 		ProviderMs: &upstreamMs,
 		PoliciesMs: policies.totalMs,
-		GatewayMs:  gatewayLatency(totalMs, upstreamMs, policies),
+		GatewayMs:  gatewayLatency(totalMs, upstreamMs, 0, policies),
 	}
 
 	b.fillRequest(evt, req, nil)

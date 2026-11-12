@@ -32,6 +32,9 @@ const (
 	SpanMCP    SpanType = "mcp"
 	SpanA2A    SpanType = "a2a"
 	SpanPlugin SpanType = "plugin"
+	// SpanRouting times the load balancer choosing a route. It carries no
+	// attributes: only its latency is read.
+	SpanRouting SpanType = "routing"
 )
 
 type RouteBaseline struct {
@@ -179,6 +182,7 @@ func newSpan(spanType SpanType, name string) *Span {
 		s.Plugin = &PluginAttrs{}
 	case SpanMCP:
 		s.MCP = &MCPAttrs{}
+	case SpanRouting:
 	case SpanA2A:
 		s.A2A = &A2AAttrs{}
 	default:

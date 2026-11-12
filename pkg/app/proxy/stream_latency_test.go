@@ -179,8 +179,8 @@ func TestForward_StreamGuardHoldIsNotGatewayOverhead(t *testing.T) {
 				"the upstream's first byte and the generation the head waited on are the provider's")
 			assert.GreaterOrEqual(t, got.PoliciesMs, tc.hold.Milliseconds(), "the hold is charged to the policy")
 			assert.Less(t, got.GatewayMs, tc.hold.Milliseconds(), "the hold is not gateway overhead")
-			assert.Equal(t, got.TotalMs, *got.ProviderMs+got.PoliciesMs+got.GatewayMs,
-				"provider, policies and gateway reconcile against the wall clock, the hold counted once")
+			assert.Equal(t, got.TotalMs, *got.ProviderMs+got.PoliciesMs+got.RoutingMs+got.GatewayMs,
+				"provider, policies, routing and gateway reconcile against the wall clock, the hold counted once")
 		})
 	}
 }
