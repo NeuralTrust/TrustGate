@@ -106,8 +106,8 @@ func (t *A2ATarget) Normalize() {
 		if t.Auth.TokenURL == "" {
 			t.Auth.TokenURL = t.Databricks.TokenURL()
 		}
-		if t.Auth.Scope == "" {
-			t.Auth.Scope = databricksScope
+		if len(t.Auth.Scopes) == 0 {
+			t.Auth.Scopes = []string{databricksScope}
 		}
 	}
 	if t.Provider == A2AProviderAzureFoundry && t.Auth.Mode == MCPAuthModeExchange && t.Auth.Pattern == ExchangeOBO && t.Auth.Scope == "" {

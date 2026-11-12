@@ -67,7 +67,7 @@ func TestDatabricksLocator(t *testing.T) {
 	require.NoError(t, serving.Validate())
 	assert.Equal(t, "https://adb-1.2.azuredatabricks.net/serving-endpoints/agents_flats/invocations", serving.Endpoint())
 	assert.Equal(t, "https://adb-1.2.azuredatabricks.net/oidc/v1/token", serving.Auth.TokenURL, "the workspace issues a service principal's token")
-	assert.Equal(t, "all-apis", serving.Auth.Scope)
+	assert.Equal(t, []string{"all-apis"}, serving.Auth.Scopes)
 
 	app := &registry.A2ATarget{
 		Provider:   registry.A2AProviderDatabricks,
