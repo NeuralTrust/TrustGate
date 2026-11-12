@@ -558,6 +558,7 @@ func (f *forwarder) recordSpan(
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
 			RegistryID:     bk.ID.String(),
+			Managed:        bk.Managed,
 			Provider:       bk.Provider(),
 			RouteModel:     route.Model,
 			RequestedModel: dto.request.RequestedModel,
