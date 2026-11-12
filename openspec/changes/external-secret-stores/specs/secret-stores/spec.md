@@ -199,16 +199,8 @@ All three routes MUST require `secret_stores:read`. Test responses MUST carry
 only the auth outcome, the read outcome or error class, the version and the
 latency. They MUST NOT carry the secret value.
 
-An instance whose reported version is below `SECRET_STORES_MIN_DATA_PLANE_VERSION`
-MUST be listed with state `too_old`. When such an instance connects to a scope
-whose gateways hold references, the admin MUST log
-`secret_refs_on_old_data_plane` and increment a metric.
-
-#### Scenario: Old data plane joins a gateway that uses references
-
-- GIVEN hybrid gateway G whose registry R holds a reference
-- WHEN a data-plane instance below the minimum version connects for G
-- THEN the store listing shows that instance as `too_old`, and the admin logs `secret_refs_on_old_data_plane`
+A connection that does not advertise `accepts_secret_refs` MUST be listed with
+state `too_old`.
 
 #### Scenario: Two instances, one degraded
 
@@ -221,6 +213,47 @@ whose gateways hold references, the admin MUST log
 - GIVEN source `control_plane` and store `corp-vault`
 - WHEN `ai-gateway/openai#api_key` is tested on the admin
 - THEN the response has `auth: ok, read: ok` and the version, and the secret string is absent from the body
+
+### Requirement: Snapshots with references are served only to planes that understand them
+
+Planes that implement this change MUST advertise `accepts_secret_refs` in
+`Hello` and in every `GetSnapshotRequest` and `GetManifestRequest`, whatever
+their `SECRET_STORES_ENABLED` setting. The compiler MUST record, for each scope
+and version, whether the snapshot holds any reference-shaped value at a
+declared location.
+
+For a snapshot version that holds references, the config-sync server MUST:
+- not send a `VersionNotice` to a connection without the capability;
+- answer `GetSnapshot` or `GetManifest` without the capability with
+  `FailedPrecondition` and detail `secret_refs_unsupported`;
+- mark that instance `too_old`, log `secret_refs_on_old_data_plane` and
+  increment a metric.
+
+Snapshots without references MUST be served exactly as today.
+
+#### Scenario: Old instance joins a gateway that uses references
+
+- GIVEN hybrid gateway G whose registry R holds a reference, served by two capable instances
+- WHEN a third instance that predates this change connects and requests the snapshot
+- THEN it gets `FailedPrecondition`, keeps serving its previous configuration (or its LKG), never sends `secret://…` upstream, and the listing shows it as `too_old`
+
+#### Scenario: Fresh old pod without LKG
+
+- GIVEN the same gateway G
+- WHEN a pod that predates this change and has no LKG starts
+- THEN it never applies a configuration, stays not-ready, and receives no traffic
+
+#### Scenario: Gateways without references are unaffected
+
+- GIVEN hybrid gateway H whose entities hold no reference
+- WHEN an instance that predates this change requests H's snapshot
+- THEN it is served exactly as today
+
+#### Scenario: References removed
+
+- GIVEN the frozen instance from the first scenario
+- WHEN every reference of G is replaced with a literal and the snapshot recompiles
+- THEN the next request from that instance is served, and it leaves `too_old`
 
 ### Requirement: Diagnostics test on the data plane
 

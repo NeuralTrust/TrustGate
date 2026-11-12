@@ -103,8 +103,8 @@ the admin API MUST check the following, in order:
        Otherwise: 422 `unknown_secret_store`.
      - the path is within the store's reported `allowed_paths`. Otherwise: 422
        `secret_path_not_allowed`.
-     - every live connection reports at least the minimum version. Otherwise:
-       422 `data_plane_too_old`.
+     - every live connection advertises `accepts_secret_refs`. Otherwise: 422
+       `data_plane_too_old`.
    - **Source `data_plane`** with no live connection: the admin MUST refuse
      the reference with 422 `secret_store_unverified`, unless the request
      carries `?allow_unverified_secret_refs=true`. In that case it MUST accept

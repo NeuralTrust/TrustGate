@@ -17,7 +17,7 @@ Chain strategy:
 | Estimated changed lines | ~5,600 total, tests included: TrustGate Phase 1 ~3,100, Phase 2 ~950; chart ~300; console ~1,100; docs ~150 |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | S1 → S2 → S3 → S4 → S5 → S6 → S7 (Phase 1) → S8 → S9 → S10 (Phase 2); H1 after S3; A1–A3 after S5/S6; DOC1 with H1; A4 after S10 |
+| Suggested split | S1 → S2 → S3 → S4 → S5 → S5b → S6 → S6b → S7 (Phase 1) → S8 → S9 → S10 (Phase 2); H1 after S3; A1–A3 after S5/S6; DOC1 with H1; A4 after S10 |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | stacked PRs to `develop` |
 
@@ -38,6 +38,7 @@ Chain strategy:
 | S4 | **Materialization (compatibility first).** Zero-cost fast path when no value starts with `secret://`; golden tests showing identical `DataFinder` output, Bedrock keys and MCP revisions for literal credentials; reference-shaped values never forwarded, flag on or off. Then: `Materializer` + `Collector`. Integration into `DataFinder.load` and `registry.Finder` on any plane with a catalog, with reverse-index invalidation. Guard D13b (eligibility + allowlist). Readers listed in §7 of the design. `CredentialUnavailable` → `secret_unavailable`. Forced refresh plus one retry on 401/403. Bedrock pool key (`ref:<registry>:<hash>`, previous entry deleted on change) and MCP revision hash, both only for reference-derived credentials. Codec test. | ~650 | S2 |
 | S5 | **Store source + admin.** `SourceResolver` (heartbeat union vs. admin catalog, `supported`). Heartbeat `secret_stores`: proto, client, hub, migration on `config_sync_connections`, `MarkHeartbeat`. `ResourceSecretStores`. `GET /secret-stores` and `/:name/usages`. Write-time validator (eligibility, scope, store, allowlist, paths, version; strict when nothing is connected, with the `allow_unverified_secret_refs` opt-in), wired into the registry and MCP target writes. `too_old` instance state plus a `secret_refs_on_old_data_plane` log and metric. Masking pass-through. `secret_reference_set` event. Swagger. | ~700 | S1, S3, S4 |
 | S6 | **Tests on both planes.** Admin `POST /:name/test` (catalog only). Data-plane `POST /__diagnostics/…/secret-stores/:name/test`. Admin test-connection and `/v1/models-catalog` resolve through `registry.Finder` when a catalog exists. | ~350 | S4, S5 |
+| S5b | **Gated serving.** `accepts_secret_refs` in `Hello`, `GetSnapshotRequest` and `GetManifestRequest` (client always sets it); per-scope and per-version `HasSecretRefs` in the compiler and Holder (and manifests); hub suppresses notices; `FailedPrecondition` `secret_refs_unsupported`; `too_old` on the connection, log and metric; tests with a fake old client (LKG kept, fresh pod not ready, scopes without references unaffected) | ~300 | S4, S5 |
 | S6b | **Pre-deploy scan.** `./trustgate secret-refs-scan` subcommand: reads Postgres, prints gateway, entity and field of credential values starting with `secret://`, never the values themselves. Chart pre-upgrade Job when `secretStores.enabled` flips on. | ~150 | S4 |
 | S7 | **Prewarm, e2e, compose.** Prewarm and `SECRET_STORES_READINESS_GATE`. e2e for hybrid (DB-less plane, fake Vault, `httptest` upstream: serve, rotate, 401 retry, outage, no value in logs or the snapshot) and for external (`run` with a catalog: validate, test-connection, serve). Compose example. | ~450 | S5, S6 |
 
