@@ -2717,6 +2717,20 @@ definitions:
       updated_at:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.LLMAvailability:
+    properties:
+      available:
+        type: boolean
+      lowest_version:
+        description: LowestVersion is the oldest data-plane version seen, set only
+          when outdated.
+        type: string
+      min_version:
+        type: string
+      reason:
+        description: Reason is available, no_data_plane, version_unknown or data_plane_outdated.
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest:
     properties:
       code:
@@ -7858,6 +7872,46 @@ paths:
       summary: Set an MCP Store access grant
       tags:
       - store
+  /v1/gateways/{gateway_id}/store/llm-availability:
+    get:
+      description: Says whether the gateway's data planes serve the LLM Store (/store/v1
+        with personal keys). Hosted and dedicated gateways always do. A hybrid gateway
+        does when every data-plane instance seen in the last five minutes reports
+        min_version or later; otherwise reason is no_data_plane, version_unknown (no
+        heartbeat, or a version that is not semver) or data_plane_outdated with the
+        lowest version seen. Personal consumers and keys can be written either way;
+        they take effect once the data plane is recent enough.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.LLMAvailability'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get whether the gateway serves the LLM Store
+      tags:
+      - store
   /v1/gateways/{gateway_id}/store/principal:
     get:
       description: 'Returns what one user holds on the gateway''s Store: installed
@@ -8231,7 +8285,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "422":
-          description: An out-of-range expires_at, or a hybrid gateway
+          description: An out-of-range expires_at
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -8651,7 +8705,7 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "422":
           description: An out-of-range expires_at, an owner_email that is not an address,
-            a group_id without group_name (or the reverse), or a hybrid gateway
+            or a group_id without group_name (or the reverse)
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
