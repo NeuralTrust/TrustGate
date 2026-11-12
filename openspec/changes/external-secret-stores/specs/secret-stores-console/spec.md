@@ -49,6 +49,43 @@ The row detail MUST show:
 - WHEN any gateway's settings are opened
 - THEN the tab is shown, and its header points to the platform's Helm values
 
+### Requirement: Compatibility with older admins
+
+When `GET …/secret-stores` answers 404, the console MUST treat the gateway as
+`supported: false`. It MUST show no error and no `SecretInput`.
+
+#### Scenario: Console newer than the admin
+
+- GIVEN an admin that predates this change
+- WHEN gateway settings and registry forms are opened
+- THEN they render exactly as before
+
+### Requirement: Unverified references need confirmation
+
+When the source is `data_plane` and no connection is live, the console MUST NOT
+send the reference silently. It MUST explain that no data plane can confirm the
+store, and resend with `allow_unverified_secret_refs=true` only after the user
+confirms.
+
+#### Scenario: Data plane not deployed yet
+
+- GIVEN hybrid gateway G with no live data plane
+- WHEN the user saves a registry whose key is a reference
+- THEN a confirmation dialog explains the risk, and the reference is saved only if the user confirms
+
+### Requirement: Downgrade warning
+
+When the listing reports an instance as `too_old`, the gateway's settings and
+the affected registry cards MUST show a warning with the downgrade checklist:
+- list the usages;
+- replace them with literals, or upgrade the data plane.
+
+#### Scenario: Old data plane
+
+- GIVEN a store listing with an instance in state `too_old`
+- WHEN the Secret stores tab is opened
+- THEN it shows the warning and the checklist
+
 ### Requirement: Tests run where the store lives
 
 "Test a secret" MUST be routed the same way as registry test-connection:

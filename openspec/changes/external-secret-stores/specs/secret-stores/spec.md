@@ -199,6 +199,17 @@ All three routes MUST require `secret_stores:read`. Test responses MUST carry
 only the auth outcome, the read outcome or error class, the version and the
 latency. They MUST NOT carry the secret value.
 
+An instance whose reported version is below `SECRET_STORES_MIN_DATA_PLANE_VERSION`
+MUST be listed with state `too_old`. When such an instance connects to a scope
+whose gateways hold references, the admin MUST log
+`secret_refs_on_old_data_plane` and increment a metric.
+
+#### Scenario: Old data plane joins a gateway that uses references
+
+- GIVEN hybrid gateway G whose registry R holds a reference
+- WHEN a data-plane instance below the minimum version connects for G
+- THEN the store listing shows that instance as `too_old`, and the admin logs `secret_refs_on_old_data_plane`
+
 #### Scenario: Two instances, one degraded
 
 - GIVEN hybrid gateway G with two live instances, one reporting `corp-vault` as `ok` and the other as `auth_failed`
