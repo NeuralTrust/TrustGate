@@ -3974,6 +3974,16 @@
                             }
                         }
                     },
+                    "403": {
+                        "description": "managed is set by a caller that is not the platform",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "content": {
@@ -4467,6 +4477,16 @@
                             }
                         }
                     },
+                    "403": {
+                        "description": "The registry is managed by NeuralTrust",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "content": {
@@ -4548,6 +4568,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "The registry is managed by NeuralTrust",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -11152,6 +11182,10 @@
                     "health_checks": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest"
                     },
+                    "managed": {
+                        "description": "Managed asks for an LLM registry NeuralTrust supplies the credentials\nfor. Platform callers only; it takes no auth.",
+                        "type": "boolean"
+                    },
                     "mcp_target": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
                     },
@@ -12039,6 +12073,9 @@
                     },
                     "id": {
                         "type": "string"
+                    },
+                    "managed": {
+                        "type": "boolean"
                     },
                     "mcp_target": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse"

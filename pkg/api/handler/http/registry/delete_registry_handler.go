@@ -40,6 +40,7 @@ func NewDeleteRegistryHandler(deleter appregistry.Deleter) *DeleteRegistryHandle
 // @Success      204         "No Content"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody  "The registry is managed by NeuralTrust"
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
 // @Failure      422         {object}  httpio.ErrorBody  "The registry carries the last primary default model of a personal consumer"
@@ -49,7 +50,7 @@ func (h *DeleteRegistryHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	if err := h.deleter.Delete(c.UserContext(), gatewayID, id); err != nil {
+	if err := h.deleter.Delete(changeContext(c), gatewayID, id); err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteNoContent(c)

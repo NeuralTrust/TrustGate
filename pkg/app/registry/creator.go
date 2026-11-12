@@ -36,6 +36,9 @@ type CreateInput struct {
 	LLMTarget   *domain.LLMTarget
 	MCPTarget   *domain.MCPTarget
 	A2ATarget   *domain.A2ATarget
+	// Managed creates an LLM registry NeuralTrust supplies the credentials for.
+	// Only the platform may ask for it (see AsPlatform).
+	Managed bool
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=registry_creator_mock.go --case=underscore --with-expecter
@@ -80,6 +83,41 @@ func NewCreator(
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry, error) {
+	if err := refuseManagedChange(ctx, in.Managed); err != nil {
+		return nil, err
+	}
+	var b *domain.Registry
+	var err error
+	switch {
+	case in.Managed && in.Type != domain.TypeLLM && in.Type != "":
+		return nil, fmt.Errorf("%w: only an LLM registry can be managed", domain.ErrInvalidRegistry)
+	case in.Managed:
+		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
+			return nil, verr
+		}
+		b, err = domain.NewManagedLLMRegistry(in.GatewayID, in.Name, in.Description, in.LLMTarget)
+	}
+	if b == nil && err == nil {
+		b, err = c.build(ctx, in)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if in.Enabled != nil {
+		b.Enabled = *in.Enabled
+	}
+	if err := c.repo.Save(ctx, b); err != nil {
+		return nil, err
+	}
+	c.memoryCache.Set(b.ID.String(), b)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
+	return b, nil
+}
+
+// build makes a registry the tenant supplies the credentials for.
+func (c *creator) build(ctx context.Context, in CreateInput) (*domain.Registry, error) {
 	var b *domain.Registry
 	var err error
 	switch in.Type {
@@ -123,20 +161,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.LLMTarget,
 		)
 	}
-	if err != nil {
-		return nil, err
-	}
-	if in.Enabled != nil {
-		b.Enabled = *in.Enabled
-	}
-	if err := c.repo.Save(ctx, b); err != nil {
-		return nil, err
-	}
-	c.memoryCache.Set(b.ID.String(), b)
-	if c.signaler != nil {
-		c.signaler.Signal(ctx)
-	}
-	return b, nil
+	return b, err
 }
 
 // prepareA2A validates the target before any request leaves the gateway,

@@ -171,7 +171,7 @@ func (t *connectionTester) resolveTarget(
 		if err != nil {
 			return "", nil, nil, err
 		}
-		return reg.Provider(), reg.ProviderOptions(), reg.Auth(), nil
+		return reg.Provider(), reg.ProviderOptions(), reg.EffectiveAuth(), nil
 	}
 	return in.Provider, in.ProviderOptions, in.Auth, nil
 }
