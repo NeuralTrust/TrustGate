@@ -145,6 +145,17 @@ runs as its own subject.
 
 All three are answered before the body is parsed and before any call to the agent.
 
+`scripts/a2a-user-check.sh` calls an agent the way an application does: it
+reads the card, sends a message, reads the task back, and checks the 401, the
+refused methods and, with a second application's key, task ownership.
+
+```bash
+AGENT_URL=https://<gateway>.agents.<domain>/<consumer>/agents/<agent> \
+API_KEY=<the application's key> \
+API_KEY_2=<another application's key> \
+scripts/a2a-user-check.sh
+```
+
 ## Card pinning
 
 For a `card_url` whose path ends in `.json` or `/agentCard/v1.0` the gateway
