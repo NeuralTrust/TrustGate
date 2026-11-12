@@ -80,6 +80,23 @@ func TestBuilder_A2AFoldsTheCall(t *testing.T) {
 	assert.Nil(t, evt.Usage)
 }
 
+// The Activity list names an A2A call by the text it sends, in either
+// protocol version; a call with no message has no preview.
+func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
+	cases := map[string]string{
+		`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"1","parts":[{"text":"Hello!"},{"data":{"a":1}},{"text":"Find flats"}]}}}`:                             "Hello! Find flats",
+		`{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","kind":"message","messageId":"1","parts":[{"kind":"text","text":"Book a trip"},{"kind":"file","file":{"uri":"x"}}]}}}`: "Book a trip",
+		`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"t-1"}}`: "",
+	}
+	for body, want := range cases {
+		rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})
+		req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/bot/agents/reg-1", Body: []byte(body)}
+		start := time.UnixMilli(2_000_000)
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, &infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
+		assert.Equal(t, want, evt.Request.Preview, body)
+	}
+}
+
 // LLM and MCP events carry no a2a block.
 func TestBuilder_OtherKindsCarryNoA2A(t *testing.T) {
 	for _, kind := range []string{events.KindLLM, events.KindMCP} {
