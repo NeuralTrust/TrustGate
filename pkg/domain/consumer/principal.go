@@ -15,7 +15,6 @@
 package consumer
 
 import (
-	"math"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -72,11 +71,7 @@ func AppPrincipal(cons *Consumer, caller *identity.Principal) *identity.Principa
 		p = &copied
 		p.Subject = AppSubject(cons.ID)
 	}
-	capHint := len(p.Claims)
-	if capHint <= math.MaxInt-2 {
-		capHint += 2
-	}
-	claims := make(map[string]any, capHint)
+	claims := make(map[string]any, len(p.Claims))
 	for k, v := range p.Claims {
 		claims[k] = v
 	}
