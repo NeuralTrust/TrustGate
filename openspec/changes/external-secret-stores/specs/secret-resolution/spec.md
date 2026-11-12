@@ -38,6 +38,51 @@ file MUST NOT resolve references.
 - WHEN any admin feature reads a registry that holds a reference
 - THEN no secret store is contacted, and the reference stays a string
 
+### Requirement: Reference-shaped values are never forwarded
+
+A plane that has this code MUST NOT forward a value that parses as a
+reference, at a declared location, as a credential to an upstream. This holds
+in all of these cases:
+- `SECRET_STORES_ENABLED` is off;
+- the plane has no store file;
+- the store is unknown;
+- the gateway is not eligible.
+
+In each case the entity MUST be marked credential-unavailable, and the request
+MUST fail with `secret_unavailable`.
+
+#### Scenario: Feature turned off after adoption
+
+- GIVEN a hybrid plane that resolved `secret://corp-vault/ai-gateway/openai#api_key`, and an operator who sets `SECRET_STORES_ENABLED=false`
+- WHEN a request is routed to that registry
+- THEN the client receives 503 `secret_unavailable`, and the upstream receives no request
+
+### Requirement: No cost and no change without references
+
+When no value at a declared location starts with `secret://`, materialization
+MUST return its input unchanged, with no copy, no allocation and no store
+access.
+
+Credential-keyed caches MUST keep today's keys for literal credentials. Only
+reference-derived credentials get new keys:
+- the Bedrock runtime pool key;
+- the MCP dial revision.
+
+When a reference-derived value changes, the Bedrock pool MUST delete the
+previous entry for that registry, so rotation never grows the pool.
+
+#### Scenario: Deploy without references
+
+- GIVEN a plane running this change, with no reference configured anywhere
+- WHEN traffic flows
+- THEN `DataFinder` output, Bedrock pool keys and MCP revisions are identical to the previous release
+
+#### Scenario: Rotation does not grow the Bedrock pool
+
+- GIVEN a Bedrock registry whose secret key comes from a reference
+- WHEN the referenced value rotates 100 times
+- THEN the pool holds one client for that registry
+
 ### Requirement: Materialization in the runtime read model
 
 Every plane that has a store file MUST substitute references with values where

@@ -82,7 +82,7 @@
 | D3 | **One store source per gateway.** `ServedByOwnDataPlane()` → the union of `Heartbeat.secret_stores` over the gateway's live connections. Otherwise → the admin's own catalog. The listing returns `supported` and `source` (`data_plane` \| `control_plane`). | Declare stores again in the console. Always use heartbeats. | Declaring stores twice drifts. In `external` mode config-sync is off and planes read Postgres directly, so there are no heartbeats; but the admin mounts the same file as the proxy, so its own catalog is authoritative. |
 | D4 | **References are strings with a URI grammar**, `secret://store/path?version=v#field`, recognised only at declared secret locations (`secretref.Locations`). | A structured object in every DTO. | Every secret field is already a string, typed or in plugin maps. No DTO, snapshot or masking change. Same shape as Kong and LiteLLM. Restricting where references are recognised means one planted in a prompt template or an arbitrary header is just text. |
 | D5 | **Only customer-operated planes resolve.** A plane resolves only when it loads a store file. Data planes always may. The admin loads one only in external and central, and then resolves for its own features: test-connection, `/v1/models-catalog` and the store test. NeuralTrust's SaaS admin never resolves. | Let the SaaS admin resolve too. | NeuralTrust's admin has neither network access nor identity in the customer's vault, and holding either is what G3 forbids. |
-| D6 | **Materialize in the runtime finders:** `consumer.DataFinder.load` and `registry.Finder`, on every plane that has a catalog. Other runtime readers (§7) call the materializer explicitly. The admin read path never materializes. | Resolve at each call site. Decorate repositories. | About 10 call sites; missing one is the LiteLLM #35239 bug. The finders sit above both the Postgres and the snapshot repositories. A repository decorator would leak values into admin reads. |
+| D6 | **Materialize in the runtime finders:** `consumer.DataFinder.load` and `registry.Finder`, on every plane that has a catalog. Other runtime readers (§7) call the materializer explicitly. The admin read path never materializes. **No cost without references:** the materializer first does an O(1) `secret://` prefix check per declared location. When nothing matches, it returns its input untouched: no copy, no allocation, no catalog access. | Resolve at each call site. Decorate repositories. | About 10 call sites; missing one is the LiteLLM #35239 bug. The finders sit above both the Postgres and the snapshot repositories. A repository decorator would leak values into admin reads. The fast path keeps every existing gateway on the code path it runs today (§13). |
 | D7 | **In-process cache per replica.** Key: (store, path, version). TTL 5 min. Refresh-ahead from 80 % ± 10 % jitter. Stale-on-error up to `max_stale` (24 h). Negative TTL 30 s. Singleflight. Fetch timeout 2 s. Evicted after 1 h unused. A pinned version never refreshes. | A Redis cache. Persisting values in the LKG. A 24 h TTL with no refresher (LiteLLM). | Redis or the LKG would put plaintext at rest. One fetch per secret per replica per TTL is cheap. |
 | D8 | **An unresolved reference becomes an empty value plus `CredentialUnavailable`.** The invoker fails with 503 `secret_unavailable` before dialing. Failover applies. | Forward the reference string. Fail the whole gateway load. | Avoids LiteLLM #26151 (a literal reference sent upstream). A single bad reference must not take down the whole gateway. |
 | D9 | **A changed value invalidates only the gateways that use it.** Refresh compares SHA-256 hashes. The reverse index from reference to gateway drops those gateways from the `DataFinder` and `registry.Finder` caches. | Clear every cache. Wait for the 1 h TTL. | Reuses the existing invalidation path, scoped to what changed. |
@@ -90,12 +90,12 @@
 | D11 | **Forced refresh on upstream 401/403**, at most once per reference per 30 s. If the value changed, invalidate and retry once on the same registry, provided nothing was streamed yet. Otherwise fall back to failover. | Wait for the TTL. | Rotation is picked up immediately (G5), and the vault is protected from retry storms. |
 | D12 | **Backend clients.** Vault/OpenBao and GCP use REST on TrustGate's HTTP client; GCP reuses the `gcpauth` token cache. AWS uses `service/secretsmanager`. Azure uses `azsecrets`. | `hashicorp/vault/api`, `cloud.google.com/go/secretmanager`. | We need little of each API, and the GCP SDK pulls in the full gRPC client stack. The AWS and Azure modules are small and reuse dependencies we already have. |
 | D13 | **Three independent guards keep stores off NeuralTrust-run planes.** (a) The admin validates eligibility (D1). (b) Every plane checks eligibility itself, plus the store's `gateways` allowlist, before resolving. A reference that fails either check stays unresolved with class `not_allowed`. (c) A plane with `INSTANCE_DEPLOYMENT_TYPE=saas` refuses to start with `SECRET_STORES_FILE` set. Our overlays set `saas` (`k8s/overlays/*/config.env`). On top of that, NeuralTrust never ships a store file to its own planes. | A single flag. | Pod identity, environment and files belong to whoever runs the pod. On our planes they are ours, so a single misconfiguration must not expose them. |
-| D14 | **Write-time validation against the store source.** **Admin catalog:** the store must exist and allow the gateway and the path. **Heartbeats with at least one live connection:** some live connection must report the store as allowing the gateway and the path, and every live connection must meet the minimum version. **Heartbeats with no live connection:** accept, so config-as-code works before the data plane is deployed. The console shows the store as `not_reported`. | Always require a report. Never validate. | Strict whenever the source is known, permissive only when it cannot be. |
+| D14 | **Strict write-time validation against the store source.** **Admin catalog:** the store must exist and allow both the gateway and the path. **Heartbeats with at least one live connection:** some live connection must report the store as allowing the gateway and the path, and every live connection must meet the minimum version. **Heartbeats with no live connection:** refuse with 422 `secret_store_unverified`, unless the request opts in with `?allow_unverified_secret_refs=true`. The console asks for explicit confirmation before sending it. | Accept silently when nothing is connected. Never validate. | A reference that reaches a data plane too old to resolve it is sent upstream as the literal API key (D19). Strict by default closes that hole. The opt-in keeps config-as-code possible before the data plane exists, as a deliberate choice. |
 | D15 | **References are not secrets.** They are returned verbatim, and `Mask`/`MaskSettings` pass them through. Writing a reference, or retargeting one (`CredentialDestinations`), needs `secret_stores:read` in addition to the entity scope. | Mask references. Let anyone with entity write add one. | The console must show references and edit them. The scope check keeps parity with today's rule: only a caller who has seen a credential may aim it elsewhere. |
 | D16 | **No inline secrets in the store file.** Vault `token`, `secret_id` and `jwt` are only accepted as `*_file` paths, mounted from Kubernetes Secrets. Inline values and unknown keys are refused. | Allow inline credentials. | The file is a ConfigMap; a secret in it leaks. Strict decoding turns typos into errors. |
 | D17 | **Optional per-store `gateways` allowlist** (gateway ids). It is enforced by the admin (validation, listing) and by every plane (resolution), and reported in the heartbeat. Empty means every eligible gateway served by that plane. | Rely on `allowed_paths` alone. | In a shared self-hosted or central cluster, every team's gateways share the proxy and the file (G8). Paths limit *what* a store can read. The allowlist limits *who* may use the store. |
 | D18 | **Field selection.** `#field` picks a top-level KV or JSON key. With no field, the whole payload is used; Vault KV requires exactly one key in that case. Non-string values are refused. The GCP service-account field takes whole JSON. | JSON pointers. | Covers the one-secret-many-keys layout. Nested paths can be added later in a backward-compatible way. |
-| D19 | **Rollout.** Everything is behind `SECRET_STORES_ENABLED` (default off), with version gating through D14. | Docs only. | Old planes ignore references and would send empty credentials. |
+| D19 | **Rollout behind `SECRET_STORES_ENABLED`** (default off), with version gating (D14). A plane that predates this change does not know the grammar. It forwards a reference **literally as the credential** (`Authorization: Bearer secret://…`), so the upstream answers 401 and that registry is down. This is LiteLLM #26151. So: (a) D14 refuses references while any live plane is older than the minimum. (b) When a plane below the minimum connects to a scope whose gateways hold references, the admin marks those instances `too_old` in the store listing, logs `secret_refs_on_old_data_plane` and increments a metric. (c) A downgrade procedure (§13) replaces references before a plane or chart is downgraded. A plane that *has* this code never forwards a reference-shaped value, whatever its flags (secret-resolution spec). | Rely on documentation. | Planes that predate the change cannot be fixed retroactively, so the control plane must keep references away from them and make any exposure visible. |
 | D20 | **Prewarm without a readiness gate.** The plane prewarms in the background after a snapshot apply, a store-file reload or a Postgres cache load. `SECRET_STORES_READINESS_GATE=true` makes readiness wait for it. | Always gate readiness. | A short vault blip must not stop pods from starting. Operators can opt in. |
 
 ## 1. Reference grammar
@@ -337,7 +337,8 @@ PUT /v1/gateways/G/registries/R  { auth: { type: api_key, api_key: { api_key: "s
          control_plane → store in catalog, allows G, path allowed          else 422 unknown_secret_store / secret_path_not_allowed
          data_plane, ≥1 live → reported by a live connection, allows G, path allowed; every live ≥ min version
                                                                           else 422 unknown_secret_store / secret_path_not_allowed / data_plane_too_old
-         data_plane, none live → accept (store shown "not_reported")
+         data_plane, none live → 422 secret_store_unverified
+                                 unless ?allow_unverified_secret_refs=true → accept (store shown "not_reported")
   repository: as today; outbox marker for G
   log "secret_reference_set" {gateway, entity, field, store, path, actor}
 ```
@@ -378,9 +379,19 @@ never run there for hybrid gateways anyway.
 | `SECRET_STORES_FILE` changed | Swap the stores, rebuild the clients of the changed stores, refresh their entries. |
 | Pinned `?version=` | Never refreshed. |
 
-The Bedrock pool key hashes the secret key and the session token
-(`pkg/infra/providers/bedrock/client.go:386`). The MCP dial revision hashes the
-materialized credential (`pkg/app/mcp/target.go:123`).
+**Credential-keyed caches change only for credentials that come from a
+reference.** Literal credentials keep exactly today's keys, so deploying this
+change causes no rebuilds, redials or memory growth.
+
+- **Bedrock runtime pool** (`pkg/infra/providers/bedrock/client.go:336-397`).
+  It is a `sync.Map` with no eviction. A reference-derived client is keyed by
+  `ref:<registry-id>:<payload-hash>`. When that reference changes, the old key
+  is deleted, so rotation never grows the pool. The literal key
+  (`buildClientKey`) is unchanged.
+- **MCP dial revision** (`pkg/app/mcp/target.go:123`). It feeds the dialer
+  caches (`pkg/infra/mcp/client/cached_dialer.go:198`,
+  `pkg/infra/mcp/openapi/dialer.go:105`). The payload hash is appended only
+  when the target's credential came from a reference.
 
 ### 3.5 Cache states and error classes
 
@@ -508,7 +519,7 @@ Guarded by `RequireGatewayAccess(ResourceSecretStores)`, which maps to
 
 | Route | Behaviour |
 |---|---|
-| `GET /v1/gateways/:gateway_id/secret-stores` | Returns `{ supported, source: data_plane\|control_plane, stores: [{ name, type, allowed_paths, status: ok\|degraded\|down\|not_reported, consistent, instances: [{instance_id, version, state, error_class, checked_at}], usages }] }`. Stores whose allowlist excludes the gateway are omitted. With source `control_plane`, `instances` holds the admin replica. |
+| `GET /v1/gateways/:gateway_id/secret-stores` | Returns `{ supported, source: data_plane\|control_plane, stores: [{ name, type, allowed_paths, status: ok\|degraded\|down\|not_reported, consistent, instances: [{instance_id, version, state, error_class, checked_at}], usages }] }`. An instance below `SECRET_STORES_MIN_DATA_PLANE_VERSION` has state `too_old` (D19). Stores whose allowlist excludes the gateway are omitted. With source `control_plane`, `instances` holds the admin replica. |
 | `GET …/:name/usages` | `[{ entity, id, name, field, reference }]` |
 | `POST …/:name/test` | Only when `source=control_plane`. Body `{ path?, field?, version? }`. Returns `{ auth, read, version, latency_ms }`, never the value. With `source=data_plane` it answers 409 `test_runs_on_data_plane`. |
 
@@ -529,6 +540,7 @@ Guarded by `RequireGatewayAccess(ResourceSecretStores)`, which maps to
 | `secret_path_not_allowed` | 422 | admin |
 | `data_plane_too_old` | 422 | admin |
 | `test_runs_on_data_plane` | 409 | admin |
+| `secret_store_unverified` | 422 | admin (D14) |
 | `secret_unavailable` | 503 | serving plane; the body names neither store nor path |
 
 ## 7. Runtime readers that must materialize
@@ -696,6 +708,7 @@ over: grammar, locations, resolver, materializer and console.
 | `pkg/api/middleware/admin_scopes.go`, `pkg/server/router/{admin,proxy}_router.go` | scope, routes |
 | `pkg/container/modules/secretstore.go` | DI: catalog, resolver, refresher, probe (any plane with a file); source, lister, validator (admin) |
 | `pkg/config/config.go`, `.env.example`, `downloads/docker-compose.yml` | variables, compose example |
+| `cmd/trustgate` (`secret-refs-scan` subcommand) | pre-deploy scan (§13.3) |
 | `docs/openapi.json`, `swagger.*` | API |
 
 ### Other repositories
@@ -757,28 +770,91 @@ over: grammar, locations, resolver, materializer and console.
   - token or scope required;
   - the value never appears in the body;
   - allowlist and paths enforced.
+- **Compatibility (flag off, and flag on with no references):**
+  - golden tests: `DataFinder`/`registry.Finder` output is byte-identical
+    and the materializer allocates nothing;
+  - `buildClientKey` and the MCP revision are unchanged for literal
+    credentials;
+  - masking and the registry, policy, auth and gateway write paths are
+    unchanged for values that do not start with `secret://`;
+  - the chart renders identical manifests with `secretStores.enabled=false`;
+  - the console treats a 404 from `GET …/secret-stores` as `supported: false`.
+- **Safety:**
+  - a reference-shaped value at a declared location is never forwarded:
+    with the flag off, with no catalog, or when the store is unknown;
+  - D14 strict versus opt-in;
+  - an old plane connecting to a scope with references raises `too_old`.
 - **End to end:**
   - **Hybrid:** DB-less plane, store file, fake Vault, `httptest` upstream.
     Serve, rotate, 401 retry, outage. No value in the logs or the snapshot.
   - **External:** `run` with the admin catalog. Validation through
     `control_plane`; test-connection resolves on the admin; the proxy serves.
 
-## 13. Rollout
+## 13. Compatibility and safe rollout
 
-1. Merge the TrustGate slices with `SECRET_STORES_ENABLED=false`. The schema
-   and proto changes are additive.
-2. Release the images, then the chart with `agentgateway.secretStores`. Render
-   tests cover hybrid, external and central.
-3. Validate on internal clusters:
-   - hybrid on EKS with IRSA, connected to dev;
-   - external on GKE with Vault Kubernetes auth;
-   - central with one remote cluster.
-4. Enable the console behind a feature flag for selected tenants and on-prem
-   customers.
-5. Publish the docs pages (§11).
+### 13.1 What changes when this code is deployed with `SECRET_STORES_ENABLED=false`
 
-**Rollback:** turn the flag off. The usages endpoint lists the references to
-replace with literals.
+| Area | Guarantee |
+|---|---|
+| Hot path | The materializer is a no-op when no value starts with `secret://` (D6). The validator runs only on such values. The forced-refresh retry applies only to registries with `SecretRefs`. |
+| Credential-keyed caches | They are unchanged for literal credentials (§3.4). There is no client rebuild, no MCP redial and no pool growth. |
+| Masking and responses | Unchanged. The reference pass-through applies only with the flag on. |
+| Database | An additive migration with nullable columns on `config_sync_connections`. It is instant on Postgres ≥ 11. A rollback image is safe: the repository uses explicit column lists (`pkg/infra/repository/configsyncconn/repository.go:149-183`). |
+| Config-sync protocol | Additive fields 6–7 on `Heartbeat`. Older control planes and planes ignore them. No snapshot or LKG format change. |
+| Boot | New variables all have defaults. The only new boot failure is setting `SECRET_STORES_FILE` on a `saas` plane, which no existing deployment does. |
+| Chart | Nothing is rendered unless `agentgateway.secretStores.enabled=true`: no new env in the shared ConfigMap and no mounts, so no pod restarts on upgrade. |
+| Console | `SecretInput` and the tab appear only with `supported: true`. A 404 from an older admin reads as unsupported. |
+| Scopes | Humans are unaffected: `HasScope` returns true for console users (`pkg/api/middleware/admin_identity.go:59`). Service credentials need `secret_stores:read` only to write references. `GATEWAY_CREDENTIAL_SCOPES` in the console gains it, opt-in. |
+
+**The only behaviour difference with the flag off.** It concerns credential
+values that literally start with `secret://`. The admin refuses new ones (422
+`secret_references_disabled`), and planes do not forward them
+(`secret_unavailable`). No provider issues keys of that shape. The pre-deploy
+scan (§13.3) confirms that none are stored.
+
+### 13.2 Impact per deployment model once enabled
+
+| Model | Who is affected | Main risk | Control |
+|---|---|---|---|
+| SaaS (hosted, dedicated) | Nobody. References are refused (eligibility `hybrid`), and NeuralTrust planes refuse a store file. | — | D1, D13 |
+| Hybrid | Only gateways that adopt references | Customer data planes upgrade on their own schedule, so an old plane would send `secret://…` upstream (D19) | Strict D14; `too_old` detection; downgrade procedure |
+| Self-hosted / central | Only gateways that adopt references | A chart rollback after adoption leaves the older proxy forwarding `secret://…` upstream | Downgrade procedure; release notes |
+
+### 13.3 Procedure
+
+1. **Pre-deploy scan.** `./trustgate secret-refs-scan` is a one-off command
+   that reads Postgres the way the collector does. It prints gateway, entity
+   and field for every credential value starting with `secret://`, never the
+   value itself. The expected result is zero. NeuralTrust runs it in SaaS; the
+   chart runs it as a pre-upgrade Job when `secretStores.enabled` flips to true.
+2. **Deploy with the flag off everywhere.** Check the §13.1 guarantees in dev
+   (golden tests plus dashboards).
+3. **Turn the flag on for resolving planes first,** then for the admin. In SaaS
+   only hybrid customers' planes ever resolve. NeuralTrust's hosted planes
+   stay off.
+4. **Release the chart** with `agentgateway.secretStores`. Render tests cover
+   hybrid, external and central, plus the disabled case being identical.
+5. **Validate on internal clusters.**
+   - Hybrid: EKS with IRSA, against dev.
+   - External: GKE with Vault Kubernetes auth.
+   - Central: one remote cluster.
+6. **Enable the console** behind a feature flag for selected tenants and
+   on-prem customers. Then publish the docs (§11).
+
+### 13.4 Downgrade and rollback
+
+Before downgrading a hybrid data plane, or rolling back a self-hosted or
+central chart, below the first version that resolves references:
+
+1. List the references with `GET …/secret-stores/:name/usages` for each store.
+2. Replace each one with a literal value, or remove the registry from routing.
+3. Then downgrade.
+
+The console shows this checklist when a connected plane reports `too_old`.
+
+Turning `SECRET_STORES_ENABLED` off on planes that have this code is always
+safe. Their references become `secret_unavailable` and are never forwarded.
+Only the routes that use references stop working.
 
 ## Rejected alternatives
 

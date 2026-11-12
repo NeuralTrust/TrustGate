@@ -238,19 +238,27 @@ Linear: _pending_. Research: `exploration.md`.
 | **A console admin aims the pod identity at a host they control.** | Impossible by construction: store addresses and auth exist only in Helm values. |
 | **Vault outage.** | Refresh-ahead, stale-on-error up to `max_stale` (24 h default), and registry failover. |
 | **A reference string is sent upstream (LiteLLM #26151).** | An unresolved reference becomes an empty value plus `CredentialUnavailable`. The request fails before any upstream call. |
-| **The data-plane fleet runs mixed versions.** | Write-time version gating from the heartbeat. Old planes report no stores. |
+| **A plane that predates this change receives a reference.** It forwards `secret://…` literally as the API key: the upstream answers 401 and that registry is down (LiteLLM #26151). | Strict write-time validation, so no reference is accepted while any live plane is too old or none is connected, unless the request explicitly opts in with `allow_unverified_secret_refs`. An old plane joining a scope with references is reported as `too_old`, logged and counted. Downgrade procedure: replace references before downgrading a plane or rolling back the chart. |
+| **Deploying the code changes behaviour for existing customers.** | With the flag off, the materializer is a no-op unless a value starts with `secret://`. Masking, write paths and cache keys for literal credentials stay unchanged. The chart renders nothing new, and the console treats a 404 as unsupported. A pre-deploy scan (`secret-refs-scan`) confirms that no stored credential starts with `secret://`. Golden tests prove all of this (design §13). |
 | **Chart and console drift.** | Discovery: the console lists only what the planes actually loaded. The generator polls until the store is reported. |
 
 ## Rollback plan
 
-Set `SECRET_STORES_ENABLED=false` on the admin and on the planes.
+**Feature rollback (always safe).** Set `SECRET_STORES_ENABLED=false` on the
+admin and the planes.
 - The admin refuses new references.
-- References already stored stay in place.
-- The planes stop resolving, so affected routes fail with `secret_unavailable`.
+- The planes stop resolving and never forward a reference-shaped value.
+- Only the routes that use references fail, with `secret_unavailable`.
 
-A full rollback of a gateway means replacing its references with literals.
-`GET …/secret-stores/:name/usages` lists them. The migration (nullable columns)
-and the proto fields are additive.
+**Version rollback.** This means downgrading a hybrid data plane, or rolling
+back a self-hosted or central chart, below the first version that resolves
+references. First replace every reference with a literal, using
+`GET …/secret-stores/:name/usages`. Otherwise the older plane forwards
+`secret://…` upstream. The console shows this checklist when a plane reports
+`too_old`.
+
+The schema change (nullable columns, explicit column lists) and the proto
+change (additive fields) are safe to roll back.
 
 ## Dependencies
 
@@ -283,6 +291,12 @@ and the proto fields are additive.
   references. A `saas` plane refuses `SECRET_STORES_FILE`.
 - [ ] **Multi-team.** A store restricted to gateway A cannot be referenced or
   resolved for gateway B in the same cluster.
+- [ ] **Compatibility.** Deploying with the flag off is a no-op for
+  existing gateways in SaaS, hybrid and self-hosted. Golden tests and an
+  identical chart render prove it.
+- [ ] **Old planes.** No reference can be written for a gateway whose live
+  planes are too old, or which has no live plane, without the explicit opt-in.
+  An old plane that joins later is reported as `too_old`.
 - [ ] **Console.** It shows the same tab, generator and `SecretInput` in
   hybrid, self-hosted and central. Tests run on the plane that can reach the
   vault and never show a value.

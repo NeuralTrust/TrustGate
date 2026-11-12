@@ -105,8 +105,10 @@ the admin API MUST check the following, in order:
        `secret_path_not_allowed`.
      - every live connection reports at least the minimum version. Otherwise:
        422 `data_plane_too_old`.
-   - **Source `data_plane`** with no live connection: the reference MUST be
-     accepted.
+   - **Source `data_plane`** with no live connection: the admin MUST refuse
+     the reference with 422 `secret_store_unverified`, unless the request
+     carries `?allow_unverified_secret_refs=true`. In that case it MUST accept
+     the reference and log the opt-in.
 
 #### Scenario: Unknown store while the data plane is connected
 
@@ -126,11 +128,17 @@ the admin API MUST check the following, in order:
 - WHEN a registry is written with `secret://corp-vault/payments/db#password`
 - THEN the response is 422 `secret_path_not_allowed`
 
-#### Scenario: Config-as-code before the data plane exists
+#### Scenario: No data plane connected
 
 - GIVEN hybrid gateway G with no live data plane
 - WHEN a registry is written with `secret://corp-vault/ai-gateway/openai#api_key`
-- THEN the write succeeds, and the store is listed with status `not_reported`
+- THEN the response is 422 `secret_store_unverified` and nothing is stored
+
+#### Scenario: Config-as-code before the data plane exists (explicit opt-in)
+
+- GIVEN hybrid gateway G with no live data plane
+- WHEN the same write is sent with `?allow_unverified_secret_refs=true`
+- THEN the write succeeds, the opt-in is logged, and the store is listed with status `not_reported`
 
 #### Scenario: Caller without store scope
 
@@ -138,9 +146,24 @@ the admin API MUST check the following, in order:
 - WHEN it writes a registry whose `api_key` is a reference
 - THEN the response is 403 and names the missing scope
 
+### Requirement: No behaviour change with the feature off
+
+While `SECRET_STORES_ENABLED` is false:
+- admin responses, masking and write paths MUST behave exactly as they do
+  today for every value that does not start with `secret://`;
+- the admin MUST refuse new values that start with `secret://` at declared
+  locations, with 422 `secret_references_disabled`. Nothing else changes.
+
+#### Scenario: Existing literal credential
+
+- GIVEN the flag is off and a registry whose `api_key` is `sk-live-123`
+- WHEN the registry is read and updated
+- THEN the response masks the key as today, and the update behaves as today
+
 ### Requirement: References are returned verbatim
 
-A stored reference MUST be returned unchanged by every admin response.
+While the feature is enabled, a stored reference MUST be returned unchanged by
+every admin response.
 `secret.Mask`, `MaskSettings` and `ResolveSettings` MUST leave it untouched. An
 update that echoes back the stored reference MUST keep it.
 
