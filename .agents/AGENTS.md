@@ -46,11 +46,11 @@ pkg/
 
 ```
 godotenv.Load (.env, /etc/secrets/.env, /etc/secrets/secrets)
-plane := argv[1]                          # admin | proxy | mcp | run (default proxy)
-dbless := CONFIG_SYNC_DATA_PLANE_ENABLED && plane in {proxy, mcp}
+plane := argv[1]                          # admin | proxy | mcp | agent | worker | run (default proxy)
+dbless := CONFIG_SYNC_DATA_PLANE_ENABLED && plane in {proxy, mcp, agent, worker}
 container.New(modules.All(plane, dbless))
 if !dbless: migrations + cache event listener
-c.Invoke(runAdmin | runProxy | runMCP | run)   # one plane (run = admin+proxy)
+c.Invoke(runAdmin | runProxy | runMCP | runAgent | run)   # one plane (run = admin+proxy)
 <-SIGINT/SIGTERM
 srv.Shutdown()
 ```
@@ -275,10 +275,10 @@ and calls `modules.All(plane, dbless)`:
   (`Core`, `Gateway`, `Registry`, `Consumer`, `Catalog`, `Store`, `Auth`,
   `Policy`, `MCPVaultPostgres`, …) **+** `ControlConfigSync` (compiler, holder,
   dispatcher, gRPC hub, authed gRPC listener).
-- **DB-less DP set** (`(proxy|mcp) && dbless`): `CoreData` (config / logger /
+- **DB-less DP set** (`(proxy|mcp|agent|worker) && dbless`): `CoreData` (config / logger /
   redis / crypto + snapshot-adapter bindings; `provideNilConnection` for
   `optional:"true"` consumers), `Cache`, `Plugins`, `Proxy`, `MCP` (with
-  `MCPVaultRedis`), `ServerProxy` / `ServerMCP`, `ConfigSyncData` (store, codec,
+  `MCPVaultRedis`), `ServerProxy` / `ServerMCP` / `ServerAgent`, `ConfigSyncData` (store, codec,
   crypto, gRPC fetcher, LKG, converge `Worker`). `main` skips migrations, cache
   event listener, and catalog sync; `runProxy` / `runMCP` start `Worker.Run`.
 

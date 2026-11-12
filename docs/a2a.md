@@ -294,14 +294,15 @@ keys of one application share their tasks; two users of one application do
 not.
 
 - Before `tasks/get`, `tasks/cancel`, `tasks/resubscribe` (and the 1.0 names)
-  and before a message that names a `taskId` or `contextId`, the gateway
-  checks the owner. Another owner, or none, answers `TaskNotFoundError`
-  (`-32001`) without calling the agent. A new conversation sends no
-  `contextId`; the agent assigns it.
+  and before a message that names a `taskId`, a `contextId` or tasks in
+  `referenceTaskIds`, the gateway checks the owner. Another owner, or none,
+  answers `TaskNotFoundError` (`-32001`) without calling the agent. A new
+  conversation sends no `contextId`; the agent assigns it. A referenced task
+  is only checked: the answer does not bind it again.
 - Each task or context id an answer or stream event names is recorded for the
   caller in Redis for 7 days, renewed whenever an answer names it again.
 - An answer naming an id another caller owns is not delivered (`-32092`,
-  `ownership_conflict`).
+  `ownership_conflict`), and none of the ids it names is recorded.
 - Redis unreadable: `-32092` (`ownership_unavailable`), nothing sent.
   Unwritable: the answer is delivered and the failure logged; later calls on
   that task get `-32001`.
@@ -323,7 +324,18 @@ Plugins see a normalised body, the same for both versions:
 
 `pre_request` sees the message parts. `pre_response` sees the parts of a
 Message answer, or of a Task's status message, artifacts and agent messages
-in its history. `request_size_limiter` measures the normalised body.
+in its history. `request_size_limiter` measures the JSON-RPC body as it is
+sent to the agent, metadata and configuration included.
+
+A part the gateway cannot read fails the call rather than reaching the
+policies unchecked: a `parts`, `artifacts` or `history` that is not a list,
+an item that is not an object, a text that is not a string, or a part of no
+known kind. In a request that answers `-32602`; in an answer or a stream
+event, `-32092` `invalid_upstream_response`.
+
+A `tasks/cancel` (`CancelTask`) answer is relayed with the task's state only:
+its artifacts, history and status message are removed. Read them with
+`tasks/get`, where `pre_response` runs.
 
 A block, or a mask verdict (the gateway does not rewrite parts), answers
 `-32090` instead of calling the agent or instead of its answer. In a stream
@@ -338,10 +350,12 @@ can pass.
 | Limit | Value | On breach |
 |---|---|---|
 | Request body | 8 MiB | 413 |
+| Tasks one message references (`referenceTaskIds`) | 32 | `-32602` |
 | Buffered answer | 8 MiB | `-32092` `response_too_large` |
 | Buffered call | 300 s | `-32092` `upstream_timeout` |
-| One stream event | 1 MiB | `-32092` `response_too_large`, stream closed |
+| One stream event, all its `data:` lines together | 1 MiB | `-32092` `response_too_large`, stream closed |
 | Agent opens no stream | 120 s | `-32092` `upstream_timeout` |
+| Agent answers a stream call with a JSON body | 300 s to read it | `-32092` `upstream_timeout` |
 | Silence between stream events | 120 s | `-32092` `stream_idle`, stream closed |
 | Stream duration | 55 min | `-32092` `stream_max_duration`, stream closed; continue with `tasks/resubscribe` or `SubscribeToTask` |
 | Ownership record | 7 days after an answer last named the id | `-32001` |
@@ -358,9 +372,9 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 | Code | Meaning | `error.data` |
 |---|---|---|
 | `-32700` | Body is not JSON | |
-| `-32600` | Not a single JSON-RPC 2.0 request with an `id`, or `Content-Type` is not `application/json` | |
+| `-32600` | Not a single JSON-RPC 2.0 request with an `id`, `Content-Type` is not `application/json`, or the request, its `params`, `message` or `configuration` or one of its parts names a key twice (ignoring case and underscores) | |
 | `-32601` | Method not of the pinned version, unknown, or outside `allowed_methods` | |
-| `-32602` | Params lack the message or the task `id` | |
+| `-32602` | Params lack the message or the task `id`, `referenceTaskIds` is not a list of up to 32 strings, or a part cannot be read | |
 | `-32001` | Task or context not found or not the caller's | 1.0: `ErrorInfo` with `TASK_NOT_FOUND` |
 | `-32003` | Push notifications refused | |
 | `-32004` | `ListTasks`, or streaming on an agent without it | |
