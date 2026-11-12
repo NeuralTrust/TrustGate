@@ -30,7 +30,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
@@ -207,9 +206,6 @@ func TestLLMKeyHandler_StatusCodes(t *testing.T) {
 		"create out of range": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, domain.ErrOwnedExpiry).Once()
 		}},
-		"create on a hybrid gateway": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
-		}},
 		"create failing unexpectedly": {method: http.MethodPost, body: validLLMKeyBody, want: http.StatusInternalServerError, hides: "10.0.0.7", expect: func(m *appauthmocks.PersonalKeys) {
 			m.EXPECT().Create(mock.Anything, mock.Anything, appauth.PersonalKeyOwner{ID: "alice", Email: "alice@acme.test"}, domain.KeyGroup{}, mock.Anything).Return(nil, errors.New("dial tcp 10.0.0.7:5432: refused")).Once()
 		}},
@@ -374,9 +370,6 @@ func TestLLMKeyHandler_CreateForUserStatusCodes(t *testing.T) {
 		"with a group_id and no group_name": {body: `{"group_id":"g-eng"}`, want: http.StatusUnprocessableEntity, says: "group_name is required", expect: func(m *appauthmocks.PersonalKeys) {
 			_, err := domain.NormalizeKeyGroup(domain.KeyGroup{ID: "g-eng"})
 			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{ID: "g-eng"}, (*time.Time)(nil)).Return(nil, err).Once()
-		}},
-		"on a hybrid gateway": {body: validLLMKeyBody, want: http.StatusUnprocessableEntity, expect: func(m *appauthmocks.PersonalKeys) {
-			m.EXPECT().Create(mock.Anything, mock.Anything, bob, domain.KeyGroup{}, mock.Anything).Return(nil, consumerdomain.ErrHybridPersonal).Once()
 		}},
 	}
 	for name, tc := range cases {

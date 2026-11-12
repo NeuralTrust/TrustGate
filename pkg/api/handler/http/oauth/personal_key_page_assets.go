@@ -206,34 +206,32 @@ func personalKeySnippets(mcpURL, llmURL string) []personalKeySnippet {
 }
 
 type personalKeyPageView struct {
-	Email       string
-	HasKey      bool
-	Masked      string
-	Expiry      string
-	Expired     bool
-	Secret      string
-	Revoked     bool
-	Done        bool
-	Unavailable string
-	Notice      string
-	CSRF        string
-	FormAction  string
-	Models      bool
-	Snippets    []personalKeySnippet
+	Email      string
+	HasKey     bool
+	Masked     string
+	Expiry     string
+	Expired    bool
+	Secret     string
+	Revoked    bool
+	Done       bool
+	Notice     string
+	CSRF       string
+	FormAction string
+	Models     bool
+	Snippets   []personalKeySnippet
 }
 
 func renderPersonalKeyPage(c *fiber.Ctx, view *appoauth.PersonalKeyView) error {
 	data := personalKeyPageView{
-		Email:       view.Email,
-		Secret:      view.Secret,
-		Revoked:     view.Revoked,
-		Done:        view.Done,
-		Unavailable: view.Unavailable,
-		Notice:      view.Notice,
-		CSRF:        view.CSRF,
-		FormAction:  c.OriginalURL(),
-		Models:      view.LLMURL != "",
-		Snippets:    personalKeySnippets(view.MCPURL, view.LLMURL),
+		Email:      view.Email,
+		Secret:     view.Secret,
+		Revoked:    view.Revoked,
+		Done:       view.Done,
+		Notice:     view.Notice,
+		CSRF:       view.CSRF,
+		FormAction: c.OriginalURL(),
+		Models:     view.LLMURL != "",
+		Snippets:   personalKeySnippets(view.MCPURL, view.LLMURL),
 	}
 	if view.Key != nil && !view.Revoked {
 		data.HasKey = true
@@ -301,7 +299,6 @@ var personalKeyPageTmpl = template.Must(template.New("personal-key").Parse(`<!do
 <body class="dotted"><div class="card wide">` + brandHeader + `
 <h1>Your personal key</h1>
 <p class="sub">One key for your Store tools{{if .Models}} and your models{{end}}, from code: the TrustGate SDK, {{if .Models}}any OpenAI-compatible SDK, {{end}}or an MCP client. It runs as you{{if .Email}} (<strong>{{.Email}}</strong>){{end}}, with what Access grants you.</p>
-{{if .Unavailable}}<div class="flash" role="status">{{.Unavailable}}</div>{{end}}
 {{if .Notice}}<div class="flash" role="status">{{.Notice}}</div>{{end}}
 {{if .Secret}}
 <div class="flash ok" role="status">Copy your key now. It is shown once and cannot be shown again.</div>
@@ -321,13 +318,13 @@ var personalKeyPageTmpl = template.Must(template.New("personal-key").Parse(`<!do
 <p class="note">It lasts 90 days. The secret is shown once, here.</p>
 {{end}}
 {{if .Done}}<p class="note">You can close this page. This link will not open again.</p>{{end}}
-{{if not .Unavailable}}<div class="usage"><h2>Use it</h2>
+<div class="usage"><h2>Use it</h2>
 <div class="snip">
 <div class="snip-head"><div class="snip-tabs" role="tablist" aria-label="Ways to use your key">{{range $i, $s := .Snippets}}<button type="button" class="snip-tab" role="tab" id="snip-tab-{{$s.ID}}" aria-controls="snip-{{$s.ID}}" aria-selected="{{if eq $i 0}}true{{else}}false{{end}}" data-snip="{{$s.ID}}">{{$s.Label}}</button>{{end}}</div>
 <button class="btn secondary snip-copy" type="button" id="snip-copy">Copy</button></div>
 {{range $i, $s := .Snippets}}<div class="snip-panel" role="tabpanel" id="snip-{{$s.ID}}" aria-labelledby="snip-tab-{{$s.ID}}"{{if ne $i 0}} hidden{{end}}><textarea class="snip-raw" hidden readonly>{{$s.Code}}</textarea><pre><code>{{range $s.Lines}}<span class="ln"><span class="n" aria-hidden="true">{{.N}}</span><span class="t">{{range .Tokens}}{{if .Kind}}<span class="tk-{{.Kind}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{else}} {{end}}</span></span>{{end}}</code></pre></div>{{end}}
 </div>
-</div>{{end}}
+</div>
 <script>
 (function(){
 var b=document.getElementById('copy');

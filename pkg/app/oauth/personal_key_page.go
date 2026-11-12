@@ -121,8 +121,6 @@ type PersonalKeyView struct {
 	Revoked bool
 	// Done: the link has served its purpose and will not open again.
 	Done bool
-	// Unavailable says why the key cannot be issued here (a hybrid gateway).
-	Unavailable string
 	// Notice is a one-line answer to what the person just asked for.
 	Notice string
 	CSRF   string
@@ -305,10 +303,6 @@ func (p *personalKeyPages) Act(ctx context.Context, ticketID, sessionID, csrf, a
 		view.Notice = "You have no personal key on this gateway yet."
 		return view, nil
 	}
-	if errors.Is(err, consumerdomain.ErrHybridPersonal) {
-		view.Unavailable = personalKeyHybridNotice
-		return view, nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +323,6 @@ func (p *personalKeyPages) Act(ctx context.Context, ticketID, sessionID, csrf, a
 		slog.String("gateway_id", ticket.GatewayID))
 	return view, nil
 }
-
-const personalKeyHybridNotice = "Personal keys are not available on this gateway: it runs on your own infrastructure."
 
 func (p *personalKeyPages) ticket(ctx context.Context, id string) (*PersonalKeyTicket, error) {
 	if strings.TrimSpace(id) == "" {

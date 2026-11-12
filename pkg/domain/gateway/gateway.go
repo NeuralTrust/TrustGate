@@ -141,13 +141,6 @@ func (g *Gateway) ServedByOwnDataPlane() bool {
 	return g.Entitlements.IsOwnDataPlane()
 }
 
-// AllowsPersonal reports whether the gateway can hold personal consumers and
-// personal keys. A hybrid gateway cannot: its data plane predates them and
-// would serve a personal consumer at its slug.
-func (g *Gateway) AllowsPersonal() bool {
-	return !g.ServedByHybridDataPlane()
-}
-
 func isReservedMetadataKey(key string) bool {
 	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }

@@ -70,7 +70,7 @@ another gateway, answers 404.
 These calls answer 422:
 
 - `personal` on an MCP consumer, a personal consumer without a primary default,
-  a personal consumer on a hybrid gateway, or a change of `audience`;
+  or a change of `audience`;
 - `auths` in the update body of a personal consumer (create never takes
   `auths`, for any audience: keys arrive only through attach);
 - detaching from a personal consumer, or deleting, the registry that holds its
@@ -120,7 +120,7 @@ names another owner.
 | Call | Result |
 |---|---|
 | `GET /v1/gateways/{gateway_id}/store/principal/llm-key` | 200 with `id`, `consumer_ids`, prefix, suffix and expiry, never the secret. 404 without a key. |
-| `POST …/llm-key` `{"expires_at"?: "<RFC 3339>"}` | 201 with the secret in `api_key` (the field the admin auth responses use), shown once, linked to nothing. Without `expires_at` (absent, `null` or empty, or no body) the key never expires. 409 if the user already has a personal key, 422 for an expiry not in (now, now + 366 days] or a hybrid gateway. |
+| `POST …/llm-key` `{"expires_at"?: "<RFC 3339>"}` | 201 with the secret in `api_key` (the field the admin auth responses use), shown once, linked to nothing. Without `expires_at` (absent, `null` or empty, or no body) the key never expires. 409 if the user already has a personal key, 422 for an expiry not in (now, now + 366 days]. |
 | `POST …/llm-key/rotate` `{"expires_at"?, "never_expires"?}` | 200 with a new secret. Same id, same links. Without either field the current expiry stays (a key that never expires stays so), unless it has passed (422). `"never_expires": true` renews the key with no expiry; together with `expires_at` it answers 422. Two rotations racing each other: the first wins and the second answers 409 `conflict` without changing anything, so the secret shown is always the live one. |
 | `DELETE …/llm-key` | 204. The key and its links are gone in one transaction; a new create starts with no links. |
 | `GET …/store/principal/llm-keys` | 200 `{"items": [...]}`: every key of the caller on the gateway, the personal key and each group key, newest first, as the GET above describes one (`group_id` and `group_name` on a group key). |
@@ -143,8 +143,8 @@ and `group_id` and `group_name` for a group key. Every field is optional:
 without `expires_at` the key never expires, and without `group_id` it is the
 user's personal key. 409 if the user already holds a key for that group (or a
 personal key, when no group is named), 422 for an expiry out of range, a
-`group_id` without its `group_name` or the reverse, an `owner_email` that is
-not an address, or a hybrid gateway. The key is the
+`group_id` without its `group_name` or the reverse, or an `owner_email` that is
+not an address. The key is the
 user's like any other: their calls, their self-only routes to rotate or revoke
 it. `owner_email` is optional; without it the email is recorded when the
 console next reconciles the key. TrustGate only checks that the gateway is the
@@ -205,9 +205,8 @@ v1: with a valid key, `/store/v1/files` and `/store/v1/files/{id}` answer the
 404 of an unknown route, because file operations would run on the registry's
 shared credential for every user it serves.
 
-1. **404 before any key lookup** when the gateway is served by a hybrid data
-   plane or has no active personal consumer. The answer is the one an unknown
-   consumer slug gets.
+1. **404 before any key lookup** when the gateway has no active personal
+   consumer. The answer is the one an unknown consumer slug gets.
 2. **401** for no key, an unknown, disabled, expired or revoked key, an
    application key, or another gateway's key. An unknown key's digest is
    remembered for 30 s (and forgotten on the next `InvalidateGatewayDataEvent`),
@@ -341,7 +340,7 @@ key is never shown to the model.
 - **The page.** A cookie per link binds the browser; every form carries a CSRF
   token and a cross-site post is refused (`Sec-Fetch-Site`). Showing a secret,
   or revoking, spends the link. Changes count against the Portal's budget, 10
-  an hour per person and gateway. Hybrid gateways have no personal keys.
+  an hour per person and gateway.
 - **Writes.** The MCP plane has no database in production: it writes the key
   through the control plane over config sync (`PersonalKeys` gRPC service,
   scoped like the Store's installs). A new key gets the groups and the email
@@ -383,13 +382,36 @@ exactly as the Portal's; the Store files them there.
   answers `{"status": "ok" | "choose_registry" | "requested" | "has_access" |
   "already_requested" | "unknown_provider" | "unavailable" | "rate_limited",
   …}`. Unset, the Store offers no request tool and users ask from the Portal.
-  Hybrid gateways have no LLM Store, so nothing to request.
+
+## Hybrid gateways
+
+A hybrid gateway serves the LLM Store from its own data plane, at the origin
+its operator configured (`https://<origin>/store/v1`). That origin does not
+name the gateway, so each call sends `X-AG-Gateway-Slug: <slug>`. Personal
+consumers and keys ride the gateway's scoped snapshot like any other gateway
+data.
+
+A data plane serves `/store/v1` on a hybrid gateway from v0.83.0
+(`dataplane.MinStoreVersion`); older planes answer 404 there. The console asks
+`GET /v1/gateways/{gateway_id}/store/llm-availability` before it offers a
+personal key:
+
+| `reason` | When |
+|---|---|
+| `available` | Hosted and dedicated gateways, or every hybrid instance seen in the last five minutes reports `min_version` or later. |
+| `no_data_plane` | No connected instance was seen in the last five minutes. |
+| `version_unknown` | An instance sent no heartbeat (planes before v0.76.0) or a version that is not semver. |
+| `data_plane_outdated` | An instance reports a version below `min_version`; `lowest_version` names the oldest. |
+
+Access and keys can be written whatever the answer: on an older plane they are
+inert and take effect when it is upgraded. The console does not set group
+limits or key budgets on hybrid gateways yet.
 
 ## Errors
 
 | Status | When |
 |---|---|
-| 404 `not_found` | hybrid gateway, no active personal consumer, or the Files API |
+| 404 `not_found` | no active personal consumer, or the Files API |
 | 401 `unauthenticated` | the key is missing or not a valid personal key of this gateway |
 | 403 `model_not_allowed` | no consumer admits the request, including a key with no links |
 | 400 / 503 | every consumer refused it for the same capability or backend reason (Request routing, step 5) |
@@ -605,7 +627,6 @@ key with its links, then restores one key per owner.
 
 ## Out of scope
 
-- Hybrid gateways: `/store/v1` answers 404 and personal consumers are refused.
 - The Files API on `/store/v1` (404, see Request routing).
 - Personal keys on `/<slug>/v1` and on MCP paths other than `/store/mcp`: they
   answer as unknown keys.

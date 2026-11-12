@@ -993,10 +993,6 @@ func callStore(t *testing.T, app *fiber.App, path, header, value string) (int, [
 func TestAuthMiddleware_StoreAnswersNotFoundBeforeAnyKeyLookup(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(f *storeFixture){
-		"hybrid gateway": func(f *storeFixture) { f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid },
-		"hybrid gateway with a data load error": func(f *storeFixture) {
-			f.gw.Entitlements.DataPlane, f.dataErr = gatewaydomain.DataPlaneHybrid, errors.New("down")
-		},
 		"store not wired": func(f *storeFixture) { f.storeKeys = nil },
 	}
 	for name, arrange := range cases {
@@ -1068,6 +1064,17 @@ func TestAuthMiddleware_StoreRejectsKeysItDoesNotAcceptAndLeavesOtherSlugsUnchan
 	status, _ = callStore(t, app, "/cons1234/v1/chat/completions", resolver.HeaderAPIKey, "ag_alice")
 	require.Equal(t, fiber.StatusUnauthorized, status)
 	require.Equal(t, lookups, f.finder.calls.Load())
+}
+
+func TestAuthMiddleware_StoreServesAHybridGateway(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t)
+	f.gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid
+	app := f.app(nil)
+	status, _ := callStore(t, app, storeChatPath, resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusOK, status)
+	status, _ = callStore(t, app, "/store/v1/models", resolver.HeaderAPIKey, "ag_alice")
+	require.Equal(t, fiber.StatusOK, status)
 }
 
 func TestAuthMiddleware_StoreAttachesTheOwnerFromEveryAPIKeyHeader(t *testing.T) {
