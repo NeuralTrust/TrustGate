@@ -62,6 +62,7 @@ func (c *cardCredentials) Authorizer(ctx context.Context, t *domain.A2ATarget) (
 	}
 	if t.Auth.Mode == domain.A2AAuthModeCloud || t.CardAuth == domain.A2ACardAuthCloud {
 		return func(r *http.Request) error {
+			agentCoreSession(t, r)
 			if err := c.sign(r.Context(), t, r); err != nil {
 				return fmt.Errorf("%w: card credential: %w", domain.ErrAgentCardUnavailable, err)
 			}
@@ -69,7 +70,14 @@ func (c *cardCredentials) Authorizer(ctx context.Context, t *domain.A2ATarget) (
 		}, nil
 	}
 	if t.Auth.Mode == domain.MCPAuthModeClientCredentials || t.CardAuth == domain.A2ACardAuthClientCredentials {
-		return c.bearer(ctx, t.Auth, cardHost(t.Endpoint()))
+		authorize, err := c.bearer(ctx, t.Auth, cardHost(t.Endpoint()))
+		if err != nil {
+			return nil, err
+		}
+		return func(r *http.Request) error {
+			agentCoreSession(t, r)
+			return authorize(r)
+		}, nil
 	}
 	return nil, fmt.Errorf("%w: a %s agent needs a credential to read its card", domain.ErrAgentCardUnavailable, t.Provider)
 }
@@ -90,6 +98,14 @@ func (c *cardCredentials) bearer(ctx context.Context, auth *domain.MCPAuth, host
 		return nil, fmt.Errorf("%w: card credential: %w", domain.ErrAgentCardUnavailable, err)
 	}
 	return onlyTo(host, "Authorization", "Bearer "+token), nil
+}
+
+// agentCoreSession gives an AgentCore card read the runtime session AgentCore
+// requires, before the request is signed.
+func agentCoreSession(t *domain.A2ATarget, r *http.Request) {
+	if t.Provider == domain.A2AProviderBedrockAgentCore {
+		r.Header.Set(domain.AgentCoreSessionHeader, domain.NewAgentCoreSession())
+	}
 }
 
 func onlyTo(host, header, value string) CardAuthorizer {

@@ -87,9 +87,11 @@ func TestCardCredentialsHostedCloudUsesTheCloudSigner(t *testing.T) {
 	t.Parallel()
 	target := agentCoreTarget(&domain.MCPAuth{Mode: domain.A2AAuthModeCloud}, "")
 	var signed *http.Request
+	var sessionWhenSigned string
 	sign := func(_ context.Context, got *domain.A2ATarget, req *http.Request) error {
 		assert.Same(t, target, got)
 		signed = req
+		sessionWhenSigned = req.Header.Get(domain.AgentCoreSessionHeader)
 		return nil
 	}
 	authorize, err := appregistry.NewCardCredentials(grantToken("unused"), sign).Authorizer(context.Background(), target)
@@ -97,6 +99,7 @@ func TestCardCredentialsHostedCloudUsesTheCloudSigner(t *testing.T) {
 	req := cardRequest(t, target.CardLocation())
 	require.NoError(t, authorize(req))
 	assert.Same(t, req, signed)
+	assert.GreaterOrEqual(t, len(sessionWhenSigned), 33, "AgentCore refuses a card read without a runtime session, and the session must be signed")
 }
 
 func TestCardCredentialsHostedCloudFailureIsCardUnavailable(t *testing.T) {
@@ -120,6 +123,7 @@ func TestCardCredentialsAgentCoreExchangeReadsWithClientCredentials(t *testing.T
 	req := cardRequest(t, target.CardLocation())
 	require.NoError(t, authorize(req))
 	assert.Equal(t, "Bearer app-token", req.Header.Get("Authorization"))
+	assert.GreaterOrEqual(t, len(req.Header.Get(domain.AgentCoreSessionHeader)), 33)
 
 	foreign := cardRequest(t, "https://bedrock-agentcore.us-east-1.amazonaws.com/x")
 	require.ErrorIs(t, authorize(foreign), domain.ErrAgentCardUnavailable)
