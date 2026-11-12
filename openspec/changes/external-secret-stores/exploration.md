@@ -43,9 +43,11 @@ AAD-bound). E3, E6, E7 and E8 are plaintext.
   Each registry is a JSON blob **that includes the plaintext `auth`**
   (`pkg/infra/configsnapshot/codec.go:109`), and
   `codec_secret_test.go:17-68` asserts that this survives.
-- **Hybrid and dedicated gateways** (`Entitlements.DataPlane`,
+- **Hybrid gateways** (`Entitlements.DataPlane`,
   `pkg/domain/gateway/entitlements.go:40-54`) run their data plane in the
-  customer's environment. It pulls a scoped snapshot over gRPC
+  customer's environment. **Dedicated** gateways get a data plane that
+  NeuralTrust runs for that gateway alone, so for this feature they behave like
+  hosted. It pulls a scoped snapshot over gRPC
   (`pkg/infra/configsync/grpc`). **Today every upstream credential of a hybrid
   gateway is stored in NeuralTrust's database and travels from the SaaS control
   plane to the customer's network.** This is the strongest argument for the
@@ -57,6 +59,16 @@ AAD-bound). E3, E6, E7 and E8 are plaintext.
   `Heartbeat` already reports `deployment_type` and the TrustGuard client id,
   never its secret. It is the natural channel for a data plane to report the
   health of its secret stores.
+- **Admin features that need a credential already follow the deployment mode.**
+  - **Hybrid gateways:** the console calls the data plane directly. It uses
+    `POST /__diagnostics/gateways/:id/registries/test-connection` and
+    `GET /__diagnostics/gateways/:id/registries/:rid/models`, with a diagnostics
+    token it mints (`pkg/server/router/proxy_router.go:25-32`;
+    `app/[locale]/v2/features/registry/actions/testRegistryConnectionAction.ts`;
+    `app/server/lib/gateway/registryModelCatalog.ts`). Model listing falls back
+    to the admin's `/v1/models-catalog` if the data plane does not answer.
+  - **Hosted and dedicated gateways:** the same features run on the admin
+    (`POST /v1/gateways/:id/registries/test-connection`, `GET /v1/models-catalog`).
 
 ### 1.3 The hot-path read model
 
@@ -116,6 +128,57 @@ AAD-bound). E3, E6, E7 and E8 are plaintext.
   `RegistrySchemaFieldRenderer.tsx`). One "value or reference" input therefore
   covers every form. Gateway settings already use tabs (General, Credentials,
   Machine identity, Deployment), so "Secret stores" becomes a new tab.
+
+### 1.6 Deployment models (public docs and chart)
+
+Source: https://docs.neuraltrust.ai/neuraltrust/deployment/overview and its
+sub-pages `external`, `central`, `configuration` and `secrets`, plus the
+`NeuralTrust/neuraltrust-platform` chart.
+
+| Model | Control plane (console + TrustGate admin) | Data plane | Chart `global.deploymentMode` |
+|---|---|---|---|
+| SaaS | NeuralTrust | NeuralTrust | — |
+| Hybrid | NeuralTrust | customer | `hybrid` |
+| Self-hosted | customer | customer, same cluster | `external` |
+| Central control plane | customer | customer, several clusters (each a hybrid install of the customer's own control plane) | `saas` (chart value) |
+
+Facts that shape the design:
+
+- **Self-hosted (`external`) runs everything in one release:**
+  - the console (`control-plane-app` and `-api`);
+  - the TrustGate admin (`agentgateway-admin`), proxy and MCP;
+  - TrustGuard, DataCore and ClickHouse.
+- **In `external`, the proxy reads Postgres directly.** "Each product's data
+  plane reads its configuration directly from that product's database." In the
+  `agentgateway` subchart, `configSync.enabled: null` turns config-sync on for
+  hybrid and off for external. So there is **no heartbeat** in a self-hosted
+  install. Its gateways are served by the in-cluster proxy, not by a data plane
+  of their own.
+- **The `agentgateway` subchart shapes how stores can be wired:**
+  - it renders `controlPlane` (the admin) only in external mode;
+  - one `serviceAccount` with `annotations` is shared by all workloads;
+  - a shared env ConfigMap (`config`) plus per-workload `extraEnv`;
+  - **no `extraVolumes`**, so mounting a store file needs new templates;
+  - `existingSecret` blocks hold platform credentials.
+- **Identity hooks already exist in the chart:**
+  - `global.gcpIdentity.method: workload-identity` and per-service
+    `serviceAccount.annotations` (GKE);
+  - IRSA for RDS/ElastiCache IAM auth (AWS);
+  - `global.azureIdentity.method`.
+
+  Stores can reuse the same identities.
+- **The chart does not set `INSTANCE_DEPLOYMENT_TYPE`** (organisation-wide code
+  search), so every customer install runs with the default `self-hosted`.
+  NeuralTrust's own overlays set `saas` (`k8s/overlays/*/config.env`).
+- **The public Secrets page leaves provider keys open.** It covers platform
+  secrets (`agentgateway-secrets` with `SERVER_SECRET_KEY`/`STS_SIGNING_KEY`,
+  database, Redis, config-sync, enrolment). It mentions Vault and ESO only in
+  passing, and recommends "an approved secret manager". Provider API keys
+  (OpenAI and so on) are **not covered**: they are pasted in the console. This
+  change fills that gap.
+- **The console detects on-prem through `DEPLOYMENT_MODE=external`**
+  (`app/constants/deployment.ts`). On-prem resolves unrestricted entitlements
+  (`app/server/lib/entitlements/resolveTeamEntitlements.ts`).
 
 ---
 
@@ -209,16 +272,17 @@ only some of them. Sources: `litellm/secret_managers/*.py`, https://docs.litellm
    explicit reference that carries store, path, field and version, references
    accepted only in fields declared as secret, background refresh, and
    stale-on-error.
-2. **Resolve on the data plane.** For hybrid and dedicated gateways this
+2. **Resolve on the data plane.** For hybrid gateways this
    removes the customer's credentials from our DB and our snapshot entirely.
    LiteLLM has no equivalent, since it has no control-plane/data-plane split.
 3. **Separate who chooses the store from who references it.**
-   - Ambient pod identity (IRSA, GKE Workload Identity, Azure MI, Vault
-     Kubernetes auth), `env` and `file` stores are safe only when the store is
-     declared by whoever runs the data plane, and only on a data plane that is
-     not shared.
-   - Managed stores (created through the Admin API) carry explicit credentials
-     or, later, federated identity bound to the gateway.
+   - Ambient pod identity (IRSA, GKE/AKS Workload Identity, Vault Kubernetes
+     auth), `env` stores and `file` stores are safe only under two conditions:
+     the store is declared by whoever runs the plane, and that plane is
+     operated by the customer.
+   - That holds for hybrid, self-hosted (`external`) and central installs
+     (§1.6). It does not hold for NeuralTrust SaaS or dedicated, which would
+     need keyless federation bound to the gateway.
 4. **Fail static, fail loud.** Serve the last good value through a backend
    outage. Never send a reference string upstream. Expose metrics and report
    health to the console.
@@ -228,7 +292,26 @@ only some of them. Sources: `litellm/secret_managers/*.py`, https://docs.litellm
 
 ## 5. Open questions (resolved in design.md)
 
-- Where to substitute: at each call site, or once in the read model? → once, in the runtime finders (D6).
-- How a hybrid data plane gets vault credentials without the SaaS seeing them → local stores (D3).
-- Whether to carry the list of references in the snapshot → no; a walker computes it (D9).
-- Should resolved values survive a data-plane restart while the vault is down (LKG)? → no by default; kept as an open question (OQ2).
+- **Which deployments first?**
+  - Every customer-operated model: hybrid, self-hosted and central.
+  - NeuralTrust SaaS and dedicated come in phase 3 (D1).
+- **How do planes know whether a gateway may use references?**
+  - Through the explicit setting `SECRET_STORES_GATEWAYS=hybrid|all`, default
+    `hybrid`. The chart sets `all` in external and central (D1).
+  - Not from `data_plane` alone, and not from `INSTANCE_DEPLOYMENT_TYPE`.
+- **Where is a store configured?** In the customer's Helm values, mounted on
+  every agentgateway workload of the cluster. Never in a TrustGate database
+  (D2).
+- **How does the admin know a gateway's stores?** It depends on who serves the
+  gateway (D3):
+  - its own data plane → the stores that plane reports in the heartbeat;
+  - anything else → the admin's own catalog, for example in external mode,
+    which has no heartbeat.
+- **How are teams isolated in a shared install?** Through a per-store
+  `gateways` allowlist (D17).
+- **Where are references substituted?** Once, in the runtime finders, not at
+  each call site (D6).
+- **Should the snapshot carry the list of references?** No. A walker computes
+  it (D10).
+- **Should resolved values survive a restart while the vault is down (LKG)?**
+  No, by default (OQ2).
