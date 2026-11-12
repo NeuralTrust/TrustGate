@@ -1,244 +1,304 @@
-# Proposal: External secret stores (vault references)
+# Proposal: External secret stores (vault references) for customer-operated deployments
 
 ## Intent
 
-Customers want to keep upstream credentials in their own secret manager
-(HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault)
-instead of pasting them into TrustGate. LiteLLM, Kong and Portkey all offer
-this.
+Customers want TrustGate to read the credentials they configure from their own
+secret manager instead of pasting them into the console: LLM provider keys, MCP
+server tokens, guardrail API keys and exporter headers. The managers in scope
+are HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault
+and Kubernetes Secrets. LiteLLM, Kong and Portkey all offer this
+(`exploration.md` §2–3). The public deployment docs even tell self-hosted
+customers to keep credentials in "an approved secret manager", but nothing in
+the product reads provider keys from one.
 
-Today every credential an admin configures is stored in TrustGate's database.
-That covers LLM provider keys, MCP server tokens, plugin API keys and exporter
-headers. Some are encrypted, some are plaintext (`exploration.md` §1.1). They
-are then compiled in plaintext into the config snapshot. For **hybrid and
-dedicated** gateways the snapshot is sent to the customer's own data plane. A
-credential that never needed to leave the customer's network therefore goes
-through NeuralTrust's SaaS and database.
+NeuralTrust's public docs define four deployment models (`exploration.md` §1.6):
 
-This change lets any credential field hold a **reference** such as
-`secret://corp-vault/ai/openai#api_key`, which the data plane resolves itself.
-The value is cached, refreshed in the background and survives a vault outage.
-Rotating a secret in the vault needs no TrustGate write.
+| Model | Control plane | Data plane | Chart `global.deploymentMode` |
+|---|---|---|---|
+| SaaS | NeuralTrust | NeuralTrust | — |
+| Hybrid | NeuralTrust | customer | `hybrid` |
+| Self-hosted | customer | customer, one cluster | `external` |
+| Central control plane | customer | customer, several clusters | `saas` (the chart value, not NeuralTrust SaaS) |
 
-Linear: _pending (no issue yet)_. Research: `exploration.md`.
+In **hybrid, self-hosted and central**, the planes that call providers run in
+the customer's own infrastructure. They can reach the customer's vault, private
+ones included, and authenticate with the pod's own workload identity (IRSA,
+GKE/AKS Workload Identity, Vault Kubernetes auth).
+
+Today a credential still has to be pasted into the console and stored in a
+TrustGate database. In hybrid it then travels from NeuralTrust's SaaS to the
+customer's data plane.
+
+This change lets any declared credential field hold a **reference**, such as
+`secret://corp-vault/ai-gateway/openai#api_key`. The customer-operated plane
+that needs the value resolves it.
+
+**Neither the secret nor the vault's credentials are written to any TrustGate
+database, snapshot or log.** The vault is configured in the customer's Helm
+values. The console lists what the planes report.
+
+In **NeuralTrust SaaS and dedicated**, the planes are NeuralTrust's. The same
+feature would need NeuralTrust to hold something that can read the customer's
+vault, unless we build keyless federation first. They are a later phase, with
+their own design review.
+
+Linear: _pending_. Research: `exploration.md`.
 
 ## Goals
 
-- **G1. Any declared credential field can hold a reference instead of a value.**
-  The same grammar works everywhere: typed fields (registry auth, MCP auth) and
-  untyped plugin settings (`CredentialPaths()`).
+- **G1. References instead of values.** On every gateway served by a
+  customer-operated plane, any declared credential field can hold a reference.
+  That is every gateway of a self-hosted or central install, and hybrid
+  gateways on NeuralTrust's control plane. One grammar covers typed fields and
+  plugin settings.
 - **G2. Backends.** HashiCorp Vault and OpenBao (KV v1/v2), AWS Secrets
-  Manager, GCP Secret Manager and Azure Key Vault. Hybrid, dedicated and
-  self-hosted planes also get local `env` and `file` stores.
-- **G3. Data-plane resolution.** For a gateway whose stores are local to its
-  data plane, the secret value and the store's credentials never reach the
-  control plane, its database, the snapshot or the LKG file.
-- **G4. Rotation without a TrustGate write.**
+  Manager, GCP Secret Manager and Azure Key Vault. Mounted files (`file`)
+  cover Kubernetes Secrets, the CSI driver and External Secrets Operator.
+  Environment variables are an `env` store.
+- **G3. Nothing sensitive at rest in TrustGate.**
+  - The secret value lives only in the memory of the customer-operated planes
+    that use it.
+  - Store addresses and credentials live only in the customer's Helm values and
+    Kubernetes Secrets.
+  - Control planes, databases, snapshots, LKG files, heartbeats, logs and API
+    responses carry reference strings and store metadata only: name, type,
+    allowed paths, allowed gateways and health.
+- **G4. Keyless by default.** Every backend's recommended auth is the pod's
+  workload identity, reusing the chart's existing ServiceAccount and identity
+  settings. Static Vault credentials (AppRole, token) come only from mounted
+  Kubernetes Secrets.
+- **G5. Rotation without a TrustGate write.**
   - Background refresh-ahead within the store TTL (default 5 min).
   - Immediate re-fetch when the upstream rejects a referenced credential (401/403).
-- **G5. Fail static, fail loud.**
-  - A vault outage keeps serving the last good value up to `max_stale`.
+- **G6. Fail static, fail loud.**
+  - The last good value is served through a vault outage, up to `max_stale`.
   - An unresolved reference is never sent upstream.
-  - The failure shows up in metrics, error codes and the console.
-- **G6. Multi-tenant safe.**
-  - Shared (hosted) planes never use ambient pod identity, `env` or `file`.
-  - Tenant-supplied addresses go through `netguard`.
-  - A store can be used only by its own gateway, and only within its allowed
-    path prefixes.
-- **G7. Manageable.**
-  - Admin API and console UI to create, test and delete stores.
-  - Every secret input can switch between a value and a reference.
-  - Deleting a store that is still referenced is refused, with the list of
-    places that use it.
+  - Failures are visible in metrics, error codes and the console.
+- **G7. One console experience in every model.** The same "Secret stores" tab,
+  generator and `SecretInput` in hybrid, self-hosted and central. Only where a
+  test runs and which values file the snippet goes into differ.
+- **G8. Multi-team safety in shared installs.** In a self-hosted or central
+  cluster, every team's gateways share the proxy and the store file. A store
+  can be restricted to the gateways allowed to use it.
 
 ## Scope
 
 ### In scope
 
-**Phase 1: core and managed stores (hosted and hybrid)**
-- Domain:
-  - `secretref.Ref` (grammar, parse, validate);
-  - `secretstore.Store` (entity, typed config, sealed auth, allowed paths,
-    cache policy);
-  - `Repository` and `Backend` ports.
-- Backends:
-  - HashiCorp Vault KV v1/v2 with token or AppRole auth;
-  - AWS Secrets Manager with static keys and an optional assume-role.
-- Admin API: `/v1/gateways/:gateway_id/secret-stores` CRUD, `POST /:id/test`,
-  `GET /:id/usages`; scope `secret_stores:read|write`.
-- Postgres table `secret_stores`. Auth material is sealed with `FieldSealer`
-  under purpose `secret-stores/v1`.
-- The snapshot gains a `secret_stores` field (JSON per store, like `Registry`)
-  and a snapshot adapter.
-- Resolver with an in-process cache:
-  - singleflight;
-  - refresh-ahead;
-  - stale-on-error up to `max_stale`;
-  - negative cache;
-  - forced refresh on upstream 401/403.
-- Materializer: substitutes references in the runtime read model
-  (`consumer.DataFinder`, `registry.Finder`). Every plane gets it at once.
-- First reference sites: registry `TargetAuth` (E1), `provider_options.headers`
-  (E2) and MCP target auth and headers (E4). The control-plane readers of E1
-  (test-connection, catalog live availability, Bedrock lister, label
-  classifier) go through the materializer too.
-- Metrics and structured errors (`secret_unavailable`). Resolved values never
-  appear in logs.
-- All of this behind `SECRET_STORES_ENABLED` (default `false`).
+**Phase 1: every customer-operated model (TrustGate, chart, console, docs)**
+- **Domain:**
+  - `secretref`: grammar, declared locations.
+  - `secretstore`: store config, `Backend` and `Catalog` ports, error classes.
+- **Store file.** `SECRET_STORES_FILE` is rendered by the chart from
+  `agentgateway.secretStores` and mounted on every agentgateway workload the
+  mode deploys:
+  - hybrid: proxy and MCP;
+  - external and central: admin, proxy and MCP.
 
-**Phase 2: local stores and the other cloud backends**
-- Local stores, declared on the data plane in `SECRET_STORES_FILE` (YAML).
-  Allowed only on hybrid, dedicated and self-hosted planes (`SECRET_STORES_ALLOW_LOCAL=true`).
-  They can use:
-  - ambient identity: AWS default chain or IRSA, GCP ADC or Workload Identity,
-    Azure managed or workload identity, Vault Kubernetes auth;
-  - `env` and `file` stores.
-- `Heartbeat` reports local store names, types and health.
-- GCP Secret Manager (SA JSON, impersonation on local stores) and Azure Key
-  Vault (client secret; managed identity on local stores).
+  The loader is strict, refuses inline secrets and reloads on change.
+- **Backends.**
+  - Vault/OpenBao: Kubernetes, JWT, AppRole and token auth.
+  - AWS Secrets Manager: default chain, assume-role, VPC endpoint.
+  - `file` and `env`.
+- **Gateway eligibility.** `SECRET_STORES_GATEWAYS=hybrid|all`, read by every
+  plane:
+  - NeuralTrust SaaS keeps the default `hybrid`;
+  - the chart sets `all` in `external` and central installs.
 
-**Phase 3: the remaining reference sites**
-- Inbound IdP client secrets (E5), plugin `CredentialPaths()` (E6), consumer
-  embedding key (E7), telemetry exporter headers and DSN (E8), health-check
-  headers (E3).
-- Per-reference health: the data plane reports failing references, and the
-  console shows them on the entity.
+  Three independent guards keep stores off NeuralTrust-run planes (design D13).
+- **Resolution on customer-operated planes.**
+  - Data planes always resolve.
+  - The admin resolves only when it has a store file, which happens only in
+    external and central installs.
+  - The resolver is an in-process cache with refresh-ahead, stale-on-error,
+    negative caching, singleflight and forced refresh on 401/403.
+- **Materializer** in the runtime finders. An unresolved reference fails the
+  request with `secret_unavailable` before any upstream call.
+- **First reference sites:** registry LLM `auth` (E1),
+  `provider_options.headers` (E2), MCP target auth and headers (E4).
+- **Store discovery for each gateway.**
+  - Gateway served by its own data plane: the stores its live config-sync
+    connections report in `Heartbeat.secret_stores`.
+  - Gateway served by the control plane's own cluster: the admin's own store
+    catalog.
+- **Admin API.**
+  - `GET /v1/gateways/:gateway_id/secret-stores`, with `supported` and `source`.
+  - `GET …/:name/usages`.
+  - `POST …/:name/test`, admin catalog only.
+  - Write-time validation of references.
+- **Data-plane diagnostics.** `POST /__diagnostics/gateways/:gateway_id/secret-stores/:name/test`.
+- **Per-store `gateways` allowlist (G8).**
+- **Console.** The "Secret stores" tab, the "Add a secret store" generator and
+  `SecretInput` in the LLM provider and MCP server forms. They are shown
+  whenever the admin reports `supported`.
+- **Public docs.** New pages in the deployment section: Secrets and
+  Configuration, Hybrid and Self-hosted, plus a "Secret stores" guide.
+- **Rollout.** Behind `SECRET_STORES_ENABLED` (default off), with capability
+  gating of snapshots (`accepts_secret_refs`, design D19).
 
-**Phase 4: keyless federation for hosted gateways (separate design review)**
-- TrustGate becomes an OIDC issuer with a per-gateway subject (`gateway:<id>`).
-  Customers trust it from Vault JWT auth, AWS `AssumeRoleWithWebIdentity`, GCP
-  Workload Identity Federation and Azure federated credentials. Hosted gateways
-  then need no long-lived store credential.
+**Phase 2: complete coverage**
+- GCP Secret Manager (ADC / GKE Workload Identity, reusing
+  `global.gcpIdentity`) and Azure Key Vault (workload or managed identity).
+  Either can move into Phase 1 if a customer needs it first.
+- **Remaining reference sites:** health-check headers (E3), IdP secrets (E5),
+  plugin `CredentialPaths()` (E6), consumer embedding (E7) and telemetry
+  exporters (E8).
+- **Per-reference health** in the heartbeat. An admin-side report for the
+  admin catalog. Warnings on entity cards. An optional readiness gate on
+  prewarm.
 
-**Console (`NeuralTrust/app`), alongside phases 1–3**
-- Gateway Settings: a new "Secret stores" tab with list, type-specific create
-  form, test connection and usages.
-- A shared `SecretInput` with two modes, "Value" and "From secret store", used
-  by every field with `secret: true`. The second mode picks a store, path,
-  field and optional version, and has a "Test" action.
+**Phase 3: NeuralTrust SaaS and dedicated (separate change, design review first)**
+- Keyless federation: a per-gateway OIDC identity issued by TrustGate and
+  trusted by AWS, GCP, Azure and Vault.
+- API-managed stores, only if federation is not enough. See `design.md` §10.
 
 ### Out of scope
 
 - Mirroring consumer API keys into a vault, as LiteLLM's `store_virtual_keys`
-  does. They are hashed, so there is nothing to store.
-- Per-user MCP OAuth tokens (`pkg/domain/vault`). They are written at runtime per
-  principal; moving that store to an external backend is a separate change.
-- Platform secrets (`SERVER_SECRET_KEY`, `DB_PASSWORD`, …). Operators already
-  inject them through env, `/etc/secrets/*`, CSI or ESO. We will document the
-  pattern but add no code.
-- Write-through ("TrustGate writes a pasted secret into your store"), Vault
-  dynamic secrets and leases, KMS envelope encryption of `SERVER_SECRET_KEY`.
-  These are follow-ups.
-- CyberArk, Infisical, 1Password, Doppler. The `Backend` port keeps them cheap
-  to add later.
+  does. They are hashed.
+- Per-user MCP OAuth tokens (`pkg/domain/vault`).
+- **Platform secrets.** `SERVER_SECRET_KEY`, DB/Redis passwords, config-sync
+  tokens and the Firewall JWT keep using `existingSecret`, ESO or CSI, as the
+  deployment docs describe.
+- A NeuralTrust-hosted vault, or per-tenant KMS / BYOK encryption of pasted
+  credentials. That is a separate hardening change.
+- Write-through to the customer's vault, Vault dynamic secrets and leases, and
+  CyberArk, Infisical, 1Password or Doppler. The `Backend` port keeps them cheap
+  to add.
 
 ## Capabilities
 
 ### New
-- `secret-references`: the grammar, the locations where a reference is
-  accepted, admin validation, and response semantics.
-- `secret-stores`: the managed store lifecycle (API, sealing, scoping, delete
-  protection, test) and local stores.
-- `secret-resolution`: resolver semantics on every plane (cache, refresh,
-  stale, negative cache, forced refresh, failure behaviour, metrics).
+- **`secret-references`:** grammar, declared locations, gateway eligibility,
+  admin validation, response semantics.
+- **`secret-stores`:** store file, guards, backends, the per-gateway store
+  source (heartbeat or admin catalog), admin listing, usages and tests, data
+  plane diagnostics.
+- **`secret-resolution`:** runtime semantics on customer-operated planes.
+- **`secret-stores-console`:** settings tab, generator, `SecretInput`.
 
 ### Modified
-- `config-snapshot`: gains the `secret_stores` field. References are carried
-  verbatim and are never resolved by the compiler.
-- `config-sync heartbeat`: gains local store and reference health (Phase 2–3).
-- Credential masking (`pkg/common/secret`): a reference is returned verbatim
-  rather than masked, because it is not a secret.
+- **Config snapshot:** carries references verbatim and never resolves them.
+  The proto is unchanged.
+- **Config-sync `Heartbeat`:** gains `secret_stores` (Phase 1) and
+  `secret_refs` (Phase 2). `config_sync_connections` gains matching columns.
+- **Credential masking** (`pkg/common/secret`): references are returned
+  verbatim.
 
 ## Approach (summary; see design.md)
 
-1. **One grammar.** `secret://<store>/<path>[?version=<v>][#<field>]` is
-   recognised only at declared secret locations. Anywhere else it is plain
-   text.
-2. **The control plane stores and ships references, never their values.** The
-   compiler copies them into the snapshot unchanged.
-3. **Each plane resolves its own references.** The `Materializer` runs where a
-   gateway's runtime model is loaded (`DataFinder.load`) and substitutes
-   values from the resolver's cache. Downstream code (provider clients,
-   plugins, MCP dialer) is unchanged.
-4. **When a resolved value changes, the plane invalidates its own copy.**
-   Refresh or forced refresh drops the affected gateway's cached data and
-   registry entries with the existing invalidation hooks. The next request
-   rebuilds them.
-5. **Who may use what depends on who declared the store.**
-   - Managed stores (API, sealed credentials) work everywhere.
-   - Local stores (data-plane YAML, ambient identity, `env`/`file`) work only
-     on planes that are not shared.
+1. **The customer configures the vault where it runs.**
+   - `agentgateway.secretStores` in the chart values becomes
+     `SECRET_STORES_FILE` on each agentgateway workload of that cluster.
+   - The cloud identity is the agentgateway ServiceAccount the chart already
+     manages.
+   - The console generates the snippet and stores nothing.
+2. **Each gateway has exactly one store source**, the planes that serve it:
+   - **Own data plane** (hybrid, or a remote cluster of a central install): its
+     config-sync connections report their stores in the heartbeat.
+   - **The control plane's own cluster** (self-hosted, or the central
+     cluster): the admin loads the same file and reports its own catalog.
+
+   The admin validates references against that source.
+3. **Only references travel.** Databases, snapshots and heartbeats never hold a
+   value.
+4. **The serving plane materializes.** It swaps each reference for the cached
+   value where the gateway's runtime model is built. Downstream code is
+   unchanged.
+5. **Tests run where the vault is reachable.** The console already routes
+   test-connection and model listing by gateway type: hybrid gateways go to the
+   data plane's diagnostics routes, others to the admin. Secret tests follow
+   the same routing.
 
 ## Affected areas
 
 | Area | Change |
 |---|---|
-| `pkg/domain/secretref` (new) | `Ref`, `Parse`, `IsRef`, `Location` |
-| `pkg/domain/secretstore` (new) | `Store`, typed config/auth, `Repository`, `Backend`, `BackendFactory`, errors |
-| `pkg/app/secretstore` (new) | creator, updater, deleter, finder, tester, usages |
-| `pkg/app/secretref` (new) | `Resolver` (cache), `Materializer`, `Collector` (walks references) |
-| `pkg/infra/secretstore/{hashicorp,awssm,gcpsm,azurekv,env,file}` (new) | backends |
-| `pkg/infra/repository/secretstore` (new) + migration | Postgres table, sealing |
-| `pkg/runtimeconfig/snapshot/adapters` | secret-store snapshot adapter |
-| `pkg/infra/configsnapshot` (proto + codec + compiler) | `secret_stores` field |
-| `pkg/app/consumer/data_finder.go`, `pkg/app/registry/finder.go` | call the materializer |
-| `pkg/app/proxy/provider.go`, `pkg/app/mcp` | forced refresh on 401/403 |
-| `pkg/common/secret` | `Mask` / `Resolve` / `MaskSettings` leave references untouched |
-| `pkg/domain/registry`, `pkg/domain/auth`, `pkg/app/policy` | write-time reference validation |
-| `pkg/api/handler/http/secretstore` (new), `pkg/server/router/admin_router.go`, `pkg/api/middleware/admin_scopes.go` | API, scopes |
-| `pkg/config` | `SECRET_STORES_ENABLED`, `SECRET_STORES_ALLOW_LOCAL`, `SECRET_STORES_FILE` |
-| `NeuralTrust/app` | Secret stores settings tab, `SecretInput`, server actions, i18n |
+| `pkg/domain/secretref`, `pkg/domain/secretstore` (new) | grammar, locations, store config, ports, errors |
+| `pkg/app/secretref` (new) | resolver, cache, refresher, materializer, collector, validator, eligibility |
+| `pkg/app/secretstore` (new) | store source per gateway, listing, usages, admin test |
+| `pkg/infra/secretstore/{hashicorp,awssm,gcpsm,azurekv,filestore,envstore,localfile}` (new) | backends, file loader |
+| `pkg/app/consumer/data_finder.go`, `pkg/app/registry/finder.go`, runtime readers | materialization + invalidation (any plane with a catalog) |
+| `pkg/app/proxy/provider.go`, `pkg/app/mcp/*`, `pkg/infra/providers/bedrock/client.go` | `secret_unavailable`, forced refresh, cache keys |
+| `pkg/infra/configsnapshot/proto/configsync.proto`, `pkg/infra/configsync/grpc`, `pkg/domain/dataplane`, `pkg/infra/repository/configsyncconn` + migration | heartbeat `secret_stores` |
+| `pkg/api/handler/http/secretstore`, `pkg/api/handler/http/diagnostics`, routers, `admin_scopes.go` | admin listing, usages and test; diagnostics test; scope |
+| `pkg/domain/registry`, `pkg/app/registry`, `pkg/app/policy`, `pkg/common/secret` | write-time validation, masking pass-through |
+| `pkg/config`, `.env.example`, `downloads/docker-compose.yml` | variables, compose example |
+| `NeuralTrust/neuraltrust-platform` (chart) | `agentgateway.secretStores` → ConfigMap, volume mounts on admin, proxy and MCP, Secret mounts, `SECRET_STORES_*` env per mode |
+| `NeuralTrust/app` | settings tab, generator, `SecretInput`, server actions, i18n |
+| `NeuralTrust/docs` | deployment Secrets / Configuration pages, Secret stores guide |
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| **Exfiltration through references.** An admin who can edit a registry can reference any path the store can read and point the registry's `base_url` at their own host. | `allowed_paths` on every store (required); a reference written by a caller needs `secret_stores:read` on that gateway; audit of every reference added; docs recommend a least-privilege policy on the vault side. |
-| **Confused deputy on shared planes.** A tenant names a store that uses NeuralTrust's own pod identity, or `env`/`file`, and reads NeuralTrust secrets. | Local and ambient stores cannot be created through the API. They exist only in data-plane YAML and are refused unless `SECRET_STORES_ALLOW_LOCAL=true`, which hosted planes never set. |
-| **SSRF or credential replay to a tenant-supplied address.** | Hosted planes dial Vault addresses through `netguard`. HTTPS is required. The Azure vault URL must match the Key Vault DNS suffixes. A custom AWS endpoint is allowed on local stores only. |
-| **Vault outage takes traffic down.** | Refresh-ahead; stale-on-error up to `max_stale` (default 24 h); registry failover already routes around a registry whose credential is unavailable. |
-| **Hot-path latency.** | Fetches happen only on a cold cache. Refresh-ahead keeps the request path at cache hits. Singleflight and a bounded timeout (default 2 s). |
-| **Vault rate limits from many replicas.** | One fetch per (store, path, version) per replica per TTL, plus jitter. The negative cache stops retries on missing secrets. |
-| **A reference string sent upstream (LiteLLM #26151).** | The materializer replaces an unresolved reference with an empty value and marks the entity `CredentialUnavailable`. The invoker fails with `secret_unavailable` before dialing. |
-| **Snapshot compatibility.** | A new proto field. Data planes that predate it ignore it. They also cannot resolve references, so a gateway that uses references needs data planes on the new version. The console reports the version from `Heartbeat`, and the admin API warns. |
+| **A tenant of NeuralTrust SaaS uses NeuralTrust's pod identity, environment or files.** | Three independent guards (design D13): eligibility `hybrid` on NeuralTrust's control plane; every plane checks eligibility itself; a plane with `INSTANCE_DEPLOYMENT_TYPE=saas` refuses `SECRET_STORES_FILE`. NeuralTrust never ships a store file to its own planes. |
+| **One team reads another team's secrets in a shared self-hosted or central cluster.** | A per-store `gateways` allowlist, enforced by the admin and by every plane. Separate stores per team, with disjoint `allowed_paths`. The generator prefills the allowlist with the current gateway. |
+| **Exfiltration through references.** An editor points a referenced secret at their own host. | `allowed_paths` is required and enforced where the store lives. Writing or retargeting a reference needs `secret_stores:read`. The generator emits least-privilege policies. Every reference write is audited. |
+| **A console admin aims the pod identity at a host they control.** | Impossible by construction: store addresses and auth exist only in Helm values. |
+| **Vault outage.** | Refresh-ahead, stale-on-error up to `max_stale` (24 h default), and registry failover. |
+| **A reference string is sent upstream (LiteLLM #26151).** | An unresolved reference becomes an empty value plus `CredentialUnavailable`. The request fails before any upstream call. |
+| **A plane that predates this change receives a reference.** It forwards `secret://…` literally as the API key: the upstream answers 401 and that registry is down (LiteLLM #26151). | Planes with this code advertise `accepts_secret_refs`. The config-sync server never serves a snapshot that contains references to a plane without it. Such a plane keeps its previous or LKG configuration, or stays not-ready if it has none; it never sends `secret://…`. Write-time validation is strict: no reference while any live plane lacks the capability or none is connected, unless the request explicitly opts in with `allow_unverified_secret_refs`. Old planes are reported as `too_old`, logged and counted. Self-hosted planes read Postgres, so the gate does not apply to them; they rely on the downgrade procedure. Downgrade procedure: replace references before downgrading a plane or rolling back the chart. |
+| **Deploying the code changes behaviour for existing customers.** | With the flag off, the materializer is a no-op unless a value starts with `secret://`. Masking, write paths and cache keys for literal credentials stay unchanged. The chart renders nothing new, and the console treats a 404 as unsupported. A pre-deploy scan (`secret-refs-scan`) confirms that no stored credential starts with `secret://`. Golden tests prove all of this (design §13). |
+| **Chart and console drift.** | Discovery: the console lists only what the planes actually loaded. The generator polls until the store is reported. |
 
 ## Rollback plan
 
-- Set `SECRET_STORES_ENABLED=false`. Then:
-  - the admin API refuses new references and new stores;
-  - existing references stay stored;
-  - the compiler keeps sending stores, but data planes with the flag off do not
-    resolve them, and traffic that depends on them fails with
-    `secret_unavailable`.
-- Real rollback for a gateway means replacing its references with literal
-  values. A `GET /secret-stores/:id/usages` listing makes that mechanical.
-- The migration is additive (a new table); the proto change is additive.
+**Feature rollback (always safe).** Set `SECRET_STORES_ENABLED=false` on the
+admin and the planes.
+- The admin refuses new references.
+- The planes stop resolving and never forward a reference-shaped value.
+- Only the routes that use references fail, with `secret_unavailable`.
+
+**Version rollback.** This means downgrading a hybrid data plane, or rolling
+back a self-hosted or central chart, below the first version that resolves
+references. First replace every reference with a literal, using
+`GET …/secret-stores/:name/usages`. Otherwise the older plane forwards
+`secret://…` upstream. The console shows this checklist when a plane reports
+`too_old`.
+
+The schema change (nullable columns, explicit column lists) and the proto
+change (additive fields) are safe to roll back.
 
 ## Dependencies
 
-- New Go modules:
-  - `github.com/aws/aws-sdk-go-v2/service/secretsmanager`;
-  - `github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets`.
-- Vault and GCP Secret Manager go through their REST APIs on TrustGate's own
-  HTTP client, which keeps `netguard` in control. Their SDKs would add heavy
-  transitive dependencies; see D11.
-- Console work in `NeuralTrust/app`.
-- Phase 4 needs a public OIDC discovery document and JWKS for the federation
-  issuer.
+- **New Go modules:** `aws-sdk-go-v2/service/secretsmanager` (Phase 1),
+  `azure-sdk-for-go/sdk/security/keyvault/azsecrets` (Phase 2).
+- **Chart (`NeuralTrust/neuraltrust-platform`).** New templates are needed
+  because the `agentgateway` subchart has no `extraVolumes`. The value keys
+  must be agreed with the chart owners (OQ3).
+- **Console (`NeuralTrust/app`) and public docs (`NeuralTrust/docs`).**
 
 ## Success criteria
 
-- [ ] A registry with `api_key: secret://corp/ai/openai#key` serves traffic on
-  a hosted plane (managed store) and on a hybrid plane (local store). Its value
-  is never in Postgres, the snapshot, the LKG file, logs or API responses.
-- [ ] A secret rotated in the vault is picked up:
-  - within the TTL with no TrustGate write;
-  - immediately after an upstream 401.
-- [ ] With the vault unreachable, traffic keeps flowing on the last good value
-  until `max_stale`, and an alert-worthy metric fires.
-- [ ] An unresolved reference fails the request with `secret_unavailable`. The
-  reference string is never sent upstream.
-- [ ] A hosted gateway cannot use an ambient, `env` or `file` store. A
-  reference outside `allowed_paths` is refused at write time.
-- [ ] A store that is still referenced cannot be deleted; the response lists
-  where it is used.
+- [ ] **Hybrid (EKS, IRSA).** A registry with
+  `api_key: secret://aws/prod/llm/openai#key` serves traffic. The value is never
+  in any TrustGate database, snapshot, LKG, log or API response. No AWS
+  credential exists outside the customer's cluster.
+- [ ] **Self-hosted (`external`, Vault with Kubernetes auth).** The same
+  registry serves traffic through the in-cluster proxy. Test-connection and
+  model listing work from the console through the admin.
+- [ ] **Central control plane.** A central-cluster gateway resolves on the
+  central cluster. A remote-cluster gateway resolves on its remote cluster.
+  Each validates against its own store source.
+- [ ] **Rotation.** A secret rotated in the vault is picked up within the TTL
+  with no TrustGate write, and immediately after an upstream 401.
+- [ ] **Outage.** With the vault unreachable, traffic continues until
+  `max_stale`, and a metric fires.
+- [ ] **No leak upstream.** An unresolved reference fails with
+  `secret_unavailable`, and the reference string never goes upstream.
+- [ ] **NeuralTrust SaaS and dedicated.** Their gateways cannot hold
+  references. A `saas` plane refuses `SECRET_STORES_FILE`.
+- [ ] **Multi-team.** A store restricted to gateway A cannot be referenced or
+  resolved for gateway B in the same cluster.
+- [ ] **Compatibility.** Deploying with the flag off is a no-op for
+  existing gateways in SaaS, hybrid and self-hosted. Golden tests and an
+  identical chart render prove it.
+- [ ] **Old planes.** No reference can be written for a gateway whose live
+  planes are too old, or which has no live plane, without the explicit opt-in.
+  An old plane that joins later never receives the snapshot with references.
+  It keeps its previous configuration, or stays not-ready, and is reported as
+  `too_old`.
+- [ ] **Console.** It shows the same tab, generator and `SecretInput` in
+  hybrid, self-hosted and central. Tests run on the plane that can reach the
+  vault and never show a value.
