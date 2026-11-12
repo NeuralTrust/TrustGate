@@ -17,6 +17,8 @@ package a2a
 import "net/http"
 
 // Upstream sends requests to agents.
+//
+//go:generate mockery --name=Upstream --dir=. --output=./mocks --filename=a2a_upstream_mock.go --case=underscore --with-expecter
 type Upstream interface {
 	// Do sends req as it is and returns the response with its body unread.
 	Do(req *http.Request) (*http.Response, error)

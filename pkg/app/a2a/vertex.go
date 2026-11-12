@@ -17,7 +17,6 @@ package a2a
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -35,37 +34,37 @@ type vertex struct{}
 func (vertex) header(*Exchange, http.Header) {}
 
 func (vertex) request(ctx context.Context, endpoint string, h http.Header, body []byte) (*http.Request, error) {
-	var call struct {
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-	if json.Unmarshal(body, &call) != nil {
+	call, ok := decodeObject(body)
+	if !ok {
 		return nil, invalidParams()
 	}
-	var task struct {
-		ID            string `json:"id"`
-		HistoryLength *int   `json:"historyLength"`
-	}
+	rpcMethod := call.str("method")
 	method, target, payload := http.MethodPost, "", []byte(nil)
-	switch call.Method {
+	switch rpcMethod {
 	case "message/send":
-		params, ok := decodeMap(call.Params)
+		params, ok := decodeMap(call["params"])
 		if !ok {
 			return nil, invalidParams()
 		}
 		payload, _ = json.Marshal(restSendRequest(params))
 		target = endpoint + "/v1/message:send"
 	case "tasks/get", "tasks/cancel":
-		if json.Unmarshal(call.Params, &task) != nil || task.ID == "" {
+		params, _ := decodeObject(call["params"])
+		id := params.str("id")
+		if id == "" {
 			return nil, invalidParams()
 		}
-		target = endpoint + "/v1/tasks/" + url.PathEscape(task.ID)
-		if call.Method == "tasks/cancel" {
+		target = endpoint + "/v1/tasks/" + url.PathEscape(id)
+		if rpcMethod == "tasks/cancel" {
 			target += ":cancel"
 		} else {
 			method = http.MethodGet
-			if task.HistoryLength != nil {
-				target += "?historyLength=" + strconv.Itoa(*task.HistoryLength)
+			var historyLength *int
+			if params.has("historyLength") && json.Unmarshal(params["historyLength"], &historyLength) != nil {
+				return nil, invalidParams()
+			}
+			if historyLength != nil {
+				target += "?historyLength=" + strconv.Itoa(*historyLength)
 			}
 		}
 	default:
@@ -83,31 +82,33 @@ func (vertex) request(ctx context.Context, endpoint string, h http.Header, body 
 	return req, nil
 }
 
-func (vertex) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError) {
+func (vertex) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError, bool) {
 	switch s := res.StatusCode; {
 	case s >= 200 && s <= 299:
 		result, ok := rpcResult(x.kind, body)
 		if !ok {
-			return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
+			return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
 		}
-		return result, nil
+		return result, nil, false
 	case s == http.StatusBadRequest || s == http.StatusUnprocessableEntity:
-		x.agentError = true
-		return nil, invalidParams()
+		return nil, invalidParams(), true
 	case s == http.StatusUnauthorized:
-		return nil, IdentityRequired()
+		return nil, IdentityRequired(), false
 	case s == http.StatusForbidden:
-		return nil, GatewayFailure(ReasonUpstreamAuthFailed)
+		return nil, GatewayFailure(ReasonUpstreamAuthFailed), false
 	case s == http.StatusNotFound && (x.kind == KindGet || x.kind == KindCancel):
-		x.agentError = true
-		return nil, TaskNotFound(Version03)
+		return nil, TaskNotFound(Version03), true
 	default:
-		return nil, GatewayFailure(ReasonUpstreamError)
+		return nil, GatewayFailure(ReasonUpstreamError), false
 	}
 }
 
 func (vertex) retry(*RPCError, int) (time.Duration, bool) {
 	return 0, false
+}
+
+func (vertex) capabilities() capabilities {
+	return capabilities{jsonrpcOnlyCard: true}
 }
 
 func copyFields(from map[string]any, keys ...string) map[string]any {
@@ -163,8 +164,8 @@ func restPart(p map[string]any) map[string]any {
 		if uri, ok := f["uri"]; ok {
 			file["fileWithUri"] = uri
 		}
-		if b, ok := f["bytes"].(string); ok {
-			file["fileWithBytes"] = base64.StdEncoding.EncodeToString([]byte(b))
+		if b, ok := f["bytes"]; ok {
+			file["fileWithBytes"] = b
 		}
 		return map[string]any{"file": file}
 	case "data":
@@ -250,10 +251,8 @@ func rpcPart(p map[string]any) map[string]any {
 		if uri, ok := f["fileWithUri"]; ok {
 			file["uri"] = uri
 		}
-		if raw, ok := f["fileWithBytes"].(string); ok {
-			if b, err := base64.StdEncoding.DecodeString(raw); err == nil {
-				file["bytes"] = string(b)
-			}
+		if raw, ok := f["fileWithBytes"]; ok {
+			file["bytes"] = raw
 		}
 		return map[string]any{"kind": "file", "file": file}
 	}

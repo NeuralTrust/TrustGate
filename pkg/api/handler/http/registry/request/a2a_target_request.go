@@ -35,27 +35,6 @@ type A2ATargetRequest struct {
 	AllowedMethods    []string                 `json:"allowed_methods,omitempty"`
 }
 
-// A2ACloudAuthRequest is the cloud credential of a hosted agent; set the one
-// its provider accepts.
-type A2ACloudAuthRequest struct {
-	AWS   *A2AAWSAuthRequest `json:"aws,omitempty"`
-	Azure *AzureAuthRequest  `json:"azure,omitempty"`
-	GCP   *A2AGCPAuthRequest `json:"gcp,omitempty"`
-}
-
-// A2AAWSAuthRequest is AWSAuthRequest plus the external id of an assumed role.
-type A2AAWSAuthRequest struct {
-	AWSAuthRequest
-	ExternalID string `json:"external_id,omitempty"`
-}
-
-// A2AGCPAuthRequest takes a service-account key or a service account to
-// impersonate; with neither the pod's Application Default Credentials apply.
-type A2AGCPAuthRequest struct {
-	ServiceAccountJSON        GCPServiceAccountJSON `json:"service_account_json,omitempty" swaggertype:"string"`
-	ImpersonateServiceAccount string                `json:"impersonate_service_account,omitempty"`
-}
-
 func (t *A2ATargetRequest) ToDomain() *domain.A2ATarget {
 	if t == nil {
 		return nil
@@ -74,21 +53,4 @@ func (t *A2ATargetRequest) ToDomain() *domain.A2ATarget {
 		CardAuth:          domain.A2ACardAuth(t.CardAuth),
 		AllowedMethods:    t.AllowedMethods,
 	}
-}
-
-func (c *A2ACloudAuthRequest) toDomain() *domain.A2ACloudAuth {
-	if c == nil {
-		return nil
-	}
-	out := &domain.A2ACloudAuth{Azure: c.Azure.ToDomain()}
-	if c.AWS != nil {
-		out.AWS = &domain.A2AAWSAuth{AWSAuth: *c.AWS.ToDomain(), ExternalID: c.AWS.ExternalID}
-	}
-	if c.GCP != nil {
-		out.GCP = &domain.A2AGCPAuth{
-			ServiceAccountJSON:        string(c.GCP.ServiceAccountJSON),
-			ImpersonateServiceAccount: c.GCP.ImpersonateServiceAccount,
-		}
-	}
-	return out
 }

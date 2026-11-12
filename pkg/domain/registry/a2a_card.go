@@ -60,6 +60,8 @@ func decodeCard(raw []byte) (map[string]any, error) {
 
 func viewCard(raw []byte) cardView {
 	var v cardView
+	// A pinned card was validated as a JSON object; a field of another type
+	// leaves that part of the view empty.
 	_ = json.Unmarshal(raw, &v)
 	return v
 }

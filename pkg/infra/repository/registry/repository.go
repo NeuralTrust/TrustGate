@@ -192,6 +192,77 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	})
 }
 
+// errCardMoved rolls back a card pin whose stored target no longer matches.
+var errCardMoved = errors.New("registry repository: a2a card moved")
+
+// PinA2ACard writes pinned's card onto one A2A registry while the stored
+// target still pins fromDigest from the same card URL, version and locator.
+// Only the card fields and updated_at change: every other column and field,
+// credentials included, keeps what is stored, so an edit made while the card
+// was being fetched is kept. It reports false, writing nothing, when the
+// stored target moved.
+func (r *Repository) PinA2ACard(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	id ids.RegistryID,
+	fromDigest string,
+	pinned *domain.A2ATarget,
+	updatedAt time.Time,
+) (bool, error) {
+	if pinned == nil {
+		return false, errors.New("registry repository: nil a2a target")
+	}
+	card := map[string]any{
+		"resolved_card_url": pinned.ResolvedCardURL,
+		"card":              pinned.Card,
+		"card_digest":       pinned.CardDigest,
+		"card_pinned_at":    pinned.CardPinnedAt,
+	}
+	cardBytes, err := json.Marshal(card)
+	if err != nil {
+		return false, fmt.Errorf("registry repository: marshal a2a card: %w", err)
+	}
+	locator := map[string]any{
+		"bedrock_agentcore":   pinned.BedrockAgentCore,
+		"azure_foundry":       pinned.AzureFoundry,
+		"vertex_agent_engine": pinned.VertexAgentEngine,
+	}
+	locatorBytes, err := json.Marshal(locator)
+	if err != nil {
+		return false, fmt.Errorf("registry repository: marshal a2a locator: %w", err)
+	}
+	const query = `
+		UPDATE registries
+		   SET a2a_target = a2a_target || $3::jsonb,
+		       updated_at = $4
+		 WHERE id = $1 AND gateway_id = $2 AND type = 'A2A'
+		   AND COALESCE(a2a_target->>'card_digest', '') = $5
+		   AND COALESCE(a2a_target->>'card_url', '') = $6
+		   AND COALESCE(a2a_target->>'protocol_version', '') = $7
+		   AND jsonb_strip_nulls(jsonb_build_object(
+		         'bedrock_agentcore', a2a_target->'bedrock_agentcore',
+		         'azure_foundry', a2a_target->'azure_foundry',
+		         'vertex_agent_engine', a2a_target->'vertex_agent_engine'))
+		       = jsonb_strip_nulls($8::jsonb)`
+	err = r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, query, id, gatewayID, cardBytes, updatedAt, fromDigest, pinned.CardURL, string(pinned.ProtocolVersion), locatorBytes)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return errCardMoved
+		}
+		return nil
+	})
+	if errors.Is(err, errCardMoved) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CompareAndSwapMCPTarget writes next's catalog fields onto one registry only
 // when match accepts the row locked by this transaction. Name, description,
 // enabled, and the registry-level auth column are left as they are. match runs

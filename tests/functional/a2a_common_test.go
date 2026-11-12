@@ -34,6 +34,9 @@ type fakeAgent struct {
 	skills []string
 	calls  []agentCall
 	tasks  int
+	// hold, when set before the agent is called, keeps a stream open after
+	// its first event until it is closed.
+	hold chan struct{}
 }
 
 func startFakeAgent(t *testing.T, version string) *fakeAgent {
@@ -131,10 +134,17 @@ func (a *fakeAgent) rpc(w http.ResponseWriter, r *http.Request) {
 	case "message/stream", "SendStreamingMessage":
 		taskID, contextID, text := a.newTask(req.Params)
 		w.Header().Set("Content-Type", "text/event-stream")
-		for _, event := range a.streamEvents(taskID, contextID, text) {
+		for i, event := range a.streamEvents(taskID, contextID, text) {
 			frame, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": event})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", frame)
 			w.(http.Flusher).Flush()
+			if i == 0 && a.hold != nil {
+				select {
+				case <-a.hold:
+				case <-r.Context().Done():
+					return
+				}
+			}
 		}
 	case "tasks/get", "GetTask":
 		id, _ := req.Params["id"].(string)

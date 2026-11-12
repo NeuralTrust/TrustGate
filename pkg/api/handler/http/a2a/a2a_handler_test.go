@@ -148,6 +148,8 @@ func TestRPCRefusals(t *testing.T) {
 		{name: "not JSON content", contentType: "text/plain", body: `{}`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
 		{name: "not JSON", contentType: "application/json", body: `{`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON payload"}}`},
 		{name: "batch", contentType: "application/json", body: `[]`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
+		{name: "JSON media type in another case", contentType: "Application/JSON; charset=utf-8", body: `{"jsonrpc":"2.0","id":4,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"Method not found"}}`},
+		{name: "JSON suffix is not JSON", contentType: "application/jsonl", body: `{}`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
 		{name: "0.3 method", contentType: "application/json", body: `{"jsonrpc":"2.0","id":3,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"Method not found"}}`},
 	}
 	for _, tc := range cases {

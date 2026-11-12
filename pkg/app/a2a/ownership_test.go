@@ -17,6 +17,8 @@ package a2a_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,20 +78,20 @@ func (s *memStore) Touch(_ context.Context, key a2a.OwnershipKey, _ time.Duratio
 	return s.writeErr
 }
 
-func (s *memStore) owner(h *harness, scope, id string) (a2a.Owner, bool) {
+func (s *memStore) owner(h *harness, scope a2a.OwnershipScope, id string) (a2a.Owner, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	o, ok := s.owners[h.key(scope, id)]
 	return o, ok
 }
 
-func (s *memStore) set(h *harness, scope, id string, o a2a.Owner) {
+func (s *memStore) set(h *harness, scope a2a.OwnershipScope, id string, o a2a.Owner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.owners[h.key(scope, id)] = o
 }
 
-func (h *harness) key(scope, id string) a2a.OwnershipKey {
+func (h *harness) key(scope a2a.OwnershipScope, id string) a2a.OwnershipKey {
 	return a2a.OwnershipKey{GatewayID: h.consumer.Consumer.GatewayID, RegistryID: h.agent.ID, Scope: scope, ID: id}
 }
 
@@ -118,8 +120,8 @@ func TestOwnershipIsRecordedFromTheFirstAnswer(t *testing.T) {
 	_, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"role":"user","parts":[{"kind":"text","text":"hi"}]}}`), nil)
 	require.Nil(t, rpcErr)
 
-	for _, scope := range []string{a2a.ScopeTask, a2a.ScopeContext} {
-		id := map[string]string{a2a.ScopeTask: v03Task, a2a.ScopeContext: v03Context}[scope]
+	for _, scope := range []a2a.OwnershipScope{a2a.ScopeTask, a2a.ScopeContext} {
+		id := map[a2a.OwnershipScope]string{a2a.ScopeTask: v03Task, a2a.ScopeContext: v03Context}[scope]
 		o, ok := h.store.owner(h, scope, id)
 		require.True(t, ok, scope)
 		assert.Equal(t, h.owner(), o, scope)
@@ -144,6 +146,8 @@ func TestOnlyTheOwnerUsesATaskOrAContext(t *testing.T) {
 		{name: "continue another caller's task", body: rpcRequest("message/send", `{"message":{"taskId":"`+v03Task+`","parts":[]}}`)},
 		{name: "unknown task", body: rpcRequest("tasks/get", `{"id":"expired"}`)},
 		{name: "unknown context", body: rpcRequest("message/send", `{"message":{"contextId":"expired","parts":[]}}`)},
+		{name: "reference another caller's task", body: rpcRequest("message/send", `{"message":{"referenceTaskIds":["`+v03Task+`"],"parts":[]}}`)},
+		{name: "reference an unknown task", body: rpcRequest("message/send", `{"message":{"referenceTaskIds":["expired"],"parts":[]}}`)},
 	}
 	for _, tc := range cases {
 		ag := newAgent(t, answer(v03TaskAnswer()))
@@ -207,4 +211,65 @@ func TestOwnerIsTheConsumerAndTheSubject(t *testing.T) {
 	h.store.set(h, a2a.ScopeTask, v03Task, a2a.Owner{ConsumerID: ids.New[ids.ConsumerKind](), Subject: h.principal.Subject})
 	_, rpcErr = h.send(t, rpcRequest("tasks/get", `{"id":"`+v03Task+`"}`), nil)
 	require.NotNil(t, rpcErr, "another consumer")
+}
+
+func TestAReferencedTaskIsOnlyChecked(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{"jsonrpc":"2.0","id":7,"result":{"kind":"message","messageId":"m-2","role":"agent","parts":[]}}`)))
+	h := newHarness(t, a2a.Version03, ag.URL, allow).as("u1")
+	referenced := h.owner()
+	referenced.UpstreamSession = "session-of-the-referenced-task"
+	h.store.set(h, a2a.ScopeTask, v03Task, referenced)
+
+	_, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"referenceTaskIds":["`+v03Task+`"],"parts":[]}}`), nil)
+	require.Nil(t, rpcErr)
+	assert.Equal(t, 1, ag.calls())
+	h.store.mu.Lock()
+	defer h.store.mu.Unlock()
+	assert.Zero(t, h.store.touched[h.key(a2a.ScopeTask, v03Task)], "a reference does not renew the binding")
+}
+
+func TestReferenceTaskIdsMustBeAShortList(t *testing.T) {
+	t.Parallel()
+	refIDs := make([]string, 33)
+	for i := range refIDs {
+		refIDs[i] = fmt.Sprintf("%q", fmt.Sprintf("t-%d", i))
+	}
+	for name, refs := range map[string]string{
+		"not a list": `"` + v03Task + `"`,
+		"too many":   "[" + strings.Join(refIDs, ",") + "]",
+	} {
+		ag := newAgent(t, answer(v03TaskAnswer()))
+		h := newHarness(t, a2a.Version03, ag.URL, allow)
+		_, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"referenceTaskIds":`+refs+`,"parts":[]}}`), nil)
+		require.NotNil(t, rpcErr, name)
+		assert.Equal(t, a2a.CodeInvalidParams, rpcErr.Code, name)
+		assert.Zero(t, ag.calls(), name)
+	}
+}
+
+func TestCancelAnswersOnlyTheTaskState(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{"jsonrpc":"2.0","id":7,"result":{"kind":"task","id":"`+v03Task+`","contextId":"`+v03Context+`","status":{"state":"canceled"},"artifacts":[{"parts":[{"kind":"text","text":"draft"}]}]}}`)))
+	h := newHarness(t, a2a.Version03, ag.URL, allow).as("u1")
+	h.store.set(h, a2a.ScopeTask, v03Task, h.owner())
+	h.store.set(h, a2a.ScopeContext, v03Context, h.owner())
+
+	result, rpcErr := h.send(t, rpcRequest("tasks/cancel", `{"id":"`+v03Task+`"}`), nil)
+	require.Nil(t, rpcErr)
+	assert.JSONEq(t, `{"kind":"task","id":"`+v03Task+`","contextId":"`+v03Context+`","status":{"state":"canceled"}}`, string(result))
+}
+
+func TestAConflictOnTheContextLeavesTheTaskUnclaimed(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer(v03TaskAnswer()))
+	h := newHarness(t, a2a.Version03, ag.URL, allow).as("u1")
+	h.store.set(h, a2a.ScopeContext, v03Context, h.owner())
+	h.as("u2")
+
+	_, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"parts":[]}}`), nil)
+	require.NotNil(t, rpcErr)
+	assert.Equal(t, a2a.ReasonOwnershipConflict, reasonOf(t, rpcErr))
+	_, claimed := h.store.owner(h, a2a.ScopeTask, v03Task)
+	assert.False(t, claimed)
 }
