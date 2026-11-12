@@ -2,11 +2,11 @@
 
 ## Purpose
 
-How the console (`NeuralTrust/app`) exposes secret stores for hybrid gateways.
-It shows:
-- what the data plane reports;
-- a guided generator for the Helm values and vault-side prerequisites;
-- a secret input that can switch between a value and a reference.
+How the console (`NeuralTrust/app`) exposes secret stores. The same code runs
+on NeuralTrust SaaS and on self-hosted and central installs
+(`DEPLOYMENT_MODE=external`). Whether the feature appears, and where tests run,
+is decided by the admin's `supported` and `source` fields, never by the
+console's own mode.
 
 The console never asks for, stores or displays a secret value or a store
 credential.
@@ -15,121 +15,133 @@ credential.
 
 ### Requirement: Secret stores tab
 
-Settings → Gateway MUST show a "Secret stores" tab for hybrid gateways when the
-feature is enabled. The tab MUST be hidden for hosted and dedicated gateways.
-- The tab MUST list the stores returned by `GET /v1/gateways/:gateway_id/secret-stores`.
-- Each row MUST show:
-  - name;
-  - type;
-  - allowed paths;
-  - aggregated status (`ok`, `degraded`, `down` or `not_reported`), with a
-    warning when `consistent=false`;
-  - usages count;
-  - last check.
-- The row detail MUST show:
-  - the per-instance state and a human hint for each error class;
-  - the usages, each linking to its entity;
-  - a "Test a secret" action.
+Settings → Gateway MUST show a "Secret stores" tab when
+`GET /v1/gateways/:gateway_id/secret-stores` returns `supported: true`. It MUST
+be hidden otherwise.
 
-#### Scenario: Hosted gateway
+The header MUST say where the stores are configured:
+- for source `data_plane`: in the Helm values of the gateway's data plane;
+- for source `control_plane`: in the platform's Helm values.
 
-- GIVEN a hosted gateway
+Each row MUST show:
+- the name;
+- the type;
+- the allowed paths;
+- the aggregated status (`ok`, `degraded`, `down` or `not_reported`), with a
+  warning when `consistent=false`;
+- the number of usages;
+- the time of the last check.
+
+The row detail MUST show:
+- the state of each instance, with a hint for each error class;
+- the usages, each linked to its entity;
+- a "Test a secret" action.
+
+#### Scenario: NeuralTrust SaaS hosted gateway
+
+- GIVEN a hosted gateway on NeuralTrust SaaS (`supported: false`)
 - WHEN its settings are opened
 - THEN no "Secret stores" tab is shown
 
-#### Scenario: Store reported with an auth error
+#### Scenario: Self-hosted gateway
 
-- GIVEN the data plane reports `corp-vault` with state `auth_failed`
-- WHEN the tab is opened
-- THEN the row shows status `down`, and the detail suggests checking the vault auth role bound to the data plane's ServiceAccount
+- GIVEN an on-prem console whose admin returns `supported: true, source: control_plane`
+- WHEN any gateway's settings are opened
+- THEN the tab is shown, and its header points to the platform's Helm values
 
-### Requirement: Test runs on the data plane
+### Requirement: Tests run where the store lives
 
-"Test a secret" MUST call the data plane's
-`/__diagnostics/gateways/:gateway_id/secret-stores/:name/test` through a server
-action, using the gateway's configured data-plane URL and a diagnostics token,
-as hybrid test-connection does.
-- The result MUST show the outcome, the error class mapped to a message, the
-  version and the latency.
-- It MUST NOT show a secret value.
+"Test a secret" MUST be routed the same way as registry test-connection:
+- **Hybrid gateway:** a server action calls the data plane's
+  `/__diagnostics/gateways/:gateway_id/secret-stores/:name/test` on the
+  configured data-plane URL, with a diagnostics token.
+- **Any other gateway:** the console calls the admin's
+  `POST /v1/gateways/:gateway_id/secret-stores/:name/test`.
 
-#### Scenario: Data plane unreachable
+The result MUST show the outcome, the error class mapped to a message, the
+version and the latency. It MUST NOT show a secret value.
 
-- GIVEN the hybrid data plane URL does not answer
+#### Scenario: Hybrid data plane unreachable
+
+- GIVEN a hybrid gateway whose data-plane URL does not answer
 - WHEN a secret is tested
-- THEN the console reports that the data plane did not answer, and nothing is tested from the control plane
+- THEN the console reports that the data plane did not answer, and nothing is tested on the control plane
 
 ### Requirement: Add a secret store generator
 
-"Add a secret store" MUST be a generator that saves nothing in NeuralTrust.
-- **Inputs.** Name, type, allowed paths, the connection and auth fields of the
-  type, and advanced cache settings.
-- **No secret inputs.** No input MUST accept a secret value. Static Vault
-  credentials MUST be referenced by the name and key of a Kubernetes Secret.
-- **Default auth.** It MUST be the type's keyless method: Vault Kubernetes auth,
-  IRSA/Pod Identity, GKE Workload Identity or AKS Workload Identity.
-- **Output:**
-  - the `agentgateway.secretStores` values snippet, plus the ServiceAccount
-    annotation when needed;
-  - the vault-side least-privilege prerequisites built from the allowed paths:
-    a Vault policy and role command, an IAM policy JSON, a `gcloud` binding or
-    an `az role assignment`;
-  - the `helm upgrade` command.
-- **Waiting.** It MUST then poll the listing and show "waiting for your data
-  plane to report `<name>`". It turns to success when the store is reported
-  `ok`, or shows the reported error class.
+"Add a secret store" MUST be a generator that saves nothing.
+
+Inputs:
+- name, type, allowed paths and the type's connection and auth fields;
+- *Gateways*, prefilled with the current gateway;
+- advanced cache settings.
+
+No input MUST accept a secret value. Static Vault credentials MUST be
+referenced by Kubernetes Secret name and key. The default auth MUST be the
+type's keyless method.
+
+Output:
+- the `agentgateway.secretStores` snippet, plus the ServiceAccount annotation
+  when needed;
+- least-privilege prerequisites built from the allowed paths;
+- the `helm upgrade` command;
+- which values file the snippet belongs to: the data plane's values for
+  `data_plane`, the platform's values for `control_plane`.
+
+The generator MUST then poll the listing until the store is reported `ok`, or
+show the reported error class.
 
 #### Scenario: AWS store generated
 
-- GIVEN type AWS Secrets Manager, name `aws`, region `eu-west-1`, allowed path `prod/llm/` and IAM role ARN R
-- WHEN the generator output is shown
-- THEN it includes a values snippet with the store and the annotation `eks.amazonaws.com/role-arn: R`, and an IAM policy granting `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:eu-west-1:<account>:secret:prod/llm/*`
+- GIVEN type AWS Secrets Manager, name `aws`, region `eu-west-1`, allowed path `prod/llm/`, role ARN R, and current gateway G
+- WHEN the output is shown
+- THEN it includes the store with `gateways: [G]`, the annotation `eks.amazonaws.com/role-arn: R`, and an IAM policy granting `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:eu-west-1:<account>:secret:prod/llm/*`
 
 ### Requirement: SecretInput
 
-On hybrid gateways with the feature enabled, every form field marked
-`secret: true` MUST render a `SecretInput` with two modes: "Value" and "From
-secret store". Phase 1 covers provider auth fields, the GCP service-account
-field, MCP secret headers and the OAuth client secret. Phase 2 adds policy
-credentials and telemetry headers.
+When the gateway is `supported`, every form field marked `secret: true` MUST
+render a `SecretInput` with two modes: "Value" and "From secret store".
+- **Phase 1:** provider auth, the GCP service account, MCP secret headers and
+  the OAuth client secret.
+- **Phase 2:** policy credentials and telemetry headers.
 
-"From secret store" mode MUST offer:
-- a store selector listing the reported stores with their status;
-- a path, with the store's allowed prefixes as a hint and an inline check;
+The "From secret store" mode MUST offer:
+- a store selector, listing the gateway's available stores with their status;
+- a path field, with the allowed prefixes as a hint and an inline check;
 - an optional key;
-- an advanced, optional version with a type-aware placeholder;
-- a read-only preview of the `secret://…` string;
-- a "Test" action that runs on the data plane.
+- an optional version, under an advanced section;
+- a read-only preview of the `secret://…` reference;
+- a "Test" action, routed as in the tab.
 
-The mode MUST round-trip:
-- a stored reference MUST open in "From secret store" mode, already filled in;
-- a literal MUST open in "Value" mode, masked as today.
-
-When no data plane is live, a free-text store name MUST be allowed with a
-warning.
+A stored reference MUST open in "From secret store" mode, already filled in. A
+literal MUST open in "Value" mode, masked as today. When the source is
+`data_plane` and no connection is live, the store name MUST be accepted as free
+text, with a warning.
 
 #### Scenario: Editing a referenced key
 
 - GIVEN registry R whose `api_key` is `secret://corp-vault/ai-gateway/openai#api_key`
-- WHEN R is opened for edit
-- THEN the API key field is in "From secret store" mode with store `corp-vault`, path `ai-gateway/openai` and key `api_key`
+- WHEN R is opened for editing
+- THEN the field is in "From secret store" mode, with store `corp-vault`, path `ai-gateway/openai` and key `api_key`
 
 #### Scenario: Path outside the allowed prefixes
 
-- GIVEN store `corp-vault` reported with `allowed_paths: ["ai-gateway/"]`
+- GIVEN store `corp-vault` with `allowed_paths: ["ai-gateway/"]`
 - WHEN the user types path `payments/db`
-- THEN the input shows an error before submit, and submit is disabled
+- THEN an inline error is shown and submit is disabled
 
 ### Requirement: Indicators and audit
 
-Registry and MCP server cards whose credentials are references MUST show a
-"from `<store>`" badge. From Phase 2, they MUST show a warning when the data
-plane reports one of their references as failing. Every console action that
-sets a reference MUST be audited through `logV2AuditEvent`, with the store and
-the path and without any value.
+- Registry and MCP cards whose credentials are references MUST show a "from
+  `<store>`" badge.
+- From Phase 2, those cards MUST show a warning when a reference is reported as
+  failing.
+- Console actions that set a reference MUST be audited through
+  `logV2AuditEvent`. The audit entry MUST carry the store and the path, and no
+  value.
 
 #### Scenario: Failing reference warning
 
-- GIVEN the heartbeat reports R's reference as `not_found` (Phase 2)
+- GIVEN R's reference is reported as `not_found` (Phase 2)
 - WHEN the registry list is shown
-- THEN R's card shows a warning that links to the reference's store and path
+- THEN R's card shows a warning that links to the store and the path
