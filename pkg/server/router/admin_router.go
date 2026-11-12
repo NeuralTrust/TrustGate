@@ -81,6 +81,8 @@ type AdminRouterDeps struct {
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
+	PreviewAgentCard       *registryhttp.PreviewAgentCardHandler
+	AgentCard              *registryhttp.AgentCardHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
 	// for every caller. Absent on planes without the connect service.
@@ -195,6 +197,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
+	registries.Post("/preview-agent-card", r.deps.PreviewAgentCard.Handle)
 	if r.deps.StoreMaterialize != nil {
 		registries.Post("/from-catalog", r.deps.StoreMaterialize.Handle)
 	}
@@ -206,6 +209,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
 		registries.Delete("/:id/shared-account", r.deps.RegistrySharedAccount.Disconnect)
 	}
+	registries.Post("/:id/agent-card/refresh", r.deps.AgentCard.Refresh)
+	registries.Post("/:id/agent-card/approve", r.deps.AgentCard.Approve)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 

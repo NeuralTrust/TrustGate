@@ -25,6 +25,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -279,12 +280,14 @@ func (r *PluginRunner) PreResponseDiscovery(
 		return nil
 	}
 	reqCtx := &infracontext.RequestContext{
-		GatewayID:    rc.Consumer.GatewayID.String(),
-		ConsumerID:   rc.Consumer.ID.String(),
-		ConsumerName: rc.Consumer.Name,
-		ConsumerType: string(rc.Consumer.Type),
-		MCP:          true,
-		Body:         []byte(`{}`),
+		GatewayID:         rc.Consumer.GatewayID.String(),
+		ConsumerID:        rc.Consumer.ID.String(),
+		ConsumerName:      rc.Consumer.Name,
+		ConsumerType:      string(rc.Consumer.Type),
+		ConsumerAudience:  string(rc.Consumer.AudienceName()),
+		ConsumerSynthetic: consumerdomain.IsStoreConsumer(rc.Consumer),
+		MCP:               true,
+		Body:              []byte(`{}`),
 	}
 	respCtx := &infracontext.ResponseContext{
 		GatewayID: rc.Consumer.GatewayID.String(),
@@ -388,18 +391,20 @@ func (r *PluginRunner) buildRequestContext(
 	}
 	headers["Content-Length"] = []string{strconv.Itoa(len(body))}
 	reqCtx := &infracontext.RequestContext{
-		GatewayID:      rc.Consumer.GatewayID.String(),
-		ConsumerID:     rc.Consumer.ID.String(),
-		ConsumerName:   rc.Consumer.Name,
-		ConsumerType:   string(rc.Consumer.Type),
-		SessionID:      "",
-		Provider:       "",
-		SourceFormat:   "",
-		RequestedModel: "",
-		MCP:            true,
-		MCPToolCallID:  call.ClientToolCallID,
-		Body:           body,
-		Headers:        headers,
+		GatewayID:         rc.Consumer.GatewayID.String(),
+		ConsumerID:        rc.Consumer.ID.String(),
+		ConsumerName:      rc.Consumer.Name,
+		ConsumerType:      string(rc.Consumer.Type),
+		ConsumerAudience:  string(rc.Consumer.AudienceName()),
+		ConsumerSynthetic: consumerdomain.IsStoreConsumer(rc.Consumer),
+		SessionID:         "",
+		Provider:          "",
+		SourceFormat:      "",
+		RequestedModel:    "",
+		MCP:               true,
+		MCPToolCallID:     call.ClientToolCallID,
+		Body:              body,
+		Headers:           headers,
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()

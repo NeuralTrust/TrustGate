@@ -571,6 +571,9 @@ func (e *executor) runOne(
 		}
 	}
 
+	if err != nil {
+		err = stampPlugin(err, entry.plugin.Name())
+	}
 	if err != nil && e.logger != nil {
 		e.logger.Debug("plugin returned error",
 			slog.String("plugin", entry.plugin.Name()),

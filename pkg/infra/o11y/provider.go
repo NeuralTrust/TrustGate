@@ -34,6 +34,7 @@ const (
 	PlaneAdmin Plane = "admin"
 	PlaneProxy Plane = "proxy"
 	PlaneMCP   Plane = "mcp"
+	PlaneAgent Plane = "agent"
 )
 
 // Route is a bounded route group that never contains path parameters.
@@ -49,6 +50,8 @@ const (
 	RouteProxyForward    Route = "proxy.forward"
 	RouteMCPRPC          Route = "mcp.rpc"
 	RouteMCPOAuth        Route = "mcp.oauth"
+	RouteAgentCard       Route = "agent.card"
+	RouteAgentRPC        Route = "agent.rpc"
 	RouteOther           Route = "other"
 )
 

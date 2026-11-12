@@ -1,0 +1,43 @@
+{
+  "id": "7eda3ec5-d322-4d8c-8705-68095a600ef7",
+  "jsonrpc": "2.0",
+  "method": "message/send",
+  "params": {
+    "configuration": {
+      "blocking": true
+    },
+    "message": {
+      "kind": "message",
+      "messageId": "m-1",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "book a flight"
+        },
+        {
+          "data": {
+            "iban": "ES9121000418450200051332"
+          },
+          "kind": "data"
+        },
+        {
+          "file": {
+            "mimeType": "application/pdf",
+            "name": "a.pdf",
+            "uri": "https://files.example.com/a.pdf"
+          },
+          "kind": "file"
+        },
+        {
+          "file": {
+            "bytes": "JVBERi0xLjc=",
+            "mimeType": "application/pdf",
+            "name": "b.pdf"
+          },
+          "kind": "file"
+        }
+      ],
+      "role": "user"
+    }
+  }
+}

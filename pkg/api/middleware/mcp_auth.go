@@ -86,7 +86,7 @@ func (m *MCPAuthMiddleware) Middleware() fiber.Handler {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
 		}
-		m.attach(c, identity, gw, data)
+		attachIdentity(c, identity, gw, data)
 		return c.Next()
 	}
 }
@@ -115,7 +115,7 @@ func enforceDefaultIdPTenant(identity Identity, gw *gatewaydomain.Gateway) error
 	return nil
 }
 
-func (m *MCPAuthMiddleware) attach(c *fiber.Ctx, identity Identity, gw *gatewaydomain.Gateway, data *appconsumer.Data) {
+func attachIdentity(c *fiber.Ctx, identity Identity, gw *gatewaydomain.Gateway, data *appconsumer.Data) {
 	c.Locals(string(appconsumer.GatewayIDKey), identity.GatewayID)
 	c.Locals(string(appconsumer.AuthIDKey), identity.AuthID)
 	c.Locals(string(appconsumer.ConsumerDataKey), data)

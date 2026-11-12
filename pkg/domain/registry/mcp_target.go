@@ -28,6 +28,7 @@ type Type string
 const (
 	TypeLLM Type = "LLM"
 	TypeMCP Type = "MCP"
+	TypeA2A Type = "A2A"
 )
 
 type MCPTransport string

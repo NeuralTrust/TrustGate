@@ -25,13 +25,15 @@ import (
 )
 
 type GetGatewayHandler struct {
-	finder        appgateway.Finder
-	baseDomain    string
-	mcpBaseDomain string
+	finder           appgateway.Finder
+	baseDomain       string
+	mcpBaseDomain    string
+	agentBaseDomain  string
+	agentTokenIssuer string
 }
 
-func NewGetGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain string) *GetGatewayHandler {
-	return &GetGatewayHandler{finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
+func NewGetGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain, agentBaseDomain, agentTokenIssuer string) *GetGatewayHandler {
+	return &GetGatewayHandler{finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain, agentBaseDomain: agentBaseDomain, agentTokenIssuer: agentTokenIssuer}
 }
 
 // Handle godoc
@@ -58,5 +60,5 @@ func (h *GetGatewayHandler) Handle(c *fiber.Ctx) error {
 	if !callerOwnsGateway(middleware.AdminIdentityFromContext(c), g) {
 		return httpio.WriteError(c, domain.ErrNotFound)
 	}
-	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain, h.agentBaseDomain, h.agentTokenIssuer))
 }

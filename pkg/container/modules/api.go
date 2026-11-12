@@ -473,6 +473,7 @@ func provideWhoAmIHandler(
 	resolveSource := connectSourceResolver(cfg)
 	opts := []mcphttp.WhoAmIOption{
 		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
+		mcphttp.WithWhoAmIAgentDomain(cfg.Server.AgentBaseDomain),
 	}
 	if !cfg.Server.ServeHybridGateways {
 		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())

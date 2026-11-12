@@ -1,6 +1,6 @@
 name: agentgateway
 
-# Runs the TrustGate admin, proxy and MCP servers as containers.
+# Runs the TrustGate admin, proxy, MCP and agent servers as containers.
 # Meant to be combined with docker-compose.yaml (postgres/redis):
 #   docker compose -f docker-compose.yaml -f docker-compose.api.yaml build admin
 #   docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d
@@ -42,3 +42,9 @@ services:
     command: ["mcp"]
     ports:
       - "8082:8082"
+
+  agent:
+    <<: *server-common
+    command: ["agent"]
+    ports:
+      - "8084:8084"

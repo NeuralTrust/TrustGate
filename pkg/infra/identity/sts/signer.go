@@ -34,9 +34,10 @@ import (
 var _ appsts.TokenSigner = (*Signer)(nil)
 
 type Signer struct {
-	issuer string
-	key    *rsa.PrivateKey
-	kid    string
+	issuer    string
+	key       *rsa.PrivateKey
+	kid       string
+	ephemeral bool
 }
 
 func NewSigner(issuer, keyPEM string, logger *slog.Logger) (*Signer, error) {
@@ -60,8 +61,12 @@ func NewSigner(issuer, keyPEM string, logger *slog.Logger) (*Signer, error) {
 			logger.Warn("sts: no STS_SIGNING_KEY configured; using an ephemeral key (dev only, not shared across replicas)")
 		}
 	}
-	return &Signer{issuer: issuer, key: key, kid: keyID(&key.PublicKey)}, nil
+	return &Signer{issuer: issuer, key: key, kid: keyID(&key.PublicKey), ephemeral: keyPEM == ""}, nil
 }
+
+// Ephemeral reports whether the key was generated in this process, so no
+// other replica can verify what it signs.
+func (s *Signer) Ephemeral() bool { return s.ephemeral }
 
 func (s *Signer) Issuer() string { return s.issuer }
 

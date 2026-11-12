@@ -136,6 +136,15 @@ func classifyRoute(plane o11y.Plane, path string) o11y.Route {
 			return o11y.RouteMCPOAuth
 		}
 		return o11y.RouteMCPRPC
+	case o11y.PlaneAgent:
+		switch {
+		case !strings.Contains(path, "/agents/"):
+			return o11y.RouteOther
+		case strings.HasSuffix(path, "/.well-known/agent-card.json"):
+			return o11y.RouteAgentCard
+		default:
+			return o11y.RouteAgentRPC
+		}
 	}
 	return o11y.RouteOther
 }

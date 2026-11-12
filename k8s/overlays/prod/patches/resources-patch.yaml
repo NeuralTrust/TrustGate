@@ -56,3 +56,20 @@ spec:
           requests:
             cpu: 500m
             memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-agent
+spec:
+  template:
+    spec:
+      containers:
+      - name: agent
+        resources:
+          limits:
+            cpu: "2"
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 512Mi

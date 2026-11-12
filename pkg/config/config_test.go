@@ -668,6 +668,7 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	t.Setenv("DB_MAX_CONNS", "50")
 	t.Setenv("LOG_LEVEL", "DEBUG")
 	t.Setenv("MCP_EXTRA_BASE_DOMAINS", "a.example,b.example, c.example ")
+	t.Setenv("AGENT_BASE_DOMAIN", "agents.example")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -687,6 +688,9 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	}
 	if cfg.Server.MCPExtraBaseDomains[2] != "c.example" {
 		t.Errorf("Server.MCPExtraBaseDomains[2] = %q, want trimmed %q", cfg.Server.MCPExtraBaseDomains[2], "c.example")
+	}
+	if cfg.Server.AgentBaseDomain != "agents.example" {
+		t.Errorf("Server.AgentBaseDomain = %q, want agents.example", cfg.Server.AgentBaseDomain)
 	}
 }
 
@@ -1432,6 +1436,37 @@ func TestLoadConfig_InstanceHeartbeat(t *testing.T) {
 	}
 	if cs.DeploymentType != InstanceDeploymentSaaS {
 		t.Errorf("ConfigSync.DeploymentType = %q, want saas", cs.DeploymentType)
+	}
+}
+
+func TestWarnAgentHostWithoutSaaS(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	withHost := Config{Server: ServerConfig{AgentBaseDomain: "agents.example"}}
+
+	withHost.WarnAgentHostWithoutSaaS(log)
+	if !strings.Contains(buf.String(), "INSTANCE_DEPLOYMENT_TYPE") {
+		t.Fatalf("unset deployment type: log = %q", buf.String())
+	}
+	buf.Reset()
+
+	selfHosted := withHost
+	selfHosted.ConfigSync.DeploymentType = InstanceDeploymentSelfHosted
+	selfHosted.WarnAgentHostWithoutSaaS(log)
+	if !strings.Contains(buf.String(), "self-hosted") {
+		t.Fatalf("self-hosted: log = %q", buf.String())
+	}
+	buf.Reset()
+
+	saas := withHost
+	saas.ConfigSync.DeploymentType = InstanceDeploymentSaaS
+	saas.WarnAgentHostWithoutSaaS(log)
+	withoutHost := Config{ConfigSync: ConfigSyncConfig{DeploymentType: InstanceDeploymentSelfHosted}}
+	withoutHost.WarnAgentHostWithoutSaaS(log)
+	(*Config)(nil).WarnAgentHostWithoutSaaS(log)
+	withHost.WarnAgentHostWithoutSaaS(nil)
+	if buf.Len() != 0 {
+		t.Fatalf("saas and no agent host must stay quiet, log = %q", buf.String())
 	}
 }
 

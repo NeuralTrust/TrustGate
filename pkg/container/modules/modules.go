@@ -29,12 +29,13 @@ const (
 	PlaneAdmin  = "admin"
 	PlaneProxy  = "proxy"
 	PlaneMCP    = "mcp"
+	PlaneAgent  = "agent"
 	PlaneRun    = "run"
 	PlaneWorker = "worker"
 )
 
 func isDataPlane(plane string) bool {
-	return plane == PlaneProxy || plane == PlaneMCP || plane == PlaneWorker
+	return plane == PlaneProxy || plane == PlaneMCP || plane == PlaneAgent || plane == PlaneWorker
 }
 
 func fullModules() []container.Option {
@@ -60,11 +61,14 @@ func fullModules() []container.Option {
 		container.WithModule(RateLimit),
 		container.WithModule(Proxy),
 		container.WithModule(TrafficLabels),
+		container.WithModule(STS),
 		container.WithModule(MCP),
 		container.WithModule(MCPVaultPostgres),
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(A2A),
+		container.WithModule(ServerAgent),
 		container.WithModule(Usage),
 		container.WithModule(ControlConfigSync),
 	}
@@ -85,10 +89,13 @@ func dataPlaneModules() []container.Option {
 		container.WithModule(RateLimit),
 		container.WithModule(Proxy),
 		container.WithModule(TrafficLabels),
+		container.WithModule(STS),
 		container.WithModule(MCP),
 		container.WithModule(MCPVaultRedis),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(A2A),
+		container.WithModule(ServerAgent),
 		container.WithModule(ConfigSyncData),
 	}
 }
