@@ -22,6 +22,7 @@ import (
 	a2ahttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/a2a"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -83,11 +84,12 @@ type agentAuthParams struct {
 	Finder      appgateway.Finder
 	Cfg         *config.Config
 	Logger      *slog.Logger
+	Playground  *resolver.PlaygroundIdentityResolver
 }
 
 func provideAgentAuth(p agentAuthParams) *middleware.AgentAuthMiddleware {
 	paths := appconsumer.NewAgentPathResolver(p.Consumers, p.Auths, p.Gateways, p.TTLMaps, p.Logger)
-	resolver := middleware.NewAgentChainIdentityResolver(
+	identityResolver := middleware.NewAgentChainIdentityResolver(
 		p.APIKeys,
 		p.Credentials,
 		paths,
@@ -97,7 +99,7 @@ func provideAgentAuth(p agentAuthParams) *middleware.AgentAuthMiddleware {
 		mtls.NewXFCCExtractor(),
 		p.Cfg.Server.TrustXFCCFrom,
 	)
-	return middleware.NewAgentAuthMiddleware(resolver, p.DataFinder, p.Finder)
+	return middleware.NewAgentAuthMiddleware(identityResolver, p.DataFinder, p.Finder, p.Playground)
 }
 
 type agentRouterParams struct {

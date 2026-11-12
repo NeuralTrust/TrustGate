@@ -15,10 +15,13 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -30,10 +33,15 @@ import (
 // plane, then admits the caller to the A2A consumer the path names. The
 // handler reads that consumer with appconsumer.ConsumerFromContext and the
 // caller with identity.PrincipalFromContext.
+//
+// The console's playground calls an agent with a playground token instead of
+// a credential of the application: the gateway is the one its slug header
+// names, and the token must be bound to the application the path names.
 type AgentAuthMiddleware struct {
 	resolver   IdentityResolver
 	dataFinder appconsumer.DataFinder
 	gateways   appgateway.Finder
+	playground *resolver.PlaygroundIdentityResolver
 }
 
 // NewAgentAuthMiddleware builds the guard over a chain resolver scoped to
@@ -42,12 +50,16 @@ func NewAgentAuthMiddleware(
 	identityResolver IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gateways appgateway.Finder,
+	playground *resolver.PlaygroundIdentityResolver,
 ) *AgentAuthMiddleware {
-	return &AgentAuthMiddleware{resolver: identityResolver, dataFinder: dataFinder, gateways: gateways}
+	return &AgentAuthMiddleware{resolver: identityResolver, dataFinder: dataFinder, gateways: gateways, playground: playground}
 }
 
 func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if m.playground != nil && c.Get(resolver.HeaderPlaygroundToken) != "" {
+			return m.playgroundCall(c)
+		}
 		id, err := m.resolver.Resolve(c)
 		if err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
@@ -84,6 +96,48 @@ func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 		c.SetUserContext(appconsumer.WithConsumer(c.UserContext(), rc))
 		return c.Next()
 	}
+}
+
+// playgroundCall admits a call from the console's playground. The token is
+// verified against the application the path names (its consumer slug), and
+// the call runs as the console user who sent it, inside that application, so
+// the tasks one person opens in the playground are theirs alone.
+func (m *AgentAuthMiddleware) playgroundCall(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	gw, err := m.gateways.FindBySlug(ctx, strings.TrimSpace(c.Get(resolver.HeaderGatewaySlug)))
+	if err != nil || gw == nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+	}
+	data, err := m.dataFinder.FindByGateway(ctx, gw.ID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
+	}
+	rc, ok := data.MatchAgentPath(c.Path())
+	if !ok || rc.Consumer.Type != consumerdomain.TypeA2A {
+		return fiber.NewError(fiber.StatusNotFound, "no agent application for this path")
+	}
+	authCtx, err := m.playground.Resolve(c, gw, rc)
+	if err != nil {
+		if errors.Is(err, resolver.ErrForbidden) {
+			return fiber.NewError(fiber.StatusForbidden, "playground token not allowed for this consumer")
+		}
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+	}
+	principal := consumerdomain.AppPrincipal(rc.Consumer, nil)
+	if consumerdomain.ValidateEndUser(authCtx.Subject) == nil {
+		principal = consumerdomain.EndUserPrincipal(rc.Consumer, nil, authCtx.Subject)
+	}
+	// No credential of the application ran, so no auth id is attached.
+	c.Locals(string(appconsumer.GatewayIDKey), gw.ID)
+	c.Locals(string(appconsumer.ConsumerDataKey), data)
+	c.Locals(string(appconsumer.ConsumerKey), rc)
+	ctx = appconsumer.WithGatewayID(ctx, gw.ID)
+	ctx = appconsumer.WithData(ctx, data)
+	ctx = appgateway.WithGateway(ctx, gw)
+	ctx = identity.WithPrincipal(ctx, principal)
+	ctx = appconsumer.WithConsumer(ctx, rc)
+	c.SetUserContext(appauth.WithAuthContext(ctx, authCtx))
+	return c.Next()
 }
 
 // agentPrincipal is who the call runs as, as on the MCP plane. A token keeps
