@@ -65,11 +65,17 @@ func TestUsageGuard(t *testing.T) {
 	t.Parallel()
 	on := func() bool { return true }
 	off := func() bool { return false }
-	checker := fixedChecker{"broke": usagedomain.ReasonWalletEmpty, "free": usagedomain.ReasonFreeLimitReached}
+	checker := fixedChecker{"broke": usagedomain.ReasonWalletEmpty, "free": usagedomain.ReasonFreeLimitReached, "managed": usagedomain.ReasonManagedLimitReached}
 
 	t.Run("healthy tenant is served", func(t *testing.T) {
 		t.Parallel()
 		status, body := call(t, guardApp(t, NewUsageGuardMiddleware(checker, on), "fine", nil), "/X84Yhsy8/v1/chat/completions")
+		assert.Equal(t, fiber.StatusOK, status)
+		assert.Equal(t, "served", string(body))
+	})
+	t.Run("managed limit leaves the request to the forwarder", func(t *testing.T) {
+		t.Parallel()
+		status, body := call(t, guardApp(t, NewUsageGuardMiddleware(checker, on), "managed", nil), "/X84Yhsy8/v1/chat/completions")
 		assert.Equal(t, fiber.StatusOK, status)
 		assert.Equal(t, "served", string(body))
 	})
@@ -152,4 +158,16 @@ func TestUsageGuard(t *testing.T) {
 		assert.Equal(t, -32092, rpc.Error.Code)
 		assert.Equal(t, "plan_unavailable", rpc.Error.Data["reason"])
 	})
+}
+
+func TestUsageGuardManagedBlocked(t *testing.T) {
+	t.Parallel()
+	checker := fixedChecker{"broke": usagedomain.ReasonWalletEmpty, "managed": usagedomain.ReasonManagedLimitReached}
+	on := NewUsageGuardMiddleware(checker, func() bool { return true })
+	assert.True(t, on.ManagedBlocked("managed"))
+	assert.True(t, on.ManagedBlocked("broke"))
+	assert.False(t, on.ManagedBlocked("fine"))
+	assert.False(t, on.ManagedBlocked(""))
+	assert.False(t, NewUsageGuardMiddleware(checker, func() bool { return false }).ManagedBlocked("managed"))
+	assert.False(t, NewUsageGuardMiddleware(nil, nil).ManagedBlocked("managed"))
 }

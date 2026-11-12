@@ -219,13 +219,21 @@ func (f *fakeUsageSystem) Sync(stream usagev1.UsageSyncService_SyncServer) error
 }
 
 func (f *fakeUsageSystem) set(tenant string, exhausted bool) {
+	reason := usagev1.ExhaustionReason_EXHAUSTION_REASON_UNSPECIFIED
+	if exhausted {
+		reason = usagev1.ExhaustionReason_EXHAUSTION_REASON_FREE_LIMIT_REACHED
+	}
+	f.setReason(tenant, reason)
+}
+
+func (f *fakeUsageSystem) setReason(tenant string, reason usagev1.ExhaustionReason) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asOf++
 	st := &usagev1.UsageState{TenantId: tenant, Status: usagev1.UsageStatus_USAGE_STATUS_HEALTHY, Version: f.asOf}
-	if exhausted {
+	if reason != usagev1.ExhaustionReason_EXHAUSTION_REASON_UNSPECIFIED {
 		st.Status = usagev1.UsageStatus_USAGE_STATUS_EXHAUSTED
-		st.Reason = usagev1.ExhaustionReason_EXHAUSTION_REASON_FREE_LIMIT_REACHED
+		st.Reason = reason
 	}
 	f.states[tenant] = st
 	for _, ch := range f.streams {
@@ -261,4 +269,62 @@ func TestUsageEnforcement_FollowsUsageSystemWithoutRestart(t *testing.T) {
 	fake.set(tenant, false)
 	require.True(t, pollProxyServedAt(t, base, gw.apiKey, gw.path, "usage-live-marker", 30*time.Second),
 		"the tenant must be served again once Usage System clears it, without a restart")
+}
+
+// TestUsageEnforcement_ManagedLimitBlocksOnlyManagedRegistries checks that a
+// tenant at its managed limit is refused with 402 managed_limit on a consumer
+// served by a managed registry, before any provider call, while a consumer on
+// its own registry is still served; a wallet block then refuses both, and
+// moving back to the managed limit serves the own registry again.
+func TestUsageEnforcement_ManagedLimitBlocksOnlyManagedRegistries(t *testing.T) {
+	defer Track(t, "UsageEnforcement")()
+
+	tenant := uniqueName("usage-managed")
+	up := newJSONUpstream(t, "usage-own-marker")
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("usage-managed-gw"), "tenant_id": tenant})
+	ownRegistry := CreateRegistry(t, gatewayID, dblessBackendPayload(uniqueName("own"), up.URL(), "sk-usage-"+uniqueName("k")))
+	managedRegistry := CreateRegistry(t, gatewayID, map[string]any{
+		"name":     uniqueName("managed"),
+		"provider": "openai",
+		"weight":   1,
+		"managed":  true,
+	})
+	ownConsumer := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("own-cons")})
+	AttachRegistry(t, gatewayID, ownConsumer, ownRegistry)
+	managedConsumer := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("managed-cons")})
+	AttachRegistry(t, gatewayID, managedConsumer, managedRegistry)
+	ownKey, ownPath := createAndAttachAPIKey(t, gatewayID, ownConsumer), chatCompletionsPath(t, ownConsumer)
+	managedKey, managedPath := createAndAttachAPIKey(t, gatewayID, managedConsumer), chatCompletionsPath(t, managedConsumer)
+
+	fake, addr := startFakeUsageSystem(t)
+	fake.setReason(tenant, usagev1.ExhaustionReason_EXHAUSTION_REASON_MANAGED_LIMIT_REACHED)
+
+	grpcPort := startUsageAdmin(t, "USAGE_SYSTEM_GRPC_ADDR="+addr, "USAGE_SYSTEM_GRPC_INSECURE=true")
+	port := GlobalConfig.Server.ProxyPort + 132
+	overrides := append(dblessOverrides(filepath.Join(t.TempDir(), "snapshot.lkg"), dblessConfigSyncToken, uniqueName("usage-managed-dp"), port),
+		fmt.Sprintf("CONFIG_SYNC_GRPC_ENDPOINT=localhost:%d", grpcPort))
+	base, _ := startDBLessProxyPlane(t, port, overrides)
+	require.True(t, pollDBLessReady(base, 30*time.Second), "data plane never became ready")
+
+	require.True(t, pollProxyServedAt(t, base, ownKey, ownPath, "usage-own-marker", 30*time.Second),
+		"the tenant's own registry must be served at the managed limit")
+	require.True(t, pollProxyStatusAt(t, base, managedKey, managedPath, chatRequest(false), http.StatusPaymentRequired, 30*time.Second),
+		"the managed registry must be refused with 402 at the managed limit")
+	status, _, body := proxyPostAt(t, base, managedKey, managedPath, chatRequest(false))
+	require.Equal(t, http.StatusPaymentRequired, status)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(body, &envelope), string(body))
+	assert.Equal(t, "managed_limit", envelope.Error.Code)
+
+	fake.setReason(tenant, usagev1.ExhaustionReason_EXHAUSTION_REASON_WALLET_EMPTY)
+	require.True(t, pollProxyStatusAt(t, base, ownKey, ownPath, chatRequest(false), http.StatusPaymentRequired, 30*time.Second),
+		"a wallet block must refuse the own registry too")
+
+	fake.setReason(tenant, usagev1.ExhaustionReason_EXHAUSTION_REASON_MANAGED_LIMIT_REACHED)
+	require.True(t, pollProxyServedAt(t, base, ownKey, ownPath, "usage-own-marker", 30*time.Second),
+		"moving back to the managed limit must serve the own registry again")
 }
