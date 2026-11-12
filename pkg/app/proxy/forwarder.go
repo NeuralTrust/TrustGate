@@ -267,6 +267,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if err != nil {
 		return nil, err
 	}
+	if f.onlyBlockedManagedLeft(ctx, in.Consumer, route) {
+		return nil, ErrManagedLimitReached
+	}
 
 	stampTarget(in.Request, route.route.Registry)
 	_, in.Request.DefaultModel = routePolicy(candidates, in.Consumer, route.route)
@@ -498,6 +501,58 @@ func (f *forwarder) invokeWithFailover(
 		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
+}
+
+// onlyBlockedManagedLeft reports whether every registry the request could
+// reach is a managed registry its tenant may not use now, so the request is
+// refused before the pre-request plugins run and bill anything. It answers
+// false whenever the reachable set is not known.
+func (f *forwarder) onlyBlockedManagedLeft(ctx context.Context, rc *appconsumer.RoutableConsumer, route routedBackend) bool {
+	if f.managedLimit == nil || !f.managedBlocked(ctx, route.route.Registry) {
+		return false
+	}
+	reachable, known := reachableRegistries(rc, route)
+	if !known {
+		return false
+	}
+	for _, bk := range reachable {
+		if bk == nil || !bk.Managed {
+			return false
+		}
+	}
+	return true
+}
+
+// reachableRegistries lists every registry the failover loop could try for
+// the route: the pinned registry, the chain, or the balancer's routes plus the
+// consumer's fallback registries. known is false when that set cannot be told
+// for sure.
+func reachableRegistries(rc *appconsumer.RoutableConsumer, route routedBackend) ([]*domain.Registry, bool) {
+	out := []*domain.Registry{route.route.Registry}
+	switch {
+	case route.pinned:
+		return out, true
+	case len(route.chain) > 0:
+		for _, r := range route.chain {
+			out = append(out, r.Registry)
+		}
+		return out, true
+	case route.lb == nil:
+		return nil, false
+	}
+	for _, r := range route.lb.Routes() {
+		out = append(out, r.Registry)
+	}
+	if rc == nil || rc.Consumer == nil {
+		return nil, false
+	}
+	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
+		if len(rc.FallbackBackends) < len(fb.Chain) {
+			return nil, false
+		}
+		out = append(out, rc.FallbackBackends...)
+	}
+	return out, true
 }
 
 // managedBlocked reports whether bk is a managed registry the request's tenant
