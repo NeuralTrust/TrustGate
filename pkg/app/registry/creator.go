@@ -35,6 +35,7 @@ type CreateInput struct {
 	Description string
 	LLMTarget   *domain.LLMTarget
 	MCPTarget   *domain.MCPTarget
+	A2ATarget   *domain.A2ATarget
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=registry_creator_mock.go --case=underscore --with-expecter
@@ -52,6 +53,8 @@ type creator struct {
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
+	cards       agentCards
+	shared      GatewayLookup
 }
 
 func NewCreator(
@@ -71,13 +74,21 @@ func NewCreator(
 		catalog:     catalog,
 		openapi:     o.openapi,
 		auths:       o.auths,
+		cards:       o.cards,
+		shared:      o.sharedGateways,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry, error) {
 	var b *domain.Registry
 	var err error
-	if in.Type == domain.TypeMCP {
+	switch in.Type {
+	case domain.TypeA2A:
+		if err := c.prepareA2A(ctx, in); err != nil {
+			return nil, err
+		}
+		b, err = domain.NewA2ARegistry(in.GatewayID, in.Name, in.Description, in.A2ATarget)
+	case domain.TypeMCP:
 		in.MCPTarget.Normalize()
 		if err := compileOpenAPITarget(ctx, in.MCPTarget, c.openapi); err != nil {
 			return nil, err
@@ -101,7 +112,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.Description,
 			in.MCPTarget,
 		)
-	} else {
+	default:
 		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
 			return nil, verr
 		}
@@ -126,6 +137,22 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 		c.signaler.Signal(ctx)
 	}
 	return b, nil
+}
+
+// prepareA2A validates the target before any request leaves the gateway,
+// then reads and pins its card.
+func (c *creator) prepareA2A(ctx context.Context, in CreateInput) error {
+	in.A2ATarget.Normalize()
+	if err := in.A2ATarget.Validate(); err != nil {
+		return err
+	}
+	if err := validateSharedDataPlane(ctx, c.shared, in.GatewayID, in.A2ATarget); err != nil {
+		return err
+	}
+	if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, &domain.MCPTarget{Auth: in.A2ATarget.Auth}); err != nil {
+		return err
+	}
+	return c.cards.pin(ctx, in.A2ATarget)
 }
 
 func validateProviderOptions(target *domain.LLMTarget) error {

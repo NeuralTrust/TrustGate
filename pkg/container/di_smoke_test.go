@@ -49,9 +49,11 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 		{"admin", false},
 		{"proxy", false},
 		{"mcp", false},
+		{"agent", false},
 		{"run", false},
 		{"proxy", true},
 		{"mcp", true},
+		{"agent", true},
 	}
 	for _, tc := range cases {
 		if _, err := container.New(modules.All(tc.plane, tc.dbless)...); err != nil {
@@ -161,7 +163,7 @@ func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 }
 
 func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
-	for _, plane := range []string{"proxy", "mcp"} {
+	for _, plane := range []string{"proxy", "mcp", "agent"} {
 		t.Run(plane, func(t *testing.T) {
 			setDBLessSmokeEnv(t)
 			c, err := container.New(modules.All(plane, true)...)
@@ -185,6 +187,8 @@ func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
 				invErr = c.Invoke(func(p dblessProxyServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			case "mcp":
 				invErr = c.Invoke(func(p dblessMCPServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
+			case "agent":
+				invErr = c.Invoke(func(p dblessAgentServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			}
 			if invErr != nil {
 				t.Fatalf("Invoke(server.Server name=%q): %v", plane, invErr)
@@ -205,6 +209,11 @@ type dblessProxyServerParam struct {
 type dblessMCPServerParam struct {
 	dig.In
 	Srv server.Server `name:"mcp"`
+}
+
+type dblessAgentServerParam struct {
+	dig.In
+	Srv server.Server `name:"agent"`
 }
 
 func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {

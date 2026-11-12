@@ -3145,6 +3145,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -3207,6 +3213,71 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/preview-agent-card": {
+            "post": {
+                "description": "Resolves and reads the agent card an a2a_target names, and returns it with its digest and the A2A versions it offers. Writes nothing; credentials in the body are used for this read only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Preview an agent card",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent to read",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PreviewAgentCardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3478,6 +3549,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 },
                 "security": [
@@ -3543,6 +3620,146 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "The registry carries the last primary default model of a personal consumer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/agent-card/approve": {
+            "post": {
+                "description": "Reads the live card again and pins it only if its digest is the one sent. Approving the pinned digest changes nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Pin a reviewed agent card",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Reviewed digest",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ApproveAgentCardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The live card no longer has that digest",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/agent-card/refresh": {
+            "post": {
+                "description": "Reads the live card of an A2A registry and reports whether it changed, which top-level fields and which skills. Writes nothing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Compare an agent's live card with the pinned one",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AgentCardRefreshResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -5868,7 +6085,7 @@ const docTemplate = `{
         },
         "/whoami": {
             "get": {
-                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A personal key (key.personal) is a person's own: it lists the Store, slug \"store\", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.",
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. An A2A consumer carries agents: its enabled agents, each with the card URL on the gateway's agent host (empty when AGENT_BASE_DOMAIN is not set). A personal key (key.personal) is a person's own: it lists the Store, slug \"store\", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no credentials, and no identifiers beyond agent ids. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.",
                 "produces": [
                     "application/json"
                 ],
@@ -8383,6 +8600,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts": {
             "type": "object",
             "properties": {
+                "agent": {
+                    "type": "string"
+                },
                 "mcp": {
                     "type": "string"
                 },
@@ -8394,6 +8614,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse": {
             "type": "object",
             "properties": {
+                "agent_token_issuer": {
+                    "description": "AgentTokenIssuer is the iss of the tokens the agent plane sends to\nagents (STS_ISSUER). Set only when hosts.agent is.",
+                    "type": "string"
+                },
                 "client_tls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig"
                 },
@@ -8843,6 +9067,121 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AAWSAuthRequest": {
+            "type": "object",
+            "properties": {
+                "access_key_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "secret_access_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "session_token": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "use_role": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest": {
+            "type": "object",
+            "properties": {
+                "aws": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AAWSAuthRequest"
+                },
+                "azure": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest"
+                },
+                "gcp": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AGCPAuthRequest"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AGCPAuthRequest": {
+            "type": "object",
+            "properties": {
+                "impersonate_service_account": {
+                    "type": "string"
+                },
+                "service_account_json": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest"
+                },
+                "azure_foundry": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator"
+                },
+                "bedrock_agentcore": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator"
+                },
+                "card_auth": {
+                    "type": "string",
+                    "enum": [
+                        "same",
+                        "client_credentials",
+                        "cloud"
+                    ]
+                },
+                "card_url": {
+                    "type": "string"
+                },
+                "cloud_auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "protocol_version": {
+                    "type": "string",
+                    "enum": [
+                        "0.3",
+                        "1.0"
+                    ]
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": [
+                        "generic",
+                        "bedrock_agentcore",
+                        "azure_foundry",
+                        "vertex_agent_engine"
+                    ]
+                },
+                "url": {
+                    "type": "string"
+                },
+                "vertex_agent_engine": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest": {
             "type": "object",
             "properties": {
@@ -8892,6 +9231,14 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.ApproveAgentCardRequest": {
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest": {
             "type": "object",
             "properties": {
@@ -8923,6 +9270,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.CreateRegistryRequest": {
             "type": "object",
             "properties": {
+                "a2a_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest"
+                },
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest"
                 },
@@ -9085,6 +9435,68 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest"
+                },
+                "azure_foundry": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator"
+                },
+                "bedrock_agentcore": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator"
+                },
+                "card_auth": {
+                    "type": "string",
+                    "enum": [
+                        "same",
+                        "client_credentials",
+                        "cloud"
+                    ]
+                },
+                "card_url": {
+                    "type": "string"
+                },
+                "cloud_auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "protocol_version": {
+                    "type": "string",
+                    "enum": [
+                        "0.3",
+                        "1.0"
+                    ]
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": [
+                        "generic",
+                        "bedrock_agentcore",
+                        "azure_foundry",
+                        "vertex_agent_engine"
+                    ]
+                },
+                "url": {
+                    "type": "string"
+                },
+                "vertex_agent_engine": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest": {
             "type": "object",
             "properties": {
@@ -9228,6 +9640,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
             "type": "object",
             "properties": {
+                "a2a_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest"
+                },
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest"
                 },
@@ -9255,6 +9670,122 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AAWSAuthResponse": {
+            "type": "object",
+            "properties": {
+                "access_key_id": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "secret_access_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "session_token": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "use_role": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse": {
+            "type": "object",
+            "properties": {
+                "aws": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AAWSAuthResponse"
+                },
+                "azure": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AzureAuthResponse"
+                },
+                "gcp": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AGCPAuthResponse"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AGCPAuthResponse": {
+            "type": "object",
+            "properties": {
+                "impersonate_service_account": {
+                    "type": "string"
+                },
+                "service_account_json": {
+                    "description": "#nosec G117 -- masked before serialization",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse"
+                },
+                "azure_foundry": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator"
+                },
+                "bedrock_agentcore": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator"
+                },
+                "card": {
+                    "type": "object"
+                },
+                "card_auth": {
+                    "type": "string"
+                },
+                "card_digest": {
+                    "type": "string"
+                },
+                "card_pinned_at": {
+                    "type": "string"
+                },
+                "card_url": {
+                    "type": "string"
+                },
+                "cloud_auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "protocol_version": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "resolved_card_url": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "vertex_agent_engine": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator"
                 }
             }
         },
@@ -9304,6 +9835,41 @@ const docTemplate = `{
                 },
                 "use_role": {
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AgentCardRefreshResponse": {
+            "type": "object",
+            "properties": {
+                "changed": {
+                    "type": "boolean"
+                },
+                "changed_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "fetched_card": {
+                    "type": "object"
+                },
+                "fetched_digest": {
+                    "type": "string"
+                },
+                "pinned_digest": {
+                    "type": "string"
+                },
+                "skills_added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skills_removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -9503,6 +10069,29 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PreviewAgentCardResponse": {
+            "type": "object",
+            "properties": {
+                "card": {
+                    "type": "object"
+                },
+                "card_digest": {
+                    "type": "string"
+                },
+                "default_version": {
+                    "type": "string"
+                },
+                "resolved_card_url": {
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse": {
             "type": "object",
             "properties": {
@@ -9560,6 +10149,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse": {
             "type": "object",
             "properties": {
+                "a2a_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse"
+                },
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse"
                 },
@@ -11070,6 +11662,42 @@ const docTemplate = `{
                 "StagePostResponse"
             ]
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.AgentCoreLocator": {
+            "type": "object",
+            "properties": {
+                "qualifier": {
+                    "type": "string"
+                },
+                "runtime_arn": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "project_endpoint": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "reasoning_engine_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",
             "properties": {
@@ -11139,6 +11767,53 @@ const docTemplate = `{
                 },
                 "sampling_rate": {
                     "type": "number"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "blocked_by": {
+                    "type": "string"
+                },
+                "context_id": {
+                    "type": "string"
+                },
+                "identity_mode": {
+                    "type": "string"
+                },
+                "identity_subject_kind": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "protocol_version": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "rpc_error_code": {
+                    "type": "integer"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "task_state": {
+                    "type": "string"
+                },
+                "upstream_status": {
+                    "type": "integer"
                 }
             }
         },
@@ -11232,6 +11907,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
+                "a2a": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.A2A"
+                },
                 "attempts": {
                     "type": "array",
                     "items": {
@@ -11700,11 +12378,35 @@ const docTemplate = `{
                 }
             }
         },
+        "pkg_api_handler_http_mcp.WhoAmIAgent": {
+            "type": "object",
+            "properties": {
+                "card_url": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "protocol_version": {
+                    "type": "string"
+                }
+            }
+        },
         "pkg_api_handler_http_mcp.WhoAmIConsumer": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "agents": {
+                    "description": "Agents are the enabled agents of an A2A consumer, sorted by name.\nAlways present for an A2A consumer, absent for any other.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIAgent"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -11724,7 +12426,7 @@ const docTemplate = `{
                     }
                 },
                 "url": {
-                    "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                    "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one, the agents\nbase on the agent plane for an A2A one. Empty when\nthe gateway has no public host configured for that plane.",
                     "type": "string"
                 }
             }

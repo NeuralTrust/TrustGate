@@ -52,6 +52,10 @@ type inertSafePlugin struct {
 
 func (p *inertSafePlugin) ScopeInertSafe() bool { return true }
 
+func (p *inertSafePlugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
+}
+
 type inertHarness struct {
 	t   *testing.T
 	reg appplugins.Registry
@@ -256,6 +260,30 @@ func TestDataFinder_FindByGateway_MCPWidePolicyNeverReachesANonMCPChain(t *testi
 // PolicyPlan nil, so that path is unreachable for the only consumers whose
 // Policies can hold a scoped policy. This test fails if that guarantee is
 // undone.
+func TestDataFinder_FindByGateway_A2APlanDropsPluginsWithoutA2A(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	llm := routableConsumer(gwID, nil)
+	a2a := routableConsumer(gwID, nil)
+	a2a.Type = domain.TypeA2A
+	h := newInertHarness(t)
+
+	llmOnly := inertPolicy(gwID, "L", nameGatingSlug, nil)
+	llmOnly.SetGlobal(true)
+	declaresA2A := inertPolicy(gwID, "A", inertSafeSlug, nil)
+	declaresA2A.SetGlobal(true)
+	attached := inertPolicy(gwID, "B", nameGatingSlug, nil, a2a.ID)
+
+	data := loadInert(t, gwID, h.reg, newTestLogger(),
+		[]*domain.Consumer{llm, a2a}, []*policydomain.Policy{llmOnly, declaresA2A, attached})
+
+	rcA2A := consumerByID(t, data, a2a.ID)
+	assert.Equal(t, []string{"A"}, h.executedPlan(rcA2A.PolicyPlan))
+	assert.Equal(t, []string{inertSafeSlug}, policySlugs(rcA2A.Policies))
+	assert.ElementsMatch(t, []string{"L", "A"}, h.executedPlan(consumerByID(t, data, llm.ID).PolicyPlan),
+		"the LLM plan is not filtered by protocol")
+}
+
 func TestDataFinder_FindByGateway_NonMCPPlanIsNeverNil(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

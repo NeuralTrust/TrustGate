@@ -170,7 +170,6 @@ func TestV2PluginIdentity(t *testing.T) {
 	assert.Equal(t, "trustguard_v2", p.Name())
 	assert.Equal(t, "trustguard", newTestPlugin(t, adapter.NewRegistry(), "http://unused").Name())
 	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedStages(), p.SupportedStages())
-	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedProtocols(), p.SupportedProtocols())
 	assert.True(t, p.MutatesRequestBody())
 	assert.True(t, p.MutatesResponseBody())
 }

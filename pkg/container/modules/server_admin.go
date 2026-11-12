@@ -83,6 +83,8 @@ type adminRouterParams struct {
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
+	PreviewAgentCard       *registryhttp.PreviewAgentCardHandler
+	AgentCard              *registryhttp.AgentCardHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount is absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler `optional:"true"`
@@ -180,6 +182,8 @@ func ServerAdmin(c *container.Container) error {
 				DeleteRegistry:            p.DeleteRegistry,
 				TestRegistryConnection:    p.TestRegistryConnection,
 				ValidateOpenAPI:           p.ValidateOpenAPI,
+				PreviewAgentCard:          p.PreviewAgentCard,
+				AgentCard:                 p.AgentCard,
 				ListRegistryTools:         p.ListRegistryTools,
 				RegistrySharedAccount:     p.RegistrySharedAccount,
 				CreatePolicy:              p.CreatePolicy,
