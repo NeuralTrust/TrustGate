@@ -55,7 +55,7 @@ func PatchTopLevelFields(body []byte, set map[string]json.RawMessage, remove []s
 	if err != nil {
 		return nil, err
 	}
-	edits := make(map[string]topEdit, len(set)+len(remove))
+	edits := make(map[string]topEdit, len(set))
 	for k, v := range set {
 		edits[k] = topEdit{value: v}
 	}

@@ -59,7 +59,7 @@ func validateTrafficLabelingRegistry(ctx context.Context, registries RegistryFin
 	if reg.Type != registrydomain.TypeLLM || reg.LLMTarget == nil {
 		return fmt.Errorf("%w: registry %s is not an LLM registry", ErrInvalidTrafficLabelingRegistry, id)
 	}
-	auth := reg.Auth()
+	auth := reg.EffectiveAuth()
 	if auth == nil || auth.Type == registrydomain.AuthTypePassthrough || auth.Type == registrydomain.AuthTypeOAuth2 {
 		return fmt.Errorf("%w: registry %s has no stored credentials; client pass-through auth cannot be used for labeling", ErrInvalidTrafficLabelingRegistry, id)
 	}

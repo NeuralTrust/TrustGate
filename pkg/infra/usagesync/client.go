@@ -240,6 +240,8 @@ func (c *Client) reason(ctx context.Context, entry *usagev1.UsageState) domain.R
 		return domain.ReasonFreeLimitReached
 	case usagev1.ExhaustionReason_EXHAUSTION_REASON_WALLET_EMPTY:
 		return domain.ReasonWalletEmpty
+	case usagev1.ExhaustionReason_EXHAUSTION_REASON_MANAGED_LIMIT_REACHED:
+		return domain.ReasonManagedLimitReached
 	default:
 		c.logger.WarnContext(ctx, "usagesync: unknown exhaustion reason, blocking as wallet_empty",
 			slog.String("tenant_id", entry.GetTenantId()), slog.String("reason", entry.GetReason().String()))

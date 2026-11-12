@@ -40,6 +40,7 @@ const (
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
 	defaultServerMCPPort      = 8082
+	defaultServerAgentPort    = 8084
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
@@ -137,8 +138,6 @@ const (
 	defaultClusterSemanticCacheVectorStore = "in_memory"
 
 	defaultTrustGuardTimeout = 30 * time.Second
-	v2ShadowAll              = "all"
-	v2ShadowOff              = "off"
 
 	defaultFirewallComplexityTimeout       = 30 * time.Second
 	defaultFirewallComplexityModelRevision = "9619f81d9db28141fc1cc0a3833c8446260ce603"
@@ -224,6 +223,17 @@ type Config struct {
 	MCPConnectRateLimit MCPConnectRateLimitConfig
 	AdminM2M            AdminM2MConfig
 	Usage               UsageConfig
+	ManagedRegistries   ManagedRegistriesConfig
+}
+
+// ManagedRegistriesConfig holds NeuralTrust's own provider credentials, which
+// managed registries (the built-in OpenAI registry every new organization
+// gets) send their requests with. They never reach the database, a config
+// snapshot or an API response. Empty means managed registries of that provider
+// send no credentials.
+type ManagedRegistriesConfig struct {
+	// OpenAIAPIKey is MANAGED_OPENAI_API_KEY.
+	OpenAIAPIKey string
 }
 
 // UsageConfig controls Usage System enforcement. It is off by default, and off
@@ -379,6 +389,12 @@ const (
 	InstanceDeploymentSelfHosted = dataplane.DeploymentSelfHosted
 )
 
+// SharedDataPlane reports whether this deployment is the shared SaaS data
+// plane, where A2A cloud credentials follow the shared data plane rules.
+func (c ConfigSyncConfig) SharedDataPlane() bool {
+	return c.DeploymentType == InstanceDeploymentSaaS
+}
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled     bool
 	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -457,6 +473,7 @@ type ServerConfig struct {
 	AdminPort         int
 	ProxyPort         int
 	MCPPort           int
+	AgentPort         int
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
@@ -468,6 +485,9 @@ type ServerConfig struct {
 	// MCPBaseDomain; these only widen what the request router recognises, for
 	// when the same cluster is also reachable under a second domain.
 	MCPExtraBaseDomains []string
+	// AgentBaseDomain is the suffix a gateway's A2A agent plane is published
+	// under. Empty means this environment offers no agents.
+	AgentBaseDomain string
 	// ReservedGatewayDomains are host suffixes no tenant may claim as a
 	// gateway's own domain, on top of the base domains this deployment routes
 	// gateways on. GATEWAY_RESERVED_DOMAINS, comma separated.
@@ -792,8 +812,7 @@ type TrustGuardConfig struct {
 }
 
 // TrustGuardV2Config is TrustGuard's /v2 engine, which the trustguard_v2 plugin
-// evaluates against and, with Shadow or Gateways, which the trustguard plugin
-// copies its evaluations to (only to compare; the copy's answer is never applied).
+// evaluates against.
 // It is the same service as TrustGuard, so BaseURL is TRUSTGUARD_BASE_URL unless
 // TRUSTGUARD_V2_BASE_URL overrides it, and Timeout is TRUSTGUARD_TIMEOUT unless
 // TRUSTGUARD_V2_TIMEOUT does.
@@ -802,15 +821,7 @@ type TrustGuardV2Config struct {
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	// Gateways maps each gateway that sends copies to the /v2 integration id
-	// its token names, empty for the policy's collector_id. No entry, no copy.
-	Gateways map[string]string
-	// Shadow is TRUSTGUARD_V2_SHADOW: "all" copies every gateway, "" or "off" only Gateways.
-	Shadow string
 }
-
-// ShadowAll reports whether every gateway is copied.
-func (c TrustGuardV2Config) ShadowAll() bool { return c.Shadow == v2ShadowAll }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
 // When FIREWALL_JWT is set it wins over SecretKey: ClientID and ClientSecret
@@ -921,6 +932,7 @@ func LoadConfig() (*Config, error) {
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 		Usage:               getUsageConfig(),
+		ManagedRegistries:   ManagedRegistriesConfig{OpenAIAPIKey: getEnv("MANAGED_OPENAI_API_KEY", "")},
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.
@@ -938,6 +950,7 @@ func getServerConfig() ServerConfig {
 		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
 		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
 		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
+		AgentPort:    getEnvInt("SERVER_AGENT_PORT", defaultServerAgentPort),
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
@@ -951,6 +964,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPExtraBaseDomains:            splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
+		AgentBaseDomain:                getEnv("AGENT_BASE_DOMAIN", ""),
 		ReservedGatewayDomains:         splitCSV(getEnv("GATEWAY_RESERVED_DOMAINS", defaultReservedGatewayDomains)),
 		MCPOAuthPublicBaseURL:          strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:             strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
@@ -1337,6 +1351,11 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func getTrustGuardConfig() TrustGuardConfig {
+	for _, name := range []string{"TRUSTGUARD_V2_SHADOW", "TRUSTGUARD_V2_GATEWAYS"} {
+		if getEnv(name, "") != "" {
+			slog.Warn("ignoring removed TrustGuard setting; TrustGuard shadows v1 to v2 itself", slog.String("env", name))
+		}
+	}
 	baseURL := getEnv("TRUSTGUARD_BASE_URL", "")
 	timeout := getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout)
 	return TrustGuardConfig{
@@ -1349,25 +1368,8 @@ func getTrustGuardConfig() TrustGuardConfig {
 			Timeout:      getEnvDuration("TRUSTGUARD_V2_TIMEOUT", timeout),
 			ClientID:     getEnv("TRUSTGUARD_V2_CLIENT_ID", ""),
 			ClientSecret: getEnv("TRUSTGUARD_V2_CLIENT_SECRET", ""),
-			Gateways:     parseV2ShadowGateways(getEnv("TRUSTGUARD_V2_GATEWAYS", "")),
-			Shadow:       strings.ToLower(strings.TrimSpace(getEnv("TRUSTGUARD_V2_SHADOW", ""))),
 		},
 	}
-}
-
-// parseV2ShadowGateways reads TRUSTGUARD_V2_GATEWAYS: a comma list of
-// gateway ids, each optionally followed by =<TrustGuard /v2 integration id>.
-func parseV2ShadowGateways(raw string) map[string]string {
-	out := make(map[string]string)
-	for _, entry := range strings.Split(raw, ",") {
-		gateway, integration, _ := strings.Cut(entry, "=")
-		gateway = strings.TrimSpace(gateway)
-		if gateway == "" {
-			continue
-		}
-		out[gateway] = strings.TrimSpace(integration)
-	}
-	return out
 }
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
@@ -1741,11 +1743,6 @@ func (c *Config) Validate() error {
 	if err := c.BedrockNative.validate(); err != nil {
 		return err
 	}
-	switch c.TrustGuard.V2.Shadow {
-	case "", v2ShadowOff, v2ShadowAll:
-	default:
-		return fmt.Errorf("%w: TRUSTGUARD_V2_SHADOW must be %q, %q or empty, got %q", errors.ErrInvalidConfig, v2ShadowAll, v2ShadowOff, c.TrustGuard.V2.Shadow)
-	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err
 	}
@@ -1888,6 +1885,24 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+// WarnAgentHostWithoutSaaS logs when AGENT_BASE_DOMAIN is set and
+// INSTANCE_DEPLOYMENT_TYPE is not saas, so the shared data plane checks on
+// A2A cloud credentials are off. An empty INSTANCE_DEPLOYMENT_TYPE loads as
+// self-hosted. It does not stop the process: a self-hosted or customer data
+// plane sets that domain to publish its own agent host.
+func (c *Config) WarnAgentHostWithoutSaaS(logger *slog.Logger) {
+	if c == nil || logger == nil || strings.TrimSpace(c.Server.AgentBaseDomain) == "" {
+		return
+	}
+	if c.ConfigSync.SharedDataPlane() {
+		return
+	}
+	logger.Warn("AGENT_BASE_DOMAIN is set and INSTANCE_DEPLOYMENT_TYPE is not saas: A2A cloud credentials are not checked against the shared data plane rules. Set INSTANCE_DEPLOYMENT_TYPE=saas on the shared data plane; a self-hosted or customer data plane that publishes its own agent host can ignore this",
+		slog.String("instance_deployment_type", c.ConfigSync.DeploymentType),
+		slog.String("agent_base_domain", c.Server.AgentBaseDomain),
+	)
 }
 
 func (c *Config) validateRedis() error {

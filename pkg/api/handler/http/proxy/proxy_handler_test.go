@@ -1237,6 +1237,22 @@ func TestHandle_OpenAIGatewayErrorsUseEnvelope(t *testing.T) {
 			forward: true,
 		},
 		{
+			name:    "managed limit on chat completions",
+			path:    proxyPath,
+			err:     appproxy.ErrManagedLimitReached,
+			status:  fiber.StatusPaymentRequired,
+			want:    `{"error":{"message":"TrustGate blocked this request: the organization reached its monthly limit for NeuralTrust-provided models. Add your own provider or upgrade the plan to resume.","type":"invalid_request_error","code":"managed_limit"}}`,
+			forward: true,
+		},
+		{
+			name:    "managed limit on messages",
+			path:    "/" + consumerSlug + "/v1/messages",
+			err:     appproxy.ErrManagedLimitReached,
+			status:  fiber.StatusPaymentRequired,
+			want:    `{"type":"error","error":{"type":"api_error","message":"TrustGate blocked this request: the organization reached its monthly limit for NeuralTrust-provided models. Add your own provider or upgrade the plan to resume."}}`,
+			forward: true,
+		},
+		{
 			name:    "responses",
 			path:    "/" + consumerSlug + "/v1/responses",
 			err:     appproxy.ErrNoBackendAvailable,

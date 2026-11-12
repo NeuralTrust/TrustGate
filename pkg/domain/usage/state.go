@@ -37,7 +37,19 @@ const (
 	ReasonNone             Reason = ""
 	ReasonFreeLimitReached Reason = "free_limit_reached"
 	ReasonWalletEmpty      Reason = "wallet_empty"
+	// ReasonManagedLimitReached blocks only the tenant's managed registries,
+	// the ones that run on NeuralTrust's own credentials.
+	ReasonManagedLimitReached Reason = "managed_limit_reached"
 )
+
+// Known reports whether r is a reason an exhausted state can carry.
+func (r Reason) Known() bool {
+	switch r {
+	case ReasonFreeLimitReached, ReasonWalletEmpty, ReasonManagedLimitReached:
+		return true
+	}
+	return false
+}
 
 // ErrInvalidState is returned for a state that cannot be applied.
 var ErrInvalidState = errors.New("usage: invalid state")
@@ -64,7 +76,7 @@ func NewTenantState(tenantID string, status Status, reason Reason, version int64
 	case StatusHealthy:
 		reason = ReasonNone
 	case StatusExhausted:
-		if reason != ReasonFreeLimitReached && reason != ReasonWalletEmpty {
+		if !reason.Known() {
 			return TenantState{}, errors.Join(ErrInvalidState, errors.New("exhausted state needs a reason"))
 		}
 	default:
@@ -73,8 +85,14 @@ func NewTenantState(tenantID string, status Status, reason Reason, version int64
 	return TenantState{TenantID: tenantID, Status: status, Reason: reason, Version: version}, nil
 }
 
-// Exhausted reports whether the tenant's requests must be blocked.
+// Exhausted reports whether the tenant is exhausted for any reason.
 func (s TenantState) Exhausted() bool { return s.Status == StatusExhausted }
+
+// BlocksTenant reports whether every request of the tenant must be blocked.
+// A tenant that only reached its managed limit keeps its other registries.
+func (s TenantState) BlocksTenant() bool {
+	return s.Exhausted() && s.Reason != ReasonManagedLimitReached
+}
 
 // Supersedes reports whether s replaces held for the same tenant: a newer
 // version always does, and at an equal version a healthy state replaces an

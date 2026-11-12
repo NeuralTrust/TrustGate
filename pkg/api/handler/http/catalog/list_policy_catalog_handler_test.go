@@ -15,7 +15,6 @@
 package catalog_test
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -79,28 +78,4 @@ func TestListPolicyCatalogHandler_Handle(t *testing.T) {
 	assert.Equal(t, "Rate Limiter", got.Groups[0].Items[0].Name)
 	require.Len(t, got.Groups[0].Items[0].SettingsSchema.Fields, 1)
 	assert.Equal(t, "limits", got.Groups[0].Items[0].SettingsSchema.Fields[0].Key)
-}
-
-type fakeGatewayCatalog struct {
-	fakeCatalogService
-	asked []string
-}
-
-func (f *fakeGatewayCatalog) CatalogFor(_ context.Context, gatewayID string) appplugins.Catalog {
-	f.asked = append(f.asked, gatewayID)
-	return f.catalog
-}
-
-func TestListPolicyCatalogHandler_PassesTheGatewayID(t *testing.T) {
-	svc := &fakeGatewayCatalog{}
-	app := fiber.New()
-	app.Get("/v1/policies-catalog", cataloghttp.NewListPolicyCatalogHandler(svc).Handle)
-
-	for _, target := range []string{"/v1/policies-catalog?gateway_id=%20gw-1%20", "/v1/policies-catalog"} {
-		resp, err := app.Test(httptest.NewRequest(http.MethodGet, target, nil))
-		require.NoError(t, err)
-		_ = resp.Body.Close()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-	}
-	assert.Equal(t, []string{"gw-1", ""}, svc.asked)
 }

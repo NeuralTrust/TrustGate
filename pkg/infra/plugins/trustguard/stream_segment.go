@@ -121,7 +121,7 @@ func (p *Plugin) inspectSegment(
 				Provider: in.Request.Provider,
 			},
 			User:     principalUser(ctx),
-			Consumer: guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			Consumer: guardConsumer(in.Request),
 			Stream:   segmentStream(traceID, seg, block),
 		},
 	}
@@ -141,7 +141,6 @@ func (p *Plugin) inspectSegment(
 		body,
 		requestHasPlaygroundToken(in.Request),
 	)
-	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		return p.segmentFailure(ctx, in, cfg, seg, err)
 	}

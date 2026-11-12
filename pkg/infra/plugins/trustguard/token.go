@@ -36,23 +36,6 @@ const (
 	tokenMinTTL        = time.Minute
 )
 
-// TrustGuard v2 answers a gateway-only token request it cannot serve with these codes.
-const (
-	codeUnknownGateway   = "unknown_gateway"
-	codeAmbiguousGateway = "ambiguous_gateway"
-)
-
-// gatewayRefusedError is TrustGuard v2 saying the gateway is not migrated (404) or
-// maps to several integrations (409).
-type gatewayRefusedError struct {
-	status int
-	code   string
-}
-
-func (e *gatewayRefusedError) Error() string {
-	return fmt.Sprintf("trustguard v2: %s (status %d)", e.code, e.status)
-}
-
 type tokenParams struct {
 	baseURL     string
 	collectorID string
@@ -69,7 +52,7 @@ type tokenRequest struct {
 	ClientSecret  string `json:"client_secret"`
 	Scope         string `json:"scope"`
 	CollectorID   string `json:"collector_id,omitempty"`
-	IntegrationID string `json:"integration_id,omitempty"`
+	IntegrationID string `json:"integration_id,omitempty"` // v2 credential; never sent with collector_id
 	GatewayID     string `json:"gateway_id"`
 }
 
@@ -77,22 +60,20 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
-	// ActiveVersion is the TrustGuard version serving the gateway's tenant ("v1" or "v2"), only on a v2 platform token.
-	ActiveVersion string `json:"active_version,omitempty"`
 }
 
 type tokenEntry struct {
-	token         string
-	expiresAt     time.Time
-	activeVersion string
+	token     string
+	expiresAt time.Time
 }
 
 type tokenManager struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
-	// v2 asks /v2/token and names the integration as it does, integration_id,
-	// where /v1/token reads collector_id.
+	// v2 names the policy's id as the v2 integration (integration_id). Otherwise it is the v1
+	// collector_id, for which TrustGuard issues the v1 platform token and routes the
+	// evaluations to the engine the collector's organisation is on.
 	v2 bool
 
 	mu    sync.Mutex
@@ -101,7 +82,7 @@ type tokenManager struct {
 	group singleflight.Group
 }
 
-// useV2 points the manager at TrustGuard's /v2/token.
+// useV2 makes the manager name the integration (integration_id) instead of a v1 collector.
 func (m *tokenManager) useV2() { m.v2 = true }
 
 func newTokenManager(httpClient *http.Client, clientID, clientSecret string) *tokenManager {
@@ -179,19 +160,6 @@ func (m *tokenManager) fetchOnce(ctx context.Context, key string, params tokenPa
 	}
 }
 
-// gatewayVersion asks TrustGuard v2 which version serves the gateway's tenant. It never reads the token cache, which would
-// outlive a cutover; the caller caches the answer for a shorter time.
-func (m *tokenManager) gatewayVersion(ctx context.Context, params tokenParams) (string, error) {
-	v, err, _ := m.group.Do("version\x00"+params.cacheKey(), func() (any, error) {
-		entry, err := m.fetch(context.WithoutCancel(ctx), params)
-		return entry.activeVersion, err
-	})
-	if err != nil {
-		return "", err
-	}
-	return v.(string), nil
-}
-
 func (m *tokenManager) cachedToken(key string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,11 +181,7 @@ func (m *tokenManager) invalidate(params tokenParams) {
 }
 
 func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntry, error) {
-	path := tokenPath
-	if m.v2 {
-		path = v2TokenPath
-	}
-	tokenURL := strings.TrimRight(params.baseURL, "/") + path
+	tokenURL := strings.TrimRight(params.baseURL, "/") + tokenPath
 	body := tokenRequest{
 		GrantType:    grantType,
 		ClientID:     m.clientID,
@@ -265,7 +229,7 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 	if ttl < tokenMinTTL {
 		ttl = tokenMinTTL
 	}
-	return tokenEntry{token: out.AccessToken, expiresAt: time.Now().Add(ttl), activeVersion: out.ActiveVersion}, nil
+	return tokenEntry{token: out.AccessToken, expiresAt: time.Now().Add(ttl)}, nil
 }
 
 // tokenStatusError sorts a non-2xx token answer. 400, 401 and 403 are the
@@ -278,10 +242,6 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 // never errUnauthorized: that one sends guard to refetch the token, which is
 // the call that just refused.
 func tokenStatusError(status int, body []byte) error {
-	if code := oauthErrorCode(body); (status == http.StatusNotFound && code == codeUnknownGateway) ||
-		(status == http.StatusConflict && code == codeAmbiguousGateway) {
-		return fmt.Errorf("trustguard: token endpoint status %d: %w", status, &gatewayRefusedError{status: status, code: code})
-	}
 	switch status {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("trustguard: token endpoint: %w", &authRejectedError{status: status, code: oauthErrorCode(body)})

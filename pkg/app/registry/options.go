@@ -22,6 +22,7 @@ import (
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -31,12 +32,19 @@ type AuthLookup interface {
 	FindByID(ctx context.Context, id ids.AuthID) (*authdomain.Auth, error)
 }
 
+// GatewayLookup loads the gateway a registry belongs to.
+type GatewayLookup interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
+}
+
 // Option configures a registry Creator or Updater.
 type Option func(*options)
 
 type options struct {
 	openapi appopenapi.Compiler
 	auths   AuthLookup
+	cards   agentCards
+	shared  sharedPlane
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.
@@ -48,6 +56,27 @@ func WithOpenAPICompiler(c appopenapi.Compiler) Option {
 // mcp_target.auth.identity_id. Without it such a target is refused.
 func WithAuthLookup(l AuthLookup) Option {
 	return func(o *options) { o.auths = l }
+}
+
+// WithAgentCards lets a save of an A2A registry read and pin its agent card.
+func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
+	return func(o *options) { o.cards = agentCards{fetcher: fetcher, credentials: credentials} }
+}
+
+// WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
+// an A2A registry on a gateway no data plane of its own serves applies
+// domain.A2ATarget.ValidateSharedDataPlane.
+// A nil gateways applies the rules to every gateway, since the gateway cannot
+// be shown to have a data plane of its own.
+func WithSharedDataPlane(gateways GatewayLookup) Option {
+	return func(o *options) { o.shared = sharedPlane{enabled: true, gateways: gateways} }
+}
+
+// sharedPlane is whether saves follow the shared data plane rules, and how a
+// gateway is found to tell whether a data plane of its own serves it.
+type sharedPlane struct {
+	enabled  bool
+	gateways GatewayLookup
 }
 
 func applyOptions(opts []Option) options {
@@ -100,4 +129,20 @@ func validateExchangeIdentity(ctx context.Context, auths AuthLookup, gatewayID i
 			domain.ErrInvalidMCPTarget, id)
 	}
 	return nil
+}
+
+func validateSharedDataPlane(ctx context.Context, shared sharedPlane, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
+	if !shared.enabled {
+		return nil
+	}
+	if shared.gateways != nil {
+		gw, err := shared.gateways.FindByID(ctx, gatewayID)
+		if err != nil {
+			return err
+		}
+		if gw.ServedByOwnDataPlane() {
+			return nil
+		}
+	}
+	return t.ValidateSharedDataPlane()
 }

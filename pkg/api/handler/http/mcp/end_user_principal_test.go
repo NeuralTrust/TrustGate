@@ -30,7 +30,7 @@ func TestEndUserPrincipal(t *testing.T) {
 	}
 	app := &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey}
 
-	p := endUserPrincipal(cons, app, " user_123 ")
+	p := consumerdomain.EndUserPrincipal(cons, app, " user_123 ")
 	if p.Subject != consumerdomain.EndUserSubject(cons.ID, "user_123") {
 		t.Fatalf("subject = %q, want the consumer-namespaced end user", p.Subject)
 	}
@@ -46,7 +46,7 @@ func TestEndUserPrincipal(t *testing.T) {
 
 	// Without an application principal (defensive) the subject is still
 	// namespaced and the method falls back to api_key.
-	bare := endUserPrincipal(cons, nil, "u")
+	bare := consumerdomain.EndUserPrincipal(cons, nil, "u")
 	if bare.Method != identity.MethodAPIKey || bare.Claims["app_subject"] != nil {
 		t.Fatalf("unexpected bare principal %+v", bare)
 	}
@@ -77,7 +77,7 @@ func TestAppPrincipal(t *testing.T) {
 	}
 	for name, caller := range callers {
 		t.Run(name, func(t *testing.T) {
-			p := appPrincipal(cons, caller)
+			p := consumerdomain.AppPrincipal(cons, caller)
 			if p.Subject != consumerdomain.AppSubject(cons.ID) {
 				t.Fatalf("subject = %q, want the consumer's own subject", p.Subject)
 			}
@@ -99,7 +99,7 @@ func TestAppPrincipal(t *testing.T) {
 		Subject: "svc-client", Method: identity.MethodJWT, Issuer: "https://idp",
 		Scopes: []string{"mcp.read"}, RawToken: "raw-token", Claims: map[string]any{"azp": "svc"},
 	}
-	p := appPrincipal(cons, bearer)
+	p := consumerdomain.AppPrincipal(cons, bearer)
 	if p.RawToken != "raw-token" || p.Issuer != "https://idp" || len(p.Scopes) != 1 || p.Claims["azp"] != "svc" {
 		t.Fatalf("everything but the subject must carry over, got %+v", p)
 	}
@@ -108,7 +108,7 @@ func TestAppPrincipal(t *testing.T) {
 	}
 
 	// Defensive: no caller at all still yields a namespaced subject.
-	if bare := appPrincipal(cons, nil); bare.Subject != consumerdomain.AppSubject(cons.ID) ||
+	if bare := consumerdomain.AppPrincipal(cons, nil); bare.Subject != consumerdomain.AppSubject(cons.ID) ||
 		bare.Method != identity.MethodAPIKey {
 		t.Fatalf("unexpected bare principal %+v", bare)
 	}
@@ -123,7 +123,7 @@ func TestWhoARequestRunsAs(t *testing.T) {
 
 	t.Run("a machine credential naming nobody is the application", func(t *testing.T) {
 		t.Parallel()
-		p := appPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey})
+		p := consumerdomain.AppPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey})
 		if p.Subject != consumerdomain.AppSubject(cons.ID) {
 			t.Fatalf("subject = %q, want the application's own subject", p.Subject)
 		}
@@ -135,14 +135,14 @@ func TestWhoARequestRunsAs(t *testing.T) {
 
 	t.Run("a machine credential naming someone is that person, under this application", func(t *testing.T) {
 		t.Parallel()
-		p := endUserPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey}, "user_123")
+		p := consumerdomain.EndUserPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey}, "user_123")
 		if p.Subject != consumerdomain.EndUserSubject(cons.ID, "user_123") {
 			t.Fatalf("subject = %q, want the end user namespaced by the application", p.Subject)
 		}
 		// Namespaced because the name is asserted, not verified: two
 		// applications naming user_123 must never share an account.
 		other := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP}
-		if endUserPrincipal(other, nil, "user_123").Subject == p.Subject {
+		if consumerdomain.EndUserPrincipal(other, nil, "user_123").Subject == p.Subject {
 			t.Fatal("two applications naming the same end user must not collide")
 		}
 	})

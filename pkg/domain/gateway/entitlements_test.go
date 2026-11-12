@@ -338,9 +338,6 @@ func TestGateway_DedicatedKeepsHostedFeatures(t *testing.T) {
 	if g.ServedByHybridDataPlane() {
 		t.Fatal("a dedicated gateway is not a hybrid one")
 	}
-	if !g.AllowsPersonal() {
-		t.Fatal("a dedicated gateway keeps personal consumers")
-	}
 	var nilGateway *Gateway
 	if nilGateway.ServedByOwnDataPlane() {
 		t.Fatal("nil gateway must not report its own data plane")

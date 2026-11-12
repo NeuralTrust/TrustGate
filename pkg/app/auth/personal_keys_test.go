@@ -26,7 +26,6 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
@@ -115,25 +114,30 @@ func (f *personalKeysFixture) listingFails(authID ids.AuthID) {
 
 func TestPersonalKeys_Create_FirstKey(t *testing.T) {
 	t.Parallel()
-	f := newPersonalKeysFixture(t)
-	f.gateway(gatewaydomain.DataPlaneHosted)
-	f.noKey("alice")
-	f.repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.OwnerID == "alice" && a.OwnerEmail == "alice@acme.test"
-	})).Return(nil).Once()
-	f.published()
+	for _, dataPlane := range []string{gatewaydomain.DataPlaneHosted, gatewaydomain.DataPlaneHybrid} {
+		t.Run("data plane "+dataPlane, func(t *testing.T) {
+			t.Parallel()
+			f := newPersonalKeysFixture(t)
+			f.gateway(dataPlane)
+			f.noKey("alice")
+			f.repo.EXPECT().Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+				return a.OwnerID == "alice" && a.OwnerEmail == "alice@acme.test"
+			})).Return(nil).Once()
+			f.published()
 
-	key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, domain.KeyGroup{}, &personalLimit)
-	require.NoError(t, err)
-	require.NotEmpty(t, key.Auth.RawKey)
-	require.Equal(t, domain.HashAPIKey(key.Auth.RawKey), key.Auth.KeyHash)
-	require.NotNil(t, key.ConsumerIDs)
-	require.Empty(t, key.ConsumerIDs)
-	require.True(t, key.Auth.Enabled)
-	require.True(t, key.Auth.ExpiresAt.Equal(personalLimit))
-	_, cached := f.keyCache.Get(key.Auth.KeyHash)
-	require.True(t, cached)
-	require.Equal(t, 1, f.signaler.Count())
+			key, err := f.keys.Create(context.Background(), f.gwID, appauth.PersonalKeyOwner{ID: "alice", Email: " alice@acme.test"}, domain.KeyGroup{}, &personalLimit)
+			require.NoError(t, err)
+			require.NotEmpty(t, key.Auth.RawKey)
+			require.Equal(t, domain.HashAPIKey(key.Auth.RawKey), key.Auth.KeyHash)
+			require.NotNil(t, key.ConsumerIDs)
+			require.Empty(t, key.ConsumerIDs)
+			require.True(t, key.Auth.Enabled)
+			require.True(t, key.Auth.ExpiresAt.Equal(personalLimit))
+			_, cached := f.keyCache.Get(key.Auth.KeyHash)
+			require.True(t, cached)
+			require.Equal(t, 1, f.signaler.Count())
+		})
+	}
 }
 
 func TestPersonalKeys_Create_NeverExpires(t *testing.T) {
@@ -163,7 +167,6 @@ func TestPersonalKeys_Create_Refused(t *testing.T) {
 		"expiry past 366 days": {owner: "alice", expiresAt: ptr(personalNow.Add(domain.MaxOwnedKeyLifetime + time.Second)), want: domain.ErrOwnedExpiry},
 		"blank owner":          {owner: " ", expiresAt: &personalLimit, want: domain.ErrInvalidOwner},
 		"not an email":         {owner: "alice", email: "alice at acme", expiresAt: &personalLimit, want: domain.ErrInvalidOwnerEmail},
-		"hybrid gateway":       {owner: "alice", expiresAt: &personalLimit, want: consumerdomain.ErrHybridPersonal, setup: func(_ *testing.T, f *personalKeysFixture) { f.gateway(gatewaydomain.DataPlaneHybrid) }},
 		"second key":           {owner: "alice", expiresAt: &personalLimit, want: domain.ErrOwnedKeyExists, setup: func(t *testing.T, f *personalKeysFixture) { f.gateway(""); f.existingKey(t) }},
 		"concurrent create 409": {owner: "alice", expiresAt: &personalLimit, want: domain.ErrOwnedKeyExists, setup: func(_ *testing.T, f *personalKeysFixture) {
 			f.gateway("")

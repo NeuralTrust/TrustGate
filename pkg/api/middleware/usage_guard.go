@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
@@ -33,6 +34,9 @@ const (
 	ErrCodeInsufficientFunds = "insufficient_funds"
 	// ErrCodePlanLimit is returned when a Free tenant reached a monthly limit.
 	ErrCodePlanLimit = "plan_limit"
+	// ErrCodeManagedLimit is returned when a tenant reached its monthly limit
+	// for managed registries and no other registry can serve the request.
+	ErrCodeManagedLimit = "managed_limit"
 
 	usageBlockedMessage = "TrustGate blocked this request: the organization's usage is exhausted. Add funds or upgrade the plan to resume."
 
@@ -50,6 +54,7 @@ type UsageGuardMiddleware struct {
 	checker appusage.ExhaustionChecker
 	enabled func() bool
 	mcp     bool
+	agent   bool
 }
 
 // NewUsageGuardMiddleware builds the guard. A nil checker or enabled function
@@ -73,10 +78,28 @@ func (m *UsageGuardMiddleware) Refusing() bool {
 	return m.Enforcing() && appusage.HoldsList(m.checker)
 }
 
+// ManagedBlocked reports whether the managed registries of tenantID are
+// blocked: any exhausted state blocks them, the managed limit only them.
+func (m *UsageGuardMiddleware) ManagedBlocked(tenantID string) bool {
+	if !m.Enforcing() || tenantID == "" {
+		return false
+	}
+	_, exhausted := m.checker.Exhausted(tenantID)
+	return exhausted
+}
+
 // ForMCP returns a copy of the guard that answers in JSON-RPC.
 func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 	clone := *m
 	clone.mcp = true
+	return &clone
+}
+
+// ForAgent returns a copy of the guard that answers in the agent plane's
+// JSON-RPC.
+func (m *UsageGuardMiddleware) ForAgent() *UsageGuardMiddleware {
+	clone := *m
+	clone.agent = true
 	return &clone
 }
 
@@ -91,7 +114,7 @@ func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 		reason, exhausted := m.checker.Exhausted(gw.TenantID())
-		if !exhausted {
+		if !exhausted || reason == usagedomain.ReasonManagedLimitReached {
 			return c.Next()
 		}
 		code := usageErrorCode(reason)
@@ -105,6 +128,18 @@ func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *UsageGuardMiddleware) body(c *fiber.Ctx, code string) []byte {
+	if m.agent {
+		out, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      nil,
+			"error": map[string]any{
+				"code":    appa2a.CodeGatewayFailure,
+				"message": usageBlockedMessage,
+				"data":    map[string]string{"reason": appa2a.ReasonPlanUnavailable},
+			},
+		})
+		return out
+	}
 	if m.mcp {
 		out, _ := json.Marshal(map[string]any{
 			"jsonrpc": "2.0",

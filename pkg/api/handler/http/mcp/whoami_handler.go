@@ -49,6 +49,7 @@ type WhoAmIHandler struct {
 	gateways    resolver.GatewayResolver
 	consumers   appconsumer.APIKeyConsumers
 	proxyDomain string
+	agentDomain string
 	byKey       *whoAmIKeyLookup
 	// refuseHybrid is set on a plane that does not serve Hybrid or dedicated
 	// gateways, so their keys are pointed at their own data plane instead of being handed
@@ -107,6 +108,13 @@ func WithWhoAmIGatewayFromKey(
 	}
 }
 
+// WithWhoAmIAgentDomain sets AGENT_BASE_DOMAIN, the suffix a gateway's agent
+// plane is published under. Without it an A2A consumer has no url and no
+// agents.
+func WithWhoAmIAgentDomain(agentDomain string) WhoAmIOption {
+	return func(h *WhoAmIHandler) { h.agentDomain = agentDomain }
+}
+
 // WithWhoAmIRefuseHybrid makes /whoami answer a Hybrid or dedicated gateway's
 // key the way the proxy answers its traffic: 421
 // gateway_served_by_external_data_plane. Set it on a plane that does not serve
@@ -141,7 +149,8 @@ type WhoAmIConsumer struct {
 	Type   string `json:"type"`
 	Active bool   `json:"active"`
 	// URL is where this consumer is served — the MCP endpoint for an MCP
-	// consumer, the provider-compatible base URL for an LLM one. Empty when
+	// consumer, the provider-compatible base URL for an LLM one, the agents
+	// base on the agent plane for an A2A one. Empty when
 	// the gateway has no public host configured for that plane.
 	URL string `json:"url,omitempty"`
 	// Upstreams are the MCP servers behind this consumer that read a stored
@@ -149,6 +158,18 @@ type WhoAmIConsumer struct {
 	// does — and also absent on a plane that cannot read the accounts at all,
 	// which is why a client reads "blocked" rather than counting a length.
 	Upstreams []WhoAmIUpstream `json:"upstreams,omitempty"`
+	// Agents are the enabled agents of an A2A consumer, sorted by name.
+	// Always present for an A2A consumer, absent for any other.
+	Agents []WhoAmIAgent `json:"agents,omitzero"`
+}
+
+// WhoAmIAgent is one agent an A2A consumer reaches, with its card on the
+// gateway.
+type WhoAmIAgent struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	CardURL         string `json:"card_url"`
+	ProtocolVersion string `json:"protocol_version"`
 }
 
 // WhoAmIUpstream is one MCP server this consumer is bound to, answered for the
@@ -191,7 +212,7 @@ type WhoAmIResponse struct {
 
 // Handle godoc
 // @Summary      Describe what an API key reaches
-// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A personal key (key.personal) is a person's own: it lists the Store, slug "store", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.
+// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. An A2A consumer carries agents: its enabled agents, each with the card URL on the gateway's agent host (empty when AGENT_BASE_DOMAIN is not set). A personal key (key.personal) is a person's own: it lists the Store, slug "store", on the MCP plane (/store/mcp, where it runs as its owner) and, when the gateway has personal consumers, on the LLM plane (/store/v1). A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no credentials, and no identifiers beyond agent ids. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.
 // @Tags         mcp
 // @Produce      json
 // @Success      200  {object}  WhoAmIResponse
@@ -248,6 +269,7 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 			Active:    cons.Active,
 			URL:       h.consumerURL(c, gateway, cons, fromKey),
 			Upstreams: whoAmIUpstreams(cons.Upstreams),
+			Agents:    h.whoAmIAgents(c, gateway, cons),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(out)
@@ -274,6 +296,30 @@ func whoAmIUpstreams(upstreams []appconsumer.KeyUpstream) []WhoAmIUpstream {
 			Connected:      up.Connected,
 			NeedsReconnect: up.NeedsReconnect,
 			Blocked:        up.Blocked,
+		})
+	}
+	return out
+}
+
+func (h *WhoAmIHandler) whoAmIAgents(
+	c *fiber.Ctx,
+	gateway *gatewaydomain.Gateway,
+	cons appconsumer.KeyConsumer,
+) []WhoAmIAgent {
+	if cons.Type != consumerdomain.TypeA2A {
+		return nil
+	}
+	out := make([]WhoAmIAgent, 0, len(cons.Agents))
+	base := h.consumerURL(c, gateway, cons, false)
+	if base == "" {
+		return out
+	}
+	for _, agent := range cons.Agents {
+		out = append(out, WhoAmIAgent{
+			ID:              agent.ID.String(),
+			Name:            agent.Name,
+			CardURL:         base + "/" + agent.ID.String() + "/.well-known/agent-card.json",
+			ProtocolVersion: string(agent.ProtocolVersion),
 		})
 	}
 	return out
@@ -312,6 +358,12 @@ func (h *WhoAmIHandler) consumerURL(
 			return ""
 		}
 		return c.Protocol() + "://" + host + "/" + cons.Slug + "/v1"
+	case consumerdomain.TypeA2A:
+		host := subdomainHost(gateway.Slug, h.agentDomain)
+		if host == "" {
+			return ""
+		}
+		return c.Protocol() + "://" + host + "/" + cons.Slug + "/agents"
 	default:
 		return ""
 	}
@@ -333,11 +385,15 @@ func (h *WhoAmIHandler) mcpHost(gateway *gatewaydomain.Gateway) string {
 	if h.byKey == nil {
 		return ""
 	}
-	base := strings.Trim(strings.TrimSpace(h.byKey.mcpDomain), ".")
-	if base == "" || gateway.Slug == "" {
+	return subdomainHost(gateway.Slug, h.byKey.mcpDomain)
+}
+
+func subdomainHost(slug, baseDomain string) string {
+	baseDomain = strings.Trim(strings.TrimSpace(baseDomain), ".")
+	if baseDomain == "" || slug == "" {
 		return ""
 	}
-	return gateway.Slug + "." + base
+	return slug + "." + baseDomain
 }
 
 // gatewayForKey is the gateway the presented key belongs to, or nil when there

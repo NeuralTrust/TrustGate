@@ -15,7 +15,6 @@
 package plugins
 
 import (
-	"context"
 	"sort"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -106,50 +105,24 @@ type CatalogService interface {
 	Catalog() Catalog
 }
 
-// GatewayCatalogService is the catalog as one gateway's organisation sees it: the TrustGuard
-// plugin of its TrustGuard version, and not the other. Without a gateway it is the v1 view.
-type GatewayCatalogService interface {
-	CatalogService
-	CatalogFor(ctx context.Context, gatewayID string) Catalog
-}
-
-var (
-	_ CatalogService        = (*catalogService)(nil)
-	_ GatewayCatalogService = (*catalogService)(nil)
-)
+var _ CatalogService = (*catalogService)(nil)
 
 type catalogService struct {
 	registry Registry
-	engines  GatewayEngines
 }
 
-// NewCatalogService builds a catalog service backed by the plugin registry. Its Catalog lists
-// every registered plugin that is not hidden, both TrustGuard ones included, for the callers
-// that resolve slugs; what a user is offered is CatalogFor.
+// NewCatalogService builds a catalog service backed by the plugin registry.
 func NewCatalogService(registry Registry) CatalogService {
 	return &catalogService{registry: registry}
 }
 
-// NewGatewayCatalogService is NewCatalogService with the resolver of a gateway's TrustGuard version.
-func NewGatewayCatalogService(registry Registry, engines GatewayEngines) GatewayCatalogService {
-	return &catalogService{registry: registry, engines: engines}
-}
-
 func (s *catalogService) Catalog() Catalog {
-	return s.build(func(string) bool { return false })
-}
-
-func (s *catalogService) CatalogFor(ctx context.Context, gatewayID string) Catalog {
-	onV2 := s.engines != nil && gatewayID != "" && s.engines.TrustGuardV2(ctx, gatewayID)
-	return s.build(func(slug string) bool {
-		return (onV2 && slug == SlugTrustGuard) || (!onV2 && slug == SlugTrustGuardV2)
-	})
-}
-
-func (s *catalogService) build(skip func(slug string) bool) Catalog {
 	buckets := make(map[string][]CatalogEntry)
 	for _, name := range s.registry.Names() {
-		if _, hidden := hiddenCatalogSlugs[name]; hidden || skip(name) {
+		if _, hidden := hiddenCatalogSlugs[name]; hidden {
+			continue
+		}
+		if _, retired := retiredCatalogSlugs[name]; retired {
 			continue
 		}
 		plugin, ok := s.registry.Get(name)

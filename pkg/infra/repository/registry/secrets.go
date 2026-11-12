@@ -37,6 +37,24 @@ const (
 	fieldMCPAuthClient        = "registries.mcp_target.auth.client_secret"
 	fieldMCPHeaderPrefix      = "registries.mcp_target.headers."
 	fieldProviderHeaderPrefix = "registries.provider_options.headers."
+	fieldA2AAuthValue         = "registries.a2a_target.auth.value"
+	fieldA2AAuthClient        = "registries.a2a_target.auth.client_secret"
+	fieldA2AHeaderPrefix      = "registries.a2a_target.headers."
+	fieldA2AAWSSecret         = "registries.a2a_target.cloud_auth.aws.secret_access_key" // #nosec G101 -- field path, not a credential
+	fieldA2AAWSSession        = "registries.a2a_target.cloud_auth.aws.session_token"     // #nosec G101 -- field path, not a credential
+	fieldA2AAzureSecret       = "registries.a2a_target.cloud_auth.azure.client_secret"   // #nosec G101 -- field path, not a credential
+	fieldA2AGCPKey            = "registries.a2a_target.cloud_auth.gcp.service_account_json"
+)
+
+// sealedFields names the field paths a target's auth secrets and static
+// headers are sealed under.
+type sealedFields struct {
+	authValue, authClient, headerPrefix string
+}
+
+var (
+	mcpFields = sealedFields{fieldMCPAuthValue, fieldMCPAuthClient, fieldMCPHeaderPrefix}
+	a2aFields = sealedFields{fieldA2AAuthValue, fieldA2AAuthClient, fieldA2AHeaderPrefix}
 )
 
 // WithFieldSealer lets the repository read credentials stored encrypted in
@@ -60,14 +78,50 @@ func (r *Repository) sealMCPTarget(id ids.RegistryID, t *domain.MCPTarget) (*dom
 	if t == nil || r.sealer == nil {
 		return t, nil
 	}
+	sealed, err := r.sealCredentials(mcpFields, id, mcpCredentials(t))
+	if err != nil {
+		return nil, err
+	}
+	out := *t
+	out.Headers, out.Auth = sealed.Headers, sealed.Auth
+	return &out, nil
+}
+
+// credentials are the secrets MCP and A2A targets carry the same way: static
+// headers and an auth block. The sealing helpers work on them so that neither
+// kind of target depends on the other's layout.
+type credentials struct {
+	Headers           map[string]string
+	Auth              *domain.MCPAuth
+	UnreadableHeaders []string
+}
+
+func mcpCredentials(t *domain.MCPTarget) *credentials {
+	if t == nil {
+		return nil
+	}
+	return &credentials{Headers: t.Headers, Auth: t.Auth, UnreadableHeaders: t.UnreadableHeaders}
+}
+
+func a2aCredentials(t *domain.A2ATarget) *credentials {
+	if t == nil {
+		return nil
+	}
+	return &credentials{Headers: t.Headers, Auth: t.Auth, UnreadableHeaders: t.UnreadableHeaders}
+}
+
+func (r *Repository) sealCredentials(f sealedFields, id ids.RegistryID, t *credentials) (*credentials, error) {
+	if t == nil || r.sealer == nil {
+		return t, nil
+	}
 	out := *t
 	if t.Auth != nil {
 		auth := *t.Auth
 		var err error
-		if auth.Value, err = r.sealer.Seal(sealedAAD(fieldMCPAuthValue, id), auth.Value); err != nil {
+		if auth.Value, err = r.sealer.Seal(sealedAAD(f.authValue, id), auth.Value); err != nil {
 			return nil, err
 		}
-		if auth.ClientSecret, err = r.sealer.Seal(sealedAAD(fieldMCPAuthClient, id), auth.ClientSecret); err != nil {
+		if auth.ClientSecret, err = r.sealer.Seal(sealedAAD(f.authClient, id), auth.ClientSecret); err != nil {
 			return nil, err
 		}
 		out.Auth = &auth
@@ -75,7 +129,7 @@ func (r *Repository) sealMCPTarget(id ids.RegistryID, t *domain.MCPTarget) (*dom
 	if t.Headers != nil {
 		out.Headers = make(map[string]string, len(t.Headers))
 		for name, value := range t.Headers {
-			sealed, err := r.sealer.Seal(sealedAAD(fieldMCPHeaderPrefix+name, id), value)
+			sealed, err := r.sealer.Seal(sealedAAD(f.headerPrefix+name, id), value)
 			if err != nil {
 				return nil, err
 			}
@@ -94,6 +148,15 @@ func (r *Repository) openMCPTarget(
 	t *domain.MCPTarget,
 	onFailure func(field, stored string, err error) error,
 ) error {
+	return r.openCredentials(mcpFields, id, mcpCredentials(t), onFailure)
+}
+
+func (r *Repository) openCredentials(
+	f sealedFields,
+	id ids.RegistryID,
+	t *credentials,
+	onFailure func(field, stored string, err error) error,
+) error {
 	if t == nil {
 		return nil
 	}
@@ -106,15 +169,15 @@ func (r *Repository) openMCPTarget(
 	}
 	if t.Auth != nil {
 		var err error
-		if t.Auth.Value, err = open(fieldMCPAuthValue, t.Auth.Value); err != nil {
+		if t.Auth.Value, err = open(f.authValue, t.Auth.Value); err != nil {
 			return err
 		}
-		if t.Auth.ClientSecret, err = open(fieldMCPAuthClient, t.Auth.ClientSecret); err != nil {
+		if t.Auth.ClientSecret, err = open(f.authClient, t.Auth.ClientSecret); err != nil {
 			return err
 		}
 	}
 	for name, value := range t.Headers {
-		plain, err := open(fieldMCPHeaderPrefix+name, value)
+		plain, err := open(f.headerPrefix+name, value)
 		if err != nil {
 			return err
 		}
@@ -127,14 +190,23 @@ func (r *Repository) openMCPTarget(
 // decrypted is returned empty, reported and counted, so the registry keeps
 // routing and listing and the credential can be entered again.
 func (r *Repository) openMCPTargetForRead(ctx context.Context, id ids.RegistryID, t *domain.MCPTarget) {
+	if t == nil {
+		return
+	}
+	c := mcpCredentials(t)
+	r.openCredentialsForRead(ctx, mcpFields, id, c)
+	t.UnreadableHeaders = c.UnreadableHeaders
+}
+
+func (r *Repository) openCredentialsForRead(ctx context.Context, f sealedFields, id ids.RegistryID, t *credentials) {
 	// The callback never fails, so neither does the walk.
-	_ = r.openMCPTarget(id, t, func(field, stored string, err error) error {
+	_ = r.openCredentials(f, id, t, func(field, stored string, err error) error {
 		crypto.ReportUnreadableField(ctx, "registries", id.String(), field, stored, err)
 		switch {
-		case field == fieldMCPAuthValue || field == fieldMCPAuthClient:
+		case field == f.authValue || field == f.authClient:
 			t.Auth.SecretUnreadable = true
-		case strings.HasPrefix(field, fieldMCPHeaderPrefix):
-			t.UnreadableHeaders = append(t.UnreadableHeaders, strings.TrimPrefix(field, fieldMCPHeaderPrefix))
+		case strings.HasPrefix(field, f.headerPrefix):
+			t.UnreadableHeaders = append(t.UnreadableHeaders, strings.TrimPrefix(field, f.headerPrefix))
 		}
 		return nil
 	})
@@ -163,9 +235,30 @@ func (r *Repository) encodeMCPTargetForUpdate(
 	if t == nil {
 		return nil, nil
 	}
+	c, err := r.credentialsForUpdate(mcpFields, id, mcpCredentials(t), func() (*credentials, error) {
+		stored, err := lockStoredMCPTarget(ctx, tx, id, gatewayID)
+		return mcpCredentials(stored), err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := *t
+	out.Headers, out.Auth = c.Headers, c.Auth
+	return json.Marshal(&out)
+}
+
+// credentialsForUpdate returns a copy of t with its credentials as they are
+// written: sealed when encrypted writes are on, and each empty unreadable
+// credential replaced by the stored value lockStored returns.
+func (r *Repository) credentialsForUpdate(
+	f sealedFields,
+	id ids.RegistryID,
+	t *credentials,
+	lockStored func() (*credentials, error),
+) (*credentials, error) {
 	out := *t
 	if r.encryptWrites {
-		sealed, err := r.sealMCPTarget(id, t)
+		sealed, err := r.sealCredentials(f, id, t)
 		if err != nil {
 			return nil, err
 		}
@@ -178,16 +271,16 @@ func (r *Repository) encodeMCPTargetForUpdate(
 		out.Headers = maps.Clone(t.Headers)
 	}
 	if hasEmptyCredential(t) {
-		stored, err := lockStoredMCPTarget(ctx, tx, id, gatewayID)
+		stored, err := lockStored()
 		if err != nil {
 			return nil, err
 		}
-		r.keepUnreadableCredentials(id, t, &out, stored)
+		r.keepUnreadable(f, id, t, &out, stored)
 	}
-	return json.Marshal(&out)
+	return &out, nil
 }
 
-func hasEmptyCredential(t *domain.MCPTarget) bool {
+func hasEmptyCredential(t *credentials) bool {
 	if t.Auth != nil && (t.Auth.Value == "" || t.Auth.ClientSecret == "") {
 		return true
 	}
@@ -224,17 +317,24 @@ func lockStoredMCPTarget(ctx context.Context, tx pgx.Tx, id ids.RegistryID, gate
 // unchanged: a new mode drops the old credential. Header names match
 // case-insensitively, as HTTP header names do.
 func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, in, out, stored *domain.MCPTarget) {
+	if out == nil {
+		return
+	}
+	r.keepUnreadable(mcpFields, id, mcpCredentials(in), mcpCredentials(out), mcpCredentials(stored))
+}
+
+func (r *Repository) keepUnreadable(f sealedFields, id ids.RegistryID, in, out, stored *credentials) {
 	if stored == nil {
 		return
 	}
 	if out.Auth != nil && stored.Auth != nil && out.Auth.Mode == stored.Auth.Mode {
 		marked := in.Auth != nil && in.Auth.SecretUnreadable
 		if out.Auth.Value == "" && stored.Auth.Value != "" &&
-			((marked && out.Auth.Mode == domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(fieldMCPAuthValue, id), stored.Auth.Value)) {
+			((marked && out.Auth.Mode == domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(f.authValue, id), stored.Auth.Value)) {
 			out.Auth.Value = stored.Auth.Value
 		}
 		if out.Auth.ClientSecret == "" && stored.Auth.ClientSecret != "" &&
-			((marked && out.Auth.Mode != domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(fieldMCPAuthClient, id), stored.Auth.ClientSecret)) {
+			((marked && out.Auth.Mode != domain.MCPAuthModeStatic) || r.unopenable(sealedAAD(f.authClient, id), stored.Auth.ClientSecret)) {
 			out.Auth.ClientSecret = stored.Auth.ClientSecret
 		}
 	}
@@ -247,8 +347,8 @@ func (r *Repository) keepUnreadableCredentials(id ids.RegistryID, in, out, store
 			continue
 		}
 		marked := slices.ContainsFunc(in.UnreadableHeaders, func(n string) bool { return strings.EqualFold(n, name) })
-		if marked || r.unopenable(sealedAAD(fieldMCPHeaderPrefix+storedName, id), prev) {
-			out.Headers[name] = r.resealHeader(id, fieldMCPHeaderPrefix, storedName, name, prev)
+		if marked || r.unopenable(sealedAAD(f.headerPrefix+storedName, id), prev) {
+			out.Headers[name] = r.resealHeader(id, f.headerPrefix, storedName, name, prev)
 		}
 	}
 }
@@ -588,4 +688,150 @@ func (r *Repository) rewriteMCPTarget(
 		return nil
 	})
 	return encrypted, fixed, err
+}
+
+func cloneCloudAuth(c *domain.A2ACloudAuth) *domain.A2ACloudAuth {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.AWS != nil {
+		aws := *c.AWS
+		out.AWS = &aws
+	}
+	if c.Azure != nil {
+		azure := *c.Azure
+		out.Azure = &azure
+	}
+	if c.GCP != nil {
+		gcp := *c.GCP
+		out.GCP = &gcp
+	}
+	return &out
+}
+
+// cloudSecrets maps the sealed field path of each secret of c to that secret.
+func cloudSecrets(c *domain.A2ACloudAuth) map[string]*string {
+	out := map[string]*string{}
+	if c == nil {
+		return out
+	}
+	if c.AWS != nil {
+		out[fieldA2AAWSSecret] = &c.AWS.SecretAccessKey
+		out[fieldA2AAWSSession] = &c.AWS.SessionToken
+	}
+	if c.Azure != nil {
+		out[fieldA2AAzureSecret] = &c.Azure.ClientSecret
+	}
+	if c.GCP != nil {
+		out[fieldA2AGCPKey] = &c.GCP.ServiceAccountJSON
+	}
+	return out
+}
+
+// sealA2ATarget returns a copy of t whose credentials are encrypted for the
+// registry id. t is not modified.
+func (r *Repository) sealA2ATarget(id ids.RegistryID, t *domain.A2ATarget) (*domain.A2ATarget, error) {
+	shell, err := r.sealCredentials(a2aFields, id, a2aCredentials(t))
+	if err != nil {
+		return nil, err
+	}
+	out := *t
+	out.Headers, out.Auth = shell.Headers, shell.Auth
+	out.CloudAuth = cloneCloudAuth(t.CloudAuth)
+	for field, value := range cloudSecrets(out.CloudAuth) {
+		if *value, err = r.sealer.Seal(sealedAAD(field, id), *value); err != nil {
+			return nil, err
+		}
+	}
+	return &out, nil
+}
+
+// openA2ATargetForRead decrypts t for a read. A credential that cannot be
+// decrypted is returned empty, reported and marked, as for MCP targets.
+func (r *Repository) openA2ATargetForRead(ctx context.Context, id ids.RegistryID, t *domain.A2ATarget) {
+	shell := a2aCredentials(t)
+	r.openCredentialsForRead(ctx, a2aFields, id, shell)
+	t.UnreadableHeaders = shell.UnreadableHeaders
+	for field, value := range cloudSecrets(t.CloudAuth) {
+		plain, err := r.sealer.OpenField(sealedAAD(field, id), *value)
+		if err != nil {
+			crypto.ReportUnreadableField(ctx, "registries", id.String(), field, *value, err)
+			t.CloudAuth.SecretUnreadable = true
+		}
+		*value = plain
+	}
+}
+
+// encodeA2ATargetForUpdate encodes t for an update of row id. A credential
+// that came back empty because it could not be decrypted on read keeps its
+// stored value. The stored row is read under a row lock in tx.
+func (r *Repository) encodeA2ATargetForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	id ids.RegistryID,
+	gatewayID ids.GatewayID,
+	t *domain.A2ATarget,
+) ([]byte, error) {
+	if t == nil {
+		return nil, nil
+	}
+	var stored *domain.A2ATarget
+	lockStored := func() (*domain.A2ATarget, error) {
+		if stored != nil {
+			return stored, nil
+		}
+		var err error
+		stored, err = lockStoredA2ATarget(ctx, tx, id, gatewayID)
+		return stored, err
+	}
+	shell, err := r.credentialsForUpdate(a2aFields, id, a2aCredentials(t), func() (*credentials, error) {
+		s, err := lockStored()
+		return a2aCredentials(s), err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := *t
+	out.Headers, out.Auth = shell.Headers, shell.Auth
+	out.CloudAuth = cloneCloudAuth(t.CloudAuth)
+	for field, value := range cloudSecrets(out.CloudAuth) {
+		if *value == "" && t.CloudAuth.SecretUnreadable {
+			s, err := lockStored()
+			if err != nil {
+				return nil, err
+			}
+			if s != nil {
+				if prev, ok := cloudSecrets(s.CloudAuth)[field]; ok {
+					*value = *prev
+				}
+			}
+			continue
+		}
+		if r.encryptWrites {
+			if *value, err = r.sealer.Seal(sealedAAD(field, id), *value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return json.Marshal(&out)
+}
+
+func lockStoredA2ATarget(ctx context.Context, tx pgx.Tx, id ids.RegistryID, gatewayID ids.GatewayID) (*domain.A2ATarget, error) {
+	const lock = `SELECT a2a_target FROM registries WHERE id = $1 AND gateway_id = $2 FOR UPDATE`
+	var raw []byte
+	if err := tx.QueryRow(ctx, lock, id, gatewayID).Scan(&raw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("registry repository: lock a2a_target: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var stored domain.A2ATarget
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, fmt.Errorf("registry repository: stored a2a_target: %w: %w", commonerrors.ErrCorruptData, err)
+	}
+	return &stored, nil
 }

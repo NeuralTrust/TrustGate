@@ -35,6 +35,10 @@ type CreateInput struct {
 	Description string
 	LLMTarget   *domain.LLMTarget
 	MCPTarget   *domain.MCPTarget
+	A2ATarget   *domain.A2ATarget
+	// Managed creates an LLM registry NeuralTrust supplies the credentials for.
+	// Only the platform may ask for it (see AsPlatform).
+	Managed bool
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=registry_creator_mock.go --case=underscore --with-expecter
@@ -52,6 +56,8 @@ type creator struct {
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
+	cards       agentCards
+	shared      sharedPlane
 }
 
 func NewCreator(
@@ -71,13 +77,56 @@ func NewCreator(
 		catalog:     catalog,
 		openapi:     o.openapi,
 		auths:       o.auths,
+		cards:       o.cards,
+		shared:      o.shared,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry, error) {
+	if err := refuseManagedChange(ctx, in.Managed); err != nil {
+		return nil, err
+	}
 	var b *domain.Registry
 	var err error
-	if in.Type == domain.TypeMCP {
+	switch {
+	case in.Managed && in.Type != domain.TypeLLM && in.Type != "":
+		return nil, fmt.Errorf("%w: only an LLM registry can be managed", domain.ErrInvalidRegistry)
+	case in.Managed:
+		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
+			return nil, verr
+		}
+		b, err = domain.NewManagedLLMRegistry(in.GatewayID, in.Name, in.Description, in.LLMTarget)
+	}
+	if b == nil && err == nil {
+		b, err = c.build(ctx, in)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if in.Enabled != nil {
+		b.Enabled = *in.Enabled
+	}
+	if err := c.repo.Save(ctx, b); err != nil {
+		return nil, err
+	}
+	c.memoryCache.Set(b.ID.String(), b)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
+	return b, nil
+}
+
+// build makes a registry the tenant supplies the credentials for.
+func (c *creator) build(ctx context.Context, in CreateInput) (*domain.Registry, error) {
+	var b *domain.Registry
+	var err error
+	switch in.Type {
+	case domain.TypeA2A:
+		if err := c.prepareA2A(ctx, in); err != nil {
+			return nil, err
+		}
+		b, err = domain.NewA2ARegistry(in.GatewayID, in.Name, in.Description, in.A2ATarget)
+	case domain.TypeMCP:
 		in.MCPTarget.Normalize()
 		if err := compileOpenAPITarget(ctx, in.MCPTarget, c.openapi); err != nil {
 			return nil, err
@@ -101,7 +150,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.Description,
 			in.MCPTarget,
 		)
-	} else {
+	default:
 		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
 			return nil, verr
 		}
@@ -112,20 +161,23 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.LLMTarget,
 		)
 	}
-	if err != nil {
-		return nil, err
+	return b, err
+}
+
+// prepareA2A validates the target before any request leaves the gateway,
+// then reads and pins its card.
+func (c *creator) prepareA2A(ctx context.Context, in CreateInput) error {
+	in.A2ATarget.Normalize()
+	if err := in.A2ATarget.Validate(); err != nil {
+		return err
 	}
-	if in.Enabled != nil {
-		b.Enabled = *in.Enabled
+	if err := validateSharedDataPlane(ctx, c.shared, in.GatewayID, in.A2ATarget); err != nil {
+		return err
 	}
-	if err := c.repo.Save(ctx, b); err != nil {
-		return nil, err
+	if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, &domain.MCPTarget{Auth: in.A2ATarget.Auth}); err != nil {
+		return err
 	}
-	c.memoryCache.Set(b.ID.String(), b)
-	if c.signaler != nil {
-		c.signaler.Signal(ctx)
-	}
-	return b, nil
+	return c.cards.pin(ctx, in.A2ATarget)
 }
 
 func validateProviderOptions(target *domain.LLMTarget) error {

@@ -66,6 +66,11 @@ message Hello {
   // GetFragments. Notices on this stream then carry the manifest version, and
   // VersionNotice.layered is set.
   bool accepts_layered = 5;
+  // accepts_managed_limit says the data plane blocks only the registries that
+  // use a NeuralTrust key for USAGE_REASON_MANAGED_LIMIT_REACHED. Older data
+  // planes get those tenants as healthy, since they would block every
+  // registry.
+  bool accepts_managed_limit = 6;
 }
 
 message Ack {
@@ -145,6 +150,9 @@ enum UsageReason {
   USAGE_REASON_UNSPECIFIED = 0;
   USAGE_REASON_FREE_LIMIT_REACHED = 1;
   USAGE_REASON_WALLET_EMPTY = 2;
+  // USAGE_REASON_MANAGED_LIMIT_REACHED blocks only the registries that use a
+  // NeuralTrust key.
+  USAGE_REASON_MANAGED_LIMIT_REACHED = 3;
 }
 
 message VersionNotice {

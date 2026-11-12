@@ -170,11 +170,8 @@ type Plugin struct {
 	// evaluate call, and the ceiling of the per-block deadline of a stream.
 	timeout time.Duration
 
-	// v2Shadow copies every evaluation to TrustGuard /v2. Only the v1 plugin has one.
-	v2Shadow *v2ShadowSender
-
 	// name is the slug this instance is registered under, and v2 says it speaks to
-	// TrustGuard's /v2 engine (asset-based request, /v2/token) and enforces its
+	// TrustGuard's /v2 engine (asset-based request, integration_id token) and enforces its
 	// answer. Everything else, the failure modes, the legs, streaming and MCP, is shared.
 	name string
 	v2   bool
@@ -220,15 +217,12 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 		tokens.useV2()
 		p.name = PluginNameV2
 		p.v2 = true
-		return p
 	}
-	p.v2Shadow = newV2ShadowSender(cfg.v2Shadow, cfg.baseTransport, logger)
 	return p
 }
 
 // NewV2 builds the trustguard_v2 plugin: the same plugin, speaking to
-// TrustGuard's /v2 engine with the credentials of the v2 platform client. It
-// sends no shadow copy; it is the evaluation.
+// TrustGuard's /v2 engine with the credentials of the v2 platform client.
 func NewV2(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...Option) *Plugin {
 	return New(registry, baseURL, timeout, clientID, clientSecret, logger, append(opts[:len(opts):len(opts)], withV2Engine())...)
 }
@@ -252,7 +246,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	if p.v2 {
+		return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
 }
 
 // ScopeInertSafe reports true: TrustGuard inspects the content of a request or
@@ -321,10 +318,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	mcpMode := in.Request.MCP
-	if !mcpMode && in.Request.Provider == "" {
+	a2aMode := in.Request.A2A
+	if !mcpMode && !a2aMode && in.Request.Provider == "" {
 		return p.guardFailure(ctx, in, stageDirection(in.Stage), failureReasonProviderMissing, nil)
 	}
-	if !mcpMode && p.registry == nil {
+	if !mcpMode && !a2aMode && p.registry == nil {
 		return passThrough(), nil
 	}
 
@@ -384,7 +382,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Provider: in.Request.Provider,
 			},
 			User:      principalUser(ctx),
-			Consumer:  guardConsumer(in.Request.ConsumerID, in.Request.ConsumerName),
+			Consumer:  guardConsumer(in.Request),
 			MCPServer: guardMCPServer(in.Request),
 		},
 	}
@@ -404,7 +402,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	firstCtx, cancelFirst := context.WithDeadline(ctx, deadline)
 	defer cancelFirst()
 	resp, err := p.guard(firstCtx, baseURL, cfg.CollectorID, traceID, body, playground)
-	p.v2Shadow.send(ctx, cfg.CollectorID, traceID, body, in.Request)
 	if err != nil {
 		var rejected *attachmentRejectedError
 		if errors.As(err, &rejected) && tgt.urlAttachments > 0 && tgt.withoutURLAttachments != nil {
@@ -468,6 +465,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if resp.Status == statusTransform {
+		if a2aMode {
+			return a2aMaskRefused(in, data, resp)
+		}
 		return p.applyTransform(ctx, in, cfg, data, resp, tgt)
 	}
 
@@ -590,6 +590,9 @@ func (p *Plugin) inspectionPayload(
 ) (json.RawMessage, transformTarget, *inspectionHalt) {
 	if mcpMode {
 		return p.mcpInspectionPayload(ctx, in, direction)
+	}
+	if in.Request.A2A {
+		return p.a2aInspectionPayload(ctx, in, direction)
 	}
 	return p.llmInspectionPayload(ctx, in, direction)
 }
@@ -1017,12 +1020,20 @@ func gatewayTraceID(ctx context.Context) string {
 
 // guardConsumer is the application a request came from, or nil when it is not
 // known.
-func guardConsumer(id, name string) *GuardConsumer {
-	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
-	if id == "" && name == "" {
+func guardConsumer(req *infracontext.RequestContext) *GuardConsumer {
+	if req == nil {
 		return nil
 	}
-	return &GuardConsumer{ID: id, Name: name}
+	c := GuardConsumer{
+		ID:        strings.TrimSpace(req.ConsumerID),
+		Name:      strings.TrimSpace(req.ConsumerName),
+		Audience:  strings.TrimSpace(req.ConsumerAudience),
+		Synthetic: req.ConsumerSynthetic,
+	}
+	if c == (GuardConsumer{}) {
+		return nil
+	}
+	return &c
 }
 
 func guardMCPServer(req *infracontext.RequestContext) *GuardMCPServer {

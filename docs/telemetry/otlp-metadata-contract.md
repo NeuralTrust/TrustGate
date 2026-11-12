@@ -45,7 +45,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Attribute | Source |
 |-----------|--------|
 | `trustgate.schema_version` | `schema_version` |
-| `trustgate.kind` | `kind` |
+| `trustgate.kind` | `kind` (`llm`, `mcp` or `a2a`) |
 | `trustgate.trace_id` | `trace_id` |
 | `trustgate.gateway_id` | `gateway_id` |
 | `trustgate.tenant_id` | `tenant_id` |
@@ -101,6 +101,21 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
 | `trustgate.mcp.tool_risk` | `mcp.tool_risk` (tools/call only: the called tool's risk from the MCP annotations its server declares — `read_only` when `readOnlyHint` is true, else `destructive` unless `destructiveHint` is false (the protocol default), else `additive`. Omitted when the tool declares none of the four hints: unannotated tools are never guessed. Advisory, the server's own claim) |
 | `trustgate.mcp.tool_open_world` | `mcp.tool_open_world` (bool; the tool's `openWorldHint`, `true` by default once any hint is declared. Omitted with `tool_risk`) |
+| `trustgate.a2a.method` | `a2a.method` (A2A JSON-RPC method as the caller sent it, e.g. `message/send` or `SendMessage`). The `trustgate.a2a.*` attributes appear only on `kind = a2a` records |
+| `trustgate.a2a.registry_id` | `a2a.registry_id` (the A2A registry the call went to) |
+| `trustgate.a2a.agent_name` | `a2a.agent_name` (the registry's name) |
+| `trustgate.a2a.provider` | `a2a.provider` (where the agent is hosted: `generic`, `bedrock_agentcore`, `azure_foundry` or `vertex_agent_engine`) |
+| `trustgate.a2a.protocol_version` | `a2a.protocol_version` (`0.3` or `1.0`, the version the registry is pinned to) |
+| `trustgate.a2a.task_id` | `a2a.task_id` (the task the call named or the agent answered with; omitted when none) |
+| `trustgate.a2a.context_id` | `a2a.context_id` (likewise for the context) |
+| `trustgate.a2a.task_state` | `a2a.task_state` (the last task state the agent reported, as the version writes it; omitted when unknown) |
+| `trustgate.a2a.upstream_status` | `a2a.upstream_status` (int; the agent's HTTP status; omitted when the call never reached the agent) |
+| `trustgate.a2a.outcome` | `a2a.outcome`: `ok`, `blocked` (a policy or a rate limit), `refused` (method, parameters or identity refused before the agent), `not_found` (a task or context the caller does not own), `upstream_error` (the agent answered an error, an invalid or oversize answer, or the gateway could not complete the call) or `upstream_timeout` (no answer in time, or a stream left silent). A stream the gateway closed at its maximum duration is `ok` with reason `stream_max_duration` |
+| `trustgate.a2a.reason` | `a2a.reason`: the `error.data.reason` of a gateway error (`policy_blocked`, `mask_unsupported`, `identity_required`, `identity_exchange_failed`, `signing_key_unavailable`, `ownership_unavailable`, `ownership_conflict`, `invalid_upstream_response`, `response_too_large`, …), `rate_limited`, or what the caller never sees: `not_owner` and `not_registered` behind a `TaskNotFound`, and `ownership_write_failed` on a delivered answer whose owner could not be recorded |
+| `trustgate.a2a.blocked_by` | `a2a.blocked_by` (the plugin that blocked; omitted otherwise) |
+| `trustgate.a2a.identity_mode` | `a2a.identity_mode` (`none`, `static`, `client_credentials`, `delegation`, `obo`, `token_exchange`, or for auth mode `cloud` the credential: `aws_sigv4`, `azure_entra`, `gcp_oauth`; the token itself is never recorded) |
+| `trustgate.a2a.identity_subject_kind` | `a2a.identity_subject_kind` (`user` or `app`) |
+| `trustgate.a2a.rpc_error_code` | `a2a.rpc_error_code` (int; the JSON-RPC error code the caller received, the gateway's or the agent's; omitted on success) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
@@ -782,6 +797,15 @@ at most a 64 KiB tail window, so a timeout is not driven by the length of the re
 | `config_invalid` | The stored settings could not be parsed. Always `failed_open` |
 | `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
 | `payload_unreadable` | The gateway could not read the body. `failure_class: input` |
+
+**Changed in ENG-3214.** The `trustguard` plugin calls TrustGuard's `/v1/token` (with its
+`collector_id`) and `/v1/evaluate`. TrustGuard answers each collector with the engine its
+organisation is on, v1 until the organisation is cut over to v2, and names it in the
+`X-TrustGuard-Engine` response header. `trustguard_evaluations_total{plugin, engine, status_class}`
+counts every answer: `plugin` is `trustguard` or `trustguard_v2`, `engine` is `v1`, `v2` or
+`unknown` (an answer without the header), and `status_class` is the HTTP class (`2xx`, `4xx`,
+`5xx`). A failure before any answer (timeout, transport) is only in
+`trustguard_evaluate_failures_total`.
 
 On a streamed response leg the plugin resolves a failure itself: it allows the block, so
 later policies in the chain still inspect it, and the

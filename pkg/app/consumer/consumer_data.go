@@ -199,6 +199,15 @@ func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
 	return d.MatchSlug(slug)
 }
 
+// MatchAgentPath returns the consumer an agent plane path addresses.
+func (d *Data) MatchAgentPath(path string) (*RoutableConsumer, bool) {
+	slug := SlugFromAgentPath(path)
+	if slug == "" {
+		return nil, false
+	}
+	return d.MatchSlug(slug)
+}
+
 func MCPPath(slug string) string {
 	return "/" + slug + "/mcp"
 }

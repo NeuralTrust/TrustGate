@@ -53,6 +53,8 @@ func TestNewRecord_RejectsBrokenContract(t *testing.T) {
 		{"zero time", func(r *Record) { r.OccurredOn = time.Time{} }},
 		{"negative unit", func(r *Record) { r.TopicClassificationChars = -1 }},
 		{"no units", func(r *Record) { r.Requests = 0 }},
+		{"negative managed requests", func(r *Record) { r.ManagedRequests = -1 }},
+		{"managed requests without a request", func(r *Record) { r.Requests, r.TopicClassificationChars, r.ManagedRequests = 0, 10, 1 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

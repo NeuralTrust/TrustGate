@@ -55,7 +55,7 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
 }
 
 // ScopeInertSafe reports true: the limit is measured on the request body and
@@ -96,6 +96,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	var body []byte
 	if in.Request != nil {
 		body = in.Request.Body
+		if in.Request.A2A {
+			body = in.Request.A2ABody
+		}
 	}
 
 	maxBytes := cfg.maxSizeBytes()

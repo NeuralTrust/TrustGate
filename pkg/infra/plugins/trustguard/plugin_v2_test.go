@@ -34,13 +34,29 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
+// v2WireRequest is TrustGuard's v2 evaluate decoder: unknown fields are a 400.
+type v2WireRequest struct {
+	OriginalRequest *struct {
+		IP      string              `json:"ip,omitempty"`
+		Headers map[string][]string `json:"headers,omitempty"`
+	} `json:"original_request,omitempty"`
+	Payload        json.RawMessage `json:"payload"`
+	Direction      string          `json:"direction"`
+	Protocol       string          `json:"protocol"`
+	GatewayID      string          `json:"gateway_id"`
+	IntegrationKey string          `json:"integration_key"`
+	SessionID      string          `json:"session_id"`
+	ApplicationID  string          `json:"application_id"`
+	Attributes     map[string]any  `json:"attributes"`
+}
+
 // fakeV2Engine is TrustGuard's /v2: its token endpoint and an evaluate endpoint that
 // decodes the body as strictly as the engine does (an unknown field, consumer_id or
 // agent_id among them, is a 400) and answers with raw.
 type fakeV2Engine struct {
 	mu            sync.Mutex
 	tokens        []map[string]any
-	requests      []v2ShadowWireRequest
+	requests      []v2WireRequest
 	headers       []http.Header
 	paths         []string
 	status        int
@@ -58,7 +74,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 		f.paths = append(f.paths, r.URL.Path)
 		f.mu.Unlock()
 		switch r.URL.Path {
-		case v2TokenPath:
+		case tokenPath:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.mu.Lock()
@@ -67,7 +83,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 			f.mu.Unlock()
 			w.Header().Set("Content-Type", contentTypeJSON)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "v2-token-" + string(rune('0'+n)), TokenType: "Bearer", ExpiresIn: 3600})
-		case v2EvaluatePath:
+		case evaluatePath:
 			calls := atomic.AddInt32(&f.evaluateCalls, 1)
 			if f.unauthorizedFirst && calls == 1 {
 				w.WriteHeader(http.StatusUnauthorized)
@@ -75,7 +91,7 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 			}
 			dec := json.NewDecoder(r.Body)
 			dec.DisallowUnknownFields()
-			var body v2ShadowWireRequest
+			var body v2WireRequest
 			if err := dec.Decode(&body); err != nil {
 				f.mu.Lock()
 				f.invalid++
@@ -107,10 +123,10 @@ func (f *fakeV2Engine) handler() http.HandlerFunc {
 	}
 }
 
-func (f *fakeV2Engine) seen() []v2ShadowWireRequest {
+func (f *fakeV2Engine) seen() []v2WireRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]v2ShadowWireRequest(nil), f.requests...)
+	return append([]v2WireRequest(nil), f.requests...)
 }
 
 func (f *fakeV2Engine) tokenRequests() []map[string]any {
@@ -132,7 +148,7 @@ func newV2TestPlugin(t *testing.T, baseURL string) *Plugin {
 }
 
 func v2Settings(direction string) map[string]any {
-	s := map[string]any{}
+	s := map[string]any{"collector_id": testCollectorID}
 	if direction != "" {
 		s["direction"] = direction
 	}
@@ -153,9 +169,7 @@ func TestV2PluginIdentity(t *testing.T) {
 	p := newV2TestPlugin(t, "http://unused")
 	assert.Equal(t, "trustguard_v2", p.Name())
 	assert.Equal(t, "trustguard", newTestPlugin(t, adapter.NewRegistry(), "http://unused").Name())
-	assert.Nil(t, p.v2Shadow, "trustguard_v2 is the evaluation, it copies nothing")
 	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedStages(), p.SupportedStages())
-	assert.Equal(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedProtocols(), p.SupportedProtocols())
 	assert.True(t, p.MutatesRequestBody())
 	assert.True(t, p.MutatesResponseBody())
 }
@@ -172,13 +186,13 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	assert.Equal(t, []string{v2TokenPath, v2EvaluatePath}, f.paths, "token on /v2/token, evaluation on /v2/evaluate, nothing on /v1")
+	assert.Equal(t, []string{tokenPath, evaluatePath}, f.paths, "token on /v1/token, evaluation on /v1/evaluate")
 	require.Len(t, f.tokens, 1)
 	assert.Equal(t, "test-v2-client", f.tokens[0]["client_id"])
 	assert.Equal(t, "test-v2-secret", f.tokens[0]["client_secret"])
 	assert.Equal(t, "platform", f.tokens[0]["scope"])
 	assert.Equal(t, "gw-test", f.tokens[0]["gateway_id"])
-	assert.NotContains(t, f.tokens[0], "integration_id", "no collector_id configured: TrustGuard resolves it from the gateway")
+	assert.Equal(t, testCollectorID, f.tokens[0]["integration_id"])
 	assert.NotContains(t, f.tokens[0], "collector_id")
 
 	require.Zero(t, f.invalid, "the engine decodes strictly")
@@ -412,7 +426,7 @@ func TestV2PluginRetriesOnceOn401(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.EqualValues(t, 2, atomic.LoadInt32(&f.evaluateCalls))
-	assert.Len(t, f.tokenRequests(), 2, "the 401 refreshes the token from /v2/token")
+	assert.Len(t, f.tokenRequests(), 2, "the 401 refreshes the token from /v1/token")
 	seen := f.seen()
 	require.Len(t, seen, 1)
 	f.mu.Lock()
@@ -456,7 +470,7 @@ func TestV2PluginStreamedBlocks(t *testing.T) {
 	stream, ok := seen[0].Attributes["stream"].(map[string]any)
 	require.True(t, ok, "the stream envelope travels in attributes.stream")
 	assert.Equal(t, float64(1), stream["seq"])
-	assert.Equal(t, []string{v2TokenPath, v2EvaluatePath}, f.pathsSnapshot())
+	assert.Equal(t, []string{tokenPath, evaluatePath}, f.pathsSnapshot())
 }
 
 func (f *fakeV2Engine) pathsSnapshot() []string {
@@ -527,10 +541,11 @@ func TestV2PluginConfig(t *testing.T) {
 	t.Parallel()
 	p := newV2TestPlugin(t, "http://unused")
 
-	t.Run("collector_id is optional", func(t *testing.T) {
-		require.NoError(t, p.ValidateConfig(map[string]any{}))
-		require.NoError(t, p.ValidateConfig(map[string]any{"direction": legRequest, "failure_mode": failureModeClosed}))
-		require.NoError(t, p.ValidateConfig(settings("")))
+	t.Run("collector_id (the integration) is required", func(t *testing.T) {
+		err := p.ValidateConfig(map[string]any{})
+		require.Error(t, err)
+		assert.True(t, strings.HasPrefix(err.Error(), "trustguard_v2:"), err.Error())
+		require.NoError(t, p.ValidateConfig(map[string]any{"collector_id": testCollectorID, "direction": legRequest, "failure_mode": failureModeClosed}))
 	})
 	t.Run("collector_id is required by v1", func(t *testing.T) {
 		v1 := newTestPlugin(t, adapter.NewRegistry(), "http://unused")
@@ -576,7 +591,7 @@ func TestV2PluginWithoutCredentialsOrBaseURLFailsOpenWithoutACall(t *testing.T) 
 func TestV2PluginTimeoutFailsOpen(t *testing.T) {
 	t.Parallel()
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == v2TokenPath {
+		if r.URL.Path == tokenPath {
 			w.Header().Set("Content-Type", contentTypeJSON)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "t", TokenType: "Bearer", ExpiresIn: 3600})
 			return

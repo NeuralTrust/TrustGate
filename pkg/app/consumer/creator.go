@@ -117,7 +117,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
-	if err := c.refusePersonalCreate(ctx, cons); err != nil {
+	if err := c.ensurePersonalGateway(ctx, cons); err != nil {
 		return nil, err
 	}
 	if err := validateSmartRoutingWrite(cons); err != nil {
@@ -137,18 +137,12 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	return cons, nil
 }
 
-func (c *creator) refusePersonalCreate(ctx context.Context, cons *domain.Consumer) error {
+func (c *creator) ensurePersonalGateway(ctx context.Context, cons *domain.Consumer) error {
 	if !cons.IsPersonal() {
 		return nil
 	}
-	gw, err := c.gateways.FindByID(ctx, cons.GatewayID)
-	if err != nil {
-		return err
-	}
-	if !gw.AllowsPersonal() {
-		return domain.ErrHybridPersonal
-	}
-	return nil
+	_, err := c.gateways.FindByID(ctx, cons.GatewayID)
+	return err
 }
 
 func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) error {

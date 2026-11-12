@@ -62,8 +62,28 @@ func TestCodecPreservesRegistrySecrets(t *testing.T) {
 		CreatedAt: time.Unix(0, 0).UTC(),
 	}
 
+	a2a := registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: gwID,
+		Name:      "travel",
+		Type:      registrydomain.TypeA2A,
+		Enabled:   true,
+		A2ATarget: &registrydomain.A2ATarget{
+			Provider:        registrydomain.A2AProviderGeneric,
+			CardURL:         "https://travel.example.com",
+			ResolvedCardURL: "https://travel.example.com/.well-known/agent-card.json",
+			ProtocolVersion: registrydomain.A2AVersion10,
+			Headers:         map[string]string{"X-Tenant": "a2a-header-secret"},
+			Auth:            &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Key", Value: "a2a-secret"},
+			Card:            []byte(`{"name":"travel"}`),
+			CardDigest:      "sha256:abc",
+			CardPinnedAt:    time.Unix(10, 0).UTC(),
+		},
+		CreatedAt: time.Unix(0, 0).UTC(),
+	}
+
 	raw, err := codec.Encode(readmodel.Build(readmodel.Data{
-		Registries: []registrydomain.Registry{llm, mcp},
+		Registries: []registrydomain.Registry{llm, mcp, a2a},
 	}))
 	require.NoError(t, err)
 
@@ -82,6 +102,10 @@ func TestCodecPreservesRegistrySecrets(t *testing.T) {
 	require.NotNil(t, gotMCP.MCPTarget)
 	require.NotNil(t, gotMCP.MCPTarget.Auth)
 	assert.Equal(t, "Bearer mcp-secret", gotMCP.MCPTarget.Auth.Value)
+
+	gotA2A, ok := snap.RegistryByID(a2a.ID)
+	require.True(t, ok)
+	assert.Equal(t, a2a.A2ATarget, gotA2A.A2ATarget)
 }
 
 func TestCodecPreservesAuthKeyHash(t *testing.T) {
