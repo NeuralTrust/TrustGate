@@ -96,6 +96,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	var body []byte
 	if in.Request != nil {
 		body = in.Request.Body
+		if in.Request.A2A {
+			body = in.Request.A2ABody
+		}
 	}
 
 	maxBytes := cfg.maxSizeBytes()

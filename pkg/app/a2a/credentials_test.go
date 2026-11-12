@@ -198,3 +198,40 @@ func TestClientCredentialsTokenIsCachedUntilTheRegistryChanges(t *testing.T) {
 	require.Nil(t, rpcErr)
 	assert.Equal(t, "Bearer cc-2", header.Get("Authorization"))
 }
+
+func TestClientCredentialsGrantOutlivesTheCallerThatStartedIt(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	provider := oauthmocks.NewProviderClient(t)
+	provider.EXPECT().ClientCredentials(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *registrydomain.MCPAuth) (*appoauth.ProviderToken, error) {
+			<-release
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return &appoauth.ProviderToken{AccessToken: "cc-1", ExpiresAt: time.Now().Add(time.Hour)}, nil
+		}).Once()
+	creds := a2a.NewCredentials(nil, provider, nil, false)
+	reg := a2aRegistry(t, a2a.Version03, "https://travel.example/a2a")
+	reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s", TokenURL: "https://idp.example/token"}
+	rc := a2aConsumer(reg)
+
+	leaving, leave := context.WithCancel(context.Background())
+	first := make(chan *a2a.RPCError, 1)
+	go func() {
+		_, _, rpcErr := creds.For(leaving, rc, reg, nil)
+		first <- rpcErr
+	}()
+	time.Sleep(50 * time.Millisecond)
+	second := make(chan string, 1)
+	go func() {
+		header, _, _ := creds.For(context.Background(), rc, reg, nil)
+		second <- header.Get("Authorization")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	leave()
+	close(release)
+
+	assert.Nil(t, <-first)
+	assert.Equal(t, "Bearer cc-1", <-second)
+}

@@ -66,7 +66,7 @@ type updater struct {
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
 	cards       agentCards
-	shared      GatewayLookup
+	shared      sharedPlane
 }
 
 func NewUpdater(
@@ -89,7 +89,7 @@ func NewUpdater(
 		openapi:     o.openapi,
 		auths:       o.auths,
 		cards:       o.cards,
-		shared:      o.sharedGateways,
+		shared:      o.shared,
 	}
 }
 
@@ -163,12 +163,16 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 	next.CardURL = cmp.Or(strings.TrimSpace(next.CardURL), prev.CardURL)
 	next.ProtocolVersion = cmp.Or(next.ProtocolVersion, prev.ProtocolVersion)
 	next.URL = cmp.Or(strings.TrimSpace(next.URL), prev.URL)
-	next.CardAuth = cmp.Or(next.CardAuth, prev.CardAuth)
 	next.BedrockAgentCore = cmp.Or(next.BedrockAgentCore, prev.BedrockAgentCore)
 	next.AzureFoundry = cmp.Or(next.AzureFoundry, prev.AzureFoundry)
 	next.VertexAgentEngine = cmp.Or(next.VertexAgentEngine, prev.VertexAgentEngine)
-	next.CloudAuth = cmp.Or(next.CloudAuth, prev.CloudAuth)
 	next.Auth = cmp.Or(next.Auth, prev.Auth)
+	if next.CardAuth == "" && next.CardAuthApplies(prev.CardAuth) {
+		next.CardAuth = prev.CardAuth
+	}
+	if next.CloudAuth == nil && next.NeedsCloudAuth() {
+		next.CloudAuth = prev.CloudAuth
+	}
 	if next.Headers == nil {
 		next.Headers = prev.Headers
 	}

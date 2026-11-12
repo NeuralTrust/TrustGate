@@ -48,11 +48,6 @@ const (
 	A2ACardAuthCloud             A2ACardAuth = "cloud"
 )
 
-var a2aMethods = map[A2AProtocolVersion][]string{
-	A2AVersion03: {"message/send", "message/stream", "tasks/get", "tasks/cancel", "tasks/resubscribe"},
-	A2AVersion10: {"SendMessage", "SendStreamingMessage", "GetTask", "CancelTask", "SubscribeToTask"},
-}
-
 var a2aReservedHeaders = []string{"Authorization", "Cookie", "Host", "Content-Length", "A2A-Version"}
 
 // A2ATarget is the agent an A2A registry points at and the card pinned for it.
@@ -244,7 +239,7 @@ func (t *A2ATarget) Validate() error {
 		return err
 	}
 	for _, m := range t.AllowedMethods {
-		if t.ProtocolVersion != "" && !slices.Contains(a2aMethods[t.ProtocolVersion], m) {
+		if kind, ok := A2AMethodKindOf(t.ProtocolVersion, m); t.ProtocolVersion != "" && (!ok || !kind.Forwarded()) {
 			return fmt.Errorf("%w: allowed_methods: %q is not a forwarded method of A2A %s", ErrInvalidRegistry, m, t.ProtocolVersion)
 		}
 	}
@@ -313,6 +308,24 @@ func (t *A2ATarget) validateAuth() error {
 	default:
 		return a.Validate()
 	}
+}
+
+// NeedsCloudAuth reports whether the target's auth or its card read uses a
+// cloud credential.
+func (t *A2ATarget) NeedsCloudAuth() bool {
+	return (t.Auth != nil && t.Auth.Mode == A2AAuthModeCloud) || t.CardAuth == A2ACardAuthCloud
+}
+
+// CardAuthApplies reports whether card_auth c is valid with the target's
+// auth mode, so an update that changes the mode keeps it only then.
+func (t *A2ATarget) CardAuthApplies(c A2ACardAuth) bool {
+	switch c {
+	case A2ACardAuthSame:
+		return t.Auth != nil && (t.Auth.Mode == MCPAuthModeStatic || t.Auth.Mode == MCPAuthModeClientCredentials)
+	case A2ACardAuthClientCredentials, A2ACardAuthCloud:
+		return t.Auth.UsesIdPClient()
+	}
+	return false
 }
 
 func (t *A2ATarget) validateCardAuth() error {

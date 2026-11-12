@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 const (
@@ -94,12 +95,17 @@ func render10(c, caps map[string]any, endpoint string) {
 	}
 }
 
+// RenderPinnedCard renders the pinned card of t for the gateway's endpoint,
+// as RenderCard does, naming only the interfaces the gateway serves for the
+// provider that hosts the agent.
+func RenderPinnedCard(t *registrydomain.A2ATarget, endpoint string) ([]byte, error) {
+	return RenderCard(t.Card, t.ProtocolVersion, endpoint, providerOf(t).capabilities().jsonrpcOnlyCard)
+}
+
 // Streaming reports whether a card declares capabilities.streaming true.
 func Streaming(card []byte) bool {
-	var c struct {
-		Capabilities struct {
-			Streaming bool `json:"streaming"`
-		} `json:"capabilities"`
-	}
-	return json.Unmarshal(card, &c) == nil && c.Capabilities.Streaming
+	c, _ := decodeObject(card)
+	caps, _ := decodeObject(c["capabilities"])
+	var streaming bool
+	return json.Unmarshal(caps["streaming"], &streaming) == nil && streaming
 }

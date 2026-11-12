@@ -29,7 +29,7 @@ import (
 
 type countingSigner struct{ calls int }
 
-func (s *countingSigner) Sign(context.Context, *registrydomain.A2ATarget, string, *http.Request) error {
+func (s *countingSigner) Sign(context.Context, *registrydomain.A2ATarget, a2a.CacheKey, *http.Request) error {
 	s.calls++
 	return nil
 }

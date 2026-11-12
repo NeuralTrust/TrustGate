@@ -48,8 +48,9 @@ const (
 )
 
 const (
-	defaultTokenTTL  = time.Hour
-	tokenRefreshSkew = 30 * time.Second
+	defaultTokenTTL   = time.Hour
+	tokenRefreshSkew  = 30 * time.Second
+	tokenGrantTimeout = 30 * time.Second
 )
 
 // IdentityTrace is how a call identified itself to the agent: the identity
@@ -59,13 +60,27 @@ type IdentityTrace struct {
 	SubjectKind string
 }
 
+// CacheKey names where a signer keeps a registry's credential: one entry per
+// registry, replaced when the registry's version changes. The zero key keeps
+// nothing.
+type CacheKey struct {
+	Registry string
+	Version  string
+}
+
+// IsZero reports whether k keeps nothing.
+func (k CacheKey) IsZero() bool {
+	return k.Registry == ""
+}
+
 // CloudSigner signs requests to a hosted agent with its cloud credential.
+//
+//go:generate mockery --name=CloudSigner --dir=. --output=./mocks --filename=a2a_cloud_signer_mock.go --case=underscore --with-expecter
 type CloudSigner interface {
 	// Sign sets the credential of t.CloudAuth on req, and refuses a request
-	// that is not https to the host of t's endpoint. A non-empty key keeps
-	// the credential under it for the next requests; an empty one keeps
-	// nothing.
-	Sign(ctx context.Context, t *registrydomain.A2ATarget, key string, req *http.Request) error
+	// that is not https to the host of t's endpoint. A non-zero key keeps
+	// the credential under it for the next requests.
+	Sign(ctx context.Context, t *registrydomain.A2ATarget, key CacheKey, req *http.Request) error
 }
 
 // Credentials builds the credential an A2A registry's auth mode sends.
@@ -180,7 +195,7 @@ func (c *Credentials) Sign(ctx context.Context, reg *registrydomain.Registry, re
 			}
 		}
 	}
-	return c.cloud.Sign(ctx, reg.A2ATarget, reg.ID.String()+"|"+strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10), req)
+	return c.cloud.Sign(ctx, reg.A2ATarget, CacheKey{Registry: reg.ID.String(), Version: strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10)}, req)
 }
 
 // cloudMode names the credential a cloud_auth signs with, as the span
@@ -209,6 +224,10 @@ func (c *Credentials) clientCredentials(ctx context.Context, reg *registrydomain
 		if token, ok := c.cached(key, reg.UpdatedAt); ok {
 			return token, nil
 		}
+		// The grant is shared by every call waiting on it, so the first
+		// caller leaving must not fail the others.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenGrantTimeout)
+		defer cancel()
 		tok, err := c.provider.ClientCredentials(ctx, reg.A2ATarget.Auth)
 		if err != nil {
 			return nil, err

@@ -58,10 +58,10 @@ func (u hostedUpstream) Do(req *http.Request) (*http.Response, error) {
 // signed under and sets a bearer token.
 type cloudSigner struct {
 	mu   sync.Mutex
-	keys []string
+	keys []a2a.CacheKey
 }
 
-func (s *cloudSigner) Sign(_ context.Context, _ *registrydomain.A2ATarget, key string, req *http.Request) error {
+func (s *cloudSigner) Sign(_ context.Context, _ *registrydomain.A2ATarget, key a2a.CacheKey, req *http.Request) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.keys = append(s.keys, key)
@@ -126,7 +126,7 @@ func TestFoundryNamesThePinnedVersionAndSignsWithEntra(t *testing.T) {
 		assert.Equal(t, string(v), req.Header.Get("A2A-Version"))
 		assert.Equal(t, "Bearer cloud-token", req.Header.Get("Authorization"))
 		assert.Equal(t, []string{"POST https://acme.services.ai.azure.com/api/projects/travel/agents/planner/endpoint/protocols/a2a"}, h.sent())
-		assert.Equal(t, []string{h.agent.ID.String() + "|" + strconv.FormatInt(h.agent.UpdatedAt.UnixNano(), 10)}, h.signer.keys)
+		assert.Equal(t, []a2a.CacheKey{{Registry: h.agent.ID.String(), Version: strconv.FormatInt(h.agent.UpdatedAt.UnixNano(), 10)}}, h.signer.keys)
 	}
 }
 
@@ -339,7 +339,7 @@ func TestVertexSendsMessagesOverREST(t *testing.T) {
 	req, body := ag.request(0)
 	assert.Equal(t, "Bearer cloud-token", req.Header.Get("Authorization"))
 	assert.JSONEq(t, `{"message":{"messageId":"m-1","role":"ROLE_USER","metadata":{"source":"bot"},"content":[{"text":"USD to EUR?"},`+
-		`{"file":{"fileWithBytes":"YUdrPQ==","mimeType":"text/plain","name":"n.txt"}},{"data":{"data":{"k":1}}}]},`+
+		`{"file":{"fileWithBytes":"aGk=","mimeType":"text/plain","name":"n.txt"}},{"data":{"data":{"k":1}}}]},`+
 		`"configuration":{"blocking":true,"historyLength":2}}`, string(body))
 	assert.JSONEq(t, rpcVertexTask, string(result))
 	_, owned := h.store.owner(h.harness, a2a.ScopeTask, "t-1")
@@ -353,6 +353,15 @@ func TestVertexAnswersWithAMessage(t *testing.T) {
 	result, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"messageId":"m-1","role":"user","parts":[{"kind":"text","text":"hi"}]}}`), nil)
 	require.Nil(t, rpcErr)
 	assert.JSONEq(t, `{"kind":"message","messageId":"m-2","role":"agent","parts":[{"kind":"text","text":"hello"}]}`, string(result))
+}
+
+func TestVertexKeepsFileBytesInBase64(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, answer([]byte(`{"message":{"messageId":"m-2","role":"ROLE_AGENT","content":[{"file":{"fileWithBytes":"aGk=","mimeType":"text/plain"}}]}}`)))
+	h := newVertexHarness(t, ag)
+	result, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"messageId":"m-1","role":"user","parts":[{"kind":"text","text":"hi"}]}}`), nil)
+	require.Nil(t, rpcErr)
+	assert.JSONEq(t, `{"kind":"message","messageId":"m-2","role":"agent","parts":[{"kind":"file","file":{"bytes":"aGk=","mimeType":"text/plain"}}]}`, string(result))
 }
 
 func TestVertexGetsAndCancelsTasks(t *testing.T) {

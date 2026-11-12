@@ -86,11 +86,16 @@ func (x *Exchange) open(ctx context.Context) (*Stream, *RPCError) {
 	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
 		defer cancel()
 		defer func() { _ = res.Body.Close() }()
+		reading := time.AfterFunc(upstreamTimeout, cancel)
 		body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
+		if !reading.Stop() {
+			return nil, GatewayFailure(ReasonUpstreamTimeout)
+		}
 		if err != nil {
 			return nil, upstreamFailure(err)
 		}
-		if _, rpcErr := x.provider.decode(x, res, body); rpcErr != nil {
+		if _, rpcErr, fromAgent := x.provider.decode(x, res, body); rpcErr != nil {
+			x.agentError = fromAgent
 			return nil, rpcErr
 		}
 		return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
@@ -126,6 +131,7 @@ func (s *Stream) Run(ctx context.Context, id json.RawMessage, emit func([]byte) 
 	defer end.Stop()
 	fail := func(rpcErr *RPCError) {
 		ended = rpcErr
+		// The caller may have left; the stream ends either way.
 		_ = emit(Response(id, nil, rpcErr))
 	}
 	for {
@@ -160,8 +166,9 @@ func (s *Stream) Run(ctx context.Context, id json.RawMessage, emit func([]byte) 
 // relay checks one event: its content against the policies and the task and
 // context it names against their owners.
 func (s *Stream) relay(ctx context.Context, data []byte) (json.RawMessage, *RPCError) {
-	result, rpcErr := s.x.decode(data, http.StatusOK)
+	result, rpcErr, fromAgent := decodeRPC(data, http.StatusOK)
 	if rpcErr != nil {
+		s.x.agentError = fromAgent
 		return nil, rpcErr
 	}
 	content, rpcErr := s.x.resultContent(result)
@@ -211,10 +218,15 @@ func (s *Stream) read(events chan<- sseEvent, done <-chan struct{}) {
 			continue
 		}
 		if value, ok := bytes.CutPrefix(line, []byte("data:")); ok {
+			value = bytes.TrimPrefix(value, []byte(" "))
+			if len(data)+1+len(value) > maxEventBytes {
+				send(sseEvent{err: bufio.ErrTooLong})
+				return
+			}
 			if data != nil {
 				data = append(data, '\n')
 			}
-			data = append(data, bytes.TrimPrefix(value, []byte(" "))...)
+			data = append(data, value...)
 		}
 	}
 	if err := scanner.Err(); err != nil {

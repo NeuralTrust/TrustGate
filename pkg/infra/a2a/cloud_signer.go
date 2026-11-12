@@ -36,12 +36,16 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
 	agentCoreService = "bedrock-agentcore"
 	entraScope       = "https://ai.azure.com/.default"
 	entraRefreshSkew = 5 * time.Minute
+	// credentialTimeout bounds a credential fetch that several calls share,
+	// which runs apart from the context of the call that started it.
+	credentialTimeout = 30 * time.Second
 )
 
 var _ appa2a.CloudSigner = (*CloudSigner)(nil)
@@ -54,8 +58,9 @@ type CloudSigner struct {
 	now             func() time.Time
 	azureCredential func(*domain.AzureAuth) (azcore.TokenCredential, error)
 
-	aws   sync.Map
-	entra sync.Map
+	aws    versioned[aws.CredentialsProvider]
+	entra  versioned[azcore.AccessToken]
+	flight singleflight.Group
 
 	gcpServiceAccount *gcpauth.ServiceAccountCache
 	gcpImpersonation  *gcpauth.ImpersonationCache
@@ -75,7 +80,7 @@ func NewCloudSigner() *CloudSigner {
 }
 
 // Sign sets the credential of t.CloudAuth on req.
-func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key string, req *http.Request) error {
+func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key appa2a.CacheKey, req *http.Request) error {
 	host := ""
 	if u, err := url.Parse(t.Endpoint()); err == nil {
 		host = u.Host
@@ -109,7 +114,7 @@ func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key string,
 
 // signV4 signs req with SigV4 for the AgentCore service of region, over the
 // exact body it carries.
-func (s *CloudSigner) signV4(ctx context.Context, a *domain.A2AAWSAuth, region, key string, req *http.Request) error {
+func (s *CloudSigner) signV4(ctx context.Context, a *domain.A2AAWSAuth, region string, key appa2a.CacheKey, req *http.Request) error {
 	creds, err := s.awsCredentials(ctx, a, region, key)
 	if err != nil {
 		return err
@@ -130,45 +135,127 @@ func (s *CloudSigner) signV4(ctx context.Context, a *domain.A2AAWSAuth, region, 
 	return v4.NewSigner().SignHTTP(ctx, creds, req, hash, agentCoreService, region, s.now())
 }
 
-func (s *CloudSigner) awsCredentials(ctx context.Context, a *domain.A2AAWSAuth, region, key string) (aws.Credentials, error) {
-	if v, ok := s.aws.Load(key); ok && key != "" {
-		provider, _ := v.(aws.CredentialsProvider)
+func (s *CloudSigner) awsCredentials(ctx context.Context, a *domain.A2AAWSAuth, region string, key appa2a.CacheKey) (aws.Credentials, error) {
+	if provider, ok := s.aws.load(key); ok {
 		return provider.Retrieve(ctx)
 	}
-	role := ""
-	if a.UseRole {
-		role = a.Role
+	load := func(ctx context.Context) (aws.CredentialsProvider, error) {
+		role := ""
+		if a.UseRole {
+			role = a.Role
+		}
+		cfg, err := bedrock.LoadAWSConfig(ctx, a.AccessKeyID, a.SecretAccessKey, a.SessionToken, region, role, a.ExternalID)
+		if err != nil {
+			return nil, err
+		}
+		return cfg.Credentials, nil
 	}
-	cfg, err := bedrock.LoadAWSConfig(ctx, a.AccessKeyID, a.SecretAccessKey, a.SessionToken, region, role, a.ExternalID)
+	if key.IsZero() {
+		provider, err := load(ctx)
+		if err != nil {
+			return aws.Credentials{}, err
+		}
+		return provider.Retrieve(ctx)
+	}
+	provider, err := shared(ctx, &s.flight, "aws|"+key.Registry+"|"+key.Version, func(ctx context.Context) (aws.CredentialsProvider, error) {
+		if provider, ok := s.aws.load(key); ok {
+			return provider, nil
+		}
+		provider, err := load(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.aws.store(key, provider)
+		return provider, nil
+	})
 	if err != nil {
 		return aws.Credentials{}, err
 	}
-	if key != "" {
-		s.aws.Store(key, cfg.Credentials)
-	}
-	return cfg.Credentials.Retrieve(ctx)
+	return provider.Retrieve(ctx)
 }
 
 // entraToken returns a Microsoft Entra token for Foundry, kept under key
 // until five minutes before it expires.
-func (s *CloudSigner) entraToken(ctx context.Context, a *domain.AzureAuth, key string) (string, error) {
-	if v, ok := s.entra.Load(key); ok && key != "" {
-		if tok, _ := v.(azcore.AccessToken); s.now().Add(entraRefreshSkew).Before(tok.ExpiresOn) {
-			return tok.Token, nil
+func (s *CloudSigner) entraToken(ctx context.Context, a *domain.AzureAuth, key appa2a.CacheKey) (string, error) {
+	fresh := func(tok azcore.AccessToken) bool { return s.now().Add(entraRefreshSkew).Before(tok.ExpiresOn) }
+	if tok, ok := s.entra.load(key); ok && fresh(tok) {
+		return tok.Token, nil
+	}
+	get := func(ctx context.Context) (azcore.AccessToken, error) {
+		cred, err := s.azureCredential(a)
+		if err != nil {
+			return azcore.AccessToken{}, err
 		}
+		return cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{entraScope}})
 	}
-	cred, err := s.azureCredential(a)
+	if key.IsZero() {
+		tok, err := get(ctx)
+		return tok.Token, err
+	}
+	tok, err := shared(ctx, &s.flight, "entra|"+key.Registry+"|"+key.Version, func(ctx context.Context) (azcore.AccessToken, error) {
+		if tok, ok := s.entra.load(key); ok && fresh(tok) {
+			return tok, nil
+		}
+		tok, err := get(ctx)
+		if err != nil {
+			return azcore.AccessToken{}, err
+		}
+		s.entra.store(key, tok)
+		return tok, nil
+	})
+	return tok.Token, err
+}
+
+// shared runs fetch once for every call waiting on name, apart from the
+// context of the call that started it so that one caller leaving does not
+// fail the others.
+func shared[T any](ctx context.Context, flight *singleflight.Group, name string, fetch func(context.Context) (T, error)) (T, error) {
+	v, err, _ := flight.Do(name, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialTimeout)
+		defer cancel()
+		return fetch(ctx)
+	})
 	if err != nil {
-		return "", err
+		var zero T
+		return zero, err
 	}
-	tok, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{entraScope}})
-	if err != nil {
-		return "", err
+	out, _ := v.(T)
+	return out, nil
+}
+
+// versioned keeps one value per registry, tagged with the registry version it
+// was made for. A value of another version is not returned and is replaced
+// by the next store, so a registry that changes many times keeps one entry.
+type versioned[T any] struct {
+	m sync.Map
+}
+
+type versionedEntry[T any] struct {
+	version string
+	value   T
+}
+
+func (v *versioned[T]) load(key appa2a.CacheKey) (T, bool) {
+	var zero T
+	if key.IsZero() {
+		return zero, false
 	}
-	if key != "" {
-		s.entra.Store(key, tok)
+	raw, ok := v.m.Load(key.Registry)
+	if !ok {
+		return zero, false
 	}
-	return tok.Token, nil
+	e, _ := raw.(versionedEntry[T])
+	if e.version != key.Version {
+		return zero, false
+	}
+	return e.value, true
+}
+
+func (v *versioned[T]) store(key appa2a.CacheKey, value T) {
+	if key.IsZero() {
+		return
+	}
+	v.m.Store(key.Registry, versionedEntry[T]{version: key.Version, value: value})
 }
 
 func azureCredential(a *domain.AzureAuth) (azcore.TokenCredential, error) {
@@ -182,11 +269,11 @@ func azureCredential(a *domain.AzureAuth) (azcore.TokenCredential, error) {
 // service-account key, an impersonated service account, or the pod's
 // Application Default Credentials. With an empty key the service-account key
 // is not kept.
-func (s *CloudSigner) googleToken(ctx context.Context, g *domain.A2AGCPAuth, key string) (string, error) {
+func (s *CloudSigner) googleToken(ctx context.Context, g *domain.A2AGCPAuth, key appa2a.CacheKey) (string, error) {
 	switch {
 	case g.ServiceAccountJSON != "":
 		cache := s.gcpServiceAccount
-		if key == "" {
+		if key.IsZero() {
 			cache = gcpauth.NewServiceAccountCache()
 		}
 		return cache.Token(ctx, g.ServiceAccountJSON, gcpauth.CloudPlatformScope)

@@ -257,7 +257,7 @@ func (c *A2ACloudAuth) validate() error {
 		}
 		if g.ServiceAccountJSON != "" {
 			if err := gcpkey.Validate(g.ServiceAccountJSON); err != nil {
-				return fmt.Errorf("%w: cloud_auth.gcp.service_account_json: %s", ErrInvalidRegistry, err.Error())
+				return fmt.Errorf("%w: cloud_auth.gcp.service_account_json: %w", ErrInvalidRegistry, err)
 			}
 		}
 		if g.ImpersonateServiceAccount != "" && !strings.Contains(g.ImpersonateServiceAccount, "@") {

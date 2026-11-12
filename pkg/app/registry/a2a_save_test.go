@@ -211,3 +211,41 @@ func TestUpdaterA2ARefusesAProviderChange(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 	assert.ErrorContains(t, err, "cannot change provider")
 }
+
+func TestUpdaterA2ADropsCloudAuthTheNewModeDoesNotUse(t *testing.T) {
+	t.Parallel()
+	gw, _ := gatewayOn(t, gatewaydomain.DataPlaneDedicated)
+	existing := storedCloudAgent(gw, cloudTarget(domain.A2AProviderBedrockAgentCore, &domain.A2ACloudAuth{AWS: &domain.A2AAWSAuth{
+		AWSAuth: domain.AWSAuth{AccessKeyID: "AKIA", SecretAccessKey: "stored-secret"},
+	}}))
+	repo, publisher := expectSavedUpdate(t, existing)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil,
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), appmocks.NewCardCredentials(t)))
+
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		A2ATarget: &domain.A2ATarget{Auth: &domain.MCPAuth{
+			Mode: domain.MCPAuthModeClientCredentials, ClientID: "app", ClientSecret: "app-secret", TokenURL: "https://idp.example.com/token",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, got.A2ATarget.CloudAuth)
+	assert.Equal(t, domain.MCPAuthModeClientCredentials, got.A2ATarget.Auth.Mode)
+}
+
+func TestUpdaterA2AKeepsCloudAuthWhileTheModeUsesIt(t *testing.T) {
+	t.Parallel()
+	gw, _ := gatewayOn(t, gatewaydomain.DataPlaneDedicated)
+	existing := storedCloudAgent(gw, explicitCloudTarget())
+	repo, publisher := expectSavedUpdate(t, existing)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil,
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), appmocks.NewCardCredentials(t)))
+
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		A2ATarget: &domain.A2ATarget{Headers: map[string]string{"X-Region": "eu"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.A2ATarget.CloudAuth)
+	assert.Equal(t, "s3cret", got.A2ATarget.CloudAuth.Azure.ClientSecret)
+}

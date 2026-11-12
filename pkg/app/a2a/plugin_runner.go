@@ -40,12 +40,6 @@ func NewPluginRunner(executor appplugins.Executor, logger *slog.Logger) *PluginR
 	return &PluginRunner{executor: executor, logger: logger}
 }
 
-type normalisedBody struct {
-	Method string `json:"method,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Parts  []Part `json:"parts"`
-}
-
 // PreRequest runs pre_request over the parts of the call.
 func (r *PluginRunner) PreRequest(ctx context.Context, x *Exchange) *RPCError {
 	return r.run(ctx, x, policy.StagePreRequest, nil)
@@ -58,7 +52,7 @@ func (r *PluginRunner) PreResponse(ctx context.Context, x *Exchange, parts []Par
 
 func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage, parts []Part) *RPCError {
 	rc := x.call.Consumer
-	body, err := json.Marshal(normalisedBody{Method: x.call.Request.Method, Agent: x.call.Agent.Name, Parts: nonNil(x.content.Parts)})
+	body, err := json.Marshal(appplugins.A2ABody{Method: x.call.Request.Method, Agent: x.call.Agent.Name, Parts: nonNil(x.content.Parts)})
 	if err != nil {
 		r.logFailOpen(ctx, x, stage, err)
 		return nil
@@ -83,10 +77,11 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 			A2A:          true,
 			A2AMethod:    x.call.Request.Method,
 			A2ATaskID:    x.content.TaskID,
+			A2ABody:      x.call.Body,
 		},
 	}
 	if stage == policy.StagePreResponse {
-		out, err := json.Marshal(normalisedBody{Parts: nonNil(parts)})
+		out, err := json.Marshal(appplugins.A2ABody{Parts: nonNil(parts)})
 		if err != nil {
 			r.logFailOpen(ctx, x, stage, err)
 			return nil

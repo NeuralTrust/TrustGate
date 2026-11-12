@@ -56,4 +56,6 @@ func TestStreaming(t *testing.T) {
 	assert.False(t, a2a.Streaming([]byte(`{"capabilities":{"streaming":false}}`)))
 	assert.False(t, a2a.Streaming([]byte(`{"capabilities":{}}`)))
 	assert.False(t, a2a.Streaming([]byte(`{"name":"x"}`)))
+	assert.False(t, a2a.Streaming([]byte(`{"Capabilities":{"streaming":true}}`)))
+	assert.False(t, a2a.Streaming([]byte(`{"capabilities":{"Streaming":true}}`)))
 }
