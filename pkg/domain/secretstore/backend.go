@@ -26,9 +26,10 @@ const redacted = "[redacted secret]"
 // Secret is a payload read from a store. Its value leaves only through
 // Select: printing, logging or marshalling a Secret shows a redacted marker.
 type Secret struct {
-	value   string
-	fields  map[string]string
-	version string
+	value     string
+	fields    map[string]string
+	nonString map[string]bool
+	version   string
 }
 
 // NewStringSecret returns a payload that is one string, such as an AWS
@@ -47,6 +48,25 @@ func NewFieldsSecret(fields map[string]string, version string) Secret {
 	return Secret{fields: copied, version: version}
 }
 
+// NewKVSecret returns a key/value payload decoded from JSON, such as a Vault
+// KV secret. Only string values can be selected; selecting any other value
+// is refused as an invalid payload.
+func NewKVSecret(data map[string]any, version string) Secret {
+	fields := make(map[string]string, len(data))
+	var nonString map[string]bool
+	for k, v := range data {
+		if s, ok := v.(string); ok {
+			fields[k] = s
+			continue
+		}
+		if nonString == nil {
+			nonString = make(map[string]bool)
+		}
+		nonString[k] = true
+	}
+	return Secret{fields: fields, nonString: nonString, version: version}
+}
+
 // Version is the version the store reported, empty when it reports none.
 func (s Secret) Version() string { return s.version }
 
@@ -57,12 +77,16 @@ func (s Secret) Version() string { return s.version }
 func (s Secret) Select(field string) (string, error) {
 	if s.fields != nil {
 		if field == "" {
-			if len(s.fields) != 1 {
-				return "", fmt.Errorf("%w: the secret has %d keys, so the reference must name one", ErrInvalidPayload, len(s.fields))
+			if n := len(s.fields) + len(s.nonString); n != 1 {
+				return "", fmt.Errorf("%w: the secret has %d keys, so the reference must name one", ErrInvalidPayload, n)
 			}
 			for _, v := range s.fields {
 				return v, nil
 			}
+			return "", fmt.Errorf("%w: the value is not a string", ErrInvalidPayload)
+		}
+		if s.nonString[field] {
+			return "", fmt.Errorf("%w: the field is not a string", ErrInvalidPayload)
 		}
 		v, ok := s.fields[field]
 		if !ok {
@@ -90,8 +114,13 @@ func (s Secret) Select(field string) (string, error) {
 
 // Equal reports whether s and o hold the same payload, ignoring the version.
 func (s Secret) Equal(o Secret) bool {
-	if (s.fields == nil) != (o.fields == nil) || s.value != o.value || len(s.fields) != len(o.fields) {
+	if (s.fields == nil) != (o.fields == nil) || s.value != o.value || len(s.fields) != len(o.fields) || len(s.nonString) != len(o.nonString) {
 		return false
+	}
+	for k := range s.nonString {
+		if !o.nonString[k] {
+			return false
+		}
 	}
 	for k, v := range s.fields {
 		if ov, ok := o.fields[k]; !ok || ov != v {
