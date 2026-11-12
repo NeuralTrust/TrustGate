@@ -122,7 +122,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *AuthMiddleware) serveStore(c *fiber.Ctx, gw *gatewaydomain.Gateway, route resolver.ProxyRoute) error {
-	if m.storeKeys == nil || gw.ServedByHybridDataPlane() {
+	if m.storeKeys == nil {
 		return notFound(c)
 	}
 	data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)

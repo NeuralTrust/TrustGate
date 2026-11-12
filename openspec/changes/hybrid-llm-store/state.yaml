@@ -1,0 +1,9 @@
+change: hybrid-llm-store
+linear: ENG-3249
+phases:
+  explore: done  # facts in design.md
+  propose: done
+  spec: pending
+  design: done  # D1 = A (version-derived), Edu 2026-11-12
+  tasks: done
+  apply: done  # uncommitted; QA 3.x pending

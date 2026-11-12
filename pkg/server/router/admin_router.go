@@ -139,6 +139,8 @@ type AdminRouterDeps struct {
 	StoreEveryone *storehttp.EveryoneHandler
 	// StorePrincipal serves the Portal's admin preview of one user's Store state.
 	StorePrincipal *storehttp.PrincipalHandler
+	// StoreLLMAvailability says whether the gateway's data planes serve the LLM Store.
+	StoreLLMAvailability *storehttp.LLMAvailabilityHandler
 	// StoreMaterialize puts a self-service catalog server on the shelf on an
 	// admin's request (POST registries/from-catalog). Present only on the full
 	// plane; nil-guarded when absent.
@@ -243,7 +245,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil || r.deps.StoreLLMAvailability != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -269,6 +271,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
 			store.Post("/principal/configure-link", r.deps.StorePrincipal.ConfigureLink)
 			store.Delete("/principal/connections/:registry_id", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.StorePrincipal.Disconnect)
+		}
+		if r.deps.StoreLLMAvailability != nil {
+			store.Get("/llm-availability", r.deps.StoreLLMAvailability.Get)
 		}
 		if r.deps.StoreLLMKey != nil {
 			interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()
