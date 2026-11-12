@@ -46,10 +46,14 @@ type Status struct {
 
 //go:generate mockery --name=Catalog --dir=. --output=./mocks --filename=secretstore_catalog_mock.go --case=underscore --with-expecter
 
-// Catalog holds the stores a plane loaded and their backends.
+// Catalog holds the stores a plane loaded and their backends. Health is not
+// its concern: the plane probes the stores and records fetch outcomes.
 type Catalog interface {
 	// Get returns the store named name (case-insensitive) and its backend.
 	Get(name string) (*Store, Backend, bool)
-	// Statuses returns every loaded store's status, sorted by name.
-	Statuses() []Status
+	// Stores returns every loaded store, sorted by name.
+	Stores() []*Store
+	// LoadError is the error of the last reload of the store file, nil when
+	// it loaded. A failed reload keeps the previous stores.
+	LoadError() error
 }

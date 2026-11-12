@@ -88,6 +88,19 @@ func (s Secret) Select(field string) (string, error) {
 	return v, nil
 }
 
+// Equal reports whether s and o hold the same payload, ignoring the version.
+func (s Secret) Equal(o Secret) bool {
+	if (s.fields == nil) != (o.fields == nil) || s.value != o.value || len(s.fields) != len(o.fields) {
+		return false
+	}
+	for k, v := range s.fields {
+		if ov, ok := o.fields[k]; !ok || ov != v {
+			return false
+		}
+	}
+	return true
+}
+
 // String implements fmt.Stringer without the value.
 func (Secret) String() string { return redacted }
 

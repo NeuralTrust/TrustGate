@@ -264,6 +264,30 @@ func TestSecretSelect(t *testing.T) {
 	}
 }
 
+func TestSecretEqual(t *testing.T) {
+	t.Parallel()
+	a := secretstore.NewFieldsSecret(map[string]string{"k": "v"}, "1")
+	if !a.Equal(secretstore.NewFieldsSecret(map[string]string{"k": "v"}, "2")) {
+		t.Error("the version must not count")
+	}
+	for _, other := range []secretstore.Secret{
+		secretstore.NewFieldsSecret(map[string]string{"k": "w"}, "1"),
+		secretstore.NewFieldsSecret(map[string]string{"k": "v", "x": "y"}, "1"),
+		secretstore.NewFieldsSecret(map[string]string{"j": "v"}, "1"),
+		secretstore.NewStringSecret("v", "1"),
+	} {
+		if a.Equal(other) || other.Equal(a) {
+			t.Errorf("%v equal to a different payload", other)
+		}
+	}
+	if !secretstore.NewStringSecret("v", "").Equal(secretstore.NewStringSecret("v", "x")) {
+		t.Error("same string payload must be equal")
+	}
+	if secretstore.NewStringSecret("", "").Equal(secretstore.NewFieldsSecret(nil, "")) {
+		t.Error("an empty string and an empty key/value payload differ")
+	}
+}
+
 func TestNewFieldsSecretCopies(t *testing.T) {
 	t.Parallel()
 	fields := map[string]string{"k": "before"}
