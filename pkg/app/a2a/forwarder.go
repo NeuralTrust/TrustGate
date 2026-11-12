@@ -217,7 +217,7 @@ func (x *Exchange) post(ctx context.Context, header http.Header, body []byte) (*
 // do sends a JSON-RPC body to the agent as its provider takes it, signed with
 // the registry's cloud credential.
 func (x *Exchange) do(ctx context.Context, header http.Header, body []byte) (*http.Response, error) {
-	req, err := x.provider.request(ctx, x.call.Agent.A2ATarget.Endpoint(), header.Clone(), body)
+	req, err := x.provider.request(ctx, x, x.call.Agent.A2ATarget.Endpoint(), header.Clone(), body)
 	if err != nil {
 		return nil, err
 	}

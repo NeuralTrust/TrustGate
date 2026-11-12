@@ -146,3 +146,23 @@ func TestAgentMetricsMiddleware_RelaysStreamEventsAsTheyAreWritten(t *testing.T)
 		t.Fatal("the stream's telemetry was not processed")
 	}
 }
+
+// A client reads the agent's card before it calls: the read is the gateway's
+// own pinned card, so it is not logged as a call to the agent.
+func TestAgentMetricsMiddleware_DoesNotTraceCardReads(t *testing.T) {
+	worker := appmetricsmocks.NewWorker(t)
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewAgentMetricsMiddleware(worker, nil, cfg)
+
+	app := fiber.New()
+	app.Use(mw.Middleware())
+	app.Get("/bot/agents/research/.well-known/agent-card.json", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/bot/agents/research/.well-known/agent-card.json", nil))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	require.Empty(t, resp.Header.Get(middleware.HeaderTraceID))
+}

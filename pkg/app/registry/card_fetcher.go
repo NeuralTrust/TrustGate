@@ -52,6 +52,11 @@ type agentCards struct {
 // agent's card is resolved from card_url; otherwise it is read from the
 // pinned or derived location.
 func (a agentCards) fetch(ctx context.Context, t *domain.A2ATarget, resolve bool) (*FetchedCard, error) {
+	// An agent reached through its provider's API publishes no card: the
+	// gateway builds it, and reads nothing.
+	if t.Provider.BuildsCard() {
+		return &FetchedCard{Card: t.BuiltCard()}, nil
+	}
 	authorize, err := a.credentials.Authorizer(ctx, t)
 	if err != nil {
 		return nil, err
