@@ -27,3 +27,12 @@ func SetStreamTimers(t *testing.T, idle, maxDuration time.Duration) {
 	streamIdleTimeout, streamMaxDuration = idle, maxDuration
 	t.Cleanup(func() { streamIdleTimeout, streamMaxDuration = oldIdle, oldMax })
 }
+
+// SetUpstreamTimeout shortens the buffered call timeout for the length of a
+// test, which must not run in parallel.
+func SetUpstreamTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := upstreamTimeout
+	upstreamTimeout = d
+	t.Cleanup(func() { upstreamTimeout = old })
+}

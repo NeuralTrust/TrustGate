@@ -29,11 +29,12 @@ import (
 // AgentCardHandler compares an A2A registry's live card with the pinned one
 // and pins a reviewed change.
 type AgentCardHandler struct {
-	cards appregistry.AgentCard
+	refresh appregistry.RefreshAgentCard
+	approve appregistry.ApproveAgentCard
 }
 
-func NewAgentCardHandler(cards appregistry.AgentCard) *AgentCardHandler {
-	return &AgentCardHandler{cards: cards}
+func NewAgentCardHandler(refresh appregistry.RefreshAgentCard, approve appregistry.ApproveAgentCard) *AgentCardHandler {
+	return &AgentCardHandler{refresh: refresh, approve: approve}
 }
 
 // Refresh godoc
@@ -54,7 +55,7 @@ func (h *AgentCardHandler) Refresh(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	refresh, err := h.cards.Refresh(c.UserContext(), gatewayID, id)
+	refresh, err := h.refresh.Refresh(c.UserContext(), gatewayID, id)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
@@ -89,7 +90,7 @@ func (h *AgentCardHandler) Approve(c *fiber.Ctx) error {
 	if err := req.Validate(); err != nil {
 		return httpio.WriteError(c, err)
 	}
-	reg, err := h.cards.Approve(c.UserContext(), gatewayID, id, req.Digest)
+	reg, err := h.approve.Approve(c.UserContext(), gatewayID, id, req.Digest)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}

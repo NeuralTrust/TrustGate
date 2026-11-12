@@ -3,11 +3,14 @@
 package functional_test
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -226,6 +229,12 @@ func TestA2A_PolicyBlocksTheMessage(t *testing.T) {
 	assert.Equal(t, "request_size_limiter", data["plugin"], "body=%v", body)
 	assert.Zero(t, agent.count(), "a blocked call must not reach the agent")
 
+	withMetadata := a2aMessage(version, "short", "")
+	withMetadata["message"].(map[string]any)["metadata"] = map[string]any{"blob": strings.Repeat("x", 400)}
+	status, body = a2aRPC(t, AgentURL, gatewayID, path, a2aKey(key), methods["send"], withMetadata)
+	assert.Equal(t, -32090, a2aErrorCode(t, status, body), "the limit counts the request as it is sent, metadata included")
+	assert.Zero(t, agent.count())
+
 	status, body = a2aRPC(t, AgentURL, gatewayID, path, a2aKey(key), methods["send"], a2aMessage(version, "short", ""))
 	require.Equal(t, http.StatusOK, status)
 	assert.Nil(t, body["error"], "body=%v", body)
@@ -327,4 +336,59 @@ func TestA2A_RefreshAndApproveTheCard(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		return strings.Contains(string(raw), "close_account")
 	}, 15*time.Second, 300*time.Millisecond, "the agent plane never served the approved card")
+}
+
+// With telemetry on, the gateway relays each event as the agent writes it,
+// so a stream reaches the caller before the agent ends it.
+func TestA2A_RelaysStreamEventsAsTheAgentWritesThem(t *testing.T) {
+	defer Track(t, "A2A")()
+	agent := startFakeAgent(t, "1.0")
+	release := make(chan struct{})
+	var released sync.Once
+	agent.hold = release
+	t.Cleanup(func() { released.Do(func() { close(release) }) })
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("a2a-stream")})
+	status, reg := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/registries", AdminURL, gatewayID), nil,
+		a2aRegistryPayload(uniqueName("echo"), agent.srv.URL, "1.0",
+			map[string]any{"mode": "static", "header": "X-Agent-Key", "value": "agent-secret"}))
+	require.Equal(t, http.StatusCreated, status, "body=%v", reg)
+	consumerID, key := createA2AConsumer(t, gatewayID, reg["id"].(string))
+	path := agentPath(t, consumerID, reg["id"].(string))
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 7, "method": a2aMethods["1.0"]["stream"], "params": a2aMessage("1.0", "held", "")})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, AgentURL+path, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-AG-API-Key", key)
+	if host, ok := agentHosts.Load(gatewayID); ok {
+		req.Host = host.(string)
+	}
+
+	first := make(chan string, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			first <- "request failed: " + err.Error()
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				first <- scanner.Text()
+				return
+			}
+		}
+		first <- "the stream ended without an event"
+	}()
+
+	select {
+	case line := <-first:
+		require.True(t, strings.HasPrefix(line, "data: "), line)
+		assert.NotContains(t, line, `"error"`)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first event did not reach the caller while the agent kept the stream open")
+	}
+	released.Do(func() { close(release) })
 }

@@ -38,7 +38,7 @@ import (
 
 type recordingSigner struct{ calls int }
 
-func (s *recordingSigner) Sign(context.Context, *domain.A2ATarget, string, *http.Request) error {
+func (s *recordingSigner) Sign(context.Context, *domain.A2ATarget, appa2a.CacheKey, *http.Request) error {
 	s.calls++
 	return nil
 }

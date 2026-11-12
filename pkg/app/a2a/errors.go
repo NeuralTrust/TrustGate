@@ -67,6 +67,8 @@ func (e *RPCError) Error() string {
 }
 
 func newRPCError(code int64, message string, data any) *RPCError {
+	// data is one of the gateway's own maps of strings and numbers, which
+	// always encode.
 	raw, _ := json.Marshal(data)
 	return &RPCError{Code: code, Message: message, Data: raw}
 }

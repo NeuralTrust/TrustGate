@@ -117,3 +117,45 @@ func TestRepository_A2APlainWhenEncryptionOff(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, staticValue, got.A2ATarget.Auth.Value)
 }
+
+func TestRepository_PinA2ACardKeepsAConcurrentEdit(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agents-pin")
+	reg := a2aRegistry(t, gwID)
+	require.NoError(t, r.Save(ctx, reg))
+	read, err := r.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+
+	edited, err := r.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+	edited.Enabled = false
+	edited.A2ATarget.Headers["X-Tenant"] = "rotated"
+	edited.UpdatedAt = time.Now().UTC()
+	require.NoError(t, r.Update(ctx, edited))
+
+	const newCard = `{"name":"Travel planner","supportedInterfaces":[{"url":"https://travel.example.com/a2a","protocolBinding":"JSONRPC","protocolVersion":"1.0"}],"skills":[{"id":"refund"}]}`
+	next := *read.A2ATarget
+	require.NoError(t, next.Pin(read.A2ATarget.ResolvedCardURL, []byte(newCard), time.Now()))
+	pinned, err := r.PinA2ACard(ctx, gwID, reg.ID, read.A2ATarget.CardDigest, &next, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, pinned)
+
+	got, err := r.FindByID(ctx, reg.ID)
+	require.NoError(t, err)
+	assert.False(t, got.Enabled, "the edit made while the card was read is kept")
+	assert.Equal(t, "rotated", got.A2ATarget.Headers["X-Tenant"])
+	assert.Equal(t, staticValue, got.A2ATarget.Auth.Value)
+	assert.Equal(t, next.CardDigest, got.A2ATarget.CardDigest)
+	assert.JSONEq(t, newCard, string(got.A2ATarget.Card))
+
+	again, err := r.PinA2ACard(ctx, gwID, reg.ID, read.A2ATarget.CardDigest, &next, time.Now().UTC())
+	require.NoError(t, err)
+	assert.False(t, again, "a digest that moved since it was read pins nothing")
+
+	moved := next
+	moved.CardURL = "https://elsewhere.example.com"
+	again, err = r.PinA2ACard(ctx, gwID, reg.ID, next.CardDigest, &moved, time.Now().UTC())
+	require.NoError(t, err)
+	assert.False(t, again, "a card read from another URL pins nothing")
+}

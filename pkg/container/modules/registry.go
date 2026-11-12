@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -74,6 +75,13 @@ type registryRepositoryDeps struct {
 	Policies  *policyrepo.Repository
 }
 
+// cardPinnerParam is optional: only the Postgres registry store pins a card
+// on its own, so a plane without it answers an approval with an error.
+type cardPinnerParam struct {
+	dig.In
+	Pinner appregistry.A2ACardPinner `optional:"true"`
+}
+
 func provideRegistryRepository(c *container.Container) error {
 	if err := c.Provide(func(deps registryRepositoryDeps) *registryrepo.Repository {
 		return registryrepo.NewRepository(
@@ -84,6 +92,11 @@ func provideRegistryRepository(c *container.Container) error {
 			registryrepo.WithDeleteHook(deps.Consumers.PruneRegistryReferencesTx),
 			registryrepo.WithDeleteHook(deps.Policies.PruneRegistryReferencesTx),
 		)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r *registryrepo.Repository) appregistry.A2ACardPinner {
+		return r
 	}); err != nil {
 		return err
 	}
@@ -138,7 +151,7 @@ func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.
 	if p.Auths != nil {
 		opts = append(opts, appregistry.WithAuthLookup(p.Auths))
 	}
-	if p.Config.ConfigSync.DeploymentType == config.InstanceDeploymentSaaS {
+	if p.Config.ConfigSync.SharedDataPlane() {
 		opts = append(opts, appregistry.WithSharedDataPlane(p.Gateways))
 	}
 	return opts
@@ -159,7 +172,7 @@ func provideAgentCards(c *container.Container) error {
 			}
 			return token.AccessToken, nil
 		}, func(ctx context.Context, t *domain.A2ATarget, req *http.Request) error {
-			return signer.Sign(ctx, t, "", req)
+			return signer.Sign(ctx, t, appa2a.CacheKey{}, req)
 		})
 	})
 }
@@ -216,8 +229,18 @@ func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(registryhttp.NewValidateOpenAPIHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, save registrySaveParams) appregistry.AgentCard {
-		return appregistry.NewAgentCard(repo, manager, publisher, logger, sig.Signaler, save.options(nil)...)
+	if err := c.Provide(func(save registrySaveParams) appregistry.PreviewAgentCard {
+		return appregistry.NewPreviewAgentCard(save.options(nil)...)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, save registrySaveParams) appregistry.RefreshAgentCard {
+		return appregistry.NewRefreshAgentCard(repo, save.options(nil)...)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, pinner cardPinnerParam, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, save registrySaveParams) appregistry.ApproveAgentCard {
+		return appregistry.NewApproveAgentCard(repo, pinner.Pinner, manager, publisher, logger, sig.Signaler, save.options(nil)...)
 	}); err != nil {
 		return err
 	}

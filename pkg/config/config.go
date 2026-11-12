@@ -378,6 +378,12 @@ const (
 	InstanceDeploymentSelfHosted = dataplane.DeploymentSelfHosted
 )
 
+// SharedDataPlane reports whether this deployment is the shared SaaS data
+// plane, where A2A cloud credentials follow the shared data plane rules.
+func (c ConfigSyncConfig) SharedDataPlane() bool {
+	return c.DeploymentType == InstanceDeploymentSaaS
+}
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled     bool
 	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -1878,7 +1884,7 @@ func (c *Config) WarnAgentHostWithoutSaaS(logger *slog.Logger) {
 	if c == nil || logger == nil || strings.TrimSpace(c.Server.AgentBaseDomain) == "" {
 		return
 	}
-	if c.ConfigSync.DeploymentType == InstanceDeploymentSaaS {
+	if c.ConfigSync.SharedDataPlane() {
 		return
 	}
 	logger.Warn("AGENT_BASE_DOMAIN is set and INSTANCE_DEPLOYMENT_TYPE is not saas: A2A cloud credentials are not checked against the shared data plane rules. Set INSTANCE_DEPLOYMENT_TYPE=saas on the shared data plane; a self-hosted or customer data plane that publishes its own agent host can ignore this",

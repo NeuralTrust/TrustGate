@@ -91,7 +91,7 @@ func (f *cardFetcher) Fetch(ctx context.Context, cardURL string, authorize appre
 	defer cancel()
 	card, err := f.get(ctx, cardURL, authorize)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s (%s)", domain.ErrAgentCardUnavailable, cardURL, err.Error())
+		return nil, fmt.Errorf("%w: %s (%w)", domain.ErrAgentCardUnavailable, cardURL, err)
 	}
 	return &appregistry.FetchedCard{URL: cardURL, Card: card}, nil
 }

@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -42,25 +41,6 @@ type A2ATargetResponse struct {
 	Card              json.RawMessage          `json:"card,omitempty" swaggertype:"object"`
 	CardDigest        string                   `json:"card_digest,omitempty"`
 	CardPinnedAt      time.Time                `json:"card_pinned_at,omitzero"`
-}
-
-// A2ACloudAuthResponse is a hosted agent's cloud credential, masked.
-type A2ACloudAuthResponse struct {
-	AWS   *A2AAWSAuthResponse `json:"aws,omitempty"`
-	Azure *AzureAuthResponse  `json:"azure,omitempty"`
-	GCP   *A2AGCPAuthResponse `json:"gcp,omitempty"`
-}
-
-// A2AAWSAuthResponse is AWSAuthResponse plus the external id of an assumed role.
-type A2AAWSAuthResponse struct {
-	AWSAuthResponse
-	ExternalID string `json:"external_id,omitempty"`
-}
-
-// A2AGCPAuthResponse is a Google credential with the key masked.
-type A2AGCPAuthResponse struct {
-	ServiceAccountJSON        string `json:"service_account_json,omitempty"` // #nosec G117 -- masked before serialization
-	ImpersonateServiceAccount string `json:"impersonate_service_account,omitempty"`
 }
 
 func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
@@ -90,21 +70,4 @@ func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
 		CardDigest:        t.CardDigest,
 		CardPinnedAt:      t.CardPinnedAt,
 	}
-}
-
-func fromA2ACloudAuth(c *domain.A2ACloudAuth) *A2ACloudAuthResponse {
-	if c == nil {
-		return nil
-	}
-	out := &A2ACloudAuthResponse{Azure: fromAzureAuth(c.Azure)}
-	if c.AWS != nil {
-		out.AWS = &A2AAWSAuthResponse{AWSAuthResponse: *fromAWSAuth(&c.AWS.AWSAuth), ExternalID: c.AWS.ExternalID}
-	}
-	if c.GCP != nil {
-		out.GCP = &A2AGCPAuthResponse{
-			ServiceAccountJSON:        secret.Mask(c.GCP.ServiceAccountJSON),
-			ImpersonateServiceAccount: c.GCP.ImpersonateServiceAccount,
-		}
-	}
-	return out
 }

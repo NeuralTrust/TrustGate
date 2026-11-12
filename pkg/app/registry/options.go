@@ -41,10 +41,10 @@ type GatewayLookup interface {
 type Option func(*options)
 
 type options struct {
-	openapi        appopenapi.Compiler
-	auths          AuthLookup
-	cards          agentCards
-	sharedGateways GatewayLookup
+	openapi appopenapi.Compiler
+	auths   AuthLookup
+	cards   agentCards
+	shared  sharedPlane
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.
@@ -66,8 +66,17 @@ func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
 // WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
 // an A2A registry on a gateway no data plane of its own serves applies
 // domain.A2ATarget.ValidateSharedDataPlane.
+// A nil gateways applies the rules to every gateway, since the gateway cannot
+// be shown to have a data plane of its own.
 func WithSharedDataPlane(gateways GatewayLookup) Option {
-	return func(o *options) { o.sharedGateways = gateways }
+	return func(o *options) { o.shared = sharedPlane{enabled: true, gateways: gateways} }
+}
+
+// sharedPlane is whether saves follow the shared data plane rules, and how a
+// gateway is found to tell whether a data plane of its own serves it.
+type sharedPlane struct {
+	enabled  bool
+	gateways GatewayLookup
 }
 
 func applyOptions(opts []Option) options {
@@ -122,16 +131,18 @@ func validateExchangeIdentity(ctx context.Context, auths AuthLookup, gatewayID i
 	return nil
 }
 
-func validateSharedDataPlane(ctx context.Context, gateways GatewayLookup, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
-	if gateways == nil {
+func validateSharedDataPlane(ctx context.Context, shared sharedPlane, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
+	if !shared.enabled {
 		return nil
 	}
-	gw, err := gateways.FindByID(ctx, gatewayID)
-	if err != nil {
-		return err
-	}
-	if gw.ServedByOwnDataPlane() {
-		return nil
+	if shared.gateways != nil {
+		gw, err := shared.gateways.FindByID(ctx, gatewayID)
+		if err != nil {
+			return err
+		}
+		if gw.ServedByOwnDataPlane() {
+			return nil
+		}
 	}
 	return t.ValidateSharedDataPlane()
 }

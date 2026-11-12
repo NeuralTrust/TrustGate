@@ -260,3 +260,43 @@ func TestStreamCallerLeavesWithoutLeaks(t *testing.T) {
 	}
 	assert.LessOrEqual(t, runtime.NumGoroutine(), before, "goroutines left behind")
 }
+
+func TestStreamEventLargerThanTheLimitAcrossDataLines(t *testing.T) {
+	t.Parallel()
+	line := strings.Repeat("x", 600<<10)
+	ag := newAgent(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: " + line + "\ndata: " + line + "\n\n"))
+	})
+	h := newHarness(t, a2a.Version03, ag.URL, allow)
+	var got collector
+	openStream(t, h, streamRequest(a2a.Version03)).Run(context.Background(), json.RawMessage(`7`), got.emit)
+	responses := got.responses(t)
+	require.Len(t, responses, 1)
+	assert.Equal(t, a2a.ReasonResponseTooLarge, reasonOf(t, responses[0].Error))
+}
+
+func TestStreamAnsweredWithAJSONBodyThatNeverEnds(t *testing.T) {
+	a2a.SetUpstreamTimeout(t, 100*time.Millisecond)
+	ag := newAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0",`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	h := newHarness(t, a2a.Version03, ag.URL, allow)
+	x, rpcErr := h.forwarder.Prepare(context.Background(), h.call(t, streamRequest(a2a.Version03), nil))
+	require.Nil(t, rpcErr)
+	done := make(chan *a2a.RPCError, 1)
+	go func() {
+		_, rpcErr := x.Open(context.Background())
+		done <- rpcErr
+	}()
+	select {
+	case rpcErr := <-done:
+		require.NotNil(t, rpcErr)
+		assert.Equal(t, a2a.ReasonUpstreamTimeout, reasonOf(t, rpcErr))
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading the answer did not time out")
+	}
+}

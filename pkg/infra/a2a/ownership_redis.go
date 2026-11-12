@@ -38,7 +38,7 @@ func NewOwnershipStore(rdb redis.UniversalClient) appa2a.OwnershipStore {
 }
 
 func ownershipKey(k appa2a.OwnershipKey) string {
-	return "a2a:own:" + k.GatewayID.String() + ":" + k.RegistryID.String() + ":" + k.Scope + ":" + k.ID
+	return "a2a:own:" + k.GatewayID.String() + ":" + k.RegistryID.String() + ":" + string(k.Scope) + ":" + k.ID
 }
 
 func (s *ownershipStore) Owner(ctx context.Context, key appa2a.OwnershipKey) (*appa2a.Owner, error) {

@@ -19,9 +19,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
@@ -51,8 +52,7 @@ func (h *Handler) Card(c *fiber.Ctx) error {
 	}
 	target := agent.A2ATarget
 	endpoint := c.BaseURL() + "/" + rc.Consumer.Slug + "/agents/" + agent.ID.String()
-	card, err := appa2a.RenderCard(target.Card, target.ProtocolVersion, endpoint,
-		target.Provider == registrydomain.A2AProviderVertexAgentEngine)
+	card, err := appa2a.RenderPinnedCard(target, endpoint)
 	if err != nil {
 		return err
 	}
@@ -66,17 +66,16 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 	if !ok {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
-	if !strings.HasPrefix(c.Get(fiber.HeaderContentType), fiber.MIMEApplicationJSON) {
+	if mediaType, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType)); err != nil || mediaType != fiber.MIMEApplicationJSON {
 		return send(c, nil, nil, appa2a.InvalidRequest())
 	}
 	body := bytes.Clone(c.Body())
-	req, err := appa2a.Decode(body)
-	if err != nil {
+	req, rpcErr := appa2a.Decode(body)
+	if rpcErr != nil {
 		var id json.RawMessage
 		if req != nil {
 			id = req.ID
 		}
-		rpcErr, _ := err.(*appa2a.RPCError)
 		return send(c, id, nil, rpcErr)
 	}
 	header := http.Header{}
@@ -116,7 +115,9 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 	if rpcErr != nil {
 		return send(c, id, nil, rpcErr)
 	}
-	_ = c.Context().SetWriteDeadline(s.Deadline().Add(streamWriteGrace))
+	if err := c.Context().SetWriteDeadline(s.Deadline().Add(streamWriteGrace)); err != nil {
+		slog.WarnContext(ctx, "a2a stream write deadline not set", slog.String("error", err.Error()))
+	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
 		rt.AddAsync()
@@ -129,6 +130,7 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 			defer rt.Done()
 		}
 		s.Run(ctx, id, func(frame []byte) error {
+			// A failed write leaves the writer in error, which Flush returns.
 			_, _ = w.WriteString("data: ")
 			_, _ = w.Write(frame)
 			_, _ = w.WriteString("\n\n")

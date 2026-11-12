@@ -31,10 +31,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-const (
-	upstreamTimeout  = 300 * time.Second
-	maxResponseBytes = 8 << 20
-)
+const maxResponseBytes = 8 << 20
+
+var upstreamTimeout = 300 * time.Second
 
 // Forwarder sends A2A calls to agents through the gateway's checks: the
 // method gate, task ownership, the policies and the registry's credential.
@@ -115,12 +114,11 @@ func (x *Exchange) prepare(ctx context.Context) *RPCError {
 	if len(target.AllowedMethods) > 0 && !slices.Contains(target.AllowedMethods, x.call.Request.Method) {
 		return MethodNotFound()
 	}
-	if kind.Streams() && (!Streaming(target.Card) || target.Provider == registrydomain.A2AProviderVertexAgentEngine) {
+	if kind.Streams() && (!Streaming(target.Card) || !x.provider.capabilities().streams) {
 		return UnsupportedOperation(x.version)
 	}
-	content, err := RequestContent(x.version, kind, x.call.Request.Params)
-	if err != nil {
-		rpcErr, _ := err.(*RPCError)
+	content, rpcErr := RequestContent(x.version, kind, x.call.Request.Params)
+	if rpcErr != nil {
 		return rpcErr
 	}
 	x.content = content
@@ -161,7 +159,6 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 		if !again {
 			return nil, rpcErr
 		}
-		x.agentError = false
 		select {
 		case <-ctx.Done():
 			return nil, upstreamFailure(ctx.Err())
@@ -172,7 +169,11 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	if x.kind != KindCancel && len(content.Parts) > 0 {
+	if x.kind == KindCancel {
+		if result, rpcErr = StripTaskContent(x.version, result); rpcErr != nil {
+			return nil, rpcErr
+		}
+	} else if len(content.Parts) > 0 {
 		if blocked := x.f.runner.PreResponse(ctx, x, content.Parts); blocked != nil {
 			return nil, blocked
 		}
@@ -183,8 +184,8 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 	return result, nil
 }
 
-// attempt sends a buffered call once and decodes the agent's answer.
 func (x *Exchange) attempt(ctx context.Context) (json.RawMessage, *RPCError) {
+	x.agentError = false
 	res, err := x.post(ctx, x.header, x.call.Body)
 	if err != nil {
 		return nil, upstreamFailure(err)
@@ -197,7 +198,9 @@ func (x *Exchange) attempt(ctx context.Context) (json.RawMessage, *RPCError) {
 	if len(body) > maxResponseBytes {
 		return nil, GatewayFailure(ReasonResponseTooLarge)
 	}
-	return x.provider.decode(x, res, body)
+	result, rpcErr, fromAgent := x.provider.decode(x, res, body)
+	x.agentError = fromAgent
+	return result, rpcErr
 }
 
 // post sends body to the agent and records when it went and how the agent
@@ -225,32 +228,30 @@ func (x *Exchange) do(ctx context.Context, header http.Header, body []byte) (*ht
 	return x.f.upstream.Do(req)
 }
 
-// decode reads a JSON-RPC response: its result, or the error the agent
-// answered. A body that is not one answers -32092.
-func (x *Exchange) decode(body []byte, status int) (json.RawMessage, *RPCError) {
+// decodeRPC reads a JSON-RPC response: its result, or the error the agent
+// answered, with fromAgent true. A body that is not one answers -32092.
+func decodeRPC(body []byte, status int) (result json.RawMessage, rpcErr *RPCError, fromAgent bool) {
 	o, ok := decodeObject(body)
 	if ok {
 		if o.has("error") {
-			var rpcErr RPCError
-			if json.Unmarshal(o["error"], &rpcErr) == nil {
-				x.agentError = true
-				return nil, &rpcErr
+			var agentErr RPCError
+			if json.Unmarshal(o["error"], &agentErr) == nil {
+				return nil, &agentErr, true
 			}
 		} else if o.has("result") {
-			return o["result"], nil
+			return o["result"], nil, false
 		}
 	}
 	if status < 200 || status > 299 {
-		return nil, GatewayFailure(ReasonUpstreamError)
+		return nil, GatewayFailure(ReasonUpstreamError), false
 	}
-	return nil, GatewayFailure(ReasonInvalidUpstreamResponse)
+	return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
 }
 
 // resultContent reads a result or an event and records the task it names.
 func (x *Exchange) resultContent(result json.RawMessage) (Content, *RPCError) {
-	content, err := ResultContent(x.version, result)
-	if err != nil {
-		rpcErr, _ := err.(*RPCError)
+	content, rpcErr := ResultContent(x.version, result)
+	if rpcErr != nil {
 		return Content{}, rpcErr
 	}
 	if content.TaskID != "" {
@@ -275,7 +276,6 @@ const (
 	OutcomeUpstreamTimeout = "upstream_timeout"
 )
 
-// finish ends the call's span with how the call ended.
 func (x *Exchange) finish(rpcErr *RPCError) {
 	if x.span == nil {
 		return
@@ -287,6 +287,8 @@ func (x *Exchange) finish(rpcErr *RPCError) {
 			Reason string `json:"reason"`
 			Plugin string `json:"plugin"`
 		}
+		// An agent's error may carry no data or data of another shape; the
+		// span then records no reason or plugin.
 		_ = json.Unmarshal(rpcErr.Data, &data)
 		if data.Reason != "" {
 			a.Reason = data.Reason
@@ -381,6 +383,12 @@ func Response(id json.RawMessage, result json.RawMessage, rpcErr *RPCError) []by
 		Result  json.RawMessage `json:"result,omitempty"`
 		Error   *RPCError       `json:"error,omitempty"`
 	}{JSONRPC: "2.0", ID: id, Result: result, Error: rpcErr}
-	out, _ := json.Marshal(resp)
+	out, err := json.Marshal(resp)
+	if err != nil {
+		resp.Result, resp.Error = nil, GatewayFailure(ReasonInvalidUpstreamResponse)
+		// The id was read from the caller's valid JSON and the error is the
+		// gateway's own, so this second encoding cannot fail.
+		out, _ = json.Marshal(resp)
+	}
 	return out
 }

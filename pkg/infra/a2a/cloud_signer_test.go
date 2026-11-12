@@ -34,6 +34,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,7 @@ func TestCloudSignerSendsTheCredentialOnlyToTheAgentHost(t *testing.T) {
 		"https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/x/invocations/",
 	} {
 		req := newRequest(t, http.MethodPost, url, `{}`)
-		require.Error(t, NewCloudSigner().Sign(context.Background(), target, "", req), url)
+		require.Error(t, NewCloudSigner().Sign(context.Background(), target, appa2a.CacheKey{}, req), url)
 		assert.Empty(t, req.Header.Get("Authorization"), url)
 	}
 }
@@ -101,19 +102,24 @@ func TestCloudSignerKeepsTheEntraTokenUntilFiveMinutesBeforeItExpires(t *testing
 		Auth:         &domain.MCPAuth{Mode: domain.A2AAuthModeCloud},
 		CloudAuth:    &domain.A2ACloudAuth{Azure: &domain.AzureAuth{TenantID: "t", ClientID: "c", ClientSecret: "s"}},
 	}
-	sign := func(key string) string {
+	sign := func(key appa2a.CacheKey) string {
 		req := newRequest(t, http.MethodPost, target.Endpoint(), `{}`)
 		require.NoError(t, s.Sign(context.Background(), target, key, req))
 		return req.Header.Get("Authorization")
 	}
+	v1 := appa2a.CacheKey{Registry: "reg-1", Version: "1"}
 
-	assert.Equal(t, "Bearer entra-1", sign("reg-1"))
+	assert.Equal(t, "Bearer entra-1", sign(v1))
 	now = now.Add(54 * time.Minute)
-	assert.Equal(t, "Bearer entra-1", sign("reg-1"))
+	assert.Equal(t, "Bearer entra-1", sign(v1))
 	now = now.Add(2 * time.Minute)
-	assert.Equal(t, "Bearer entra-2", sign("reg-1"))
-	assert.Equal(t, "Bearer entra-3", sign(""), "a preview keeps no token")
-	assert.Equal(t, "Bearer entra-4", sign(""))
+	assert.Equal(t, "Bearer entra-2", sign(v1))
+	assert.Equal(t, "Bearer entra-3", sign(appa2a.CacheKey{}), "a preview keeps no token")
+	assert.Equal(t, "Bearer entra-4", sign(appa2a.CacheKey{}))
+	cred.exp = now.Add(time.Hour)
+	assert.Equal(t, "Bearer entra-5", sign(appa2a.CacheKey{Registry: "reg-1", Version: "2"}), "a new version of the registry fetches a new token")
+	assert.Equal(t, "Bearer entra-5", sign(appa2a.CacheKey{Registry: "reg-1", Version: "2"}))
+	assert.Equal(t, "Bearer entra-6", sign(v1), "the old version's token was replaced, not kept beside it")
 }
 
 // sigV4 computes a SigV4 signature from the request as it is sent, apart
@@ -182,7 +188,7 @@ func TestCloudSignerSignsAgentCoreCallsWithSigV4(t *testing.T) {
 	req := newRequest(t, http.MethodPost, target.Endpoint(), body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Amzn-Bedrock-AgentCore-Runtime-Session-Id", "tgs-0190c9f5-7a3e-7cc1-9d1e-2b8f4a6c7d10")
-	require.NoError(t, s.Sign(context.Background(), target, "reg-1", req))
+	require.NoError(t, s.Sign(context.Background(), target, appa2a.CacheKey{Registry: "reg-1", Version: "1"}, req))
 
 	assert.Equal(t, hexSHA256(body), req.Header.Get("X-Amz-Content-Sha256"))
 	assert.Equal(t, "20261111T100000Z", req.Header.Get("X-Amz-Date"))
@@ -221,7 +227,7 @@ func TestCloudSignerAssumesTheRoleWithItsExternalID(t *testing.T) {
 	s := NewCloudSigner()
 	for range 2 {
 		req := newRequest(t, http.MethodPost, target.Endpoint(), `{}`)
-		require.NoError(t, s.Sign(context.Background(), target, "reg-1", req))
+		require.NoError(t, s.Sign(context.Background(), target, appa2a.CacheKey{Registry: "reg-1", Version: "1"}, req))
 		assert.True(t, strings.HasPrefix(req.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=ASIAASSUMED/"))
 		assert.Equal(t, "assumed-token", req.Header.Get("X-Amz-Security-Token"))
 	}
