@@ -18033,7 +18033,7 @@
       "name": "com.microsoft/outlook",
       "vendor": "Outlook",
       "category": "Productivity & Docs",
-      "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; tenant needs Microsoft 365 Copilot).",
+      "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; each user needs a Microsoft 365 Copilot license and Work IQ billing).",
       "capabilities": [
         "Search messages",
         "Send and reply messages",
@@ -18056,24 +18056,26 @@
         "registration": "manual",
         "dcr": false,
         "pkce": true,
-        "authorize_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
-        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "authorize_url": "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token",
         "scopes": [
           "offline_access",
           "openid",
           "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
-        ]
+        ],
+        "resource": "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
       },
       "config_guide": {
-        "summary": "Create a public Entra app for the Work IQ Mail server.",
+        "summary": "Create an Entra app registration with a client secret for the Work IQ Mail server.",
         "steps": [
           "Copy the Directory (tenant) ID from Entra ID → Overview.",
+          "Create the Agent 365 Tools service principal in the tenant if it does not exist yet.",
           "Add the Agent 365 Tools delegated permission McpServers.Mail.All and grant admin consent.",
-          "Register {gatewayBaseUrl}/oauth/callback/com.microsoft/outlook as a SPA redirect URI.",
-          "Enter the app's client ID; no client secret is required."
+          "Add a Web platform redirect URI https://<gateway-mcp host>/oauth/callback/com.microsoft/outlook. Use the gateway's MCP sign-in host, not the host shown under Access → How to connect. The gateway redeems the code server-side, so register it on the Web platform, not as a Single-page application.",
+          "Create a client secret and enter the app's client ID and secret."
         ],
         "docs_url": "https://learn.microsoft.com/en-us/microsoft-agent-365/tooling-servers-overview",
-        "note": "Requires Microsoft 365 Copilot and an enabled Work IQ/Agent 365 tenant."
+        "note": "Every user who connects needs a Microsoft 365 Copilot license and must be covered by a Copilot usage-based billing spending policy that includes Work IQ API for custom apps and agents (Microsoft 365 admin center → Copilot → Cost management). Without either, calls fail with \"WorkIQ license check failed\"."
       },
       "relevance": 92,
       "tools": [

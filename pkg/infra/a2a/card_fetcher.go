@@ -33,6 +33,7 @@ import (
 const (
 	cardFetchTimeout = 10 * time.Second
 	maxCardBytes     = 1 << 20
+	maxReasonBytes   = 300
 )
 
 var cardProbePaths = []string{"/.well-known/agent-card.json", "/.well-known/agent.json", "/agentCard/v1.0"}
@@ -119,6 +120,9 @@ func (f *cardFetcher) get(ctx context.Context, rawURL string, authorize appregis
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
+		if reason := refusalReason(res); reason != "" {
+			return nil, fmt.Errorf("status %d: %s", res.StatusCode, reason)
+		}
 		return nil, fmt.Errorf("status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, maxCardBytes+1))
@@ -133,4 +137,33 @@ func (f *cardFetcher) get(ctx context.Context, rawURL string, authorize appregis
 		return nil, errors.New("not a JSON object")
 	}
 	return body, nil
+}
+
+// refusalReason is what a JSON error answer says, as AWS, Azure and Google
+// word it ({"message"}, {"Message"}, {"error":{"message"}}), prefixed with
+// AWS's error type. Empty when the answer says nothing readable.
+func refusalReason(res *http.Response) string {
+	var answer struct {
+		Message      string `json:"message"`
+		MessageUpper string `json:"Message"`
+		Error        struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8<<10))
+	_ = json.Unmarshal(body, &answer)
+	message := answer.Message
+	if message == "" {
+		message = answer.MessageUpper
+	}
+	if message == "" {
+		message = answer.Error.Message
+	}
+	if kind, _, _ := strings.Cut(res.Header.Get("X-Amzn-Errortype"), ":"); kind != "" {
+		message = strings.TrimSpace(kind + " " + message)
+	}
+	if len(message) > maxReasonBytes {
+		message = message[:maxReasonBytes] + "…"
+	}
+	return message
 }
