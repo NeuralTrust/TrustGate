@@ -545,12 +545,16 @@ func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
 	require.False(t, *server.OAuth.DCR)
 	require.NotNil(t, server.OAuth.PKCE)
 	require.True(t, *server.OAuth.PKCE)
-	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", server.OAuth.AuthorizeURL)
-	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", server.OAuth.TokenURL)
+	require.Equal(t, "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize", server.OAuth.AuthorizeURL)
+	require.Equal(t, "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token", server.OAuth.TokenURL)
 	require.Contains(t, server.OAuth.Scopes, "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All")
-	require.Empty(t, server.OAuth.Resource)
+	require.Equal(t, "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1", server.OAuth.Resource)
 	require.NotNil(t, server.ConfigGuide)
 	require.Contains(t, server.ConfigGuide.Note, "Microsoft 365 Copilot")
+	require.Contains(t, server.ConfigGuide.Note, "Work IQ API for custom apps and agents")
+	for _, step := range server.ConfigGuide.Steps {
+		require.NotContains(t, step, "{gatewayBaseUrl}")
+	}
 }
 
 func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
