@@ -29,29 +29,12 @@ import (
 )
 
 const (
-	tokenPath          = "/v2/token"
+	tokenPath          = "/v1/token"
 	grantType          = "client_credentials"
 	tokenScopePlatform = "platform"
 	tokenRefreshSkew   = 30 * time.Second
 	tokenMinTTL        = time.Minute
 )
-
-// TrustGuard v2 answers a gateway-only token request it cannot serve with these codes.
-const (
-	codeUnknownGateway   = "unknown_gateway"
-	codeAmbiguousGateway = "ambiguous_gateway"
-)
-
-// gatewayRefusedError is TrustGuard v2 saying the gateway is not migrated (404) or
-// maps to several integrations (409).
-type gatewayRefusedError struct {
-	status int
-	code   string
-}
-
-func (e *gatewayRefusedError) Error() string {
-	return fmt.Sprintf("trustguard v2: %s (status %d)", e.code, e.status)
-}
 
 type tokenParams struct {
 	baseURL     string
@@ -69,7 +52,7 @@ type tokenRequest struct {
 	ClientSecret  string `json:"client_secret"`
 	Scope         string `json:"scope"`
 	CollectorID   string `json:"collector_id,omitempty"`
-	IntegrationID string `json:"integration_id,omitempty"`
+	IntegrationID string `json:"integration_id,omitempty"` // v2 credential; never sent with collector_id
 	GatewayID     string `json:"gateway_id"`
 }
 
@@ -252,17 +235,13 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 // tokenStatusError sorts a non-2xx token answer. 400, 401 and 403 are the
 // endpoint refusing these credentials: TrustGuard answers a wrong platform
 // secret with 400 invalid_scope and empty ones with 401 invalid_client. They
-// are typed as the same rejection a 401/403 from /v2/evaluate is, so both legs
+// are typed as the same rejection a 401/403 from /v1/evaluate is, so both legs
 // report reason unauthorized and fail open the same way. Every other
 // status stays on the transport path: 5xx and 429 are transient, and a 404 or
 // 421 is an ingress or a wrong base URL answering rather than the guard. It is
 // never errUnauthorized: that one sends guard to refetch the token, which is
 // the call that just refused.
 func tokenStatusError(status int, body []byte) error {
-	if code := oauthErrorCode(body); (status == http.StatusNotFound && code == codeUnknownGateway) ||
-		(status == http.StatusConflict && code == codeAmbiguousGateway) {
-		return fmt.Errorf("trustguard: token endpoint status %d: %w", status, &gatewayRefusedError{status: status, code: code})
-	}
 	switch status {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("trustguard: token endpoint: %w", &authRejectedError{status: status, code: oauthErrorCode(body)})

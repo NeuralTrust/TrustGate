@@ -82,13 +82,13 @@ func initInstruments() {
 		meter := otel.Meter("trustgate/trustguard")
 		if c, err := meter.Int64Counter(
 			"trustguard_evaluate_failures_total",
-			metric.WithDescription("TrustGuard /v2/evaluate call failures by reason"),
+			metric.WithDescription("TrustGuard /v1/evaluate call failures by reason"),
 		); err == nil {
 			evaluateFailures = c
 		}
 		if c, err := meter.Int64Counter(
 			"trustguard_evaluations_total",
-			metric.WithDescription("TrustGuard /v2/evaluate answers by plugin and by the engine (v1 or v2) that answered"),
+			metric.WithDescription("TrustGuard /v1/evaluate answers by plugin and by the engine (v1 or v2) that answered"),
 		); err == nil {
 			evaluations = c
 		}

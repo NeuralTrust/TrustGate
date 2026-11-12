@@ -29,21 +29,21 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
-// The trustguard plugin always calls TrustGuard's /v2 paths; TrustGuard answers a collector of an
-// organisation that is not cut over with v1, so the paths are the public contract, not the engine.
-func TestTrustGuardPathsAreV2(t *testing.T) {
+// The trustguard plugin always calls TrustGuard's single /v1 door; TrustGuard picks the engine by
+// org state, so the paths are the public contract, not the engine.
+func TestTrustGuardPathsAreV1Door(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "/v2/token", tokenPath)
-	assert.Equal(t, "/v2/evaluate", evaluatePath)
+	assert.Equal(t, "/v1/token", tokenPath)
+	assert.Equal(t, "/v1/evaluate", evaluatePath)
 }
 
-// A v1 policy names its collector on /v2/token, never an integration: that is what makes
+// A v1 policy names its collector on /v1/token, never an integration: that is what makes
 // TrustGuard issue the v1 platform token it always got from /v1/token.
 func TestV1PolicyTokenRequestNamesTheCollector(t *testing.T) {
 	t.Parallel()
 	var raw map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v2/token", r.URL.Path)
+		require.Equal(t, "/v1/token", r.URL.Path)
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		require.NoError(t, json.Unmarshal(body, &raw))
