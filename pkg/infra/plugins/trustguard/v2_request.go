@@ -174,7 +174,7 @@ func v2MCPServerOf(server *GuardMCPServer) *v2MCPServer {
 	return &v2MCPServer{ID: server.ID}
 }
 
-// normalizeV2Response reads a /v2/evaluate answer in the v1 shape the plugin enforces. The v2
+// normalizeV2Response reads a v2-shaped /v1/evaluate answer in the v1 shape the plugin enforces. The v2
 // statuses are v1's (allow, report, skip, transform, ask, block); only the findings name their
 // source differently, so the ids a finding is deduplicated by are filled from the v2 ones.
 // The control's name is not copied to detector_name: that one reaches the client's block message.
