@@ -39,6 +39,24 @@ type Registry struct {
 	// from. It is a request-scoped view built by the Store scoper: never
 	// persisted and never carried by the config snapshot.
 	InstanceOf ids.RegistryID `json:"-"`
+
+	// credentialUnavailable marks a runtime copy in which a referenced
+	// credential could not be resolved and was left empty. Only the
+	// materializer sets it, on copies it owns; it is never persisted,
+	// encoded or cached outside a gateway's runtime data.
+	credentialUnavailable bool
+}
+
+// CredentialUnavailable reports whether a referenced credential of b could
+// not be resolved, so calling the registry must fail with
+// ErrSecretUnavailable instead of sending an empty credential.
+func (b *Registry) CredentialUnavailable() bool {
+	return b != nil && b.credentialUnavailable
+}
+
+// MarkCredentialUnavailable sets CredentialUnavailable on b, a runtime copy.
+func (b *Registry) MarkCredentialUnavailable() {
+	b.credentialUnavailable = true
 }
 
 // ScopeKey returns the registry id an MCP policy scope has to name to reach

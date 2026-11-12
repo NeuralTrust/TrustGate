@@ -202,6 +202,9 @@ func (p *providerInvoker) Invoke(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
+	if bk.CredentialUnavailable() {
+		return nil, registry.ErrSecretUnavailable
+	}
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
@@ -284,6 +287,9 @@ func (p *providerInvoker) InvokeStream(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
+	if bk.CredentialUnavailable() {
+		return nil, registry.ErrSecretUnavailable
+	}
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
@@ -656,8 +662,8 @@ func unsupportedReasoningToolsError(prep *preparedInvocation, requestBody []byte
 
 // clientSentReasoningEffort reports whether the original client body set
 // reasoning_effort. A missing, empty, or null field does not count. The body
-// forwarded upstream is not a substitute: "none" is removed before the call
-// for models that reject it.
+// forwarded upstream is not a substitute: "none" is removed before calling
+// models that reject it.
 func clientSentReasoningEffort(body []byte) bool {
 	var request map[string]json.RawMessage
 	if json.Unmarshal(body, &request) != nil {

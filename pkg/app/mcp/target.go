@@ -24,6 +24,7 @@ import (
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
 
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
@@ -112,9 +113,12 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	t := reg.MCPTarget
 	headers := make(map[string]string, len(t.Headers)+1)
 	for k, v := range t.Headers {
+		if secretref.IsRef(v) {
+			continue
+		}
 		headers[k] = v
 	}
-	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
+	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic && !secretref.IsRef(t.Auth.Value) {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
 	target := Target{

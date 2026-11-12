@@ -1,0 +1,142 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package modules
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+
+	"go.uber.org/dig"
+
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/backends"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/localfile"
+)
+
+// SecretStores is what a plane runs to resolve secret references. Catalog
+// and Cache are nil unless SECRET_STORES_ENABLED is set and the plane loads a
+// store file; the materializer always exists, so a reference that reaches a
+// plane without stores is left empty instead of being forwarded.
+type SecretStores struct {
+	Catalog      *localfile.Catalog
+	Cache        *appsecretref.Cache
+	Materializer appsecretref.Materializer
+	logger       *slog.Logger
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+type secretStoresParams struct {
+	dig.In
+	Config   *config.Config
+	Gateways gatewaydomain.Repository
+	Manager  *cache.TTLMapManager
+	Logger   *slog.Logger
+}
+
+// SecretStoresModule provides the plane's secret stores.
+func SecretStoresModule(c *container.Container) error {
+	if err := c.Provide(provideSecretStores); err != nil {
+		return err
+	}
+	return c.Provide(func(s *SecretStores) appsecretref.Materializer { return s.Materializer })
+}
+
+func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
+	cfg := p.Config.SecretStores
+	s := &SecretStores{logger: p.Logger}
+	if cfg.Enabled && cfg.File != "" {
+		catalog, err := localfile.Open(cfg.File, backends.Factory(context.Background()), localfile.Options{
+			DeploymentType: p.Config.ConfigSync.DeploymentType,
+			Logger:         p.Logger,
+			OnReload:       s.storesChanged,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.Catalog = catalog
+		s.Cache = appsecretref.NewCache(catalog, appsecretref.Options{
+			FetchTimeout:    cfg.FetchTimeout,
+			RefreshInterval: cfg.RefreshInterval,
+			ProbeInterval:   cfg.ProbeInterval,
+			Logger:          p.Logger,
+		})
+	}
+	matCfg := appsecretref.MaterializerConfig{
+		Enabled:     cfg.Enabled,
+		Eligibility: cfg.Gateways,
+		Gateways:    p.Gateways,
+		Invalidate:  appconsumer.InvalidateGatewayData(p.Manager),
+		Logger:      p.Logger,
+	}
+	if s.Cache != nil {
+		matCfg.Catalog, matCfg.Resolver = s.Catalog, s.Cache
+	}
+	s.Materializer = appsecretref.NewMaterializer(matCfg)
+	if s.Catalog != nil {
+		p.Logger.Info("secret stores loaded", slog.Int("stores", len(s.Catalog.Stores())), slog.String("eligibility", string(cfg.Gateways)))
+	}
+	return s, nil
+}
+
+// storesChanged drops what was read from stores the store file added,
+// changed or removed, and rebuilds the gateways that referenced them.
+func (s *SecretStores) storesChanged(names []string) {
+	if s.Cache != nil {
+		for _, name := range names {
+			s.Cache.InvalidateStore(name)
+		}
+	}
+	if s.Materializer != nil {
+		s.Materializer.StoresChanged(names)
+	}
+}
+
+// Start runs the refresh and probe loops and the store file watch, when the
+// plane loads a store file. Stop ends them.
+func (s *SecretStores) Start() {
+	if s == nil || s.Cache == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.wg.Add(2)
+	go func() {
+		defer s.wg.Done()
+		s.Cache.Run(ctx)
+	}()
+	go func() {
+		defer s.wg.Done()
+		if err := s.Catalog.Watch(ctx); err != nil {
+			s.logger.Error("secret store file watch stopped; changes need a restart", slog.String("error", err.Error()))
+		}
+	}()
+}
+
+// Stop ends the loops Start began and waits for them.
+func (s *SecretStores) Stop() {
+	if s == nil || s.cancel == nil {
+		return
+	}
+	s.cancel()
+	s.wg.Wait()
+}

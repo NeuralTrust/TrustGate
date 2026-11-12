@@ -230,8 +230,8 @@ func TestReload(t *testing.T) {
 	if err := c.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.last(); strings.Join(got, ",") != "b" {
-		t.Fatalf("changed = %v, want [b] (a unchanged, c new)", got)
+	if got := r.last(); strings.Join(got, ",") != "b,c" {
+		t.Fatalf("changed = %v, want [b c] (a unchanged, b removed, c added)", got)
 	}
 	if _, again, _ := c.Get("a"); again != backendA || r.builds.Load() != 3 {
 		t.Fatalf("an unchanged store must keep its backend (builds %d)", r.builds.Load())

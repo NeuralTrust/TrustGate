@@ -1,0 +1,272 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package secretref
+
+import (
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+)
+
+// slot is the value at one declared location of a registry.
+type slot struct {
+	path  []string
+	value string
+}
+
+const headersKey = "headers"
+
+// registryHasRef reports whether any declared location of r holds a
+// reference-shaped value. It allocates nothing, so a registry without
+// references costs a few comparisons.
+func registryHasRef(r *registry.Registry) bool {
+	if r == nil {
+		return false
+	}
+	if t := r.LLMTarget; t != nil {
+		if a := t.Auth; a != nil {
+			if k := a.APIKey; k != nil && (domain.IsRef(k.APIKey) || domain.IsRef(k.HeaderValue) || domain.IsRef(k.ParamValue)) {
+				return true
+			}
+			if w := a.AWS; w != nil && (domain.IsRef(w.AccessKeyID) || domain.IsRef(w.SecretAccessKey) || domain.IsRef(w.SessionToken)) {
+				return true
+			}
+			if z := a.Azure; z != nil && (domain.IsRef(z.APIKey) || domain.IsRef(z.ClientSecret)) {
+				return true
+			}
+			if o := a.OAuth; o != nil && (domain.IsRef(o.ClientSecret) || domain.IsRef(o.RefreshToken) || domain.IsRef(o.Password)) {
+				return true
+			}
+			if a.GCPServiceAccount != nil && domain.IsRef(*a.GCPServiceAccount) {
+				return true
+			}
+		}
+		switch headers := t.ProviderOptions[headersKey].(type) {
+		case map[string]any:
+			for _, v := range headers {
+				if s, ok := v.(string); ok && domain.IsRef(s) {
+					return true
+				}
+			}
+		case map[string]string:
+			for _, v := range headers {
+				if domain.IsRef(v) {
+					return true
+				}
+			}
+		}
+	}
+	if t := r.MCPTarget; t != nil {
+		if a := t.Auth; a != nil && (domain.IsRef(a.Value) || domain.IsRef(a.ClientSecret)) {
+			return true
+		}
+		for _, v := range t.Headers {
+			if domain.IsRef(v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// registrySlots lists the declared locations of r that hold a
+// reference-shaped value.
+func registrySlots(r *registry.Registry) []slot {
+	var out []slot
+	add := func(value string, path ...string) {
+		if domain.IsRef(value) {
+			out = append(out, slot{path: path, value: value})
+		}
+	}
+	if t := r.LLMTarget; t != nil {
+		if a := t.Auth; a != nil {
+			if k := a.APIKey; k != nil {
+				add(k.APIKey, "llm_target", "auth", "api_key", "api_key")
+				add(k.HeaderValue, "llm_target", "auth", "api_key", "header_value")
+				add(k.ParamValue, "llm_target", "auth", "api_key", "param_value")
+			}
+			if w := a.AWS; w != nil {
+				add(w.AccessKeyID, "llm_target", "auth", "aws", "access_key_id")
+				add(w.SecretAccessKey, "llm_target", "auth", "aws", "secret_access_key")
+				add(w.SessionToken, "llm_target", "auth", "aws", "session_token")
+			}
+			if z := a.Azure; z != nil {
+				add(z.APIKey, "llm_target", "auth", "azure", "api_key")
+				add(z.ClientSecret, "llm_target", "auth", "azure", "client_secret")
+			}
+			if o := a.OAuth; o != nil {
+				add(o.ClientSecret, "llm_target", "auth", "oauth", "client_secret")
+				add(o.RefreshToken, "llm_target", "auth", "oauth", "refresh_token")
+				add(o.Password, "llm_target", "auth", "oauth", "password")
+			}
+			if a.GCPServiceAccount != nil {
+				add(*a.GCPServiceAccount, "llm_target", "auth", "gcp_service_account")
+			}
+		}
+		switch headers := t.ProviderOptions[headersKey].(type) {
+		case map[string]any:
+			for k, v := range headers {
+				if s, ok := v.(string); ok {
+					add(s, "llm_target", "provider_options", headersKey, k)
+				}
+			}
+		case map[string]string:
+			for k, v := range headers {
+				add(v, "llm_target", "provider_options", headersKey, k)
+			}
+		}
+	}
+	if t := r.MCPTarget; t != nil {
+		if a := t.Auth; a != nil {
+			add(a.Value, "mcp_target", "auth", "value")
+			add(a.ClientSecret, "mcp_target", "auth", "client_secret")
+		}
+		for k, v := range t.Headers {
+			add(v, "mcp_target", "headers", k)
+		}
+	}
+	return out
+}
+
+// copyRegistry returns a copy of r whose credential-bearing parts are its
+// own, so setting a slot never writes through to r. Everything else,
+// unexported and json:"-" fields included, is shared or copied by value.
+func copyRegistry(r *registry.Registry) *registry.Registry {
+	c := *r
+	if r.LLMTarget != nil {
+		t := *r.LLMTarget
+		if r.LLMTarget.Auth != nil {
+			a := *r.LLMTarget.Auth
+			if a.APIKey != nil {
+				k := *a.APIKey
+				a.APIKey = &k
+			}
+			if a.AWS != nil {
+				w := *a.AWS
+				a.AWS = &w
+			}
+			if a.Azure != nil {
+				z := *a.Azure
+				a.Azure = &z
+			}
+			if a.OAuth != nil {
+				o := *a.OAuth
+				a.OAuth = &o
+			}
+			if a.GCPServiceAccount != nil {
+				s := *a.GCPServiceAccount
+				a.GCPServiceAccount = &s
+			}
+			t.Auth = &a
+		}
+		if r.LLMTarget.ProviderOptions != nil {
+			opts := make(map[string]any, len(r.LLMTarget.ProviderOptions))
+			for k, v := range r.LLMTarget.ProviderOptions {
+				opts[k] = v
+			}
+			switch headers := opts[headersKey].(type) {
+			case map[string]any:
+				copied := make(map[string]any, len(headers))
+				for k, v := range headers {
+					copied[k] = v
+				}
+				opts[headersKey] = copied
+			case map[string]string:
+				copied := make(map[string]string, len(headers))
+				for k, v := range headers {
+					copied[k] = v
+				}
+				opts[headersKey] = copied
+			}
+			t.ProviderOptions = opts
+		}
+		c.LLMTarget = &t
+	}
+	if r.MCPTarget != nil {
+		t := *r.MCPTarget
+		if r.MCPTarget.Auth != nil {
+			a := *r.MCPTarget.Auth
+			t.Auth = &a
+		}
+		if r.MCPTarget.Headers != nil {
+			headers := make(map[string]string, len(r.MCPTarget.Headers))
+			for k, v := range r.MCPTarget.Headers {
+				headers[k] = v
+			}
+			t.Headers = headers
+		}
+		c.MCPTarget = &t
+	}
+	return &c
+}
+
+// setSlot writes value at path of c, a copy from copyRegistry. path is one
+// that registrySlots returned for the same registry.
+func setSlot(c *registry.Registry, path []string, value string) {
+	if len(path) == 3 && path[0] == "mcp_target" && path[1] == headersKey {
+		c.MCPTarget.Headers[path[2]] = value
+		return
+	}
+	switch strings.Join(path[:min(len(path), 3)], ".") {
+	case "llm_target.auth.api_key":
+		switch path[3] {
+		case "api_key":
+			c.LLMTarget.Auth.APIKey.APIKey = value
+		case "header_value":
+			c.LLMTarget.Auth.APIKey.HeaderValue = value
+		case "param_value":
+			c.LLMTarget.Auth.APIKey.ParamValue = value
+		}
+	case "llm_target.auth.aws":
+		switch path[3] {
+		case "access_key_id":
+			c.LLMTarget.Auth.AWS.AccessKeyID = value
+		case "secret_access_key":
+			c.LLMTarget.Auth.AWS.SecretAccessKey = value
+		case "session_token":
+			c.LLMTarget.Auth.AWS.SessionToken = value
+		}
+	case "llm_target.auth.azure":
+		switch path[3] {
+		case "api_key":
+			c.LLMTarget.Auth.Azure.APIKey = value
+		case "client_secret":
+			c.LLMTarget.Auth.Azure.ClientSecret = value
+		}
+	case "llm_target.auth.oauth":
+		switch path[3] {
+		case "client_secret":
+			c.LLMTarget.Auth.OAuth.ClientSecret = value
+		case "refresh_token":
+			c.LLMTarget.Auth.OAuth.RefreshToken = value
+		case "password":
+			c.LLMTarget.Auth.OAuth.Password = value
+		}
+	case "llm_target.auth.gcp_service_account":
+		*c.LLMTarget.Auth.GCPServiceAccount = value
+	case "llm_target.provider_options.headers":
+		switch headers := c.LLMTarget.ProviderOptions[headersKey].(type) {
+		case map[string]any:
+			headers[path[3]] = value
+		case map[string]string:
+			headers[path[3]] = value
+		}
+	case "mcp_target.auth.value":
+		c.MCPTarget.Auth.Value = value
+	case "mcp_target.auth.client_secret":
+		c.MCPTarget.Auth.ClientSecret = value
+	}
+}

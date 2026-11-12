@@ -202,6 +202,7 @@ type adminParam struct {
 	Usage          *modules.UsageLoops
 	Revocations    appconfigsyncrevocation.Refresher
 	OpsSDK         *o11y.SDK
+	SecretStores   *modules.SecretStores `optional:"true"`
 }
 
 // rateLimitParams is what the plan rate limiter needs to run in the background
@@ -229,6 +230,7 @@ type proxyParam struct {
 	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
 	RateLimit     rateLimitParams
 	OpsSDK        *o11y.SDK
+	SecretStores  *modules.SecretStores `optional:"true"`
 }
 
 // planeParam is what the mcp and agent planes run with besides their server.
@@ -241,6 +243,7 @@ type planeParam struct {
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
 	RateLimit    rateLimitParams
 	OpsSDK       *o11y.SDK
+	SecretStores *modules.SecretStores `optional:"true"`
 }
 
 type mcpParam struct {
@@ -272,6 +275,7 @@ type allParam struct {
 	RateLimit      rateLimitParams
 	Usage          *modules.UsageLoops
 	OpsSDK         *o11y.SDK
+	SecretStores   *modules.SecretStores `optional:"true"`
 }
 
 // startSecretsBackfill starts the stored-secrets backfill and returns the
@@ -294,6 +298,8 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 	defer p.Usage.Stop()
 	defer stopRevocations()
 	defer stopPresence()
+	p.SecretStores.Start()
+	defer p.SecretStores.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Srv},
 		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
@@ -316,6 +322,8 @@ func runPlane(p planeParam, srv server.Server, name string, logger *slog.Logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
+	p.SecretStores.Start()
+	defer p.SecretStores.Stop()
 	runServer(srv, name, logger)
 }
 
@@ -329,6 +337,8 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
+	p.SecretStores.Start()
+	defer p.SecretStores.Stop()
 	runServer(p.Srv, serverProxy, logger)
 }
 
@@ -374,6 +384,8 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer startRateLimit(p.RateLimit, logger)()
 	p.Usage.Start()
 	defer p.Usage.Stop()
+	p.SecretStores.Start()
+	defer p.SecretStores.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
 		namedServer{name: serverProxy, srv: p.Proxy},
@@ -381,8 +393,8 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	)
 }
 
-// startRateLimit runs the plan counter sync loop
-// for as long as the process serves traffic. It loads the tenant caps once,
+// startRateLimit runs the plan counter sync loop as long as the process
+// serves traffic. It loads the tenant caps once,
 // bounded, before returning, so call it before the servers start: the first
 // requests are then measured against the tenant's row and not the gateway stamp.
 //
