@@ -66,6 +66,33 @@ func toolCallPreview(mcp *events.MCP, body string) string {
 	return tool + "(" + arg + ")"
 }
 
+// a2aMessagePreview is the text an A2A call sends: the text parts of
+// params.message, as A2A 0.3 ({"kind":"text","text":…}) and 1.0 ({"text":…})
+// write them. A call with no message (GetTask, CancelTask) has none. The body
+// is the sanitized one, and the text gets a prompt's credential redaction.
+func a2aMessagePreview(body string) string {
+	var envelope struct {
+		Params struct {
+			Message struct {
+				Parts []struct {
+					Kind string `json:"kind"`
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"message"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		return ""
+	}
+	texts := make([]string, 0, len(envelope.Params.Message.Parts))
+	for _, part := range envelope.Params.Message.Parts {
+		if part.Text != "" && (part.Kind == "" || part.Kind == "text") {
+			texts = append(texts, part.Text)
+		}
+	}
+	return truncatePreview(events.RedactCredentialsInText(strings.Join(texts, " "), maxPreviewRunes))
+}
+
 // firstStringArgument walks params.arguments as a token stream because a Go
 // map would lose the order the client wrote the arguments in, and the first
 // one is the closest thing to a tool's main argument.
