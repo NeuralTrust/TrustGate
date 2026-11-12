@@ -19,6 +19,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -36,9 +38,14 @@ func Providers(c *container.Container) error {
 		providers.SetDefaultHTTPTimeout(cfg.Provider.RequestTimeout)
 		providers.SetDefaultResponseHeaderTimeout(cfg.Provider.ResponseHeaderTimeout)
 		netguard.SetAllowPrivate(cfg.Outbound.AllowPrivateNetworks)
+		registrydomain.SetManagedAPIKeys(map[string]string{
+			provider.OpenAI: cfg.ManagedRegistries.OpenAIAPIKey,
+		})
 		// One line at startup so an operator can tell which side of the guard
 		// this gateway is on without reading its environment.
 		logger.Info("outbound network policy",
 			slog.Bool("allow_private_networks", cfg.Outbound.AllowPrivateNetworks))
+		logger.Info("managed registries",
+			slog.Bool("openai_key_configured", cfg.ManagedRegistries.OpenAIAPIKey != ""))
 	})
 }

@@ -111,6 +111,9 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Re
 	if existing.GatewayID != gatewayID {
 		return domain.ErrNotFound
 	}
+	if err := refuseManagedChange(ctx, existing.Managed); err != nil {
+		return err
+	}
 	for _, cleaner := range d.cleaners {
 		if err := cleaner.DeleteByRegistry(ctx, gatewayID, id); err != nil {
 			return fmt.Errorf("clean registry dependency: %w", err)
