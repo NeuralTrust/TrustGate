@@ -34,6 +34,9 @@ type CreateRegistryRequest struct {
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
 	A2ATarget       *A2ATargetRequest    `json:"a2a_target,omitempty"`
+	// Managed asks for an LLM registry NeuralTrust supplies the credentials
+	// for. Platform callers only; it takes no auth.
+	Managed bool `json:"managed,omitempty"`
 }
 
 type PricingRequest struct {
@@ -171,6 +174,9 @@ func (r CreateRegistryRequest) Validate() error {
 	if r.A2ATarget != nil && r.ToType() != domain.TypeA2A {
 		return fmt.Errorf("a2a_target is only valid for A2A registries: %w", commonerrors.ErrValidation)
 	}
+	if r.Managed && r.ToType() != domain.TypeLLM {
+		return fmt.Errorf("only an LLM registry can be managed: %w", commonerrors.ErrValidation)
+	}
 	if r.ToType() == domain.TypeA2A {
 		if r.A2ATarget == nil {
 			return fmt.Errorf("a2a_target is required for A2A registries: %w", commonerrors.ErrValidation)
@@ -189,11 +195,17 @@ func (r CreateRegistryRequest) Validate() error {
 	if strings.TrimSpace(r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
-	if r.Auth == nil {
-		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
-	}
-	if err := r.Auth.ToDomain().Validate(); err != nil {
-		return err
+	if r.Managed {
+		if r.Auth != nil {
+			return fmt.Errorf("a managed registry takes no auth: %w", commonerrors.ErrValidation)
+		}
+	} else {
+		if r.Auth == nil {
+			return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
+		}
+		if err := r.Auth.ToDomain().Validate(); err != nil {
+			return err
+		}
 	}
 	if err := r.Pricing.ToDomain().Validate(); err != nil {
 		return err

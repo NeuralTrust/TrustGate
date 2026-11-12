@@ -101,6 +101,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	if err := refuseManagedChange(ctx, existing.Managed); err != nil {
+		return nil, err
+	}
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}

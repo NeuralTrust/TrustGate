@@ -760,8 +760,8 @@ func filesProviderConfig(bk *registry.Registry, authorization string) *providers
 }
 
 func registryCredentials(bk *registry.Registry, authorization string) providers.Credentials {
-	creds := providers.CredentialsFromTargetAuth(bk.Auth())
-	providers.ApplyIncomingBearer(&creds, bk.Auth(), authorization)
+	creds := providers.CredentialsFromTargetAuth(bk.EffectiveAuth())
+	providers.ApplyIncomingBearer(&creds, bk.EffectiveAuth(), authorization)
 	return creds
 }
 

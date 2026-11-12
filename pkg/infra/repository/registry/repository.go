@@ -123,11 +123,11 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 		return fmt.Errorf("registry repository: marshal a2a_target: %w", err)
 	}
 	const query = `
-		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target, managed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt, a2aTargetBytes,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt, a2aTargetBytes, b.Managed,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -289,7 +289,7 @@ func (r *Repository) Delete(
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target, managed
 		  FROM registries
 		 WHERE id = $1`
 	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
@@ -308,7 +308,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target, managed
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -355,7 +355,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target, managed
 		  FROM registries
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -393,7 +393,7 @@ func (r *Repository) scanRegistry(ctx context.Context, s rowScanner) (*domain.Re
 	if err := s.Scan(
 		&b.ID, &b.GatewayID, &b.Name, &typeRaw, &b.Enabled, &providerRaw,
 		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw, &pricingRaw,
-		&b.CreatedAt, &b.UpdatedAt, &a2aTargetRaw,
+		&b.CreatedAt, &b.UpdatedAt, &a2aTargetRaw, &b.Managed,
 	); err != nil {
 		return nil, err
 	}
