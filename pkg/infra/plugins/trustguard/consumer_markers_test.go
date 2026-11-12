@@ -100,7 +100,7 @@ func markedBody(req *infracontext.RequestContext) GuardRequest {
 	return body
 }
 
-// The trustguard plugin posts the v1 body to /v2/evaluate, where TrustGuard maps
+// The trustguard plugin posts the v1 body to /v1/evaluate, where TrustGuard maps
 // attributes.consumer onto attributes.application, markers included.
 func TestV1BodyCarriesConsumerMarkers(t *testing.T) {
 	t.Parallel()
