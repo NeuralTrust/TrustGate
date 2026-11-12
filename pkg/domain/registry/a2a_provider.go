@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/google/uuid"
 )
 
 // A2AProvider says where an A2A agent is hosted, which decides how it is
@@ -54,6 +55,15 @@ type a2aLocator interface {
 	validate() error
 	cardURL(v A2AProtocolVersion) string
 	endpoint() string
+}
+
+// AgentCoreSessionHeader names the AgentCore runtime session of a request.
+// AgentCore refuses a request without one, the card read included.
+const AgentCoreSessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+
+// NewAgentCoreSession returns a session id AgentCore accepts (33 characters or more).
+func NewAgentCoreSession() string {
+	return "tgs-" + uuid.Must(uuid.NewV7()).String()
 }
 
 // AgentCoreLocator names an Amazon Bedrock AgentCore runtime.
