@@ -1,7 +1,12 @@
 change: external-secret-stores
 linear: null
 parent: null
-focus: hybrid-first (phases 1-2); hosted and dedicated in phase 3 as a separate change
+focus: customer-operated deployments (hybrid, self-hosted/external, central control plane); NeuralTrust SaaS and dedicated in phase 3 as a separate change
+repos:
+  - NeuralTrust/TrustGate
+  - NeuralTrust/neuraltrust-platform
+  - NeuralTrust/app
+  - NeuralTrust/docs
 phases:
   explore: done
   propose: done
@@ -11,7 +16,8 @@ phases:
   apply: pending
 open_questions:
   OQ1: default max_stale (24h vs 1h)
-  OQ2: opt-in LKG persistence of resolved values on hybrid planes
-  OQ3: agentgateway.secretStores chart keys (agree with chart owners)
-  OQ4: packaging / plan entitlement
+  OQ2: opt-in LKG persistence of resolved values on hybrid/remote planes
+  OQ3: agentgateway.secretStores chart keys, mounts and per-mode SECRET_STORES_GATEWAYS default
+  OQ4: packaging / plan entitlement (on-prem consoles resolve unrestricted entitlements)
   OQ5: phase 3 federation issuer and whether API-managed stores are needed
+  OQ6: move GCP Secret Manager / Azure Key Vault into phase 1 for self-hosted customers on GKE/AKS
