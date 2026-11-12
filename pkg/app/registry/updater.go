@@ -169,6 +169,8 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 	next.BedrockAgentCore = cmp.Or(next.BedrockAgentCore, prev.BedrockAgentCore)
 	next.AzureFoundry = cmp.Or(next.AzureFoundry, prev.AzureFoundry)
 	next.VertexAgentEngine = cmp.Or(next.VertexAgentEngine, prev.VertexAgentEngine)
+	next.AgentCoreHarness = cmp.Or(next.AgentCoreHarness, prev.AgentCoreHarness)
+	next.Databricks = cmp.Or(next.Databricks, prev.Databricks)
 	next.Auth = cmp.Or(next.Auth, prev.Auth)
 	if next.CardAuth == "" && next.CardAuthApplies(prev.CardAuth) {
 		next.CardAuth = prev.CardAuth
@@ -208,7 +210,9 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 func sameLocator(a, b *domain.A2ATarget) bool {
 	return samePointee(a.BedrockAgentCore, b.BedrockAgentCore) &&
 		samePointee(a.AzureFoundry, b.AzureFoundry) &&
-		samePointee(a.VertexAgentEngine, b.VertexAgentEngine)
+		samePointee(a.VertexAgentEngine, b.VertexAgentEngine) &&
+		samePointee(a.AgentCoreHarness, b.AgentCoreHarness) &&
+		samePointee(a.Databricks, b.Databricks)
 }
 
 func samePointee[T comparable](a, b *T) bool {
