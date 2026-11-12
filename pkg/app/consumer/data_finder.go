@@ -50,6 +50,16 @@ type dataFinder struct {
 	// budgets loads the group budgets with the gateway's data. Nil: no group
 	// key is held to a budget on this plane.
 	budgets keygroupdomain.Reader
+	// materializer replaces the secret references of the loaded registries
+	// with their values. Nil leaves registries as stored.
+	materializer RegistryMaterializer
+}
+
+// RegistryMaterializer turns the secret references held by a gateway's
+// registries into values, returning the input map untouched when none holds
+// a reference.
+type RegistryMaterializer interface {
+	Registries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
 }
 
 // DataFinderOption tunes NewDataFinder.
@@ -60,6 +70,13 @@ type DataFinderOption func(*dataFinder)
 // request.
 func WithKeyGroupBudgets(r keygroupdomain.Reader) DataFinderOption {
 	return func(f *dataFinder) { f.budgets = r }
+}
+
+// WithSecretReferences resolves the secret references of a gateway's
+// registries when its data is built. The values live only in the cached
+// data, never in the repositories or the shared registry cache.
+func WithSecretReferences(m RegistryMaterializer) DataFinderOption {
+	return func(f *dataFinder) { f.materializer = m }
 }
 
 func NewDataFinder(
@@ -87,6 +104,20 @@ func NewDataFinder(
 		}
 	}
 	return f
+}
+
+// InvalidateGatewayData returns a function that drops, on this replica only,
+// everything built from a gateway's registries: its runtime data and its
+// load balancers, which hold the registries they route to. Deleting bumps
+// each map's generation, so a load already in flight does not write the old
+// data back.
+func InvalidateGatewayData(manager *cache.TTLMapManager) func(ids.GatewayID) {
+	data := manager.GetTTLMap(cache.ConsumerDataTTLName)
+	balancers := manager.GetTTLMap(cache.LoadBalancerTTLName)
+	return func(gatewayID ids.GatewayID) {
+		data.Delete(gatewayID.String())
+		balancers.DeleteByPrefix(gatewayID.String() + ":")
+	}
 }
 
 func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID ids.GatewayID) (*Data, error) {
@@ -134,6 +165,9 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err
+	}
+	if f.materializer != nil {
+		backendByID = f.materializer.Registries(ctx, gatewayID, backendByID)
 	}
 	loaded, err := f.loadPolicies(ctx, gatewayID)
 	if err != nil {

@@ -41,7 +41,8 @@ type Options struct {
 	DeploymentType string
 	Logger         *slog.Logger
 	// OnReload is called after a reload with the names of the stores that
-	// changed or were removed, so cached values read from them are dropped.
+	// were added, changed or removed, so cached values read from them are
+	// dropped and references to them are resolved again.
 	OnReload func(changed []string)
 }
 
@@ -176,9 +177,7 @@ func (c *Catalog) load() ([]string, error) {
 			return nil, fmt.Errorf("store %q: %w", store.Name, err)
 		}
 		next[store.Name] = loaded{store: store, backend: backend}
-		if _, existed := previous[store.Name]; existed {
-			changed = append(changed, store.Name)
-		}
+		changed = append(changed, store.Name)
 	}
 	for name := range previous {
 		if _, kept := next[name]; !kept {

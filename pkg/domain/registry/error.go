@@ -28,6 +28,12 @@ var ErrCredentialAcquisition = errors.New("provider credential acquisition faile
 // ErrCredentialAcquisition, so the proxy still treats it as terminal.
 var ErrCallerCredentialRejected = fmt.Errorf("%w: the provider credential sent by the caller was rejected", ErrCredentialAcquisition)
 
+// ErrSecretUnavailable reports that a credential of the registry is a secret
+// reference that could not be resolved, so the registry cannot be called. It
+// is not a credential acquisition failure: failover may try another registry.
+// Its message names neither the store nor the path.
+var ErrSecretUnavailable = errors.New("a credential of this registry is temporarily unavailable")
+
 // BackendError represents a non-2xx response received from a backend target
 // (the upstream LLM provider). It carries the status code and raw body; the
 // proxy relays the error to the client through adapter.ClientErrorBody.
