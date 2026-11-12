@@ -92,8 +92,8 @@ func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key appa2a.
 	switch {
 	case c == nil:
 		return errors.New("a2a: the agent has no cloud_auth")
-	case c.AWS != nil && t.BedrockAgentCore != nil:
-		return s.signV4(ctx, c.AWS, t.BedrockAgentCore.Region(), key, req)
+	case c.AWS != nil && t.AWSRegion() != "":
+		return s.signV4(ctx, c.AWS, t.AWSRegion(), key, req)
 	case c.Azure != nil:
 		token, err := s.entraToken(ctx, c.Azure, key)
 		if err != nil {
