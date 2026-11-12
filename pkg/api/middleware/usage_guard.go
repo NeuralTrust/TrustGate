@@ -34,6 +34,9 @@ const (
 	ErrCodeInsufficientFunds = "insufficient_funds"
 	// ErrCodePlanLimit is returned when a Free tenant reached a monthly limit.
 	ErrCodePlanLimit = "plan_limit"
+	// ErrCodeManagedLimit is returned when a tenant reached its monthly limit
+	// for managed registries and no other registry can serve the request.
+	ErrCodeManagedLimit = "managed_limit"
 
 	usageBlockedMessage = "TrustGate blocked this request: the organization's usage is exhausted. Add funds or upgrade the plan to resume."
 
@@ -75,6 +78,16 @@ func (m *UsageGuardMiddleware) Refusing() bool {
 	return m.Enforcing() && appusage.HoldsList(m.checker)
 }
 
+// ManagedBlocked reports whether the managed registries of tenantID are
+// blocked: any exhausted state blocks them, the managed limit only them.
+func (m *UsageGuardMiddleware) ManagedBlocked(tenantID string) bool {
+	if !m.Enforcing() || tenantID == "" {
+		return false
+	}
+	_, exhausted := m.checker.Exhausted(tenantID)
+	return exhausted
+}
+
 // ForMCP returns a copy of the guard that answers in JSON-RPC.
 func (m *UsageGuardMiddleware) ForMCP() *UsageGuardMiddleware {
 	clone := *m
@@ -101,7 +114,7 @@ func (m *UsageGuardMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 		reason, exhausted := m.checker.Exhausted(gw.TenantID())
-		if !exhausted {
+		if !exhausted || reason == usagedomain.ReasonManagedLimitReached {
 			return c.Next()
 		}
 		code := usageErrorCode(reason)

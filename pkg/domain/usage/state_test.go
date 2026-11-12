@@ -32,6 +32,8 @@ func TestNewTenantState(t *testing.T) {
 	}{
 		{name: "exhausted wallet", tenant: "t1", status: StatusExhausted, reason: ReasonWalletEmpty, version: 3, wantReason: ReasonWalletEmpty},
 		{name: "exhausted free limit", tenant: "t1", status: StatusExhausted, reason: ReasonFreeLimitReached, version: 3, wantReason: ReasonFreeLimitReached},
+		{name: "exhausted managed limit", tenant: "t1", status: StatusExhausted, reason: ReasonManagedLimitReached, version: 3, wantReason: ReasonManagedLimitReached},
+		{name: "exhausted unknown reason", tenant: "t1", status: StatusExhausted, reason: Reason("overdraft"), version: 1, wantErr: true},
 		{name: "healthy drops reason", tenant: "t1", status: StatusHealthy, reason: ReasonWalletEmpty, version: 3, wantReason: ReasonNone},
 		{name: "missing tenant", status: StatusHealthy, version: 1, wantErr: true},
 		{name: "zero version", tenant: "t1", status: StatusHealthy, wantErr: true},
@@ -90,6 +92,28 @@ func TestSnapshotChanges(t *testing.T) {
 	}
 	if held["stale"].Version != 5 {
 		t.Fatal("Changes wrote into held")
+	}
+}
+
+func TestTenantStateBlocks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		state      TenantState
+		wantTenant bool
+	}{
+		{name: "healthy", state: TenantState{Status: StatusHealthy}},
+		{name: "wallet empty", state: TenantState{Status: StatusExhausted, Reason: ReasonWalletEmpty}, wantTenant: true},
+		{name: "free limit", state: TenantState{Status: StatusExhausted, Reason: ReasonFreeLimitReached}, wantTenant: true},
+		{name: "managed limit", state: TenantState{Status: StatusExhausted, Reason: ReasonManagedLimitReached}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.state.BlocksTenant(); got != tt.wantTenant {
+				t.Fatalf("BlocksTenant = %v, want %v", got, tt.wantTenant)
+			}
+		})
 	}
 }
 

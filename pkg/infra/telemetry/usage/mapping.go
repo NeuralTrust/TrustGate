@@ -38,6 +38,7 @@ const (
 	attrRequests                 = "usage.requests"
 	attrSmartRoutingExecutions   = "usage.smart_routing_executions"
 	attrTopicClassificationChars = "usage.topic_classification_chars"
+	attrManagedRequests          = "usage.managed_requests"
 
 	occurredOnLayout = "2006-01-02T15:04:05.000Z07:00"
 )
@@ -72,6 +73,7 @@ func toLogRecord(r usagedomain.Record, observed time.Time) otellog.Record {
 	appendUnit(attrRequests, r.Requests)
 	appendUnit(attrSmartRoutingExecutions, r.SmartRoutingExecutions)
 	appendUnit(attrTopicClassificationChars, r.TopicClassificationChars)
+	appendUnit(attrManagedRequests, r.ManagedRequests)
 	rec.AddAttributes(attrs...)
 	return rec
 }

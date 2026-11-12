@@ -136,12 +136,20 @@ func TestRedisStateCacheBlocksUnknownReasons(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	server.HSet(StatesKey, "tenant-a", "7|exhausted|overdraft_limit")
 	server.HSet(StatesKey, "tenant-b", "8|paused|")
+	server.HSet(StatesKey, "tenant-c", "9|exhausted|managed_limit_reached")
 
 	states, err := NewRedisStateCache(client, nil).LoadAll(context.Background())
 	if err != nil {
 		t.Fatalf("LoadAll: %v", err)
 	}
-	if len(states) != 1 || states[0].TenantID != "tenant-a" || states[0].Reason != domain.ReasonWalletEmpty || !states[0].Exhausted() {
+	byTenant := map[string]domain.TenantState{}
+	for _, s := range states {
+		byTenant[s.TenantID] = s
+	}
+	if len(states) != 2 || byTenant["tenant-a"].Reason != domain.ReasonWalletEmpty || !byTenant["tenant-a"].Exhausted() {
 		t.Fatalf("states = %+v, want tenant-a blocked as wallet_empty and the unknown status skipped", states)
+	}
+	if byTenant["tenant-c"].Reason != domain.ReasonManagedLimitReached {
+		t.Fatalf("tenant-c = %+v, want the managed limit kept", byTenant["tenant-c"])
 	}
 }

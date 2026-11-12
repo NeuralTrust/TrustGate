@@ -134,7 +134,7 @@ func (f *fakeUsage) TenantChangedSince(cursor uint64, tenantID string) (usagedom
 }
 
 func (s *Service) testUsageStream(scope string, acceptsChanges bool) *usageStream {
-	return newUsageStream(s.usage, s.usageGateways, s.logger, scope, acceptsChanges)
+	return newUsageStream(s.usage, s.usageGateways, s.logger, scope, acceptsChanges, true)
 }
 
 func (f *fakeUsage) Subscribe() (<-chan struct{}, func()) {
@@ -950,5 +950,82 @@ func TestSyncRetriesAnOwedListWithoutAnyChange(t *testing.T) {
 	gateways.recover()
 	if got := recvUsage(t, stream); len(got.GetExhausted()) != 1 || got.GetExhausted()[0].GetTenantId() != "tenant-a" {
 		t.Fatalf("usage = %v, want tenant-a's list once the gateway resolves, with no change or notice", got)
+	}
+}
+
+func managedState(t *testing.T, tenant string, version int64) usagedomain.TenantState {
+	t.Helper()
+	s, err := usagedomain.NewTenantState(tenant, usagedomain.StatusExhausted, usagedomain.ReasonManagedLimitReached, version)
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	return s
+}
+
+func walletEmptyState(t *testing.T, tenant string, version int64) usagedomain.TenantState {
+	t.Helper()
+	s, err := usagedomain.NewTenantState(tenant, usagedomain.StatusExhausted, usagedomain.ReasonWalletEmpty, version)
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	return s
+}
+
+func TestUsageStreamSendsTheManagedLimitOnlyToDataPlanesThatAcceptIt(t *testing.T) {
+	ctx := context.Background()
+	for _, tt := range []struct {
+		name        string
+		managed     bool
+		wantListed  int
+		wantStatus  snapshotpb.UsageStatus
+		wantReasonB snapshotpb.UsageReason
+	}{
+		{name: "accepts the managed limit", managed: true, wantListed: 2, wantStatus: snapshotpb.UsageStatus_USAGE_STATUS_EXHAUSTED, wantReasonB: snapshotpb.UsageReason_USAGE_REASON_MANAGED_LIMIT_REACHED},
+		{name: "predates the managed limit", managed: false, wantListed: 1, wantStatus: snapshotpb.UsageStatus_USAGE_STATUS_HEALTHY, wantReasonB: snapshotpb.UsageReason_USAGE_REASON_UNSPECIFIED},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := newFakeUsage(exhaustedState(t, "tenant-a", 4), managedState(t, "tenant-b", 5))
+			svc := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil))
+			stream := newUsageStream(svc.usage, svc.usageGateways, svc.logger, "", true, tt.managed)
+
+			msgs := stream.next(ctx)
+			if len(msgs) != 1 || len(msgs[0].GetUsage().GetExhausted()) != tt.wantListed || msgs[0].GetUsage().GetAsOfVersion() != 5 {
+				t.Fatalf("list = %v, want %d listed as of 5", msgs, tt.wantListed)
+			}
+
+			usage.set(walletEmptyState(t, "tenant-c", 6))
+			_ = stream.next(ctx)
+			usage.set(managedState(t, "tenant-c", 7))
+			msgs = stream.next(ctx)
+			states := msgs[0].GetUsageChanges().GetStates()
+			if len(states) != 1 || states[0].GetStatus() != tt.wantStatus || states[0].GetVersion() != 7 || states[0].GetReason() != tt.wantReasonB {
+				t.Fatalf("change = %v, want tenant-c %v at version 7", states, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestUsageStreamUnblocksAnOldDataPlaneWhenAWalletBlockBecomesTheManagedLimit(t *testing.T) {
+	ctx := context.Background()
+	usage := newFakeUsage(walletEmptyState(t, "tenant-a", 4))
+	svc := NewService(NewHub(discardLogger(), nil), &fakeSource{}, discardLogger(), nil, WithUsage(usage, nil))
+	stream := newUsageStream(svc.usage, svc.usageGateways, svc.logger, "", false, false)
+	plane := usageapp.NewEnforcement()
+
+	plane.ApplySnapshot(usageSnapshotFromProto(stream.next(ctx)[0].GetUsage()))
+	if _, blocked := plane.Exhausted("tenant-a"); !blocked {
+		t.Fatal("tenant-a must start blocked for its wallet")
+	}
+
+	usage.set(managedState(t, "tenant-a", 5))
+	plane.ApplySnapshot(usageSnapshotFromProto(stream.next(ctx)[0].GetUsage()))
+	if reason, blocked := plane.Exhausted("tenant-a"); blocked {
+		t.Fatalf("tenant-a still blocked (%s) on a data plane that cannot block managed registries alone", reason)
+	}
+}
+
+func TestUsageReasonRoundTripsTheManagedLimit(t *testing.T) {
+	if got := usageReasonFromProto(usageReasonToProto(usagedomain.ReasonManagedLimitReached)); got != usagedomain.ReasonManagedLimitReached {
+		t.Fatalf("reason = %q, want managed_limit_reached", got)
 	}
 }

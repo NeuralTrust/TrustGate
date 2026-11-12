@@ -45,9 +45,11 @@ type RouteBaseline struct {
 
 type LLMAttrs struct {
 	RegistryID string
-	Provider   string
-	Model      string
-	SentModel  string
+	// Managed is set when the registry runs on NeuralTrust's own credentials.
+	Managed   bool
+	Provider  string
+	Model     string
+	SentModel string
 	// RouteModel is the model the load balancer's route pinned, empty when the
 	// route deferred to the registry's model policy. It separates the balancer's
 	// decision from RequestedModel (what the client asked for) and SentModel
