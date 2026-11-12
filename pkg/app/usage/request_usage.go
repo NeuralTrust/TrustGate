@@ -57,7 +57,7 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 		return
 	}
 	meta := rt.Metadata()
-	var smartRouting int64
+	var smartRouting, managed int64
 	if meta.Kind == events.KindMCP {
 		if rt.IsMetaTool() {
 			return
@@ -77,6 +77,9 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 		if served.TierApplied {
 			smartRouting = 1
 		}
+		if served.Managed {
+			managed = 1
+		}
 	}
 	if !BillableStatus(statusCode) {
 		return
@@ -90,6 +93,7 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 		ConsumerID:             meta.ConsumerID,
 		Requests:               1,
 		SmartRoutingExecutions: smartRouting,
+		ManagedRequests:        managed,
 	})
 	if err != nil {
 		r.skip()

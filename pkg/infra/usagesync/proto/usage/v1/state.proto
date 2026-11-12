@@ -43,6 +43,11 @@ enum ExhaustionReason {
   EXHAUSTION_REASON_FREE_LIMIT_REACHED = 1;
   // EXHAUSTION_REASON_WALLET_EMPTY: a Standard tenant's balance reached zero.
   EXHAUSTION_REASON_WALLET_EMPTY = 2;
+  // EXHAUSTION_REASON_MANAGED_LIMIT_REACHED: a Free or Standard tenant reached
+  // its monthly limit of requests served by registries that use a NeuralTrust
+  // key. Data planes block only those registries and keep serving the rest; a
+  // consumer that cannot do that treats the tenant as HEALTHY.
+  EXHAUSTION_REASON_MANAGED_LIMIT_REACHED = 3;
 }
 
 // UsageState is the usage status of one tenant. Every hop (Usage System,

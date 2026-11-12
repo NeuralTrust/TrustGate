@@ -92,6 +92,9 @@ const (
 	UsageReason_USAGE_REASON_UNSPECIFIED        UsageReason = 0
 	UsageReason_USAGE_REASON_FREE_LIMIT_REACHED UsageReason = 1
 	UsageReason_USAGE_REASON_WALLET_EMPTY       UsageReason = 2
+	// USAGE_REASON_MANAGED_LIMIT_REACHED blocks only the registries that use a
+	// NeuralTrust key.
+	UsageReason_USAGE_REASON_MANAGED_LIMIT_REACHED UsageReason = 3
 )
 
 // Enum value maps for UsageReason.
@@ -100,11 +103,13 @@ var (
 		0: "USAGE_REASON_UNSPECIFIED",
 		1: "USAGE_REASON_FREE_LIMIT_REACHED",
 		2: "USAGE_REASON_WALLET_EMPTY",
+		3: "USAGE_REASON_MANAGED_LIMIT_REACHED",
 	}
 	UsageReason_value = map[string]int32{
-		"USAGE_REASON_UNSPECIFIED":        0,
-		"USAGE_REASON_FREE_LIMIT_REACHED": 1,
-		"USAGE_REASON_WALLET_EMPTY":       2,
+		"USAGE_REASON_UNSPECIFIED":           0,
+		"USAGE_REASON_FREE_LIMIT_REACHED":    1,
+		"USAGE_REASON_WALLET_EMPTY":          2,
+		"USAGE_REASON_MANAGED_LIMIT_REACHED": 3,
 	}
 )
 
@@ -249,8 +254,13 @@ type Hello struct {
 	// GetFragments. Notices on this stream then carry the manifest version, and
 	// VersionNotice.layered is set.
 	AcceptsLayered bool `protobuf:"varint,5,opt,name=accepts_layered,json=acceptsLayered,proto3" json:"accepts_layered,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// accepts_managed_limit says the data plane blocks only the registries that
+	// use a NeuralTrust key for USAGE_REASON_MANAGED_LIMIT_REACHED. Older data
+	// planes get those tenants as healthy, since they would block every
+	// registry.
+	AcceptsManagedLimit bool `protobuf:"varint,6,opt,name=accepts_managed_limit,json=acceptsManagedLimit,proto3" json:"accepts_managed_limit,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -314,6 +324,13 @@ func (x *Hello) GetAcceptsUsageChanges() bool {
 func (x *Hello) GetAcceptsLayered() bool {
 	if x != nil {
 		return x.AcceptsLayered
+	}
+	return false
+}
+
+func (x *Hello) GetAcceptsManagedLimit() bool {
+	if x != nil {
+		return x.AcceptsManagedLimit
 	}
 	return false
 }
@@ -1311,14 +1328,15 @@ const file_configsync_proto_rawDesc = "" +
 	"\x05hello\x18\x01 \x01(\v2\x11.snapshotpb.HelloH\x00R\x05hello\x12#\n" +
 	"\x03ack\x18\x02 \x01(\v2\x0f.snapshotpb.AckH\x00R\x03ack\x125\n" +
 	"\theartbeat\x18\x03 \x01(\v2\x15.snapshotpb.HeartbeatH\x00R\theartbeatB\x05\n" +
-	"\x03msg\"\xdc\x01\n" +
+	"\x03msg\"\x90\x02\n" +
 	"\x05Hello\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x120\n" +
 	"\x14last_applied_version\x18\x02 \x01(\tR\x12lastAppliedVersion\x12#\n" +
 	"\raccepts_usage\x18\x03 \x01(\bR\facceptsUsage\x122\n" +
 	"\x15accepts_usage_changes\x18\x04 \x01(\bR\x13acceptsUsageChanges\x12'\n" +
-	"\x0faccepts_layered\x18\x05 \x01(\bR\x0eacceptsLayered\".\n" +
+	"\x0faccepts_layered\x18\x05 \x01(\bR\x0eacceptsLayered\x122\n" +
+	"\x15accepts_managed_limit\x18\x06 \x01(\bR\x13acceptsManagedLimit\".\n" +
 	"\x03Ack\x12'\n" +
 	"\x0fapplied_version\x18\x01 \x01(\tR\x0eappliedVersion\"\xc8\x01\n" +
 	"\tHeartbeat\x12\x18\n" +
@@ -1382,11 +1400,12 @@ const file_configsync_proto_rawDesc = "" +
 	"\vUsageStatus\x12\x1c\n" +
 	"\x18USAGE_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14USAGE_STATUS_HEALTHY\x10\x01\x12\x1a\n" +
-	"\x16USAGE_STATUS_EXHAUSTED\x10\x02*o\n" +
+	"\x16USAGE_STATUS_EXHAUSTED\x10\x02*\x97\x01\n" +
 	"\vUsageReason\x12\x1c\n" +
 	"\x18USAGE_REASON_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fUSAGE_REASON_FREE_LIMIT_REACHED\x10\x01\x12\x1d\n" +
-	"\x19USAGE_REASON_WALLET_EMPTY\x10\x022\xad\x02\n" +
+	"\x19USAGE_REASON_WALLET_EMPTY\x10\x02\x12&\n" +
+	"\"USAGE_REASON_MANAGED_LIMIT_REACHED\x10\x032\xad\x02\n" +
 	"\n" +
 	"ConfigSync\x12@\n" +
 	"\x04Sync\x12\x19.snapshotpb.ClientMessage\x1a\x19.snapshotpb.ServerMessage(\x010\x01\x12J\n" +

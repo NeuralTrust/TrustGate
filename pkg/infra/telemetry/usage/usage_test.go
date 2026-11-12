@@ -138,10 +138,27 @@ func TestEmitter_MapsRecordToContract(t *testing.T) {
 	assert.Equal(t, int64(1), got["usage.smart_routing_executions"].AsInt64())
 	assert.NotContains(t, got, "usage.consumer_id")
 	assert.NotContains(t, got, "usage.topic_classification_chars")
+	assert.NotContains(t, got, "usage.managed_requests")
 	for key := range got {
 		assert.Regexp(t, `^usage\.`, key)
 	}
 	assert.Equal(t, 1, counter.get(usagedomain.OutcomeEmitted))
+}
+
+func TestEmitter_MapsManagedRequests(t *testing.T) {
+	t.Parallel()
+	mem := &memExporter{}
+	e := newEmitter(mem, 16, &outcomeCounter{}, discardLogger())
+	r := sampleRecord(t)
+	r.ManagedRequests = 1
+	e.Emit(context.Background(), r)
+	e.Close()
+
+	records := mem.all()
+	require.Len(t, records, 1)
+	got := attrs(records[0])
+	assert.Equal(t, int64(1), got["usage.requests"].AsInt64())
+	assert.Equal(t, int64(1), got["usage.managed_requests"].AsInt64())
 }
 
 func TestEmitter_FullQueueDropsWithoutBlocking(t *testing.T) {
