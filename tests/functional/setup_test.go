@@ -9,6 +9,10 @@ package functional_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -36,11 +40,13 @@ var (
 	adminCmd          *exec.Cmd
 	proxyCmd          *exec.Cmd
 	mcpCmd            *exec.Cmd
+	agentCmd          *exec.Cmd
 	gatewayBinaryPath string
 
 	AdminURL   = getEnv("ADMIN_URL", "")
 	ProxyURL   = getEnv("PROXY_URL", "")
 	MCPURL     = getEnv("MCP_URL", "")
+	AgentURL   = getEnv("AGENT_URL", "")
 	BaseDomain = getEnv("BASE_DOMAIN", "")
 
 	// AdminToken is a JWT signed with the same secret the admin server boots
@@ -51,7 +57,16 @@ var (
 var (
 	dbName                   = "trustgate_functional"
 	serverConfigSyncGRPCPort = 8083
+	functionalSTSSigningKey  string
 )
+
+func generateSTSSigningKey() string {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		log.Fatalf("failed to generate the STS signing key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
 
 func TestMain(m *testing.M) {
 	fmt.Println("Creating Test Environment...")
@@ -89,6 +104,9 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelReque
 	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	// Upstream stubs in the functional suite listen on loopback.
 	env = append(env, "OUTBOUND_ALLOW_PRIVATE_NETWORKS=true")
+	// One signing key for every plane, as in production: the agent plane
+	// refuses delegation with an ephemeral key.
+	env = append(env, "STS_SIGNING_KEY="+functionalSTSSigningKey)
 	env = append(env, "TRUSTGUARD_CLIENT_ID="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_ID", trustGuardFunctionalClientID))
 	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_SECRET", trustGuardFunctionalClientSecret))
 	if trustGuardBaseURL != "" {
@@ -126,6 +144,7 @@ func setupTestEnvironment() {
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
 	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
 	MCPURL = getEnv("MCP_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.MCPPort))
+	AgentURL = getEnv("AGENT_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AgentPort))
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
 	token, err := jwt.NewJwtManager(&cfg.Server).CreateToken()
@@ -134,7 +153,7 @@ func setupTestEnvironment() {
 	}
 	AdminToken = token
 
-	requireFreePorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort, serverConfigSyncGRPCPort})
+	requireFreePorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort, cfg.Server.AgentPort, serverConfigSyncGRPCPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
@@ -145,6 +164,8 @@ func setupTestEnvironment() {
 	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
 	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
 	_ = os.Setenv("CONFIG_SYNC_GRPC_LISTEN_ADDR", fmt.Sprintf(":%d", serverConfigSyncGRPCPort))
+
+	functionalSTSSigningKey = generateSTSSigningKey()
 
 	trustGuardStubURL := getEnv("FUNCTIONAL_TRUSTGUARD_BASE_URL", "")
 	if trustGuardStubURL == "" {
@@ -169,6 +190,9 @@ func setupTestEnvironment() {
 	mcpCmd = startServer("MCP", "mcp", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", MCPURL), "mcp server", cfg.Server.MCPPort)
 
+	agentCmd = startServer("AGENT", "agent", cmdEnv)
+	waitForServerReady(fmt.Sprintf("%s/healthz", AgentURL), "agent server", cfg.Server.AgentPort)
+
 	fmt.Println("Test Environment Ready")
 }
 
@@ -176,6 +200,11 @@ func teardownTestEnvironment() {
 	StopTrustGuardFunctionalStub()
 	StopFirewallComplexityStub()
 	StopConsoleModelRequestsStub()
+	if agentCmd != nil && agentCmd.Process != nil {
+		if err := syscall.Kill(-agentCmd.Process.Pid, syscall.SIGKILL); err != nil {
+			log.Printf("error killing agent server: %v", err)
+		}
+	}
 	if mcpCmd != nil && mcpCmd.Process != nil {
 		if err := syscall.Kill(-mcpCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing mcp server: %v", err)

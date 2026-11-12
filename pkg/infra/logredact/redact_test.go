@@ -116,3 +116,19 @@ func TestRedactLogString_FormEncodedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactLogString_PreviewCloudCredentials(t *testing.T) {
+	body := `{"provider":"vertex_agent_engine","auth":{"mode":"cloud"},"cloud_auth":{` +
+		`"aws":{"access_key_id":"AKIDEXAMPLE","secret_access_key":"wJalrXUtnFEMI-aws-secret","session_token":"FwoGZXIvYXdz-session"},` +
+		`"azure":{"tenant_id":"t","client_id":"c","client_secret":"entra-client-secret"},` +
+		`"gcp":{"service_account_json":"{\"type\":\"service_account\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\nMIIEgcp-key\\n-----END PRIVATE KEY-----\\n\",\"client_email\":\"sa@p.iam.gserviceaccount.com\"}"}}}`
+	got := RedactLogString("preview failed body=" + body)
+	for _, secret := range []string{"wJalrXUtnFEMI-aws-secret", "FwoGZXIvYXdz-session", "entra-client-secret", "MIIEgcp-key", "sa@p.iam"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("%s leaked: %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, `"provider":"vertex_agent_engine"`) {
+		t.Fatalf("safe field lost: %q", got)
+	}
+}

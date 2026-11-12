@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
@@ -37,7 +36,6 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	"github.com/NeuralTrust/TrustGate/pkg/common/keyscope"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -68,22 +66,6 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, compiler appopenapi.Compiler) appmcp.Dialer {
 		remote := mcpclient.NewCachedDialer(client, logger)
 		return mcpopenapi.NewDialer(remote, compiler)
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(func(cfg *config.Config, cc cache.Client, logger *slog.Logger) (sts.TokenSigner, error) {
-		keyPEM := cfg.Server.STSSigningKey
-		if keyPEM == "" {
-			env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
-			if env == "prod" || env == "production" {
-				resolved, err := infrasts.ResolveSharedSigningKey(context.Background(), cc.RedisClient(), keyscope.Scope(cfg.Redis.KeyScope), logger)
-				if err != nil {
-					return nil, err
-				}
-				keyPEM = resolved
-			}
-		}
-		return infrasts.NewSigner(cfg.Server.STSIssuer, keyPEM, logger)
 	}); err != nil {
 		return err
 	}

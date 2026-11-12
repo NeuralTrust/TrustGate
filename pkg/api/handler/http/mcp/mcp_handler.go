@@ -621,7 +621,7 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
-	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
+	if !consumerdomain.AdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 	}
 	// Who the request runs as is read from the request, not from the consumer.
@@ -639,7 +639,7 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		caller := identity.PrincipalFromContext(c.UserContext())
 		endUser := strings.TrimSpace(c.Get(consumerdomain.EndUserHeader))
 		if endUser == "" {
-			c.SetUserContext(identity.WithPrincipal(c.UserContext(), appPrincipal(rc.Consumer, caller)))
+			c.SetUserContext(identity.WithPrincipal(c.UserContext(), consumerdomain.AppPrincipal(rc.Consumer, caller)))
 			return rc, nil
 		}
 		// Named but malformed is refused rather than quietly treated as
@@ -647,7 +647,7 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
 			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
-		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, caller, endUser))
+		ctx := identity.WithPrincipal(c.UserContext(), consumerdomain.EndUserPrincipal(rc.Consumer, caller, endUser))
 		c.SetUserContext(ctx)
 		if rt := trace.FromContext(ctx); rt != nil {
 			rt.SetEndUser(endUser)
@@ -658,88 +658,6 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 
 func machineCredential(p *identity.Principal) bool {
 	return p != nil && (p.Method == identity.MethodAPIKey || p.Method == identity.MethodMTLS)
-}
-
-func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, endUser string) *identity.Principal {
-	endUser = strings.TrimSpace(endUser)
-	p := &identity.Principal{
-		Subject: consumerdomain.EndUserSubject(cons.ID, endUser),
-		Method:  identity.MethodAPIKey,
-		Claims: map[string]any{
-			"end_user":    endUser,
-			"consumer_id": cons.ID.String(),
-		},
-	}
-	if app != nil {
-		if app.Method != "" {
-			p.Method = app.Method
-		}
-		if app.Subject != "" {
-			p.Claims["app_subject"] = app.Subject
-		}
-	}
-	return p
-}
-
-// appPrincipal is the principal a request runs as on a consumer that acts as
-// the application itself and was entered with a credential the application
-// holds: the consumer-namespaced subject its upstream accounts hang off. The
-// credential's own subject stays in the claims, so an audit trail still names
-// the api key or the certificate that was used.
-//
-// The swap happens here, after the auth binding has been applied to the real
-// caller, because only the request path knows which consumer is being entered:
-// an api key is a many-to-many row, so the credential alone cannot say whose
-// application this is.
-//
-// It is deliberately limited to an api key or a client certificate — a shared
-// credential, where callers already share whatever it opens. A bearer token
-// keeps its own subject: on a consumer that admits tokens from an external IdP
-// the token may well be one person's, and collapsing those onto one subject
-// would hand every holder the account the first of them linked. A
-// client-credentials token needs nothing from this either, since its subject is
-// the application's client id already.
-func appPrincipal(cons *consumerdomain.Consumer, caller *identity.Principal) *identity.Principal {
-	p := &identity.Principal{Subject: consumerdomain.AppSubject(cons.ID), Method: identity.MethodAPIKey}
-	if caller != nil {
-		// Everything but the subject is carried over: an upstream that forwards
-		// or exchanges the caller's own token still needs it, and the claims are
-		// what an audit trail reads.
-		copied := *caller
-		p = &copied
-		p.Subject = consumerdomain.AppSubject(cons.ID)
-	}
-	claims := make(map[string]any, len(p.Claims)+2)
-	for k, v := range p.Claims {
-		claims[k] = v
-	}
-	claims["consumer_id"] = cons.ID.String()
-	if caller != nil && caller.Subject != "" {
-		claims[identity.ClaimCredentialSubject] = caller.Subject
-	}
-	p.Claims = claims
-	return p
-}
-
-// consumerAdmitsPrincipal applies the consumer's auth binding to the verified
-// caller: a bearer token from a shared IdP must have been issued to an allowed
-// client, and a client certificate must carry an allowed subject. API keys are
-// bound to one consumer already, and a missing principal has nothing to bind.
-func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.Principal) bool {
-	if cons == nil {
-		return false
-	}
-	if principal == nil {
-		return true
-	}
-	switch {
-	case principal.Method.IsBearerToken():
-		return cons.AuthBinding.AllowsClient(principal.Claims)
-	case principal.Method == identity.MethodMTLS:
-		return cons.AuthBinding.AllowsCertificateClaims(principal.Claims)
-	default:
-		return true
-	}
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

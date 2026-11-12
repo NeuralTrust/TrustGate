@@ -118,12 +118,16 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal pricing: %w", err)
 	}
+	a2aTargetBytes, err := r.marshalA2ATarget(b.ID, b.A2ATarget)
+	if err != nil {
+		return fmt.Errorf("registry repository: marshal a2a_target: %w", err)
+	}
 	const query = `
-		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt, a2aTargetBytes,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -159,7 +163,8 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       health_checks    = $9,
 		       mcp_target       = $10,
 		       pricing          = $11,
-		       updated_at       = $12
+		       updated_at       = $12,
+		       a2a_target       = $14
 		 WHERE id = $1 AND gateway_id = $13`
 	return r.withGatewayMarkedTx(ctx, b.GatewayID, func(tx pgx.Tx) error {
 		providerOptionsBytes, err := r.encodeProviderOptionsForUpdate(ctx, tx, b)
@@ -170,8 +175,12 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		if err != nil {
 			return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
 		}
+		a2aTargetBytes, err := r.encodeA2ATargetForUpdate(ctx, tx, b.ID, b.GatewayID, b.A2ATarget)
+		if err != nil {
+			return fmt.Errorf("registry repository: marshal a2a_target: %w", err)
+		}
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.UpdatedAt, b.GatewayID,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.UpdatedAt, b.GatewayID, a2aTargetBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -280,7 +289,7 @@ func (r *Repository) Delete(
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
 		  FROM registries
 		 WHERE id = $1`
 	row := database.Reader(ctx, r.conn.Pool).QueryRow(ctx, query, id)
@@ -299,7 +308,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -346,7 +355,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at, a2a_target
 		  FROM registries
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -378,13 +387,13 @@ type rowScanner interface {
 
 func (r *Repository) scanRegistry(ctx context.Context, s rowScanner) (*domain.Registry, error) {
 	b := &domain.Registry{}
-	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw, pricingRaw []byte
+	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw, pricingRaw, a2aTargetRaw []byte
 	var providerRaw *string
 	var typeRaw string
 	if err := s.Scan(
 		&b.ID, &b.GatewayID, &b.Name, &typeRaw, &b.Enabled, &providerRaw,
 		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw, &pricingRaw,
-		&b.CreatedAt, &b.UpdatedAt,
+		&b.CreatedAt, &b.UpdatedAt, &a2aTargetRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -443,6 +452,15 @@ func (r *Repository) scanRegistry(ctx context.Context, s rowScanner) (*domain.Re
 		b.MCPTarget = &t
 	}
 
+	if len(a2aTargetRaw) > 0 {
+		var t domain.A2ATarget
+		if err := json.Unmarshal(a2aTargetRaw, &t); err != nil {
+			return nil, fmt.Errorf("scan a2a_target: %w: %w", commonerrors.ErrCorruptData, err)
+		}
+		r.openA2ATargetForRead(ctx, b.ID, &t)
+		b.A2ATarget = &t
+	}
+
 	return b, nil
 }
 
@@ -461,6 +479,20 @@ func (r *Repository) marshalMCPTarget(id ids.RegistryID, t *domain.MCPTarget) ([
 		return json.Marshal(t)
 	}
 	stored, err := r.sealMCPTarget(id, t)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(stored)
+}
+
+func (r *Repository) marshalA2ATarget(id ids.RegistryID, t *domain.A2ATarget) ([]byte, error) {
+	if t == nil {
+		return nil, nil
+	}
+	if !r.encryptWrites {
+		return json.Marshal(t)
+	}
+	stored, err := r.sealA2ATarget(id, t)
 	if err != nil {
 		return nil, err
 	}

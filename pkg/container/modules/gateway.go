@@ -92,22 +92,22 @@ func provideGatewayServices(c *container.Container) error {
 	}
 
 	if err := c.Provide(func(creator appgateway.Creator, cfg *config.Config) *gatewayhttp.CreateGatewayHandler {
-		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain, cfg.Server.STSIssuer)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.GetGatewayHandler {
-		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain, cfg.Server.STSIssuer)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.ListGatewayHandler {
-		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain, cfg.Server.STSIssuer)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(updater appgateway.Updater, finder appgateway.Finder, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
-		return gatewayhttp.NewUpdateGatewayHandler(updater, finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+		return gatewayhttp.NewUpdateGatewayHandler(updater, finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain, cfg.Server.STSIssuer)
 	}); err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func provideGatewayServices(c *container.Container) error {
 // reservedGatewayDomains are the host suffixes this deployment routes gateways
 // on by slug, which no tenant may claim as one gateway's own domain.
 func reservedGatewayDomains(cfg *config.Config) []string {
-	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain}
+	reserved := []string{cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain, cfg.Server.AgentBaseDomain}
 	if u, err := url.Parse(cfg.Server.MCPOAuthPublicBaseURL); err == nil && u.Hostname() != "" {
 		reserved = append(reserved, u.Hostname())
 	}

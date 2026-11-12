@@ -32,4 +32,9 @@ var (
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
 	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
 	ErrInvalidPricing         = fmt.Errorf("registry: invalid pricing: %w", commonerrors.ErrValidation)
+	// ErrAgentCardUnavailable reports an agent card that could not be fetched
+	// or is not a JSON object with a name.
+	ErrAgentCardUnavailable = fmt.Errorf("registry: agent card unavailable: %w", commonerrors.ErrValidation)
+	// ErrAgentVersionUnsupported reports an A2A version the agent card does not offer.
+	ErrAgentVersionUnsupported = fmt.Errorf("registry: agent version unsupported: %w", commonerrors.ErrValidation)
 )

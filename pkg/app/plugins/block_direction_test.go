@@ -64,6 +64,15 @@ func TestExecutor_RunStage_BlockSetsDirectionHeader(t *testing.T) {
 	}
 }
 
+func TestExecutor_RunStage_ErrorNamesThePlugin(t *testing.T) {
+	shared := &PluginError{StatusCode: http.StatusTooManyRequests, Message: "slow"}
+	_, _, err := runDenied(t, policy.StagePreRequest, &fakePlugin{name: "guard", err: shared})
+	pe, ok := AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, "guard", pe.Plugin)
+	assert.Empty(t, shared.Plugin, "a shared error must not be mutated")
+}
+
 func TestExecutor_RunStage_NonBlocksDoNotGetDirectionHeader(t *testing.T) {
 	for _, status := range []int{
 		http.StatusBadRequest,

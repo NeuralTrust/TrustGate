@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover check-usagesync-contract test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-agent run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover check-usagesync-contract test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit mcp-catalog-probe \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -51,6 +51,10 @@ run-mcp: build ## Build and run the MCP server
 	@$(info $(M) Running $(APP_NAME) mcp ...)
 	./bin/$(APP_NAME) mcp
 
+run-agent: build ## Build and run the A2A agent server
+	@$(info $(M) Running $(APP_NAME) agent ...)
+	./bin/$(APP_NAME) agent
+
 mcp-catalog-probe: ## Probe curated MCP catalog URLs (see docs/mcp/testing-guide.md); add -apply to hide broken_*
 	@$(info $(M) Probing MCP catalog ...)
 	go run ./cmd/mcp-catalog-probe -catalog seed/mcp-catalog/enterprise-servers.json $(ARGS)
@@ -81,6 +85,7 @@ up: env ## Bring up Postgres, Redis and all TrustGate planes in Docker
 	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
 	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
 	@echo "    MCP    -> http://localhost:8082  (healthz: /healthz)"
+	@echo "    Agent  -> http://localhost:8084  (healthz: /healthz)"
 	@echo "  Tail logs with 'make logs', tear down with 'make down'."
 
 down: ## Tear down the full stack and remove volumes

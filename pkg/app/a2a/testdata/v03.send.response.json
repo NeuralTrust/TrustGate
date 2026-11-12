@@ -1,0 +1,110 @@
+{
+  "id": "7eda3ec5-d322-4d8c-8705-68095a600ef7",
+  "jsonrpc": "2.0",
+  "result": {
+    "artifacts": [
+      {
+        "artifactId": "5c914cab-96e5-45cb-b80b-9c11badc92fc",
+        "name": "plan",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "itinerary"
+          },
+          {
+            "data": {
+              "flight": "IB3166"
+            },
+            "kind": "data"
+          },
+          {
+            "file": {
+              "mimeType": "application/pdf",
+              "name": "ticket.pdf",
+              "uri": "https://files.example.com/ticket.pdf"
+            },
+            "kind": "file"
+          },
+          {
+            "file": {
+              "bytes": "JVBERi0xLjc=",
+              "mimeType": "application/pdf",
+              "name": "raw.pdf"
+            },
+            "kind": "file"
+          }
+        ]
+      }
+    ],
+    "contextId": "a2dcdf2e-968d-4b2f-9b73-b0ea8131f238",
+    "history": [
+      {
+        "contextId": "a2dcdf2e-968d-4b2f-9b73-b0ea8131f238",
+        "kind": "message",
+        "messageId": "m-1",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "book a flight"
+          },
+          {
+            "data": {
+              "iban": "ES9121000418450200051332"
+            },
+            "kind": "data"
+          },
+          {
+            "file": {
+              "mimeType": "application/pdf",
+              "name": "a.pdf",
+              "uri": "https://files.example.com/a.pdf"
+            },
+            "kind": "file"
+          },
+          {
+            "file": {
+              "bytes": "JVBERi0xLjc=",
+              "mimeType": "application/pdf",
+              "name": "b.pdf"
+            },
+            "kind": "file"
+          }
+        ],
+        "role": "user",
+        "taskId": "491328c6-3a34-4bfd-a3cb-0cfeaa80d2aa"
+      },
+      {
+        "contextId": "a2dcdf2e-968d-4b2f-9b73-b0ea8131f238",
+        "kind": "message",
+        "messageId": "2bf8e764-c1a4-4b6e-b8f4-097f1a4ec1d5",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "working on it"
+          }
+        ],
+        "role": "agent",
+        "taskId": "491328c6-3a34-4bfd-a3cb-0cfeaa80d2aa"
+      }
+    ],
+    "id": "491328c6-3a34-4bfd-a3cb-0cfeaa80d2aa",
+    "kind": "task",
+    "status": {
+      "message": {
+        "contextId": "a2dcdf2e-968d-4b2f-9b73-b0ea8131f238",
+        "kind": "message",
+        "messageId": "77d0b03d-fd67-4666-a909-59a0a9124856",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "done"
+          }
+        ],
+        "role": "agent",
+        "taskId": "491328c6-3a34-4bfd-a3cb-0cfeaa80d2aa"
+      },
+      "state": "completed",
+      "timestamp": "2026-11-11T17:03:43.903983Z"
+    }
+  }
+}
