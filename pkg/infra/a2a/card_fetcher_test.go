@@ -124,3 +124,17 @@ func TestFetchRefusesHTTPWithoutPrivateNetworks(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrAgentCardUnavailable)
 	assert.Contains(t, err.Error(), "https")
 }
+
+func TestFetchReportsWhatTheRefusalSays(t *testing.T) {
+	netguardtest.Allow(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Amzn-Errortype", "ValidationException:http://internal.amazon.com/coral/com.amazon.bedrock.agentcore/")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Agent runtime is not configured for A2A"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := NewCardFetcher(nil).Fetch(context.Background(), srv.URL+"/card.json", nil)
+	require.ErrorIs(t, err, domain.ErrAgentCardUnavailable)
+	assert.Contains(t, err.Error(), "status 400: ValidationException Agent runtime is not configured for A2A")
+}
