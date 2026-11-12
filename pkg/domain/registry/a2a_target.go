@@ -60,6 +60,8 @@ type A2ATarget struct {
 	BedrockAgentCore  *AgentCoreLocator  `json:"bedrock_agentcore,omitempty"`
 	AzureFoundry      *FoundryLocator    `json:"azure_foundry,omitempty"`
 	VertexAgentEngine *VertexLocator     `json:"vertex_agent_engine,omitempty"`
+	AgentCoreHarness  *HarnessLocator    `json:"agentcore_harness,omitempty"`
+	Databricks        *DatabricksLocator `json:"databricks_agent,omitempty"`
 	Headers           map[string]string  `json:"headers,omitempty"`
 	Auth              *MCPAuth           `json:"auth,omitempty"`
 	CloudAuth         *A2ACloudAuth      `json:"cloud_auth,omitempty"`
@@ -95,6 +97,19 @@ func (t *A2ATarget) Normalize() {
 	if t.BedrockAgentCore != nil && t.BedrockAgentCore.Qualifier == "" {
 		t.BedrockAgentCore.Qualifier = agentCoreDefaultQualifier
 	}
+	if t.AgentCoreHarness != nil && t.AgentCoreHarness.Qualifier == "" {
+		t.AgentCoreHarness.Qualifier = agentCoreDefaultQualifier
+	}
+	// A Databricks service principal gets its token from the workspace, for
+	// every Databricks API.
+	if t.Provider == A2AProviderDatabricks && t.Databricks != nil && t.Auth.Mode == MCPAuthModeClientCredentials {
+		if t.Auth.TokenURL == "" {
+			t.Auth.TokenURL = t.Databricks.TokenURL()
+		}
+		if t.Auth.Scope == "" {
+			t.Auth.Scope = databricksScope
+		}
+	}
 	if t.Provider == A2AProviderAzureFoundry && t.Auth.Mode == MCPAuthModeExchange && t.Auth.Pattern == ExchangeOBO && t.Auth.Scope == "" {
 		t.Auth.Scope = foundryOBOScope
 	}
@@ -108,6 +123,10 @@ func (t *A2ATarget) locator() a2aLocator {
 		return t.AzureFoundry
 	case t.Provider == A2AProviderVertexAgentEngine && t.VertexAgentEngine != nil:
 		return t.VertexAgentEngine
+	case t.Provider == A2AProviderAgentCoreHarness && t.AgentCoreHarness != nil:
+		return t.AgentCoreHarness
+	case t.Provider == A2AProviderDatabricks && t.Databricks != nil:
+		return t.Databricks
 	default:
 		return nil
 	}
@@ -145,7 +164,7 @@ func (t *A2ATarget) OfferedVersions(card []byte) []A2AProtocolVersion {
 	switch t.Provider {
 	case A2AProviderAzureFoundry:
 		return []A2AProtocolVersion{A2AVersion03, A2AVersion10}
-	case A2AProviderVertexAgentEngine:
+	case A2AProviderVertexAgentEngine, A2AProviderAgentCoreHarness, A2AProviderDatabricks:
 		return []A2AProtocolVersion{A2AVersion03}
 	default:
 		return DetectVersions(card)
@@ -220,6 +239,9 @@ func (t *A2ATarget) Validate() error {
 	if t.Provider == A2AProviderVertexAgentEngine && t.ProtocolVersion == A2AVersion10 {
 		return fmt.Errorf("%w: a Vertex AI agent speaks A2A 0.3", ErrAgentVersionUnsupported)
 	}
+	if t.Provider.BuildsCard() && t.ProtocolVersion == A2AVersion10 {
+		return fmt.Errorf("%w: the gateway serves A2A 0.3 for an agent it translates", ErrAgentVersionUnsupported)
+	}
 	for name := range t.Headers {
 		if slices.ContainsFunc(a2aReservedHeaders, func(r string) bool { return strings.EqualFold(r, name) }) ||
 			strings.HasPrefix(strings.ToUpper(name), "X-AG-") {
@@ -248,7 +270,7 @@ func (t *A2ATarget) Validate() error {
 
 func (t *A2ATarget) validateLocation() error {
 	locators := 0
-	for _, set := range []bool{t.BedrockAgentCore != nil, t.AzureFoundry != nil, t.VertexAgentEngine != nil} {
+	for _, set := range []bool{t.BedrockAgentCore != nil, t.AzureFoundry != nil, t.VertexAgentEngine != nil, t.AgentCoreHarness != nil, t.Databricks != nil} {
 		if set {
 			locators++
 		}
@@ -265,7 +287,8 @@ func (t *A2ATarget) validateLocation() error {
 			return fmt.Errorf("%w: url must be an https URL", ErrInvalidRegistry)
 		}
 		return nil
-	case A2AProviderBedrockAgentCore, A2AProviderAzureFoundry, A2AProviderVertexAgentEngine:
+	case A2AProviderBedrockAgentCore, A2AProviderAzureFoundry, A2AProviderVertexAgentEngine,
+		A2AProviderAgentCoreHarness, A2AProviderDatabricks:
 		l := t.locator()
 		if t.CardURL != "" || t.URL != "" || l == nil || locators != 1 {
 			return fmt.Errorf("%w: %s, not by card_url or url", ErrInvalidRegistry, t.Provider.locatedBy())
@@ -308,6 +331,18 @@ func (t *A2ATarget) validateAuth() error {
 	default:
 		return a.Validate()
 	}
+}
+
+// AWSRegion is the region of an AWS-hosted agent (an AgentCore runtime or
+// harness), or "" for any other.
+func (t *A2ATarget) AWSRegion() string {
+	switch {
+	case t.BedrockAgentCore != nil:
+		return t.BedrockAgentCore.Region()
+	case t.AgentCoreHarness != nil:
+		return t.AgentCoreHarness.Region()
+	}
+	return ""
 }
 
 // NeedsCloudAuth reports whether the target's auth or its card read uses a

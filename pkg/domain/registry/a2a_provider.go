@@ -313,6 +313,8 @@ func (p A2AProvider) cloudKind() string {
 		return "azure"
 	case A2AProviderVertexAgentEngine:
 		return "gcp"
+	case A2AProviderAgentCoreHarness:
+		return "aws"
 	default:
 		return ""
 	}
@@ -328,8 +330,10 @@ func (p A2AProvider) allowsAuth(a *MCPAuth) bool {
 		return a.Mode == A2AAuthModeCloud || a.Mode == MCPAuthModeClientCredentials || userToken
 	case A2AProviderAzureFoundry:
 		return a.Mode == A2AAuthModeCloud || (a.Mode == MCPAuthModeExchange && a.Pattern == ExchangeOBO)
-	case A2AProviderVertexAgentEngine:
+	case A2AProviderVertexAgentEngine, A2AProviderAgentCoreHarness:
 		return a.Mode == A2AAuthModeCloud
+	case A2AProviderDatabricks:
+		return a.Mode == MCPAuthModeStatic || a.Mode == MCPAuthModeClientCredentials
 	default:
 		return false
 	}
@@ -345,6 +349,11 @@ func (p A2AProvider) authError() error {
 			"or exchange with obo or token_exchange; it cannot validate a token signed by TrustGate yet"
 	case A2AProviderAzureFoundry:
 		reason = "a Microsoft Foundry agent accepts only Microsoft Entra ID: auth mode cloud with cloud_auth.azure, or exchange with obo"
+	case A2AProviderAgentCoreHarness:
+		reason = "an Amazon Bedrock AgentCore harness accepts only AWS: auth mode cloud with cloud_auth.aws"
+	case A2AProviderDatabricks:
+		reason = "a Databricks agent accepts a service principal (auth mode client_credentials, OAuth machine-to-machine) " +
+			"or a personal access token (auth mode static, header Authorization)"
 	default:
 		reason = "a Vertex AI agent accepts only Google tokens of a service account: auth mode cloud with cloud_auth.gcp"
 	}
@@ -360,6 +369,8 @@ func (p A2AProvider) cloudError() error {
 		reason = "a Microsoft Foundry agent requires Microsoft Entra ID, even to read its card: set cloud_auth.azure"
 	case A2AProviderVertexAgentEngine:
 		reason = "a Vertex AI agent requires a Google service account token, even to read its card: set cloud_auth.gcp"
+	case A2AProviderAgentCoreHarness:
+		reason = "an Amazon Bedrock AgentCore harness signs in with AWS: set cloud_auth.aws"
 	default:
 		reason = "cloud_auth is only valid with auth mode cloud or card_auth cloud"
 	}
@@ -374,6 +385,10 @@ func (p A2AProvider) locatedBy() string {
 		return "a Microsoft Foundry agent is located by azure_foundry (project_endpoint, agent_name)"
 	case A2AProviderVertexAgentEngine:
 		return "a Vertex AI agent is located by vertex_agent_engine (project, location, reasoning_engine_id)"
+	case A2AProviderAgentCoreHarness:
+		return "an Amazon Bedrock AgentCore harness is located by agentcore_harness (harness_arn, qualifier)"
+	case A2AProviderDatabricks:
+		return "a Databricks agent is located by databricks_agent (workspace_url, and serving_endpoint or app_url)"
 	default:
 		return "a generic agent is located by card_url"
 	}

@@ -30,8 +30,8 @@ import (
 type provider interface {
 	// header adds the provider's headers to those of every request of x.
 	header(x *Exchange, h http.Header)
-	// request is the HTTP request that carries the JSON-RPC body to endpoint.
-	request(ctx context.Context, endpoint string, h http.Header, body []byte) (*http.Request, error)
+	// request is the HTTP request that carries the JSON-RPC body of x to endpoint.
+	request(ctx context.Context, x *Exchange, endpoint string, h http.Header, body []byte) (*http.Request, error)
 	// decode reads the agent's answer to a call that is not a stream, and
 	// reports whether the error it returns is one the agent answered.
 	decode(x *Exchange, res *http.Response, body []byte) (result json.RawMessage, rpcErr *RPCError, fromAgent bool)
@@ -58,6 +58,10 @@ func providerOf(t *registrydomain.A2ATarget) provider {
 		return agentCore{}
 	case registrydomain.A2AProviderVertexAgentEngine:
 		return vertex{}
+	case registrydomain.A2AProviderAgentCoreHarness:
+		return harness{}
+	case registrydomain.A2AProviderDatabricks:
+		return databricks{}
 	default:
 		return jsonrpc{}
 	}
@@ -69,7 +73,7 @@ type jsonrpc struct{}
 
 func (jsonrpc) header(*Exchange, http.Header) {}
 
-func (jsonrpc) request(ctx context.Context, endpoint string, h http.Header, body []byte) (*http.Request, error) {
+func (jsonrpc) request(ctx context.Context, _ *Exchange, endpoint string, h http.Header, body []byte) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
