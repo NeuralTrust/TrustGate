@@ -68,6 +68,10 @@ type usageStream struct {
 	logger   *slog.Logger
 	scope    string
 	changes  bool
+	// managed is set when the data plane blocks only managed registries for
+	// the managed limit. Without it those tenants are sent as healthy, since
+	// the data plane would block every registry.
+	managed bool
 
 	tenantID string
 	resolved bool
@@ -82,8 +86,8 @@ type usageStream struct {
 	cursor uint64
 }
 
-func newUsageStream(source UsageSource, gateways GatewayResolver, logger *slog.Logger, scope string, acceptsChanges bool) *usageStream {
-	return &usageStream{source: source, gateways: gateways, logger: logger, scope: scope, changes: acceptsChanges, resolved: scope == ""}
+func newUsageStream(source UsageSource, gateways GatewayResolver, logger *slog.Logger, scope string, acceptsChanges, acceptsManaged bool) *usageStream {
+	return &usageStream{source: source, gateways: gateways, logger: logger, scope: scope, changes: acceptsChanges, managed: acceptsManaged, resolved: scope == ""}
 }
 
 // next returns the usage messages the stream is owed now.
@@ -107,7 +111,7 @@ func (u *usageStream) next(ctx context.Context) []*snapshotpb.ServerMessage {
 	}
 	u.cursor = cursor
 	u.listed = u.changes && snapshot.AsOfVersion > 0
-	return []*snapshotpb.ServerMessage{usageMessage(snapshot)}
+	return []*snapshotpb.ServerMessage{usageMessage(u.forPlane(snapshot))}
 }
 
 func (u *usageStream) changedSince() []*snapshotpb.ServerMessage {
@@ -117,15 +121,48 @@ func (u *usageStream) changedSince() []*snapshotpb.ServerMessage {
 		if !changed {
 			return nil
 		}
-		return []*snapshotpb.ServerMessage{usageChangesMessage([]usagedomain.TenantState{state})}
+		return []*snapshotpb.ServerMessage{usageChangesMessage([]usagedomain.TenantState{u.stateForPlane(state)})}
 	}
 	states, cursor := u.source.ChangesSince(u.cursor)
 	u.cursor = cursor
+	if !u.managed {
+		plane := make([]usagedomain.TenantState, len(states))
+		for i, state := range states {
+			plane[i] = u.stateForPlane(state)
+		}
+		states = plane
+	}
 	var out []*snapshotpb.ServerMessage
 	for start := 0; start < len(states); start += maxUsageChangesPerMessage {
 		out = append(out, usageChangesMessage(states[start:min(start+maxUsageChangesPerMessage, len(states))]))
 	}
 	return out
+}
+
+// forPlane drops the tenants that only reached the managed limit from a list
+// sent to a data plane that cannot block managed registries alone: missing
+// from a list at or above their version, they read as healthy.
+func (u *usageStream) forPlane(snapshot usagedomain.Snapshot) usagedomain.Snapshot {
+	if u.managed {
+		return snapshot
+	}
+	out := usagedomain.Snapshot{AsOfVersion: snapshot.AsOfVersion, Exhausted: make([]usagedomain.TenantState, 0, len(snapshot.Exhausted))}
+	for _, state := range snapshot.Exhausted {
+		if state.BlocksTenant() {
+			out.Exhausted = append(out.Exhausted, state)
+		}
+	}
+	return out
+}
+
+// stateForPlane sends a managed-limit state as healthy at the same version to
+// a data plane that cannot block managed registries alone, so a tenant that
+// moves from a tenant-wide block to the managed limit is unblocked there.
+func (u *usageStream) stateForPlane(state usagedomain.TenantState) usagedomain.TenantState {
+	if u.managed || !state.Exhausted() || state.BlocksTenant() {
+		return state
+	}
+	return usagedomain.TenantState{TenantID: state.TenantID, Status: usagedomain.StatusHealthy, Reason: usagedomain.ReasonNone, Version: state.Version}
 }
 
 func (u *usageStream) resolve(ctx context.Context) bool {
@@ -222,10 +259,14 @@ func usageSnapshotFromProto(msg *snapshotpb.UsageSnapshot) usagedomain.Snapshot 
 }
 
 func usageReasonFromProto(reason snapshotpb.UsageReason) usagedomain.Reason {
-	if reason == snapshotpb.UsageReason_USAGE_REASON_FREE_LIMIT_REACHED {
+	switch reason {
+	case snapshotpb.UsageReason_USAGE_REASON_FREE_LIMIT_REACHED:
 		return usagedomain.ReasonFreeLimitReached
+	case snapshotpb.UsageReason_USAGE_REASON_MANAGED_LIMIT_REACHED:
+		return usagedomain.ReasonManagedLimitReached
+	default:
+		return usagedomain.ReasonWalletEmpty
 	}
-	return usagedomain.ReasonWalletEmpty
 }
 
 func usageReasonToProto(reason usagedomain.Reason) snapshotpb.UsageReason {
@@ -234,6 +275,8 @@ func usageReasonToProto(reason usagedomain.Reason) snapshotpb.UsageReason {
 		return snapshotpb.UsageReason_USAGE_REASON_FREE_LIMIT_REACHED
 	case usagedomain.ReasonWalletEmpty:
 		return snapshotpb.UsageReason_USAGE_REASON_WALLET_EMPTY
+	case usagedomain.ReasonManagedLimitReached:
+		return snapshotpb.UsageReason_USAGE_REASON_MANAGED_LIMIT_REACHED
 	default:
 		return snapshotpb.UsageReason_USAGE_REASON_UNSPECIFIED
 	}

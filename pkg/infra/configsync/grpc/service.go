@@ -154,7 +154,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		retry := time.NewTicker(s.usageRetry)
 		defer retry.Stop()
 		usageRetry = retry.C
-		usage = newUsageStream(s.usage, s.usageGateways, s.logger, scope, hello.GetAcceptsUsageChanges())
+		usage = newUsageStream(s.usage, s.usageGateways, s.logger, scope, hello.GetAcceptsUsageChanges(), hello.GetAcceptsManagedLimit())
 		if err := sendUsage(stream, usage.next(ctx)); err != nil {
 			return err
 		}
