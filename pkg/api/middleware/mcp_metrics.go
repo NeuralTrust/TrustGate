@@ -142,11 +142,17 @@ func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID stri
 		headers[name] = append(headers[name], string(value))
 	}
 
-	return &infracontext.ResponseContext{
+	out := &infracontext.ResponseContext{
 		GatewayID:  gatewayID,
 		Headers:    headers,
-		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
-		Streaming:  false,
 	}
+	// Reading the body of a streamed response drains the stream before
+	// fasthttp writes a byte of it to the client.
+	if c.Response().IsBodyStream() {
+		out.Streaming = true
+		return out
+	}
+	out.Body = append([]byte(nil), c.Response().Body()...)
+	return out
 }
