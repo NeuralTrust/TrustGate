@@ -293,7 +293,9 @@ change underneath:
 
 - **A consumer named by a row is gone.** Deleted through the admin API. The
   Application shows the plane as missing and offers to forget it; it must not
-  fail the page.
+  fail the page. TrustGate keeps the deleted consumer's row as history
+  (`deleted_at`), without its keys, registries or policies, but the admin API
+  answers 404 for it and leaves it out of every list, and it never routes.
 - **A consumer belongs to no row.** The normal case (§7.1), not an error state.
 
 Deleting an Application in the console deletes its consumers in the gateway —

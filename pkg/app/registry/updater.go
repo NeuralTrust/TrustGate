@@ -15,7 +15,9 @@
 package registry
 
 import (
+	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/url"
@@ -44,6 +46,7 @@ type UpdateInput struct {
 	Pricing         *domain.Pricing
 	SetPricing      bool
 	MCPTarget       *domain.MCPTarget
+	A2ATarget       *domain.A2ATarget
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=registry_updater_mock.go --case=underscore --with-expecter
@@ -62,6 +65,8 @@ type updater struct {
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
+	cards       agentCards
+	shared      GatewayLookup
 }
 
 func NewUpdater(
@@ -83,6 +88,8 @@ func NewUpdater(
 		catalog:     catalog,
 		openapi:     o.openapi,
 		auths:       o.auths,
+		cards:       o.cards,
+		shared:      o.sharedGateways,
 	}
 }
 
@@ -113,6 +120,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 			return nil, err
 		}
 	}
+	if err := u.applyA2ATargetUpdate(ctx, existing, in.A2ATarget); err != nil {
+		return nil, err
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if !existing.IsMCP() {
 		if verr := validateProviderOptions(existing.LLMTarget); verr != nil {
@@ -131,6 +141,71 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		u.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+// applyA2ATargetUpdate merges incoming over the stored target: omitted fields
+// keep their stored value, masked secrets resolve to the stored ones, and the
+// card is read and pinned again only when card_url, protocol_version or the
+// locator changes.
+func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Registry, incoming *domain.A2ATarget) error {
+	if incoming == nil {
+		return nil
+	}
+	prev := existing.A2ATarget
+	if existing.Type != domain.TypeA2A || prev == nil {
+		return fmt.Errorf("%w: a2a_target is only valid for A2A registries", domain.ErrInvalidRegistry)
+	}
+	if incoming.Provider != "" && incoming.Provider != prev.Provider {
+		return fmt.Errorf("%w: a registry cannot change provider; create another registry", domain.ErrInvalidRegistry)
+	}
+	next := *incoming
+	next.Provider = prev.Provider
+	next.CardURL = cmp.Or(strings.TrimSpace(next.CardURL), prev.CardURL)
+	next.ProtocolVersion = cmp.Or(next.ProtocolVersion, prev.ProtocolVersion)
+	next.URL = cmp.Or(strings.TrimSpace(next.URL), prev.URL)
+	next.CardAuth = cmp.Or(next.CardAuth, prev.CardAuth)
+	next.BedrockAgentCore = cmp.Or(next.BedrockAgentCore, prev.BedrockAgentCore)
+	next.AzureFoundry = cmp.Or(next.AzureFoundry, prev.AzureFoundry)
+	next.VertexAgentEngine = cmp.Or(next.VertexAgentEngine, prev.VertexAgentEngine)
+	next.CloudAuth = cmp.Or(next.CloudAuth, prev.CloudAuth)
+	next.Auth = cmp.Or(next.Auth, prev.Auth)
+	if next.Headers == nil {
+		next.Headers = prev.Headers
+	}
+	if next.AllowedMethods == nil {
+		next.AllowedMethods = prev.AllowedMethods
+	}
+	next.ResolvedCardURL, next.Card, next.CardDigest, next.CardPinnedAt = prev.ResolvedCardURL, prev.Card, prev.CardDigest, prev.CardPinnedAt
+	next.Normalize()
+	next.ResolveSecretsFrom(prev)
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	if err := validateSharedDataPlane(ctx, u.shared, existing.GatewayID, &next); err != nil {
+		return err
+	}
+	if exchangeIdentityChanged(prev.Auth, next.Auth) {
+		if err := validateExchangeIdentity(ctx, u.auths, existing.GatewayID, &domain.MCPTarget{Auth: next.Auth}); err != nil {
+			return err
+		}
+	}
+	if next.CardURL != prev.CardURL || next.ProtocolVersion != prev.ProtocolVersion || !sameLocator(&next, prev) {
+		if err := u.cards.pin(ctx, &next); err != nil {
+			return err
+		}
+	}
+	existing.A2ATarget = &next
+	return nil
+}
+
+func sameLocator(a, b *domain.A2ATarget) bool {
+	return samePointee(a.BedrockAgentCore, b.BedrockAgentCore) &&
+		samePointee(a.AzureFoundry, b.AzureFoundry) &&
+		samePointee(a.VertexAgentEngine, b.VertexAgentEngine)
+}
+
+func samePointee[T comparable](a, b *T) bool {
+	return a == b || (a != nil && b != nil && *a == *b)
 }
 
 func applyMCPTargetUpdate(

@@ -40,6 +40,12 @@ patches:
   target:
     kind: Deployment
     name: agentgateway-mcp
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-agent
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev
@@ -47,7 +53,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: d8d2d42d3e1558faf29981566c84ab0e96b67223
+  newTag: 05e69b169a9ad165ab22b175d8df279ba744a93a
 configMapGenerator:
 - behavior: create
   envs:

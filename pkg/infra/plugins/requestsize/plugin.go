@@ -55,7 +55,7 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
 }
 
 // ScopeInertSafe reports true: the limit is measured on the request body and

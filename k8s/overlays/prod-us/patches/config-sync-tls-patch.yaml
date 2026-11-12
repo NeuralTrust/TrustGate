@@ -56,3 +56,20 @@ spec:
           value: ""
         - name: CONFIG_SYNC_TLS_SERVER_NAME
           value: agentgateway-configsync.us.neuraltrust.ai
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-agent
+spec:
+  template:
+    spec:
+      containers:
+      - name: agent
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: ""
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-configsync.us.neuraltrust.ai

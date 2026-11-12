@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": -32001,
+    "data": null,
+    "message": "Task not found"
+  },
+  "id": "73d32b39-89c6-49c3-8f7a-3f33f8aa9ead",
+  "jsonrpc": "2.0"
+}

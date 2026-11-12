@@ -263,6 +263,10 @@ func TestClassifyRouteUsesLinearEnums(t *testing.T) {
 		{name: "mcp segment prefix", plane: o11y.PlaneMCP, path: "/tools/notmcp/connect", want: o11y.RouteMCPRPC},
 		{name: "oauth prefix boundary", plane: o11y.PlaneMCP, path: "/oauthish/token", want: o11y.RouteMCPRPC},
 		{name: "well known prefix boundary", plane: o11y.PlaneMCP, path: "/.well-knownish/oauth", want: o11y.RouteMCPRPC},
+		{name: "agent health", plane: o11y.PlaneAgent, path: "/healthz", want: o11y.RouteHealth},
+		{name: "agent card", plane: o11y.PlaneAgent, path: "/app/agents/research/.well-known/agent-card.json", want: o11y.RouteAgentCard},
+		{name: "agent rpc", plane: o11y.PlaneAgent, path: "/app/agents/research", want: o11y.RouteAgentRPC},
+		{name: "agent other", plane: o11y.PlaneAgent, path: "/.well-known/jwks.json", want: o11y.RouteOther},
 		{name: "version is admin only", plane: o11y.PlaneProxy, path: "/__/version", want: o11y.RouteProxyForward},
 		{name: "other", plane: o11y.PlaneAdmin, path: "/unknown/id", want: o11y.RouteOther},
 	}
