@@ -972,6 +972,13 @@ func connectCallbackURL(baseURL, provider string) string {
 	return baseURL + connectCallbackPathPrefix + provider
 }
 
+// ConnectCallbackURL is the redirect_uri the connect flow sends for provider
+// when baseURL is the connect origin. It is what an admin registers with the
+// vendor for a manually registered OAuth client.
+func ConnectCallbackURL(baseURL, provider string) string {
+	return connectCallbackURL(strings.TrimRight(strings.TrimSpace(baseURL), "/"), provider)
+}
+
 // ownsSharedAccount reports whether this ticket may write the account behind an
 // instance — connect it, or revoke it.
 //
