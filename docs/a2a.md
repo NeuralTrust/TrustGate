@@ -11,7 +11,9 @@ pinned to one version and the gateway never translates between them.
 
 Everything below applies to every agent. Agents hosted on Amazon Bedrock
 AgentCore, Microsoft Foundry or Google Vertex AI Agent Engine differ only as
-described in [Hosted agents](#hosted-agents).
+described in [Hosted agents](#hosted-agents). Agents that do not speak A2A (an
+AgentCore harness, a Databricks agent) are reached through their provider's
+API, as described in [Translated agents](#translated-agents).
 
 ## Running the plane
 
@@ -440,3 +442,33 @@ credentials only to that host over HTTPS.
   `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`. Not yet verified against a
   deployed Agent Engine.
 - A credential the gateway cannot obtain answers `-32092` `cloud_auth_failed`.
+
+## Translated agents
+
+`a2a_target.provider` is `agentcore_harness` or `databricks_agent`. These
+agents do not speak A2A: the gateway turns each `message/send` into a call to
+the provider's own API and the answer into an A2A 0.3 message. They publish no
+card, so the gateway builds one (the agent's name, a single `chat` skill,
+A2A 0.3, no streaming) and pins it like any other.
+
+| | `agentcore_harness` | `databricks_agent` |
+|---|---|---|
+| Locator | `harness_arn` (`arn:aws:bedrock-agentcore:{region}:{account}:harness/{name}-{id}`), `qualifier` (default `DEFAULT`) | `workspace_url`, and `serving_endpoint` (Model Serving) or `app_url` (`*.databricksapps.com`) |
+| `auth.mode` | `cloud` (`cloud_auth.aws`, as an AgentCore runtime) | `client_credentials` (a service principal; `token_url` defaults to `{workspace_url}/oidc/v1/token`, `scopes` to `all-apis`), or `static` (`Authorization: Bearer` a personal access token) |
+| Gateway calls | `POST /harnesses/invoke` (InvokeHarness), SigV4 `bedrock-agentcore` | `POST {workspace_url}/serving-endpoints/{serving_endpoint}/invocations`, or `POST {app_url}/responses` |
+| Sends | `messages: [{role: user, content: [{text}]}]` | `input: [{role: user, content}]`, `context.conversation_id` |
+| Reads | The text deltas of the event stream's assistant messages | The `output_text` of the `message` output items |
+
+- Only `message/send` is forwarded. There are no tasks, so `tasks/get` and
+  `tasks/cancel` answer `-32004`, and `message/stream` is refused since the
+  card does not stream.
+- The message's text parts, and its data parts as JSON, are sent as one text.
+  A file part answers `-32005`.
+- The conversation is the call's `contextId`, or a new one the reply carries.
+  It is bound to its owner like any context. On a harness it is the runtime
+  session (`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`), so the harness keeps
+  the history. A Databricks agent gets it as `context.conversation_id` and
+  keeps the history only if it stores it under that id.
+- An error the agent answers (a harness `runtimeClientError`, a Databricks
+  400) is `-32603` with the agent's message; a refused credential is `-32092`
+  `upstream_auth_failed`.
