@@ -65,6 +65,10 @@ var errNoModelAccess = errors.New("this key has no model access; ask your admin 
 // carried a provider key the gateway could not use. It never echoes the key.
 const callerCredentialMessage = "the provider credential in Authorization was rejected; send a valid access token or service-account key"
 
+// managedLimitMessage answers a request that only a managed registry could
+// serve once the tenant reached its monthly limit for them.
+const managedLimitMessage = "TrustGate blocked this request: the organization reached its monthly limit for NeuralTrust-provided models. Add your own provider or upgrade the plan to resume."
+
 const (
 	errCodePluginRejected        = "plugin_rejected"
 	errCodeUnauthenticated       = "unauthenticated"
@@ -864,6 +868,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusMethodNotAllowed, httpio.ErrorBody{Error: errCodeMethodNotAllowed, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrModelNotFound):
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrManagedLimitReached):
+		return fiber.StatusPaymentRequired, httpio.ErrorBody{Error: middleware.ErrCodeManagedLimit, Message: managedLimitMessage}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
