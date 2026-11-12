@@ -223,6 +223,17 @@ type Config struct {
 	MCPConnectRateLimit MCPConnectRateLimitConfig
 	AdminM2M            AdminM2MConfig
 	Usage               UsageConfig
+	ManagedRegistries   ManagedRegistriesConfig
+}
+
+// ManagedRegistriesConfig holds NeuralTrust's own provider credentials, which
+// managed registries (the built-in OpenAI registry every new organization
+// gets) send their requests with. They never reach the database, a config
+// snapshot or an API response. Empty means managed registries of that provider
+// send no credentials.
+type ManagedRegistriesConfig struct {
+	// OpenAIAPIKey is MANAGED_OPENAI_API_KEY.
+	OpenAIAPIKey string
 }
 
 // UsageConfig controls Usage System enforcement. It is off by default, and off
@@ -921,6 +932,7 @@ func LoadConfig() (*Config, error) {
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 		Usage:               getUsageConfig(),
+		ManagedRegistries:   ManagedRegistriesConfig{OpenAIAPIKey: getEnv("MANAGED_OPENAI_API_KEY", "")},
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.

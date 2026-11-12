@@ -114,7 +114,7 @@ func (c *Classifier) Classify(ctx context.Context, in trafficlabels.ClassifyInpu
 	}
 	cfg := &providers.Config{
 		Options:      adapter.OpenAIProviderOptionsForTarget(reg.Provider(), target, reg.ProviderOptions()),
-		Credentials:  providers.CredentialsFromTargetAuth(reg.Auth()),
+		Credentials:  providers.CredentialsFromTargetAuth(reg.EffectiveAuth()),
 		Model:        in.Model,
 		DefaultModel: in.Model,
 	}
@@ -158,12 +158,13 @@ func (c *Classifier) registry(ctx context.Context, in trafficlabels.ClassifyInpu
 	if err != nil {
 		return nil, fmt.Errorf("labelllm: find registry: %w", err)
 	}
+	auth := reg.EffectiveAuth()
 	switch {
 	case reg.GatewayID.String() != in.GatewayID:
 		return nil, fmt.Errorf("%w: registry %s does not belong to gateway %s", trafficlabel.ErrClassifierUnavailable, id, in.GatewayID)
 	case reg.Type != registry.TypeLLM || reg.LLMTarget == nil:
 		return nil, fmt.Errorf("%w: registry %s is not an LLM registry", trafficlabel.ErrClassifierUnavailable, id)
-	case reg.Auth() == nil || reg.Auth().Type == registry.AuthTypePassthrough || reg.Auth().Type == registry.AuthTypeOAuth2:
+	case auth == nil || auth.Type == registry.AuthTypePassthrough || auth.Type == registry.AuthTypeOAuth2:
 		return nil, fmt.Errorf("%w: registry %s has no stored credentials", trafficlabel.ErrClassifierUnavailable, id)
 	}
 	return reg, nil

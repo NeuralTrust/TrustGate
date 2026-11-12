@@ -27,6 +27,7 @@ type Registry struct {
 	Name        string         `json:"name"`
 	Type        Type           `json:"type"`
 	Enabled     bool           `json:"enabled"`
+	Managed     bool           `json:"managed,omitempty"` // NeuralTrust's own credentials; platform-only changes (managed.go)
 	Description string         `json:"description,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
@@ -233,6 +234,9 @@ func (b *Registry) validateLLM() error {
 	}
 	if b.A2ATarget != nil {
 		return fmt.Errorf("%w: a2a_target is only valid for A2A registries", ErrInvalidRegistry)
+	}
+	if b.Managed {
+		return b.validateManagedLLM()
 	}
 	return b.LLMTarget.Validate()
 }

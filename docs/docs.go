@@ -3134,6 +3134,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
+                    "403": {
+                        "description": "managed is set by a caller that is not the platform",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -3538,6 +3544,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
+                    "403": {
+                        "description": "The registry is managed by NeuralTrust",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -3602,6 +3614,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "The registry is managed by NeuralTrust",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -9285,6 +9303,10 @@ const docTemplate = `{
                 "health_checks": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest"
                 },
+                "managed": {
+                    "description": "Managed asks for an LLM registry NeuralTrust supplies the credentials\nfor. Platform callers only; it takes no auth.",
+                    "type": "boolean"
+                },
                 "mcp_target": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
                 },
@@ -10172,6 +10194,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "managed": {
+                    "type": "boolean"
                 },
                 "mcp_target": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse"
