@@ -11797,6 +11797,9 @@ const docTemplate = `{
                 "protocol_version": {
                     "type": "string"
                 },
+                "provider": {
+                    "type": "string"
+                },
                 "reason": {
                     "type": "string"
                 },
