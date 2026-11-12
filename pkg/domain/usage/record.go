@@ -45,6 +45,9 @@ type Record struct {
 	Requests                 int64
 	SmartRoutingExecutions   int64
 	TopicClassificationChars int64
+	// ManagedRequests counts requests served by a managed registry; each one
+	// is also counted in Requests.
+	ManagedRequests int64
 }
 
 // NewRecord validates r and normalizes OccurredOn to UTC with millisecond
@@ -62,10 +65,12 @@ func NewRecord(r Record) (Record, error) {
 		return Record{}, fmt.Errorf("%w: trace id is required", ErrInvalidRecord)
 	case r.OccurredOn.IsZero():
 		return Record{}, fmt.Errorf("%w: occurred on is required", ErrInvalidRecord)
-	case r.Requests < 0 || r.SmartRoutingExecutions < 0 || r.TopicClassificationChars < 0:
+	case r.Requests < 0 || r.SmartRoutingExecutions < 0 || r.TopicClassificationChars < 0 || r.ManagedRequests < 0:
 		return Record{}, fmt.Errorf("%w: units cannot be negative", ErrInvalidRecord)
 	case r.Requests == 0 && r.SmartRoutingExecutions == 0 && r.TopicClassificationChars == 0:
 		return Record{}, fmt.Errorf("%w: no units", ErrInvalidRecord)
+	case r.ManagedRequests > r.Requests:
+		return Record{}, fmt.Errorf("%w: managed requests exceed requests", ErrInvalidRecord)
 	}
 	r.OccurredOn = r.OccurredOn.UTC().Truncate(time.Millisecond)
 	return r, nil
