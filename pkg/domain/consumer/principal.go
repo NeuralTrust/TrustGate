@@ -71,7 +71,7 @@ func AppPrincipal(cons *Consumer, caller *identity.Principal) *identity.Principa
 		p = &copied
 		p.Subject = AppSubject(cons.ID)
 	}
-	claims := make(map[string]any, len(p.Claims)+2)
+	claims := make(map[string]any, len(p.Claims))
 	for k, v := range p.Claims {
 		claims[k] = v
 	}
