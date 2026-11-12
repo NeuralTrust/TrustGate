@@ -15,6 +15,8 @@
 package middleware
 
 import (
+	"strings"
+
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	appusage "github.com/NeuralTrust/TrustGate/pkg/app/usage"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -22,8 +24,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// agentCardSuffix ends the path of an agent's card on the agent plane.
+const agentCardSuffix = "/.well-known/agent-card.json"
+
 // AgentMetricsMiddleware traces agent plane requests as the MCP plane traces
-// its own, under kind a2a, and returns the trace id in X-AG-Trace-Id.
+// its own, under kind a2a, and returns the trace id in X-AG-Trace-Id. A read
+// of an agent's card is not traced: the gateway answers it with the card it
+// pinned, without calling the agent, and an A2A client reads it before its
+// calls, so it would list every call twice.
 type AgentMetricsMiddleware struct {
 	metrics *MCPMetricsMiddleware
 }
@@ -36,5 +44,11 @@ func NewAgentMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestR
 }
 
 func (m *AgentMetricsMiddleware) Middleware() fiber.Handler {
-	return m.metrics.Middleware()
+	traced := m.metrics.Middleware()
+	return func(c *fiber.Ctx) error {
+		if c.Method() == fiber.MethodGet && strings.HasSuffix(c.Path(), agentCardSuffix) {
+			return c.Next()
+		}
+		return traced(c)
+	}
 }

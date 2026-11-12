@@ -500,6 +500,7 @@ func (b *Builder) buildA2A(
 	}
 
 	b.fillRequest(evt, req, nil)
+	evt.Request.Preview = a2aMessagePreview(evt.Request.Body)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
 	if a2a != nil && a2a.Outcome == a2aOutcomeUpstreamTimeout {

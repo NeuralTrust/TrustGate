@@ -82,6 +82,9 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			if m.telemetryEnabled {
 				req = m.buildRequestContext(c, gatewayID)
 				resp = m.buildResponseContext(c, gatewayID)
+				// Only the agent plane admits playground tokens; on the MCP plane
+				// no resolver produces a playground AuthContext, so this stays false.
+				markPlaygroundVerified(c, req)
 			}
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
