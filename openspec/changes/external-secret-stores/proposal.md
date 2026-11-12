@@ -133,8 +133,8 @@ Linear: _pending_. Research: `exploration.md`.
   whenever the admin reports `supported`.
 - **Public docs.** New pages in the deployment section: Secrets and
   Configuration, Hybrid and Self-hosted, plus a "Secret stores" guide.
-- **Rollout.** Behind `SECRET_STORES_ENABLED` (default off), with data-plane
-  version gating.
+- **Rollout.** Behind `SECRET_STORES_ENABLED` (default off), with capability
+  gating of snapshots (`accepts_secret_refs`, design D19).
 
 **Phase 2: complete coverage**
 - GCP Secret Manager (ADC / GKE Workload Identity, reusing
@@ -238,7 +238,7 @@ Linear: _pending_. Research: `exploration.md`.
 | **A console admin aims the pod identity at a host they control.** | Impossible by construction: store addresses and auth exist only in Helm values. |
 | **Vault outage.** | Refresh-ahead, stale-on-error up to `max_stale` (24 h default), and registry failover. |
 | **A reference string is sent upstream (LiteLLM #26151).** | An unresolved reference becomes an empty value plus `CredentialUnavailable`. The request fails before any upstream call. |
-| **A plane that predates this change receives a reference.** It forwards `secret://…` literally as the API key: the upstream answers 401 and that registry is down (LiteLLM #26151). | Strict write-time validation, so no reference is accepted while any live plane is too old or none is connected, unless the request explicitly opts in with `allow_unverified_secret_refs`. An old plane joining a scope with references is reported as `too_old`, logged and counted. Downgrade procedure: replace references before downgrading a plane or rolling back the chart. |
+| **A plane that predates this change receives a reference.** It forwards `secret://…` literally as the API key: the upstream answers 401 and that registry is down (LiteLLM #26151). | Planes with this code advertise `accepts_secret_refs`. The config-sync server never serves a snapshot that contains references to a plane without it. Such a plane keeps its previous or LKG configuration, or stays not-ready if it has none; it never sends `secret://…`. Write-time validation is strict: no reference while any live plane lacks the capability or none is connected, unless the request explicitly opts in with `allow_unverified_secret_refs`. Old planes are reported as `too_old`, logged and counted. Self-hosted planes read Postgres, so the gate does not apply to them; they rely on the downgrade procedure. Downgrade procedure: replace references before downgrading a plane or rolling back the chart. |
 | **Deploying the code changes behaviour for existing customers.** | With the flag off, the materializer is a no-op unless a value starts with `secret://`. Masking, write paths and cache keys for literal credentials stay unchanged. The chart renders nothing new, and the console treats a 404 as unsupported. A pre-deploy scan (`secret-refs-scan`) confirms that no stored credential starts with `secret://`. Golden tests prove all of this (design §13). |
 | **Chart and console drift.** | Discovery: the console lists only what the planes actually loaded. The generator polls until the store is reported. |
 
@@ -296,7 +296,9 @@ change (additive fields) are safe to roll back.
   identical chart render prove it.
 - [ ] **Old planes.** No reference can be written for a gateway whose live
   planes are too old, or which has no live plane, without the explicit opt-in.
-  An old plane that joins later is reported as `too_old`.
+  An old plane that joins later never receives the snapshot with references.
+  It keeps its previous configuration, or stays not-ready, and is reported as
+  `too_old`.
 - [ ] **Console.** It shows the same tab, generator and `SecretInput` in
   hybrid, self-hosted and central. Tests run on the plane that can reach the
   vault and never show a value.

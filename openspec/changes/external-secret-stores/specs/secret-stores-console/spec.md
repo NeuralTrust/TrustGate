@@ -76,7 +76,10 @@ confirms.
 ### Requirement: Downgrade warning
 
 When the listing reports an instance as `too_old`, the gateway's settings and
-the affected registry cards MUST show a warning with the downgrade checklist:
+the affected registry cards MUST show a warning. The warning MUST explain that
+the instance does not understand references, and that it is frozen on its
+previous configuration (or not ready if it has none). It MUST include the
+downgrade checklist:
 - list the usages;
 - replace them with literals, or upgrade the data plane.
 
