@@ -231,3 +231,51 @@ func TestPathResolver_PersonalConsumerIsNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, matches)
 }
+
+func TestSlugFromAgentPath(t *testing.T) {
+	t.Parallel()
+	for path, want := range map[string]string{
+		"/app/agents/research":                             "app",
+		"/app/agents/research/":                            "app",
+		"/app/agents/research/.well-known/agent-card.json": "app",
+		"/app/agents":                                      "",
+		"/app/agents/":                                     "",
+		"//agents/research":                                "",
+		"/app/mcp":                                         "",
+		"/app/other/research":                              "",
+		"/":                                                "",
+	} {
+		require.Equal(t, want, appconsumer.SlugFromAgentPath(path), path)
+	}
+}
+
+func TestPathResolver_EachPlaneReadsOnlyItsOwnPaths(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	a := pathAuth(t, gw)
+	c := slugConsumer(t, gw, "hub", a.ID)
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().FindActiveBySlug(mock.Anything, "hub").Return(c, nil)
+	auths := authmocks.NewRepository(t)
+	auths.EXPECT().FindByIDs(mock.Anything, gw, []ids.AuthID{a.ID}).Return([]*authdomain.Auth{a}, nil)
+	gateways := gatewaymocks.NewRepository(t)
+
+	mcp := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
+	agent := appconsumer.NewAgentPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
+
+	matches, err := mcp.Match(context.Background(), "", "/hub/mcp")
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	matches, err = mcp.Match(context.Background(), "", "/hub/agents/research")
+	require.NoError(t, err)
+	require.Empty(t, matches, "the MCP scope must not read agent paths")
+
+	matches, err = agent.Match(context.Background(), "", "/hub/agents/research")
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	require.Equal(t, a.ID, matches[0].Auths[0].ID)
+	matches, err = agent.Match(context.Background(), "", "/hub/mcp")
+	require.NoError(t, err)
+	require.Empty(t, matches, "the agent scope must not read MCP paths")
+}

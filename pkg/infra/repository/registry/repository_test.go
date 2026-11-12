@@ -151,6 +151,8 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 		[]byte(nil),
 		time.Now().UTC(),
 		time.Now().UTC(),
+		[]byte(nil),
+		false,
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
@@ -189,6 +191,8 @@ func TestRepository_ScanPricing(t *testing.T) {
 		pricingJSON,
 		time.Now().UTC(),
 		time.Now().UTC(),
+		[]byte(nil),
+		false,
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
@@ -216,6 +220,42 @@ func TestRepository_AuthEncryption_NilAuthStoresNull(t *testing.T) {
 	}
 	if stored != nil {
 		t.Fatalf("encryptAuth(nil) = %v, want nil", stored)
+	}
+}
+
+func TestRepository_ScanManaged(t *testing.T) {
+	t.Parallel()
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	r := &Repository{cipher: cipher}
+
+	provider := "openai"
+	reg, err := r.scanRegistry(context.Background(), fakeRow{values: []any{
+		ids.New[ids.RegistryKind](),
+		ids.New[ids.GatewayKind](),
+		"OpenAI (NeuralTrust)",
+		string(domain.TypeLLM),
+		true,
+		&provider,
+		[]byte(nil),
+		[]byte(nil),
+		"",
+		[]byte(nil),
+		[]byte(nil),
+		[]byte(nil),
+		time.Now().UTC(),
+		time.Now().UTC(),
+		[]byte(nil),
+		true,
+	}})
+	if err != nil {
+		t.Fatalf("scanRegistry: %v", err)
+	}
+	if !reg.Managed || reg.Auth() != nil {
+		t.Fatalf("got managed=%v auth=%+v, want a managed registry with no stored auth", reg.Managed, reg.Auth())
 	}
 }
 

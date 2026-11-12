@@ -19,6 +19,7 @@ const SchemaVersion = 3
 const (
 	KindLLM = "llm"
 	KindMCP = "mcp"
+	KindA2A = "a2a"
 )
 
 type Event struct {
@@ -65,6 +66,7 @@ type Event struct {
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
 
 	MCP *MCP `json:"mcp,omitempty"`
+	A2A *A2A `json:"a2a,omitempty"`
 
 	EndUser *EndUser `json:"end_user,omitempty"`
 }
@@ -155,6 +157,34 @@ type MCP struct {
 	// no hint: the server's claim, advisory only.
 	ToolRisk      string `json:"tool_risk,omitempty"`
 	ToolOpenWorld *bool  `json:"tool_open_world,omitempty"`
+}
+
+// A2A describes an A2A call on the agent plane. Outcome is ok, blocked,
+// refused, not_found, upstream_error or upstream_timeout; Reason is the
+// gateway's reason for it (not_owner, policy_blocked, mask_unsupported, the
+// -32092 reasons). Provider is where the agent is hosted (generic,
+// bedrock_agentcore, azure_foundry, vertex_agent_engine). IdentityMode is the
+// registry's identity mode (none, static, client_credentials, delegation,
+// obo, token_exchange, or the cloud credential aws_sigv4, azure_entra,
+// gcp_oauth) and
+// IdentitySubjectKind is user or app. Neither the token nor the subject is
+// recorded here.
+type A2A struct {
+	Method              string `json:"method"`
+	RegistryID          string `json:"registry_id,omitempty"`
+	AgentName           string `json:"agent_name,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	ProtocolVersion     string `json:"protocol_version,omitempty"`
+	TaskID              string `json:"task_id,omitempty"`
+	ContextID           string `json:"context_id,omitempty"`
+	TaskState           string `json:"task_state,omitempty"`
+	UpstreamStatus      int    `json:"upstream_status,omitempty"`
+	Outcome             string `json:"outcome,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	BlockedBy           string `json:"blocked_by,omitempty"`
+	IdentityMode        string `json:"identity_mode,omitempty"`
+	IdentitySubjectKind string `json:"identity_subject_kind,omitempty"`
+	RPCErrorCode        int    `json:"rpc_error_code,omitempty"`
 }
 
 // MCPPolicyScope tells which scoped policies of the consumer applied to a

@@ -174,7 +174,7 @@ func (p *personalKeys) Create(ctx context.Context, gatewayID ids.GatewayID, owne
 	if err := a.SetOwnerEmail(owner.Email, a.CreatedAt); err != nil {
 		return nil, err
 	}
-	if err := p.ensureNotHybrid(ctx, gatewayID); err != nil {
+	if err := p.ensureGateway(ctx, gatewayID); err != nil {
 		return nil, err
 	}
 	// The unique index refuses a second key all the same; asking first gives
@@ -263,13 +263,9 @@ func (p *personalKeys) findOwned(ctx context.Context, gatewayID ids.GatewayID, o
 	return a, nil
 }
 
-func (p *personalKeys) ensureNotHybrid(ctx context.Context, gatewayID ids.GatewayID) error {
-	gw, err := p.gateways.FindByID(ctx, gatewayID)
-	if err != nil {
+func (p *personalKeys) ensureGateway(ctx context.Context, gatewayID ids.GatewayID) error {
+	if _, err := p.gateways.FindByID(ctx, gatewayID); err != nil {
 		return fmt.Errorf("auth: load gateway: %w", err)
-	}
-	if !gw.AllowsPersonal() {
-		return consumerdomain.ErrHybridPersonal
 	}
 	return nil
 }

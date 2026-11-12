@@ -112,6 +112,7 @@ type RegistryResponse struct {
 	Name            string                `json:"name"`
 	Type            string                `json:"type"`
 	Enabled         bool                  `json:"enabled"`
+	Managed         bool                  `json:"managed"`
 	Provider        string                `json:"provider,omitempty"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
 	Description     string                `json:"description,omitempty"`
@@ -119,6 +120,7 @@ type RegistryResponse struct {
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
 	Pricing         *PricingResponse      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
+	A2ATarget       *A2ATargetResponse    `json:"a2a_target,omitempty"`
 	// SharedAccount is set by the flat listing on MCP instances that hold one
 	// account for every caller, so it shows whether that account is connected.
 	SharedAccount *SharedAccountStateResponse `json:"shared_account,omitempty"`
@@ -263,6 +265,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Name:            b.Name,
 		Type:            string(regType),
 		Enabled:         b.Enabled,
+		Managed:         b.Managed,
 		Provider:        b.Provider(),
 		ProviderOptions: maskProviderOptions(b.ProviderOptions()),
 		Description:     b.Description,
@@ -270,6 +273,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		HealthChecks:    health,
 		Pricing:         fromPricing(b.Pricing()),
 		MCPTarget:       fromMCPTarget(b.MCPTarget),
+		A2ATarget:       fromA2ATarget(b.A2ATarget),
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
@@ -309,30 +313,35 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
 	}
-	if t.Auth != nil {
-		out.Auth = &MCPAuthResponse{
-			Mode:                    string(t.Auth.Mode),
-			Header:                  t.Auth.Header,
-			Value:                   secret.Mask(t.Auth.Value),
-			ExpectedAudience:        t.Auth.ExpectedAudience,
-			Pattern:                 string(t.Auth.Pattern),
-			Audience:                t.Auth.Audience,
-			Scope:                   t.Auth.Scope,
-			Actor:                   t.Auth.Actor,
-			IdentityID:              t.Auth.IdentityID,
-			Provider:                t.Auth.Provider,
-			Account:                 string(t.Auth.Account),
-			Registration:            string(t.Auth.Registration),
-			ClientID:                t.Auth.ClientID,
-			ClientSecret:            secret.Mask(t.Auth.ClientSecret),
-			AuthorizeURL:            t.Auth.AuthorizeURL,
-			TokenURL:                t.Auth.TokenURL,
-			Scopes:                  t.Auth.Scopes,
-			Resource:                t.Auth.Resource,
-			TokenEndpointAuthMethod: t.Auth.TokenEndpointAuthMethod,
-		}
-	}
+	out.Auth = fromMCPAuth(t.Auth)
 	return out
+}
+
+func fromMCPAuth(a *domain.MCPAuth) *MCPAuthResponse {
+	if a == nil {
+		return nil
+	}
+	return &MCPAuthResponse{
+		Mode:                    string(a.Mode),
+		Header:                  a.Header,
+		Value:                   secret.Mask(a.Value),
+		ExpectedAudience:        a.ExpectedAudience,
+		Pattern:                 string(a.Pattern),
+		Audience:                a.Audience,
+		Scope:                   a.Scope,
+		Actor:                   a.Actor,
+		IdentityID:              a.IdentityID,
+		Provider:                a.Provider,
+		Account:                 string(a.Account),
+		Registration:            string(a.Registration),
+		ClientID:                a.ClientID,
+		ClientSecret:            secret.Mask(a.ClientSecret),
+		AuthorizeURL:            a.AuthorizeURL,
+		TokenURL:                a.TokenURL,
+		Scopes:                  a.Scopes,
+		Resource:                a.Resource,
+		TokenEndpointAuthMethod: a.TokenEndpointAuthMethod,
+	}
 }
 
 func FromAuth(a *domain.TargetAuth) *TargetAuthResponse {

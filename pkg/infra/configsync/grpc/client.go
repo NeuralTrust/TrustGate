@@ -349,6 +349,7 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		LastAppliedVersion:  c.lastApplied,
 		AcceptsUsage:        c.acceptsUsage.Load(),
 		AcceptsUsageChanges: c.acceptsUsage.Load(),
+		AcceptsManagedLimit: c.acceptsUsage.Load(),
 		AcceptsLayered:      c.layered,
 	}}}
 	helloResult := make(chan error, 1)

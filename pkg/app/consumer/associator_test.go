@@ -371,10 +371,32 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 			wantAttach:        true,
 		},
 		{
-			name:              "skip validation for a2a consumer",
+			name:              "reject llm-only policy for a2a consumer",
 			consumerType:      domain.TypeA2A,
-			slug:              "cost_cap",
-			resolverProtocols: map[string][]string{"cost_cap": {"LLM"}},
+			slug:              "token_rate_limiter",
+			resolverProtocols: map[string][]string{"token_rate_limiter": {"LLM"}},
+			wantMismatch:      true,
+		},
+		{
+			name:              "reject trustguard_v2 for a2a consumer",
+			consumerType:      domain.TypeA2A,
+			slug:              "trustguard_v2",
+			resolverProtocols: map[string][]string{"trustguard_v2": {"LLM", "MCP"}},
+			wantMismatch:      true,
+		},
+		{
+			name:              "allow a2a policy for a2a consumer",
+			consumerType:      domain.TypeA2A,
+			slug:              "trustguard",
+			resolverProtocols: map[string][]string{"trustguard": {"LLM", "MCP", "A2A"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "skip validation for global policy on a2a consumer",
+			consumerType:      domain.TypeA2A,
+			global:            true,
+			slug:              "token_rate_limiter",
+			resolverProtocols: map[string][]string{"token_rate_limiter": {"LLM"}},
 			wantAttach:        true,
 		},
 		{
@@ -420,6 +442,9 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 			if tt.wantMismatch {
 				if !errors.Is(err, domain.ErrPolicyProtocolMismatch) {
 					t.Fatalf("err = %v, want ErrPolicyProtocolMismatch", err)
+				}
+				if !strings.Contains(err.Error(), tt.slug) || !strings.Contains(err.Error(), string(tt.consumerType)) {
+					t.Fatalf("err = %v, want it to name %s and %s", err, tt.slug, tt.consumerType)
 				}
 				publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 				return

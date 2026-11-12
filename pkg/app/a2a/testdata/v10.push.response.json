@@ -1,0 +1,16 @@
+{
+  "error": {
+    "code": -32003,
+    "data": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "domain": "a2a-protocol.org",
+        "metadata": {},
+        "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED"
+      }
+    ],
+    "message": "Push Notification is not supported"
+  },
+  "id": "r1",
+  "jsonrpc": "2.0"
+}

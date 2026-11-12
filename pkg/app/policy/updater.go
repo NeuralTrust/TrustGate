@@ -74,7 +74,6 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
-	engines      appplugins.GatewayEngines
 }
 
 func NewUpdater(
@@ -87,10 +86,8 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
-	opts ...Option,
 ) Updater {
 	return &updater{
-		engines:      applyOptions(opts).engines,
 		repo:         repo,
 		consumers:    consumers,
 		levels:       levels,
@@ -184,11 +181,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// A pause that also changes the slug validates too: the new slug is input,
 	// not a row the gateway already holds.
 	if !wasEnabled || existing.Enabled || slugChanged {
-		if in.Settings != nil || slugChanged {
-			if err := validateEngine(ctx, u.engines, existing.GatewayID, existing.Slug); err != nil {
-				return nil, err
-			}
-		}
 		if err := validatePlugin(
 			u.registry,
 			existing.Slug,

@@ -148,7 +148,13 @@ type RequestContext struct {
 	ConsumerID string
 	// ConsumerName is the consumer's name, for the places an id alone reads as
 	// nothing: a guard that shows the application a request came from.
-	ConsumerName       string
+	ConsumerName string
+	// ConsumerAudience is who the consumer serves, application or personal (an
+	// LLM Store key), and ConsumerSynthetic marks a consumer that is never
+	// persisted, the MCP Store's. TrustGuard v2 inventories neither as an
+	// application.
+	ConsumerAudience   string
+	ConsumerSynthetic  bool
 	AuthID             string
 	OwnerID            string
 	ConsumerType       string
@@ -234,6 +240,16 @@ type RequestContext struct {
 	MCPServerCode string
 	// MCPServerName is the persisted server name, without Store instance labels.
 	MCPServerName string
+	// A2A marks a call on the agent plane. Body is then the normalised A2A
+	// body (method, agent and parts), not the JSON-RPC request.
+	A2A bool
+	// A2AMethod is the JSON-RPC method of an A2A call.
+	A2AMethod string
+	// A2ATaskID is the task an A2A call names, "" when it names none.
+	A2ATaskID string
+	// A2ABody is the caller's JSON-RPC body as it is sent to the agent, for
+	// the policies that measure the request rather than read its content.
+	A2ABody []byte
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

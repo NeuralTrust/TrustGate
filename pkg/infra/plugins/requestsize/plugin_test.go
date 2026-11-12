@@ -184,3 +184,20 @@ func TestPlugin_Execute_RequiresContentLength(t *testing.T) {
 	_, err = p.Execute(context.Background(), input(settings, req))
 	require.NoError(t, err)
 }
+
+func TestPlugin_Execute_MeasuresTheA2ARequestAsSent(t *testing.T) {
+	p := New()
+	settings := map[string]any{"allowed_payload_size": 1, "size_unit": "kilobytes"}
+	sent := []byte(`{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"parts":[{"kind":"text","text":"hi"}],"metadata":{"blob":"` + strings.Repeat("x", 2048) + `"}}}}`)
+	req := &infracontext.RequestContext{
+		A2A:     true,
+		Body:    []byte(`{"method":"message/send","parts":[{"type":"text","text":"hi"}]}`),
+		A2ABody: sent,
+	}
+
+	_, err := p.Execute(context.Background(), input(settings, req))
+	require.Error(t, err)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, 413, pe.StatusCode)
+}

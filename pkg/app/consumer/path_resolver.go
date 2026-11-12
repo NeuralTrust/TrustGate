@@ -49,6 +49,7 @@ type pathResolver struct {
 	cache     *cache.TTLMap
 	sf        singleflight.Group
 	logger    *slog.Logger
+	slugOf    func(path string) string
 }
 
 func NewPathResolver(
@@ -64,12 +65,27 @@ func NewPathResolver(
 		gateways:  gateways,
 		cache:     manager.GetTTLMap(cache.ConsumerPathTTLName),
 		logger:    logger,
+		slugOf:    SlugFromMCPPath,
 	}
+}
+
+// NewAgentPathResolver is NewPathResolver for the agent plane, which reads
+// the consumer from /{consumer}/agents/{agent} paths.
+func NewAgentPathResolver(
+	consumers domain.Reader,
+	auths authdomain.Repository,
+	gateways gatewaydomain.Repository,
+	manager *cache.TTLMapManager,
+	logger *slog.Logger,
+) PathResolver {
+	r := NewPathResolver(consumers, auths, gateways, manager, logger).(*pathResolver)
+	r.slugOf = SlugFromAgentPath
+	return r
 }
 
 func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatch, error) {
 	host = normalizeHost(host)
-	slug := SlugFromMCPPath(path)
+	slug := r.slugOf(path)
 	if slug == "" {
 		return nil, nil
 	}
@@ -124,6 +140,16 @@ func SlugFromMCPPath(path string) string {
 		return ""
 	}
 	return segments[len(segments)-2]
+}
+
+// SlugFromAgentPath returns the consumer slug of an agent plane path,
+// /{consumer}/agents/{agent} or below it, and "" for any other path.
+func SlugFromAgentPath(path string) string {
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(segments) < 3 || segments[0] == "" || segments[1] != "agents" || segments[2] == "" {
+		return ""
+	}
+	return segments[0]
 }
 
 func (r *pathResolver) cached(key string) ([]PathMatch, bool) {

@@ -15,8 +15,6 @@
 package catalog
 
 import (
-	"strings"
-
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/gofiber/fiber/v2"
@@ -40,8 +38,5 @@ func NewListPolicyCatalogHandler(service appplugins.CatalogService) *ListPolicyC
 // @Failure      401  {object}  httpio.ErrorBody
 // @Router       /v1/policies-catalog [get]
 func (h *ListPolicyCatalogHandler) Handle(c *fiber.Ctx) error {
-	if gateways, ok := h.service.(appplugins.GatewayCatalogService); ok {
-		return httpio.WriteOK(c, gateways.CatalogFor(c.UserContext(), strings.TrimSpace(c.Query("gateway_id"))))
-	}
 	return httpio.WriteOK(c, h.service.Catalog())
 }

@@ -81,6 +81,8 @@ type AdminRouterDeps struct {
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
 	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
+	PreviewAgentCard       *registryhttp.PreviewAgentCardHandler
+	AgentCard              *registryhttp.AgentCardHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
 	// for every caller. Absent on planes without the connect service.
@@ -137,6 +139,8 @@ type AdminRouterDeps struct {
 	StoreEveryone *storehttp.EveryoneHandler
 	// StorePrincipal serves the Portal's admin preview of one user's Store state.
 	StorePrincipal *storehttp.PrincipalHandler
+	// StoreLLMAvailability says whether the gateway's data planes serve the LLM Store.
+	StoreLLMAvailability *storehttp.LLMAvailabilityHandler
 	// StoreMaterialize puts a self-service catalog server on the shelf on an
 	// admin's request (POST registries/from-catalog). Present only on the full
 	// plane; nil-guarded when absent.
@@ -195,6 +199,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
+	registries.Post("/preview-agent-card", r.deps.PreviewAgentCard.Handle)
 	if r.deps.StoreMaterialize != nil {
 		registries.Post("/from-catalog", r.deps.StoreMaterialize.Handle)
 	}
@@ -206,6 +211,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
 		registries.Delete("/:id/shared-account", r.deps.RegistrySharedAccount.Disconnect)
 	}
+	registries.Post("/:id/agent-card/refresh", r.deps.AgentCard.Refresh)
+	registries.Post("/:id/agent-card/approve", r.deps.AgentCard.Approve)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
@@ -238,7 +245,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil || r.deps.StoreLLMAvailability != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -264,6 +271,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
 			store.Post("/principal/configure-link", r.deps.StorePrincipal.ConfigureLink)
 			store.Delete("/principal/connections/:registry_id", r.deps.AdminAuthz.RequireInteractiveIdentity(), r.deps.StorePrincipal.Disconnect)
+		}
+		if r.deps.StoreLLMAvailability != nil {
+			store.Get("/llm-availability", r.deps.StoreLLMAvailability.Get)
 		}
 		if r.deps.StoreLLMKey != nil {
 			interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()

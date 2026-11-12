@@ -25,8 +25,6 @@ import (
 )
 
 const (
-	v2EvaluatePath = "/v2/evaluate"
-	v2TokenPath    = "/v2/token"
 	// The service answering /v2 is TrustGuard, so the peer stays "trustguard"; the span says which engine.
 	v2EvaluateSpanName = "trustguard_v2.evaluate"
 )
@@ -107,6 +105,33 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 	return req
 }
 
+// withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the
+// collector's organisation is cut over: the model the upstream was sent and, for a tools/call,
+// the server's name and the native tool. They ride inside attributes, which TrustGuard v1 reads
+// as a free map, so a v1 answer is unchanged; TrustGuard maps them onto v2's names when v2
+// answers. The pointers of body are not shared with the caller's copy.
+func withInventory(body GuardRequest) GuardRequest {
+	req := body.request
+	if req == nil {
+		return body
+	}
+	if !req.MCP {
+		if served := v2ModelOf(req, body.Direction).Name; served != "" {
+			body.Attributes.Model.ServedName = served
+		}
+		return body
+	}
+	if body.Attributes.MCPServer != nil {
+		server := *body.Attributes.MCPServer
+		server.Name = strings.TrimSpace(req.MCPServerName)
+		if tool := strings.TrimSpace(req.MCPTool); tool != "" {
+			server.Tool = &GuardTool{Name: tool}
+		}
+		body.Attributes.MCPServer = &server
+	}
+	return body
+}
+
 func v2ModelOf(req *infracontext.RequestContext, direction string) *v2Model {
 	name := strings.TrimSpace(req.ResolvedModel)
 	if name == "" && direction == directionOutput {
@@ -149,7 +174,7 @@ func v2MCPServerOf(server *GuardMCPServer) *v2MCPServer {
 	return &v2MCPServer{ID: server.ID}
 }
 
-// normalizeV2Response reads a /v2/evaluate answer in the v1 shape the plugin enforces. The v2
+// normalizeV2Response reads a v2-shaped /v1/evaluate answer in the v1 shape the plugin enforces. The v2
 // statuses are v1's (allow, report, skip, transform, ask, block); only the findings name their
 // source differently, so the ids a finding is deduplicated by are filled from the v2 ones.
 // The control's name is not copied to detector_name: that one reaches the client's block message.

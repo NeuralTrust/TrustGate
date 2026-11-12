@@ -80,7 +80,7 @@ func (t *storeTool) requestModels(ctx context.Context, baseURL string, arguments
 	if gw == nil {
 		return nil, fmt.Errorf("%w: no gateway on this request", ErrStoreToolUnavailable)
 	}
-	if !gw.AllowsPersonal() || strings.TrimSpace(gw.TenantID()) == "" {
+	if strings.TrimSpace(gw.TenantID()) == "" {
 		return marshalToolResult(
 			"Models through a personal key are not available on this gateway, so there is nothing to request here.",
 			map[string]any{"available": false},

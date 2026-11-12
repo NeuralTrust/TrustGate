@@ -23,7 +23,6 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -160,11 +159,6 @@ func TestPersonalKeysClient_RoundTrip(t *testing.T) {
 	}
 	if err := client.Revoke(ctx, gw, "alice"); !errors.Is(err, authdomain.ErrNotFound) {
 		t.Fatalf("second Revoke: err = %v, want ErrNotFound", err)
-	}
-
-	issuer.err = consumerdomain.ErrHybridPersonal
-	if _, err := client.Create(ctx, gw, appauth.PersonalKeyOwner{ID: "bob"}, nil); !errors.Is(err, consumerdomain.ErrHybridPersonal) {
-		t.Fatalf("Create on a hybrid gateway: err = %v, want ErrHybridPersonal", err)
 	}
 }
 

@@ -191,3 +191,21 @@ func (r *Repository) List(ctx context.Context, scope string, page *listing.Page)
 	}
 	return conns, nil
 }
+
+// ListInstances returns every recorded instance of scope as the data-plane
+// domain reads it. An empty scope matches nothing: the global scope is the
+// hosted planes, whose instances never gate anything.
+func (r *Repository) ListInstances(ctx context.Context, scope string) ([]dataplane.Instance, error) {
+	if scope == "" {
+		return nil, nil
+	}
+	conns, err := r.List(ctx, scope, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dataplane.Instance, 0, len(conns))
+	for _, c := range conns {
+		out = append(out, dataplane.Instance{State: c.State, LastSeen: c.LastSeen, Version: c.Version})
+	}
+	return out, nil
+}

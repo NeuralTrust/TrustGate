@@ -46,9 +46,9 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 	reg := newTestPluginRegistry(t)
 	want := map[string][]appplugins.Protocol{
-		"request_size_limiter":  {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
-		"rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
-		"trustguard":            {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"request_size_limiter":  {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
+		"rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
+		"trustguard":            {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
 		"trustguard_v2":         {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"per_tool_rate_limiter": {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"token_rate_limiter":    {appplugins.ProtocolLLM},
@@ -65,7 +65,6 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		p, ok := reg.Get(slug)
 		require.Truef(t, ok, "plugin %q not registered", slug)
 		assert.ElementsMatchf(t, protocols, p.SupportedProtocols(), "slug %q protocol set", slug)
-		assert.NotContainsf(t, p.SupportedProtocols(), appplugins.ProtocolA2A, "slug %q must not report A2A", slug)
 	}
 }
 

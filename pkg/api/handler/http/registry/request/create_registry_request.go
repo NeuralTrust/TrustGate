@@ -33,6 +33,10 @@ type CreateRegistryRequest struct {
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+	A2ATarget       *A2ATargetRequest    `json:"a2a_target,omitempty"`
+	// Managed asks for an LLM registry NeuralTrust supplies the credentials
+	// for. Platform callers only; it takes no auth.
+	Managed bool `json:"managed,omitempty"`
 }
 
 type PricingRequest struct {
@@ -167,6 +171,21 @@ func (r CreateRegistryRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if r.A2ATarget != nil && r.ToType() != domain.TypeA2A {
+		return fmt.Errorf("a2a_target is only valid for A2A registries: %w", commonerrors.ErrValidation)
+	}
+	if r.Managed && r.ToType() != domain.TypeLLM {
+		return fmt.Errorf("only an LLM registry can be managed: %w", commonerrors.ErrValidation)
+	}
+	if r.ToType() == domain.TypeA2A {
+		if r.A2ATarget == nil {
+			return fmt.Errorf("a2a_target is required for A2A registries: %w", commonerrors.ErrValidation)
+		}
+		if r.MCPTarget != nil || r.Provider != "" || r.Auth != nil {
+			return fmt.Errorf("an A2A registry takes a2a_target, not provider, auth or mcp_target: %w", commonerrors.ErrValidation)
+		}
+		return nil
+	}
 	if r.ToType() == domain.TypeMCP {
 		if r.MCPTarget == nil {
 			return fmt.Errorf("mcp_target is required for MCP registries: %w", commonerrors.ErrValidation)
@@ -176,11 +195,17 @@ func (r CreateRegistryRequest) Validate() error {
 	if strings.TrimSpace(r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
-	if r.Auth == nil {
-		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
-	}
-	if err := r.Auth.ToDomain().Validate(); err != nil {
-		return err
+	if r.Managed {
+		if r.Auth != nil {
+			return fmt.Errorf("a managed registry takes no auth: %w", commonerrors.ErrValidation)
+		}
+	} else {
+		if r.Auth == nil {
+			return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
+		}
+		if err := r.Auth.ToDomain().Validate(); err != nil {
+			return err
+		}
 	}
 	if err := r.Pricing.ToDomain().Validate(); err != nil {
 		return err
@@ -247,30 +272,35 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 	if t.OpenAPI != nil {
 		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}
 	}
-	if t.Auth != nil {
-		out.Auth = &domain.MCPAuth{
-			Mode:                    domain.MCPAuthMode(t.Auth.Mode),
-			Header:                  t.Auth.Header,
-			Value:                   t.Auth.Value,
-			ExpectedAudience:        t.Auth.ExpectedAudience,
-			Pattern:                 domain.MCPExchangePattern(t.Auth.Pattern),
-			Audience:                t.Auth.Audience,
-			Scope:                   t.Auth.Scope,
-			Actor:                   t.Auth.Actor,
-			IdentityID:              t.Auth.IdentityID,
-			Provider:                t.Auth.Provider,
-			Account:                 domain.MCPAccount(t.Auth.Account),
-			Registration:            domain.MCPClientRegistration(t.Auth.Registration),
-			ClientID:                t.Auth.ClientID,
-			ClientSecret:            t.Auth.ClientSecret,
-			AuthorizeURL:            t.Auth.AuthorizeURL,
-			TokenURL:                t.Auth.TokenURL,
-			Scopes:                  t.Auth.Scopes,
-			Resource:                t.Auth.Resource,
-			TokenEndpointAuthMethod: t.Auth.TokenEndpointAuthMethod,
-		}
-	}
+	out.Auth = t.Auth.ToDomain()
 	return out
+}
+
+func (a *MCPAuthRequest) ToDomain() *domain.MCPAuth {
+	if a == nil {
+		return nil
+	}
+	return &domain.MCPAuth{
+		Mode:                    domain.MCPAuthMode(a.Mode),
+		Header:                  a.Header,
+		Value:                   a.Value,
+		ExpectedAudience:        a.ExpectedAudience,
+		Pattern:                 domain.MCPExchangePattern(a.Pattern),
+		Audience:                a.Audience,
+		Scope:                   a.Scope,
+		Actor:                   a.Actor,
+		IdentityID:              a.IdentityID,
+		Provider:                a.Provider,
+		Account:                 domain.MCPAccount(a.Account),
+		Registration:            domain.MCPClientRegistration(a.Registration),
+		ClientID:                a.ClientID,
+		ClientSecret:            a.ClientSecret,
+		AuthorizeURL:            a.AuthorizeURL,
+		TokenURL:                a.TokenURL,
+		Scopes:                  a.Scopes,
+		Resource:                a.Resource,
+		TokenEndpointAuthMethod: a.TokenEndpointAuthMethod,
+	}
 }
 
 func (h *HealthChecksRequest) ToDomain() *domain.HealthChecks {

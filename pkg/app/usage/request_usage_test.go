@@ -66,6 +66,14 @@ func llmTrace(tenant string, tierApplied ...bool) *trace.RequestTrace {
 	return rt
 }
 
+func llmTraceManaged(managed ...bool) *trace.RequestTrace {
+	rt := trace.New("trace-llm", trace.Metadata{GatewayID: "gw-1", TenantID: "tenant-1", ConsumerID: "cons-1", Kind: events.KindLLM})
+	for _, m := range managed {
+		rt.StartSpan(trace.SpanLLM, "llm").LLM.Managed = m
+	}
+	return rt
+}
+
 func llmTraceWithOutcomes(outcomes ...string) *trace.RequestTrace {
 	rt := trace.New("trace-llm", trace.Metadata{GatewayID: "gw-1", TenantID: "tenant-1", ConsumerID: "cons-1", Kind: events.KindLLM})
 	for _, outcome := range outcomes {
@@ -92,6 +100,7 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 		status       int
 		wantRecord   bool
 		wantSmart    int64
+		wantManaged  int64
 		wantSkipped  int
 		wantTraceID  string
 		wantConsumer string
@@ -110,6 +119,10 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 		{name: "provider refused the request", rt: llmTraceWithOutcomes("terminal"), status: 404},
 		{name: "provider failed on every attempt", rt: llmTraceWithOutcomes("retryable", "retryable"), status: 400},
 		{name: "provider failure recovered by a fallback", rt: llmTraceWithOutcomes("retryable", "success"), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "managed registry served", rt: llmTraceManaged(true), status: 200, wantRecord: true, wantManaged: 1, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "managed registry fell back to an own registry", rt: llmTraceManaged(true, false), status: 200, wantRecord: true, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "own registry fell back to a managed one", rt: llmTraceManaged(false, true), status: 200, wantRecord: true, wantManaged: 1, wantTraceID: "trace-llm", wantConsumer: "cons-1"},
+		{name: "managed limit reached", rt: llmTraceManaged(), status: 402},
 		{name: "models listing", rt: modelsListing, status: 200},
 		{name: "no tenant", rt: llmTrace(""), status: 200, wantSkipped: 1},
 		{name: "mcp served", rt: mcpTrace(200, 0), status: 200, wantRecord: true, wantTraceID: "trace-mcp"},
@@ -141,6 +154,7 @@ func TestRequestRecorder_Outcomes(t *testing.T) {
 			assert.Equal(t, tt.wantConsumer, r.ConsumerID)
 			assert.Equal(t, int64(1), r.Requests)
 			assert.Equal(t, tt.wantSmart, r.SmartRoutingExecutions)
+			assert.Equal(t, tt.wantManaged, r.ManagedRequests)
 			assert.Zero(t, r.TopicClassificationChars)
 			assert.Equal(t, time.Date(2026, 10, 20, 8, 5, 25, 123000000, time.UTC), r.OccurredOn)
 		})

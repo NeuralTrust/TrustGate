@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Command trustgate starts a server selected by argv[1] (default proxy):
-// "admin", "proxy", "mcp", or "run" (admin + proxy together in one process).
+// "admin", "proxy", "mcp", "agent", or "run" (admin + proxy together in one process).
 //
 // @title                       TrustGate Admin API
 // @version                     1.0
@@ -65,6 +65,7 @@ const (
 	serverAdmin  = modules.PlaneAdmin
 	serverProxy  = modules.PlaneProxy
 	serverMCP    = modules.PlaneMCP
+	serverAgent  = modules.PlaneAgent
 	serverRun    = modules.PlaneRun
 	serverWorker = modules.PlaneWorker
 )
@@ -87,6 +88,11 @@ func main() {
 	c, err := container.New(modules.All(plane, dbless)...)
 	if err != nil {
 		log.Fatalf("failed to initialize container: %v", err)
+	}
+	if err := c.Invoke(func(cfg *config.Config, logger *slog.Logger) {
+		cfg.WarnAgentHostWithoutSaaS(logger)
+	}); err != nil {
+		log.Fatalf("failed to read config: %v", err)
 	}
 
 	if err := c.Invoke(modules.StartCacheJanitor); err != nil {
@@ -116,11 +122,15 @@ func main() {
 		return
 	}
 
-	if plane == serverMCP {
+	if plane == serverMCP || plane == serverAgent {
 		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
 			log.Fatalf("failed to start metrics worker: %v", err)
 		}
-		if err := c.Invoke(runMCP); err != nil {
+		var run any = runMCP
+		if plane == serverAgent {
+			run = runAgent
+		}
+		if err := c.Invoke(run); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -166,7 +176,7 @@ func serverType() string {
 }
 
 func isDataPlane(plane string) bool {
-	return plane == serverProxy || plane == serverMCP || plane == serverWorker
+	return plane == serverProxy || plane == serverMCP || plane == serverAgent || plane == serverWorker
 }
 
 func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
@@ -221,9 +231,9 @@ type proxyParam struct {
 	OpsSDK        *o11y.SDK
 }
 
-type mcpParam struct {
+// planeParam is what the mcp and agent planes run with besides their server.
+type planeParam struct {
 	dig.In
-	Srv          server.Server `name:"mcp"`
 	Worker       appmetrics.Worker
 	UsageRecords *usageinfra.Emitter
 	Conn         *database.Connection
@@ -231,6 +241,18 @@ type mcpParam struct {
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
 	RateLimit    rateLimitParams
 	OpsSDK       *o11y.SDK
+}
+
+type mcpParam struct {
+	dig.In
+	Srv   server.Server `name:"mcp"`
+	Plane planeParam
+}
+
+type agentParam struct {
+	dig.In
+	Srv   server.Server `name:"agent"`
+	Plane planeParam
 }
 
 type allParam struct {
@@ -279,6 +301,14 @@ func runAdmin(p adminParam, logger *slog.Logger, stopBackfill func()) {
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
+	runPlane(p.Plane, p.Srv, serverMCP, logger)
+}
+
+func runAgent(p agentParam, logger *slog.Logger) {
+	runPlane(p.Plane, p.Srv, serverAgent, logger)
+}
+
+func runPlane(p planeParam, srv server.Server, name string, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
@@ -286,7 +316,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
-	runServer(p.Srv, serverMCP, logger)
+	runServer(srv, name, logger)
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {

@@ -27,11 +27,13 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -45,7 +47,10 @@ import (
 )
 
 var (
-	ErrNoBackendAvailable     = errors.New("no backend available")
+	ErrNoBackendAvailable = errors.New("no backend available")
+	// ErrManagedLimitReached is returned when every registry left for the
+	// request is managed and the tenant reached its managed limit.
+	ErrManagedLimitReached    = errors.New("the organization reached its monthly limit for NeuralTrust-provided models")
 	ErrNoBackendsInPool       = errors.New("application has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
 	// ErrModelNotChatCapable is returned when a chat request names a catalog
@@ -133,6 +138,9 @@ type forwarder struct {
 	// groupBudget holds a group key's store requests to its group's budget;
 	// nil when the plane enforces none.
 	groupBudget *groupBudgetStage
+	// managedLimit tells whether a tenant's managed registries are blocked;
+	// nil when the plane enforces no usage.
+	managedLimit ManagedLimit
 
 	nativeToolHold   time.Duration
 	nativeLookupWait time.Duration
@@ -141,6 +149,19 @@ type forwarder struct {
 
 // ForwarderOption configures an optional forwarder capability.
 type ForwarderOption func(*forwarder)
+
+// ManagedLimit tells whether the managed registries of a tenant must be
+// skipped because its usage is exhausted.
+type ManagedLimit interface {
+	ManagedBlocked(tenantID string) bool
+}
+
+// WithManagedLimit makes the forwarder skip managed registries of tenants
+// whose usage blocks them, and refuse the request when no other registry is
+// left.
+func WithManagedLimit(limit ManagedLimit) ForwarderOption {
+	return func(f *forwarder) { f.managedLimit = limit }
+}
 
 // WithStreamCodec attaches the codec the stream guard segments SSE events
 // with. Omitting it leaves the guard unbuilt, which is what keeps tests that do
@@ -245,6 +266,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	route, err := f.routeBackend(ctx, in.Consumer, in.Request, intent, candidates)
 	if err != nil {
 		return nil, err
+	}
+	if f.onlyBlockedManagedLeft(ctx, in.Consumer, route) {
+		return nil, ErrManagedLimitReached
 	}
 
 	stampTarget(in.Request, route.route.Registry)
@@ -357,8 +381,22 @@ func (f *forwarder) invokeWithFailover(
 	fromFallback := route.fromFallback
 	sequential := len(route.chain) > 0
 	modelMissOnly := sequential
+	managedSkipped := false
 	for current.Registry != nil {
 		bk := current.Registry
+		if f.managedBlocked(ctx, bk) {
+			managedSkipped = true
+			excluded[current.Key()] = struct{}{}
+			if route.pinned {
+				break
+			}
+			next, viaFallback := f.nextCandidate(ctx, lb, rc, dto.request, route.chain, excluded, true)
+			if next == nil {
+				break
+			}
+			current, fromFallback = *next, viaFallback
+			continue
+		}
 		for r := 0; r < attemptsPerBackend; r++ {
 			selectingRegistry := sequential && modelMissOnly
 			if selectingRegistry && budget.deadlineExceeded() {
@@ -448,6 +486,9 @@ func (f *forwarder) invokeWithFailover(
 		current, fromFallback = *next, viaFallback
 	}
 
+	if managedSkipped && budget.attempts == 0 {
+		return nil, ErrManagedLimitReached
+	}
 	if sequential && modelMissOnly && budget.attempts > 0 {
 		// A native Bedrock caller is talking to AWS, and AWS's own answer to an
 		// unknown model identifier is the error its SDK knows how to read: the
@@ -460,6 +501,71 @@ func (f *forwarder) invokeWithFailover(
 		return nil, noRegistryServesModelError(dto.request.RequestedModel, dto.routeSlug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
+}
+
+// onlyBlockedManagedLeft reports whether every registry the request could
+// reach is a managed registry its tenant may not use now, so the request is
+// refused before the pre-request plugins run and bill anything. It answers
+// false whenever the reachable set is not known.
+func (f *forwarder) onlyBlockedManagedLeft(ctx context.Context, rc *appconsumer.RoutableConsumer, route routedBackend) bool {
+	if f.managedLimit == nil || !f.managedBlocked(ctx, route.route.Registry) {
+		return false
+	}
+	reachable, known := reachableRegistries(rc, route)
+	if !known {
+		return false
+	}
+	for _, bk := range reachable {
+		if bk == nil || !bk.Managed {
+			return false
+		}
+	}
+	return true
+}
+
+// reachableRegistries lists every registry the failover loop could try for
+// the route: the pinned registry, the chain, or the balancer's routes plus the
+// consumer's fallback registries. known is false when that set cannot be told
+// for sure.
+func reachableRegistries(rc *appconsumer.RoutableConsumer, route routedBackend) ([]*domain.Registry, bool) {
+	out := []*domain.Registry{route.route.Registry}
+	switch {
+	case route.pinned:
+		return out, true
+	case len(route.chain) > 0:
+		for _, r := range route.chain {
+			out = append(out, r.Registry)
+		}
+		return out, true
+	case route.lb == nil:
+		return nil, false
+	}
+	for _, r := range route.lb.Routes() {
+		out = append(out, r.Registry)
+	}
+	if rc == nil || rc.Consumer == nil {
+		return nil, false
+	}
+	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
+		if len(rc.FallbackBackends) < len(fb.Chain) {
+			return nil, false
+		}
+		out = append(out, rc.FallbackBackends...)
+	}
+	return out, true
+}
+
+// managedBlocked reports whether bk is a managed registry the request's tenant
+// may not use now.
+func (f *forwarder) managedBlocked(ctx context.Context, bk *domain.Registry) bool {
+	if f.managedLimit == nil || bk == nil || !bk.Managed {
+		return false
+	}
+	gw, ok := appgateway.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	return f.managedLimit.ManagedBlocked(gw.TenantID())
 }
 
 type failoverState struct {
@@ -557,6 +663,7 @@ func (f *forwarder) recordSpan(
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
 			RegistryID:     bk.ID.String(),
+			Managed:        bk.Managed,
 			Provider:       bk.Provider(),
 			RouteModel:     route.Model,
 			RequestedModel: dto.request.RequestedModel,
@@ -593,6 +700,8 @@ func (f *forwarder) stampConsumerScope(in ForwardInput) {
 	in.Request.ConsumerID = in.Consumer.Consumer.ID.String()
 	in.Request.ConsumerName = in.Consumer.Consumer.Name
 	in.Request.ConsumerType = string(in.Consumer.Consumer.Type)
+	in.Request.ConsumerAudience = string(in.Consumer.Consumer.AudienceName())
+	in.Request.ConsumerSynthetic = consumerdomain.IsStoreConsumer(in.Consumer.Consumer)
 	if in.Request.GatewayID == "" {
 		in.Request.GatewayID = in.Consumer.Consumer.GatewayID.String()
 	}

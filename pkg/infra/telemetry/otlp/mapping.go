@@ -63,6 +63,23 @@ const (
 	attrMCPDecision          = "trustgate.mcp.decision"
 	attrMCPToolRisk          = "trustgate.mcp.tool_risk"
 	attrMCPToolOpenWorld     = "trustgate.mcp.tool_open_world"
+
+	attrA2AMethod              = "trustgate.a2a.method"
+	attrA2ARegistryID          = "trustgate.a2a.registry_id"
+	attrA2AAgentName           = "trustgate.a2a.agent_name"
+	attrA2AProvider            = "trustgate.a2a.provider"
+	attrA2AProtocolVersion     = "trustgate.a2a.protocol_version"
+	attrA2ATaskID              = "trustgate.a2a.task_id"
+	attrA2AContextID           = "trustgate.a2a.context_id"
+	attrA2ATaskState           = "trustgate.a2a.task_state"
+	attrA2AUpstreamStatus      = "trustgate.a2a.upstream_status"
+	attrA2AOutcome             = "trustgate.a2a.outcome"
+	attrA2AReason              = "trustgate.a2a.reason"
+	attrA2ABlockedBy           = "trustgate.a2a.blocked_by"
+	attrA2AIdentityMode        = "trustgate.a2a.identity_mode"
+	attrA2AIdentitySubjectKind = "trustgate.a2a.identity_subject_kind"
+	attrA2ARPCErrorCode        = "trustgate.a2a.rpc_error_code"
+
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -205,6 +222,27 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrMCPToolRisk, evt.MCP.ToolRisk)
 		if evt.MCP.ToolOpenWorld != nil {
 			attrs = append(attrs, attribute.Bool(attrMCPToolOpenWorld, *evt.MCP.ToolOpenWorld))
+		}
+	}
+	if evt.A2A != nil {
+		appendStr(attrA2AMethod, evt.A2A.Method)
+		appendStr(attrA2ARegistryID, evt.A2A.RegistryID)
+		appendStr(attrA2AAgentName, evt.A2A.AgentName)
+		appendStr(attrA2AProvider, evt.A2A.Provider)
+		appendStr(attrA2AProtocolVersion, evt.A2A.ProtocolVersion)
+		appendStr(attrA2ATaskID, evt.A2A.TaskID)
+		appendStr(attrA2AContextID, evt.A2A.ContextID)
+		appendStr(attrA2ATaskState, evt.A2A.TaskState)
+		if evt.A2A.UpstreamStatus != 0 {
+			attrs = append(attrs, attribute.Int(attrA2AUpstreamStatus, evt.A2A.UpstreamStatus))
+		}
+		appendStr(attrA2AOutcome, evt.A2A.Outcome)
+		appendStr(attrA2AReason, evt.A2A.Reason)
+		appendStr(attrA2ABlockedBy, evt.A2A.BlockedBy)
+		appendStr(attrA2AIdentityMode, evt.A2A.IdentityMode)
+		appendStr(attrA2AIdentitySubjectKind, evt.A2A.IdentitySubjectKind)
+		if evt.A2A.RPCErrorCode != 0 {
+			attrs = append(attrs, attribute.Int(attrA2ARPCErrorCode, evt.A2A.RPCErrorCode))
 		}
 	}
 	appendStr(attrTraceID, evt.TraceID)

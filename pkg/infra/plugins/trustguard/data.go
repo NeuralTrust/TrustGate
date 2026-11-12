@@ -74,15 +74,30 @@ type GuardAttributes struct {
 type GuardMCPServer struct {
 	ID   string `json:"id"`
 	Code string `json:"code,omitempty"`
+	// Name and Tool are for TrustGuard v2's inventory: the registry's display name and the
+	// upstream-native tool the call is bound to. TrustGuard v1 ignores them.
+	Name string     `json:"name,omitempty"`
+	Tool *GuardTool `json:"tool,omitempty"`
+}
+
+// GuardTool is the upstream-native tool of a tools/call.
+type GuardTool struct {
+	Name string `json:"name"`
 }
 
 // GuardConsumer names the application a request came from. TrustGuard stores
 // the name with the event only when it is sent here, and the console's Activity
 // otherwise has the id alone for a consumer it cannot look up — the MCP Store's,
 // which is synthetic, and one deleted since.
+//
+// Audience (application or personal) and Synthetic tell TrustGuard v2 not to
+// inventory a personal key or the MCP Store as an application. TrustGuard v1
+// ignores them.
 type GuardConsumer struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Audience  string `json:"audience,omitempty"`
+	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
 // GuardStream correlates the evaluate calls of a single streamed response so
@@ -115,6 +130,9 @@ type GuardStream struct {
 type GuardModel struct {
 	Name     string `json:"name,omitempty"`
 	Provider string `json:"provider,omitempty"`
+	// ServedName is the model the upstream was sent, for TrustGuard v2's inventory; Name stays
+	// the client's ref, which TrustGuard v1 matches rules on. TrustGuard v1 ignores it.
+	ServedName string `json:"served_name,omitempty"`
 }
 
 type GuardResponse struct {

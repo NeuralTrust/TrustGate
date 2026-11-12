@@ -45,8 +45,10 @@ func NewCreateRegistryHandler(creator appregistry.Creator) *CreateRegistryHandle
 // @Success      201         {object}  response.RegistryResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody  "managed is set by a caller that is not the platform"
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries [post]
 func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
@@ -63,7 +65,7 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
-	b, err := h.creator.Create(c.UserContext(), appregistry.CreateInput{
+	b, err := h.creator.Create(changeContext(c), appregistry.CreateInput{
 		GatewayID:   gatewayID,
 		Name:        req.Name,
 		Type:        req.ToType(),
@@ -71,6 +73,8 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Description: req.Description,
 		LLMTarget:   req.ToLLMTarget(),
 		MCPTarget:   req.ToMCPTarget(),
+		A2ATarget:   req.A2ATarget.ToDomain(),
+		Managed:     req.Managed,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

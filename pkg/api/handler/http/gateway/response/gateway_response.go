@@ -33,6 +33,9 @@ type GatewayResponse struct {
 	Domain   string            `json:"domain,omitempty"`
 	Hosts    GatewayHosts      `json:"hosts"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// AgentTokenIssuer is the iss of the tokens the agent plane sends to
+	// agents (STS_ISSUER). Set only when hosts.agent is.
+	AgentTokenIssuer string `json:"agent_token_issuer,omitempty"`
 	// StoreMode is the gateway's MCP Store curation mode, the same value
 	// UpdateGatewayRequest writes. It is derived (never blank) rather than left
 	// for readers to dig out of metadata: a reader that missed it there read a
@@ -49,17 +52,19 @@ type GatewayResponse struct {
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
-// plane: Proxy for the LLM proxy and MCP for the Model Context Protocol server.
+// plane: Proxy for the LLM proxy, MCP for the Model Context Protocol server and
+// Agent for the A2A agent plane, absent when AGENT_BASE_DOMAIN is not set.
 type GatewayHosts struct {
 	Proxy string `json:"proxy,omitempty"`
 	MCP   string `json:"mcp,omitempty"`
+	Agent string `json:"agent,omitempty"`
 }
 
-func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) GatewayResponse {
+func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDomain, agentTokenIssuer string) GatewayResponse {
 	if g == nil {
 		return GatewayResponse{}
 	}
-	return GatewayResponse{
+	resp := GatewayResponse{
 		ID:      g.ID,
 		Slug:    g.Slug,
 		Status:  g.Status,
@@ -68,10 +73,11 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		Hosts: GatewayHosts{
 			Proxy: proxyHost(g, proxyBaseDomain),
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
+			Agent: subdomainHost(g.Slug, agentBaseDomain),
 		},
 		Metadata:        g.Metadata,
 		StoreMode:       g.StoreMode(),
-		Telemetry:       g.Telemetry,
+		Telemetry:       g.Telemetry.WithoutCredentials(),
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,
 		Entitlements:    g.Entitlements,
@@ -79,6 +85,10 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		CreatedAt:       g.CreatedAt,
 		UpdatedAt:       g.UpdatedAt,
 	}
+	if resp.Hosts.Agent != "" {
+		resp.AgentTokenIssuer = agentTokenIssuer
+	}
+	return resp
 }
 
 func proxyHost(g *domain.Gateway, baseDomain string) string {

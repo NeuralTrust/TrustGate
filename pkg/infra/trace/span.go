@@ -45,9 +45,11 @@ type RouteBaseline struct {
 
 type LLMAttrs struct {
 	RegistryID string
-	Provider   string
-	Model      string
-	SentModel  string
+	// Managed is set when the registry runs on NeuralTrust's own credentials.
+	Managed   bool
+	Provider  string
+	Model     string
+	SentModel string
 	// RouteModel is the model the load balancer's route pinned, empty when the
 	// route deferred to the registry's model policy. It separates the balancer's
 	// decision from RequestedModel (what the client asked for) and SentModel
@@ -112,6 +114,26 @@ type MCPAttrs struct {
 	ToolOpenWorld *bool
 }
 
+// A2AAttrs describe one A2A call: the agent and method, the task it ran,
+// what the agent answered and how the gateway ended the call.
+type A2AAttrs struct {
+	Method              string
+	RegistryID          string
+	AgentName           string
+	Provider            string
+	ProtocolVersion     string
+	TaskID              string
+	ContextID           string
+	TaskState           string
+	UpstreamStatus      int
+	Outcome             string
+	Reason              string
+	BlockedBy           string
+	IdentityMode        string
+	IdentitySubjectKind string
+	RPCErrorCode        int
+}
+
 // MCPPolicyScope records how the scoped policies of a consumer applied to one
 // tools/call: how many were evaluated, the ids of those that entered the plan
 // and those left out with the dimension that rejected them. Unscoped policies
@@ -140,6 +162,7 @@ type Span struct {
 	LLM    *LLMAttrs
 	Plugin *PluginAttrs
 	MCP    *MCPAttrs
+	A2A    *A2AAttrs
 
 	mu         sync.Mutex
 	endedAt    time.Time
@@ -162,6 +185,8 @@ func newSpan(spanType SpanType, name string) *Span {
 	case SpanMCP:
 		s.MCP = &MCPAttrs{}
 	case SpanRouting:
+	case SpanA2A:
+		s.A2A = &A2AAttrs{}
 	default:
 		s.LLM = &LLMAttrs{}
 	}
@@ -486,4 +511,22 @@ func (s *Span) MCPAttrsCopy() (MCPAttrs, bool) {
 		return MCPAttrs{}, false
 	}
 	return *s.MCP, true
+}
+
+// SetA2A records the attributes of an A2A call.
+func (s *Span) SetA2A(attrs A2AAttrs) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.A2A = &attrs
+}
+
+// A2AAttrsCopy returns the attributes of an A2A span, and false for any
+// other span.
+func (s *Span) A2AAttrsCopy() (A2AAttrs, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.A2A == nil {
+		return A2AAttrs{}, false
+	}
+	return *s.A2A, true
 }

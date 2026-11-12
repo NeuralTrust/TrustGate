@@ -58,7 +58,6 @@ type creator struct {
 	memoryCache  *cache.TTLMap
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
-	engines      appplugins.GatewayEngines
 }
 
 func NewCreator(
@@ -69,10 +68,8 @@ func NewCreator(
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
-	opts ...Option,
 ) Creator {
 	return &creator{
-		engines:      applyOptions(opts).engines,
 		repo:         repo,
 		levels:       levels,
 		registryRepo: registryRepo,
@@ -98,9 +95,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 		if err := secret.ValidateCredentialSettings(p.Settings, paths); err != nil {
 			return nil, errors.Join(commonerrors.ErrValidation, err)
 		}
-	}
-	if err := validateEngine(ctx, c.engines, in.GatewayID, in.Slug); err != nil {
-		return nil, err
 	}
 	// A create has no previous version of these settings.
 	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings, nil, true); err != nil {

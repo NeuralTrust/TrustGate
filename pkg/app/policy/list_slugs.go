@@ -53,6 +53,14 @@ func ResolveListSlugs(catalog appplugins.Catalog, categories, types []string) (s
 			categorySlugs[item.Slug] = struct{}{}
 		}
 	}
+	for group, retired := range appplugins.RetiredCatalogSlugs() {
+		if _, ok := wanted[group]; !ok {
+			continue
+		}
+		for _, slug := range retired {
+			categorySlugs[slug] = struct{}{}
+		}
+	}
 
 	if len(typeSet) == 0 {
 		return sortedKeys(categorySlugs), true

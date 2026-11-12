@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
@@ -38,6 +39,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	"go.uber.org/dig"
 )
 
 func Proxy(c *container.Container) error {
@@ -83,14 +85,21 @@ func Proxy(c *container.Container) error {
 		registry *adapter.Registry,
 		bedrockModels appcatalog.BedrockModelResolver,
 		groupBudget *tokenratelimit.GroupBudget,
+		usage forwarderUsage,
 		cfg *config.Config,
 		logger *slog.Logger,
 	) appproxy.Forwarder {
-		return appproxy.NewForwarder(
-			factory, cacheClient, manager, invoker, executor, sessions, resolver, listing, limiter, cfg, logger,
+		opts := []appproxy.ForwarderOption{
 			appproxy.WithStreamCodec(registry),
 			appproxy.WithForwarderBedrockModelResolver(bedrockModels),
 			appproxy.WithGroupBudget(groupBudget),
+		}
+		if usage.Guard != nil {
+			opts = append(opts, appproxy.WithManagedLimit(usage.Guard))
+		}
+		return appproxy.NewForwarder(
+			factory, cacheClient, manager, invoker, executor, sessions, resolver, listing, limiter, cfg, logger,
+			opts...,
 		)
 	}); err != nil {
 		return err
@@ -118,6 +127,13 @@ func Proxy(c *container.Container) error {
 			WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs)).
 			WithLogger(logger)
 	})
+}
+
+// forwarderUsage is the usage guard the forwarder skips managed registries
+// with; planes without one enforce no usage.
+type forwarderUsage struct {
+	dig.In
+	Guard *middleware.UsageGuardMiddleware `optional:"true"`
 }
 
 // newGroupBudget is the stage that holds a group key's store requests to its

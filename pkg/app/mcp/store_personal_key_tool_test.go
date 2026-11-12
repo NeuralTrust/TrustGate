@@ -145,7 +145,7 @@ func TestStorePersonalKey_NamesNoModelsWhereTheKeyReachesNone(t *testing.T) {
 	}
 }
 
-func TestStorePersonalKey_SaysAHybridGatewayHasNone(t *testing.T) {
+func TestStorePersonalKey_MintsALinkOnAHybridGateway(t *testing.T) {
 	links := &recordingPersonalKeyLinks{}
 	tool, rc, gw := personalKeyStoreTool(t, links)
 	gw.Entitlements.DataPlane = gatewaydomain.DataPlaneHybrid
@@ -154,8 +154,8 @@ func TestStorePersonalKey_SaysAHybridGatewayHasNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("call: %v", err)
 	}
-	if links.calls != 0 || !strings.Contains(string(raw), "not available on this gateway") {
-		t.Fatalf("a hybrid gateway must mint no link, got %s", raw)
+	if links.calls != 1 || !strings.Contains(string(raw), "personal_key_url") {
+		t.Fatalf("a hybrid gateway must mint a link, got %s", raw)
 	}
 }
 

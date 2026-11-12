@@ -1,9 +1,0 @@
-change: access-everyone
-linear: ENG-3054
-phases:
-  explore: done
-  propose: done
-  spec: done  # flag = UI only; narrowing Add confirms (2026-11-05)
-  design: done
-  tasks: done  # one PR per repo, size:exception
-  apply: in_progress  # TrustGate 1-3 and app 4-7 done 2026-11-05; front wiring (8) pending coordination

@@ -36,6 +36,7 @@ type MCPMetricsMiddleware struct {
 	telemetryEnabled    bool
 	enableRequestTraces bool
 	enablePluginTraces  bool
+	kind                string
 }
 
 func NewMCPMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRecorder, cfg *config.Config) *MCPMetricsMiddleware {
@@ -46,6 +47,7 @@ func NewMCPMetricsMiddleware(worker appmetrics.Worker, usage appusage.RequestRec
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
 		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
+		kind:                events.KindMCP,
 	}
 }
 
@@ -103,7 +105,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
 		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
-		Kind:      events.KindMCP,
+		Kind:      m.kind,
 	}
 	if gw != nil {
 		meta.TenantID = gw.TenantID()
@@ -140,11 +142,17 @@ func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID stri
 		headers[name] = append(headers[name], string(value))
 	}
 
-	return &infracontext.ResponseContext{
+	out := &infracontext.ResponseContext{
 		GatewayID:  gatewayID,
 		Headers:    headers,
-		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
-		Streaming:  false,
 	}
+	// Reading the body of a streamed response drains the stream before
+	// fasthttp writes a byte of it to the client.
+	if c.Response().IsBodyStream() {
+		out.Streaming = true
+		return out
+	}
+	out.Body = append([]byte(nil), c.Response().Body()...)
+	return out
 }

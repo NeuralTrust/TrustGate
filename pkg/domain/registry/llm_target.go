@@ -33,6 +33,12 @@ type LLMTarget struct {
 }
 
 func (t *LLMTarget) Validate() error {
+	return t.validate(true)
+}
+
+// validate checks the target; requireAuth is false only for a managed
+// registry, whose credentials NeuralTrust supplies.
+func (t *LLMTarget) validate(requireAuth bool) error {
 	if t == nil {
 		return fmt.Errorf("%w: llm_target is required for LLM registries", ErrInvalidRegistry)
 	}
@@ -42,11 +48,13 @@ func (t *LLMTarget) Validate() error {
 	if !provider.IsValid(t.Provider) {
 		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidRegistry, t.Provider)
 	}
-	if t.Auth == nil {
+	if requireAuth && t.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidRegistry)
 	}
-	if err := t.Auth.Validate(); err != nil {
-		return err
+	if t.Auth != nil {
+		if err := t.Auth.Validate(); err != nil {
+			return err
+		}
 	}
 	if t.HealthChecks != nil {
 		if err := t.HealthChecks.Validate(); err != nil {

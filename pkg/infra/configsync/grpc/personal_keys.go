@@ -24,7 +24,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc"
@@ -122,8 +121,6 @@ func personalKeyStatus(op string, err error) error {
 		return status.Errorf(codes.NotFound, "personal keys: %s: no personal key", op)
 	case errors.Is(err, authdomain.ErrOwnedKeyExists):
 		return status.Errorf(codes.AlreadyExists, "personal keys: %s: %v", op, authdomain.ErrOwnedKeyExists)
-	case errors.Is(err, consumerdomain.ErrHybridPersonal):
-		return status.Errorf(codes.FailedPrecondition, "personal keys: %s: %v", op, consumerdomain.ErrHybridPersonal)
 	case errors.Is(err, authdomain.ErrOwnedExpiry), errors.Is(err, authdomain.ErrInvalidOwner):
 		return status.Errorf(codes.InvalidArgument, "personal keys: %s: %v", op, err)
 	default:
@@ -208,8 +205,6 @@ func personalKeyError(op string, err error) error {
 		return authdomain.ErrNotFound
 	case codes.AlreadyExists:
 		return authdomain.ErrOwnedKeyExists
-	case codes.FailedPrecondition:
-		return consumerdomain.ErrHybridPersonal
 	case codes.InvalidArgument:
 		return fmt.Errorf("personal keys: %s: %w: %s", op, commonerrors.ErrValidation, status.Convert(err).Message())
 	default:
