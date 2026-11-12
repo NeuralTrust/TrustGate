@@ -15,6 +15,9 @@
 package middleware_test
 
 import (
+	"bufio"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -71,4 +74,75 @@ func TestAgentMetricsMiddleware_TracesAsA2A(t *testing.T) {
 	require.NotNil(t, gotRT)
 	require.Equal(t, "a2a", gotRT.Metadata().Kind)
 	require.Equal(t, gotRT.TraceID(), resp.Header.Get(middleware.HeaderTraceID))
+}
+
+func TestAgentMetricsMiddleware_RelaysStreamEventsAsTheyAreWritten(t *testing.T) {
+	worker := appmetricsmocks.NewWorker(t)
+	processed := make(chan *infracontext.ResponseContext, 1)
+	worker.EXPECT().
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ *trace.RequestTrace, _ *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time, _ []telemetrydomain.ExporterConfig) {
+			processed <- resp
+		}).
+		Return().
+		Once()
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewAgentMetricsMiddleware(worker, nil, cfg)
+
+	release := make(chan struct{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), ids.New[ids.GatewayKind]()))
+		return c.Next()
+	})
+	app.Use(mw.Middleware())
+	app.Post("/bot/agents/research", func(c *fiber.Ctx) error {
+		rt := trace.FromContext(c.UserContext())
+		rt.AddAsync()
+		c.Set(fiber.HeaderContentType, "text/event-stream")
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer rt.Done()
+			_, _ = w.WriteString("data: first\n\n")
+			_ = w.Flush()
+			<-release
+			_, _ = w.WriteString("data: last\n\n")
+			_ = w.Flush()
+		})
+		return nil
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = app.Listener(ln) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	first := make(chan string, 1)
+	go func() {
+		resp, err := http.Post("http://"+ln.Addr().String()+"/bot/agents/research", "application/json", nil)
+		if err != nil {
+			first <- err.Error()
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		line, _ := bufio.NewReader(resp.Body).ReadString('\n')
+		first <- line
+	}()
+	select {
+	case line := <-first:
+		require.Equal(t, "data: first\n", line)
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("the first event did not reach the client before the stream ended")
+	}
+	close(release)
+
+	select {
+	case got := <-processed:
+		require.True(t, got.Streaming)
+		require.Empty(t, got.Body)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stream's telemetry was not processed")
+	}
 }
