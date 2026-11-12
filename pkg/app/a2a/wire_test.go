@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,14 +39,14 @@ var versions = map[a2a.Version]string{a2a.Version03: "v03", a2a.Version10: "v10"
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	return raw
 }
 
 func decodeFixture(t *testing.T, name string) *a2a.Request {
 	t.Helper()
 	req, err := a2a.Decode(readFixture(t, name))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	return req
 }
 
@@ -110,6 +111,14 @@ func TestDecode(t *testing.T) {
 		{name: "notification", body: `{"jsonrpc":"2.0","method":"tasks/get"}`, code: a2a.CodeInvalidRequest},
 		{name: "object id", body: `{"jsonrpc":"2.0","id":{},"method":"tasks/get"}`, code: a2a.CodeInvalidRequest},
 		{name: "method by another case", body: `{"jsonrpc":"2.0","id":1,"METHOD":"tasks/get"}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "params twice by case", body: `{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{}},"PARAMS":{"message":{}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "params key twice", body: `{"jsonrpc":"2.0","id":1,"method":"tasks/get","params":{"id":"a","ID":"b"}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "message key twice", body: `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"taskId":"a","taskId":"b"}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "task id in two cases", body: `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"taskId":"a","task_id":"b"}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "references in two cases", body: `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"referenceTaskIds":["a"],"reference_task_ids":["b"]}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "part key twice", body: `{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"parts":[{"kind":"text","text":"a","TEXT":"b"}]}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "file key twice", body: `{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"parts":[{"kind":"file","file":{"uri":"a","URI":"b"}}]}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
+		{name: "configuration key twice", body: `{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{},"configuration":{"blocking":true,"Blocking":false}}}`, code: a2a.CodeInvalidRequest, wantID: `1`},
 	} {
 		req, err := a2a.Decode([]byte(tc.body))
 		assert.Equal(t, tc.code, rpcCode(t, err), tc.name)
@@ -121,8 +130,11 @@ func TestDecode(t *testing.T) {
 		assert.Equal(t, tc.wantID, string(req.ID), tc.name)
 	}
 
+	_, err := a2a.Decode([]byte(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"parts":[{"data":{"Name":1,"name":2}}],"metadata":{"k":1,"K":2}}}}`))
+	require.Nil(t, err, "the caller's own data and metadata may repeat keys by case")
+
 	req, err := a2a.Decode([]byte(`{"jsonrpc":"2.0","id":"r1","method":"GetTask","params":{"id":"t-1"}}`))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, `"r1"`, string(req.ID))
 	assert.Equal(t, "GetTask", req.Method)
 	assert.JSONEq(t, `{"id":"t-1"}`, string(req.Params))
@@ -141,7 +153,7 @@ func TestRequestContent_SendParts(t *testing.T) {
 		kind, ok := a2a.MethodKind(v, req.Method)
 		require.True(t, ok)
 		got, err := a2a.RequestContent(v, kind, req.Params)
-		require.NoError(t, err)
+		require.Nil(t, err)
 		require.Len(t, got.Parts, len(want), prefix)
 		for i := range want {
 			assert.Equal(t, want[i].Type, got.Parts[i].Type, prefix)
@@ -168,7 +180,7 @@ func TestRequestContent_Ownership(t *testing.T) {
 		kind, _ := a2a.MethodKind(v, stream.Method)
 		require.Equal(t, a2a.KindStream, kind)
 		got, err := a2a.RequestContent(v, kind, stream.Params)
-		require.NoError(t, err)
+		require.Nil(t, err)
 		assert.Equal(t, "ctx-1", got.ContextID, prefix)
 		assert.Empty(t, got.TaskID, prefix)
 
@@ -176,7 +188,7 @@ func TestRequestContent_Ownership(t *testing.T) {
 		kind, _ = a2a.MethodKind(v, get.Method)
 		require.Equal(t, a2a.KindGet, kind)
 		got, err = a2a.RequestContent(v, kind, get.Params)
-		require.NoError(t, err)
+		require.Nil(t, err)
 		assert.Equal(t, taskIDs[v], got.TaskID, prefix)
 	}
 }
@@ -187,19 +199,19 @@ func TestRequestContent_ReadsIDsAsTheAgentDoes(t *testing.T) {
 	t.Parallel()
 	got, err := a2a.RequestContent(a2a.Version10, a2a.KindSend,
 		json.RawMessage(`{"message":{"taskId":"mine","TASKID":"other","context_id":"ctx","parts":[]}}`))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, "mine", got.TaskID)
 	assert.Equal(t, "ctx", got.ContextID)
 
 	got, err = a2a.RequestContent(a2a.Version03, a2a.KindSend,
 		json.RawMessage(`{"message":{"parts":[{"kind":"text","text":"evil","TEXT":"benign"}]}}`))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	require.Len(t, got.Parts, 1)
 	assert.Equal(t, "evil", got.Parts[0].Text)
 
 	got, err = a2a.RequestContent(a2a.Version10, a2a.KindSend,
 		json.RawMessage(`{"message":{"parts":[{"text":null,"raw":"JVBERi0xLjc="}]}}`))
-	require.NoError(t, err)
+	require.Nil(t, err)
 	require.Len(t, got.Parts, 1)
 	assert.Equal(t, a2a.PartFile, got.Parts[0].Type)
 }
@@ -230,7 +242,7 @@ func TestResultContent_Task(t *testing.T) {
 	}
 	for v, prefix := range versions {
 		got, err := a2a.ResultContent(v, resultOf(t, readFixture(t, prefix+".send.response.json")))
-		require.NoError(t, err)
+		require.Nil(t, err)
 		assert.Equal(t, ids[v][0], got.TaskID, prefix)
 		assert.Equal(t, ids[v][1], got.ContextID, prefix)
 		assert.Equal(t, states[v], got.State, prefix)
@@ -248,7 +260,7 @@ func TestResultContent_Message(t *testing.T) {
 	t.Parallel()
 	for v, prefix := range versions {
 		got, err := a2a.ResultContent(v, resultOf(t, readFixture(t, prefix+".send_message_result.response.json")))
-		require.NoError(t, err)
+		require.Nil(t, err)
 		assert.NotEmpty(t, got.ContextID, prefix)
 		assert.Equal(t, []a2a.Part{{Type: a2a.PartText, Text: "hello back"}}, got.Parts, prefix)
 	}
@@ -265,7 +277,7 @@ func TestResultContent_StreamEvents(t *testing.T) {
 				continue
 			}
 			c, err := a2a.ResultContent(v, resultOf(t, []byte(data)))
-			require.NoError(t, err, prefix)
+			require.Nil(t, err, prefix)
 			events = append(events, c)
 		}
 		require.Len(t, events, 4, prefix)
@@ -290,4 +302,63 @@ func TestResultContent_RefusesWhatIsNotAResult(t *testing.T) {
 			assert.Equal(t, a2a.CodeGatewayFailure, rpcCode(t, err), raw)
 		}
 	}
+}
+
+func TestStripTaskContent(t *testing.T) {
+	t.Parallel()
+	task := `{"id":"t-1","contextId":"c-1","status":{"state":"%s","message":{"parts":[{"text":"partial"}]}},"artifacts":[{"parts":[{"text":"draft"}]}],"history":[{"role":"agent","parts":[{"text":"draft"}]}]}`
+	stripped := `{"id":"t-1","contextId":"c-1","status":{"state":"%s"}}`
+	for _, tc := range []struct {
+		name    string
+		version a2a.Version
+		in      string
+		want    string
+	}{
+		{name: "0.3 task", version: a2a.Version03, in: fmt.Sprintf(task, "canceled"), want: fmt.Sprintf(stripped, "canceled")},
+		{name: "1.0 bare task", version: a2a.Version10, in: fmt.Sprintf(task, "TASK_STATE_CANCELED"), want: fmt.Sprintf(stripped, "TASK_STATE_CANCELED")},
+		{name: "1.0 wrapped task", version: a2a.Version10, in: `{"task":` + fmt.Sprintf(task, "TASK_STATE_CANCELED") + `}`, want: `{"task":` + fmt.Sprintf(stripped, "TASK_STATE_CANCELED") + `}`},
+	} {
+		got, rpcErr := a2a.StripTaskContent(tc.version, json.RawMessage(tc.in))
+		require.Nil(t, rpcErr, tc.name)
+		assert.JSONEq(t, tc.want, string(got), tc.name)
+	}
+
+	_, rpcErr := a2a.StripTaskContent(a2a.Version03, json.RawMessage(`[]`))
+	require.NotNil(t, rpcErr)
+	assert.Equal(t, a2a.ReasonInvalidUpstreamResponse, reasonOf(t, rpcErr))
+}
+
+func TestResultContent_RefusesMalformedContent(t *testing.T) {
+	t.Parallel()
+	for name, result := range map[string]string{
+		"artifacts not a list":       `{"kind":"task","id":"t","status":{"state":"completed"},"artifacts":{"parts":[{"kind":"text","text":"x"}]}}`,
+		"artifact parts not a list":  `{"kind":"task","id":"t","status":{"state":"completed"},"artifacts":[{"parts":{"kind":"text","text":"x"}}]}`,
+		"history item not an object": `{"kind":"task","id":"t","status":{"state":"completed"},"history":["x"]}`,
+		"status not an object":       `{"kind":"task","id":"t","status":"completed"}`,
+		"part not an object":         `{"kind":"message","parts":["x"]}`,
+		"text not a string":          `{"kind":"message","parts":[{"kind":"text","text":{"t":"x"}}]}`,
+		"unknown part kind":          `{"kind":"message","parts":[{"kind":"video","text":"x"}]}`,
+		"file not an object":         `{"kind":"message","parts":[{"kind":"file","file":"x"}]}`,
+		"artifact not an object":     `{"kind":"artifact-update","taskId":"t","artifact":"x"}`,
+	} {
+		_, err := a2a.ResultContent(a2a.Version03, json.RawMessage(result))
+		require.NotNil(t, err, name)
+		assert.Equal(t, a2a.ReasonInvalidUpstreamResponse, reasonOf(t, err), name)
+	}
+
+	_, err := a2a.ResultContent(a2a.Version10, json.RawMessage(`{"message":{"parts":[{"text":1}]}}`))
+	require.NotNil(t, err, "1.0 text not a string")
+	_, err = a2a.ResultContent(a2a.Version10, json.RawMessage(`{"message":{"parts":[{"metadata":{}}]}}`))
+	require.NotNil(t, err, "1.0 part of no known kind")
+
+	got, err := a2a.ResultContent(a2a.Version03, json.RawMessage(`{"kind":"task","id":"t","status":{"state":"working"},"artifacts":null}`))
+	require.Nil(t, err, "absent and null lists are empty")
+	assert.Empty(t, got.Parts)
+}
+
+func TestRequestContent_RefusesMalformedParts(t *testing.T) {
+	t.Parallel()
+	_, err := a2a.RequestContent(a2a.Version03, a2a.KindSend, json.RawMessage(`{"message":{"parts":{"kind":"text","text":"x"}}}`))
+	require.NotNil(t, err)
+	assert.Equal(t, a2a.CodeInvalidParams, rpcCode(t, err))
 }

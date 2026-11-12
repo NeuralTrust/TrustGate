@@ -54,7 +54,7 @@ type creator struct {
 	openapi     appopenapi.Compiler
 	auths       AuthLookup
 	cards       agentCards
-	shared      GatewayLookup
+	shared      sharedPlane
 }
 
 func NewCreator(
@@ -75,7 +75,7 @@ func NewCreator(
 		openapi:     o.openapi,
 		auths:       o.auths,
 		cards:       o.cards,
-		shared:      o.sharedGateways,
+		shared:      o.shared,
 	}
 }
 

@@ -153,8 +153,8 @@ func newHarness(t *testing.T, v a2a.Version, url string, exec executorFunc) *har
 
 func (h *harness) call(t *testing.T, body []byte, header http.Header) *a2a.Call {
 	t.Helper()
-	req, err := a2a.Decode(body)
-	require.NoError(t, err)
+	req, rpcErr := a2a.Decode(body)
+	require.Nil(t, rpcErr)
 	if header == nil {
 		header = http.Header{}
 	}

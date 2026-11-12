@@ -105,21 +105,21 @@ func TestSharedDataPlaneRefusesAmbientCloudCredentialsOnEveryAgentOperation(t *t
 			})
 
 			t.Run("preview", func(t *testing.T) {
-				_, err := appregistry.NewAgentCard(repomocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil, cards, shared).
+				_, err := appregistry.NewPreviewAgentCard(cards, shared).
 					Preview(ctx, gw.ID, build())
 				require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 			})
 
 			t.Run("refresh", func(t *testing.T) {
 				reg := storedCloudAgent(gw, build())
-				_, err := appregistry.NewAgentCard(storedAgent(t, reg), newCacheManager(), nil, newTestLogger(), nil, cards, shared).
+				_, err := appregistry.NewRefreshAgentCard(storedAgent(t, reg), cards, shared).
 					Refresh(ctx, gw.ID, reg.ID)
 				require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 			})
 
 			t.Run("approve", func(t *testing.T) {
 				reg := storedCloudAgent(gw, build())
-				_, err := appregistry.NewAgentCard(storedAgent(t, reg), newCacheManager(), nil, newTestLogger(), nil, cards, shared).
+				_, err := appregistry.NewApproveAgentCard(storedAgent(t, reg), nil, newCacheManager(), nil, newTestLogger(), nil, cards, shared).
 					Approve(ctx, gw.ID, reg.ID, "sha256:reviewed")
 				require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 			})
@@ -153,7 +153,7 @@ func TestSharedDataPlaneAllowsExplicitCloudCredentials(t *testing.T) {
 	fetcher := appmocks.NewCardFetcher(t)
 	fetcher.EXPECT().Fetch(mock.Anything, target.CardLocation(), mock.Anything).
 		Return(&appregistry.FetchedCard{URL: target.CardLocation(), Card: []byte(foundryCard)}, nil).Once()
-	cards := appregistry.NewAgentCard(repomocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil,
+	cards := appregistry.NewPreviewAgentCard(
 		appregistry.WithAgentCards(fetcher, anonymousCards(t)), appregistry.WithSharedDataPlane(gateways))
 
 	got, err := cards.Preview(context.Background(), gw.ID, target)
@@ -172,7 +172,7 @@ func TestOwnDataPlaneKeepsAmbientCloudCredentials(t *testing.T) {
 				fetcher := appmocks.NewCardFetcher(t)
 				fetcher.EXPECT().Fetch(mock.Anything, target.CardLocation(), mock.Anything).
 					Return(&appregistry.FetchedCard{URL: target.CardLocation(), Card: []byte(foundryCard)}, nil).Once()
-				cards := appregistry.NewAgentCard(repomocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil,
+				cards := appregistry.NewPreviewAgentCard(
 					appregistry.WithAgentCards(fetcher, anonymousCards(t)), appregistry.WithSharedDataPlane(gateways))
 
 				_, err := cards.Preview(context.Background(), gw.ID, target)
@@ -191,11 +191,20 @@ func TestSelfHostedDeploymentKeepsAmbientCloudCredentials(t *testing.T) {
 			fetcher := appmocks.NewCardFetcher(t)
 			fetcher.EXPECT().Fetch(mock.Anything, target.CardLocation(), mock.Anything).
 				Return(&appregistry.FetchedCard{URL: target.CardLocation(), Card: []byte(foundryCard)}, nil).Once()
-			cards := appregistry.NewAgentCard(repomocks.NewRepository(t), newCacheManager(), nil, newTestLogger(), nil,
+			cards := appregistry.NewPreviewAgentCard(
 				appregistry.WithAgentCards(fetcher, anonymousCards(t)))
 
 			_, err := cards.Preview(context.Background(), ids.New[ids.GatewayKind](), target)
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestSharedDataPlaneWithoutAGatewayLookupAppliesTheRules(t *testing.T) {
+	t.Parallel()
+	cards := appregistry.NewPreviewAgentCard(
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), appmocks.NewCardCredentials(t)), appregistry.WithSharedDataPlane(nil))
+
+	_, err := cards.Preview(context.Background(), ids.New[ids.GatewayKind](), ambientCloudTargets["aws default chain"]())
+	require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 }

@@ -26,10 +26,10 @@ import (
 )
 
 type PreviewAgentCardHandler struct {
-	cards appregistry.AgentCard
+	cards appregistry.PreviewAgentCard
 }
 
-func NewPreviewAgentCardHandler(cards appregistry.AgentCard) *PreviewAgentCardHandler {
+func NewPreviewAgentCardHandler(cards appregistry.PreviewAgentCard) *PreviewAgentCardHandler {
 	return &PreviewAgentCardHandler{cards: cards}
 }
 

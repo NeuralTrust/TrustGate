@@ -49,9 +49,9 @@ func A2A(c *container.Container) error {
 }
 
 // a2aCredentialOptions turns the shared data plane checks on for a saas
-// deployment. Save-time uses the same deployment type in registrySaveParams.
+// deployment, as registrySaveParams does for saves.
 func a2aCredentialOptions(cfg *config.Config) []appa2a.CredentialsOption {
-	if cfg != nil && cfg.ConfigSync.DeploymentType == config.InstanceDeploymentSaaS {
+	if cfg != nil && cfg.ConfigSync.SharedDataPlane() {
 		return []appa2a.CredentialsOption{appa2a.WithSharedDataPlane()}
 	}
 	return nil

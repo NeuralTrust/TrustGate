@@ -51,8 +51,23 @@ func storedAgent(t *testing.T, reg *domain.Registry) *repomocks.Repository {
 	return repo
 }
 
-func newAgentCard(repo domain.Repository, publisher cache.EventPublisher, fetcher appregistry.CardFetcher, creds appregistry.CardCredentials) appregistry.AgentCard {
-	return appregistry.NewAgentCard(repo, newCacheManager(), publisher, newTestLogger(), nil, appregistry.WithAgentCards(fetcher, creds))
+type agentCardUseCases struct {
+	appregistry.PreviewAgentCard
+	appregistry.RefreshAgentCard
+	appregistry.ApproveAgentCard
+}
+
+func newAgentCard(repo domain.Repository, publisher cache.EventPublisher, fetcher appregistry.CardFetcher, creds appregistry.CardCredentials) agentCardUseCases {
+	return newAgentCardPinningWith(repo, nil, publisher, fetcher, creds)
+}
+
+func newAgentCardPinningWith(repo domain.Repository, pinner appregistry.A2ACardPinner, publisher cache.EventPublisher, fetcher appregistry.CardFetcher, creds appregistry.CardCredentials) agentCardUseCases {
+	opt := appregistry.WithAgentCards(fetcher, creds)
+	return agentCardUseCases{
+		PreviewAgentCard: appregistry.NewPreviewAgentCard(opt),
+		RefreshAgentCard: appregistry.NewRefreshAgentCard(repo, opt),
+		ApproveAgentCard: appregistry.NewApproveAgentCard(repo, pinner, newCacheManager(), publisher, newTestLogger(), nil, opt),
+	}
 }
 
 func digestOf(t *testing.T, card string) string {
@@ -122,19 +137,39 @@ func TestAgentCardRefusesAnotherGatewayAndNonAgents(t *testing.T) {
 func TestAgentCardApprovePinsTheReviewedCard(t *testing.T) {
 	t.Parallel()
 	reg := pinnedA2ARegistry(t)
-	repo := storedAgent(t, reg)
-	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.A2ATarget.CardDigest == digestOf(t, cardNewSkill)
-	})).Return(nil).Once()
+	stored := reg.A2ATarget.CardDigest
+	saved := *reg
+	savedTarget := *reg.A2ATarget
+	savedTarget.Card, savedTarget.CardDigest = []byte(cardNewSkill), digestOf(t, cardNewSkill)
+	saved.A2ATarget = &savedTarget
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, reg.ID).Return(reg, nil).Once()
+	repo.EXPECT().FindByID(mock.Anything, reg.ID).Return(&saved, nil).Once()
+	pinner := appmocks.NewA2ACardPinner(t)
+	pinner.EXPECT().PinA2ACard(mock.Anything, reg.GatewayID, reg.ID, stored, mock.MatchedBy(func(next *domain.A2ATarget) bool {
+		return next.CardDigest == digestOf(t, cardNewSkill)
+	}), mock.Anything).Return(true, nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
 		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: reg.GatewayID.String(), RegistryID: reg.ID.String()}).
 		Return(nil).Once()
-	cards := newAgentCard(repo, publisher, liveCard(t, cardNewSkill), anonymousCards(t))
+	cards := newAgentCardPinningWith(repo, pinner, publisher, liveCard(t, cardNewSkill), anonymousCards(t))
 
 	got, err := cards.Approve(context.Background(), reg.GatewayID, reg.ID, digestOf(t, cardNewSkill))
 	require.NoError(t, err)
 	assert.JSONEq(t, cardNewSkill, string(got.A2ATarget.Card))
+}
+
+func TestAgentCardApproveOfARegistryEditedMeanwhileConflicts(t *testing.T) {
+	t.Parallel()
+	reg := pinnedA2ARegistry(t)
+	pinner := appmocks.NewA2ACardPinner(t)
+	pinner.EXPECT().PinA2ACard(mock.Anything, reg.GatewayID, reg.ID, reg.A2ATarget.CardDigest, mock.Anything, mock.Anything).
+		Return(false, nil).Once()
+	cards := newAgentCardPinningWith(storedAgent(t, reg), pinner, nil, liveCard(t, cardNewSkill), anonymousCards(t))
+
+	_, err := cards.Approve(context.Background(), reg.GatewayID, reg.ID, digestOf(t, cardNewSkill))
+	require.ErrorIs(t, err, appregistry.ErrAgentCardChanged)
 }
 
 func TestAgentCardApproveOfAMovedCardConflicts(t *testing.T) {

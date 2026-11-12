@@ -247,6 +247,9 @@ type RequestContext struct {
 	A2AMethod string
 	// A2ATaskID is the task an A2A call names, "" when it names none.
 	A2ATaskID string
+	// A2ABody is the caller's JSON-RPC body as it is sent to the agent, for
+	// the policies that measure the request rather than read its content.
+	A2ABody []byte
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

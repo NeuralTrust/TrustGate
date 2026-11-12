@@ -22,24 +22,10 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
-type a2aBody struct {
-	Parts []a2aPart `json:"parts"`
-}
-
-type a2aPart struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text"`
-	Data      json.RawMessage `json:"data"`
-	URL       string          `json:"url"`
-	Raw       string          `json:"raw"`
-	MediaType string          `json:"media_type"`
-	Filename  string          `json:"filename"`
-}
-
 // a2aContent returns the text of the text and data parts of a normalised A2A
 // body, and its file parts as attachments.
 func a2aContent(body []byte) (string, []GuardAttachment, error) {
-	var decoded a2aBody
+	var decoded appplugins.A2ABody
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return "", nil, err
 	}
@@ -47,11 +33,11 @@ func a2aContent(body []byte) (string, []GuardAttachment, error) {
 	var attachments []GuardAttachment
 	for _, part := range decoded.Parts {
 		switch part.Type {
-		case "text":
+		case appplugins.A2APartText:
 			texts = append(texts, part.Text)
-		case "data":
+		case appplugins.A2APartData:
 			texts = append(texts, string(part.Data))
-		case "file":
+		case appplugins.A2APartFile:
 			attachments = append(attachments, GuardAttachment{
 				Filename:    firstNonEmpty(part.Filename, "file"),
 				ContentType: firstNonEmpty(part.MediaType, "application/octet-stream"),

@@ -33,11 +33,22 @@ type provider interface {
 	header(x *Exchange, h http.Header)
 	// request is the HTTP request that carries the JSON-RPC body to endpoint.
 	request(ctx context.Context, endpoint string, h http.Header, body []byte) (*http.Request, error)
-	// decode reads the agent's answer to a call that is not a stream.
-	decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError)
+	// decode reads the agent's answer to a call that is not a stream, and
+	// reports whether the error it returns is one the agent answered.
+	decode(x *Exchange, res *http.Response, body []byte) (result json.RawMessage, rpcErr *RPCError, fromAgent bool)
 	// retry says how long to wait before sending a buffered call again after
 	// its attempt-th answer was rpcErr, and false when it is not sent again.
 	retry(rpcErr *RPCError, attempt int) (time.Duration, bool)
+	// capabilities is what the gateway can do with an agent hosted here.
+	capabilities() capabilities
+}
+
+type capabilities struct {
+	// streams is whether the gateway relays the agent's event streams.
+	streams bool
+	// jsonrpcOnlyCard is whether the served card must name the JSON-RPC
+	// interface only, because the gateway translates every call.
+	jsonrpcOnlyCard bool
 }
 
 func providerOf(t *registrydomain.A2ATarget) provider {
@@ -68,12 +79,16 @@ func (jsonrpc) request(ctx context.Context, endpoint string, h http.Header, body
 	return req, nil
 }
 
-func (jsonrpc) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError) {
-	return x.decode(body, res.StatusCode)
+func (jsonrpc) decode(_ *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError, bool) {
+	return decodeRPC(body, res.StatusCode)
 }
 
 func (jsonrpc) retry(*RPCError, int) (time.Duration, bool) {
 	return 0, false
+}
+
+func (jsonrpc) capabilities() capabilities {
+	return capabilities{streams: true}
 }
 
 // foundry is a Microsoft Foundry agent: JSON-RPC, with the pinned version
@@ -90,7 +105,11 @@ const ReasonUpstreamAuthFailed = "upstream_auth_failed"
 
 const (
 	agentCoreSessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
-	agentCoreSessionBusy   = -32054
+	// agentCoreSessionBusy and agentCoreSessionBusyMessage are how AgentCore
+	// answers a call that reached a session still running another one. The
+	// code alone also covers session errors that a retry does not fix.
+	agentCoreSessionBusy        = -32054
+	agentCoreSessionBusyMessage = "Session operation in progress"
 )
 
 // agentCoreRetryWait is how long to wait before each retry of a call that
@@ -113,22 +132,22 @@ func (agentCore) header(x *Exchange, h http.Header) {
 // decode reads a JSON-RPC answer whatever its status. A 401 that asks for
 // authentication is the user identity refused; a 403 without a JSON-RPC
 // error is the gateway's SigV4 signature refused.
-func (agentCore) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError) {
+func (agentCore) decode(_ *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError, bool) {
 	if res.StatusCode == http.StatusUnauthorized && res.Header.Get("WWW-Authenticate") != "" {
-		return nil, IdentityRequired()
+		return nil, IdentityRequired(), false
 	}
-	result, rpcErr := x.decode(body, res.StatusCode)
-	if rpcErr != nil && !x.agentError && res.StatusCode == http.StatusForbidden {
-		return nil, GatewayFailure(ReasonUpstreamAuthFailed)
+	result, rpcErr, fromAgent := decodeRPC(body, res.StatusCode)
+	if rpcErr != nil && !fromAgent && res.StatusCode == http.StatusForbidden {
+		return nil, GatewayFailure(ReasonUpstreamAuthFailed), false
 	}
-	return result, rpcErr
+	return result, rpcErr, fromAgent
 }
 
 // retry sends a call again while its session is busy: AgentCore did not
 // process it.
 func (agentCore) retry(rpcErr *RPCError, attempt int) (time.Duration, bool) {
 	if attempt >= len(agentCoreRetryWait) || rpcErr.Code != agentCoreSessionBusy ||
-		!strings.Contains(rpcErr.Message, "Session operation in progress") {
+		!strings.Contains(rpcErr.Message, agentCoreSessionBusyMessage) {
 		return 0, false
 	}
 	return agentCoreRetryWait[attempt], true
