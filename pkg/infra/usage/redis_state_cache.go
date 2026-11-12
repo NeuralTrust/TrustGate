@@ -119,7 +119,7 @@ func decode(tenantID, value string) (domain.TenantState, error) {
 		return domain.TenantState{}, fmt.Errorf("usage: malformed version %q: %w", parts[0], err)
 	}
 	status, reason := domain.Status(parts[1]), domain.Reason(parts[2])
-	if status == domain.StatusExhausted && reason != domain.ReasonFreeLimitReached && reason != domain.ReasonWalletEmpty {
+	if status == domain.StatusExhausted && !reason.Known() {
 		reason = domain.ReasonWalletEmpty
 	}
 	return domain.NewTenantState(tenantID, status, reason, version)
