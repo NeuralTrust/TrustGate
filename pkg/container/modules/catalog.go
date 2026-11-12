@@ -118,7 +118,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewRegistryAvailability); err != nil {
 		return err
 	}
-	if err := c.Provide(cataloghttp.NewListMCPServersHandler); err != nil {
+	if err := c.Provide(func(catalog appcatalog.MCPServerCatalog, cfg *config.Config) *cataloghttp.ListMCPServersHandler {
+		return cataloghttp.NewListMCPServersHandler(catalog, cfg.Server.MCPOAuthPublicBaseURL)
+	}); err != nil {
 		return err
 	}
 	return c.Provide(cataloghttp.NewListModelsHandler)
