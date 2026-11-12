@@ -288,6 +288,31 @@ func TestSecretEqual(t *testing.T) {
 	}
 }
 
+func TestKVSecret(t *testing.T) {
+	t.Parallel()
+	s := secretstore.NewKVSecret(map[string]any{"key": "sk", "n": 1.0, "obj": map[string]any{}}, "4")
+	if v, err := s.Select("key"); err != nil || v != "sk" || s.Version() != "4" {
+		t.Fatalf("Select(key) = %q, %v", v, err)
+	}
+	for _, f := range []string{"n", "obj", ""} {
+		if _, err := s.Select(f); !errors.Is(err, secretstore.ErrInvalidPayload) {
+			t.Errorf("Select(%q) = %v, want invalid_payload", f, err)
+		}
+	}
+	if _, err := s.Select("absent"); !errors.Is(err, secretstore.ErrFieldNotFound) {
+		t.Errorf("absent: %v", err)
+	}
+	if _, err := secretstore.NewKVSecret(map[string]any{"n": true}, "").Select(""); !errors.Is(err, secretstore.ErrInvalidPayload) {
+		t.Errorf("single non-string key: %v", err)
+	}
+	if v, err := secretstore.NewKVSecret(map[string]any{"only": "x"}, "").Select(""); err != nil || v != "x" {
+		t.Errorf("single string key = %q, %v", v, err)
+	}
+	if s.Equal(secretstore.NewKVSecret(map[string]any{"key": "sk"}, "4")) {
+		t.Error("dropping a non-string key must count as a change")
+	}
+}
+
 func TestNewFieldsSecretCopies(t *testing.T) {
 	t.Parallel()
 	fields := map[string]string{"k": "before"}
