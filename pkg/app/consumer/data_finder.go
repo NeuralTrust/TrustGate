@@ -57,9 +57,9 @@ type dataFinder struct {
 
 // RegistryMaterializer turns the secret references held by a gateway's
 // registries into values, returning the input map untouched when none holds
-// a reference.
+// a reference, and records what the gateway uses so changes invalidate it.
 type RegistryMaterializer interface {
-	Registries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
+	GatewayRegistries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
 }
 
 // DataFinderOption tunes NewDataFinder.
@@ -167,7 +167,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 	if f.materializer != nil {
-		backendByID = f.materializer.Registries(ctx, gatewayID, backendByID)
+		backendByID = f.materializer.GatewayRegistries(ctx, gatewayID, backendByID)
 	}
 	loaded, err := f.loadPolicies(ctx, gatewayID)
 	if err != nil {

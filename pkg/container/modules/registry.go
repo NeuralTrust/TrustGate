@@ -255,7 +255,7 @@ func provideRegistryServices(c *container.Container) error {
 
 type connectionTesterParams struct {
 	dig.In
-	Finder  appregistry.Finder
+	Finder  appregistry.RuntimeFinder
 	Locator factory.ProviderLocator
 	Logger  *slog.Logger
 	// Catalog is optional so a plane without the catalog module still tests

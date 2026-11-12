@@ -16,6 +16,7 @@ package modules
 
 import (
 	"fmt"
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
 	"log/slog"
 
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
@@ -86,6 +87,7 @@ func Proxy(c *container.Container) error {
 		bedrockModels appcatalog.BedrockModelResolver,
 		groupBudget *tokenratelimit.GroupBudget,
 		usage forwarderUsage,
+		secrets forwarderSecrets,
 		cfg *config.Config,
 		logger *slog.Logger,
 	) appproxy.Forwarder {
@@ -93,6 +95,9 @@ func Proxy(c *container.Container) error {
 			appproxy.WithStreamCodec(registry),
 			appproxy.WithForwarderBedrockModelResolver(bedrockModels),
 			appproxy.WithGroupBudget(groupBudget),
+		}
+		if secrets.Refresher != nil {
+			opts = append(opts, appproxy.WithSecretRefresher(secrets.Refresher))
 		}
 		if usage.Guard != nil {
 			opts = append(opts, appproxy.WithManagedLimit(usage.Guard))
@@ -158,4 +163,12 @@ func newGroupBudget(
 		notifier = events
 	}
 	return tokenratelimit.NewGroupBudget(cacheClient.RedisClient(), registry, pricing, notifier, logger), nil
+}
+
+// forwarderSecrets is the refresher the forwarder retries a rejected
+// referenced credential with; absent on a plane without the secret stores
+// module.
+type forwarderSecrets struct {
+	dig.In
+	Refresher appsecretref.Materializer `optional:"true"`
 }

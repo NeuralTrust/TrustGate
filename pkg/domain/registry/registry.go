@@ -45,6 +45,37 @@ type Registry struct {
 	// materializer sets it, on copies it owns; it is never persisted,
 	// encoded or cached outside a gateway's runtime data.
 	credentialUnavailable bool
+	// secretSource and secretDigest tie a runtime copy to the stored
+	// registry it was materialized from, and fingerprint the values it
+	// received, so credential-keyed caches change key when a referenced
+	// value rotates and an upstream rejection can re-read the references.
+	secretSource *Registry
+	secretDigest string
+}
+
+// SecretSource returns the stored registry b was materialized from, nil when
+// b holds no resolved reference.
+func (b *Registry) SecretSource() *Registry {
+	if b == nil {
+		return nil
+	}
+	return b.secretSource
+}
+
+// SecretDigest fingerprints the values b's references resolved to, empty
+// when b holds none. It is a keyed hash, safe in cache keys and never a
+// value.
+func (b *Registry) SecretDigest() string {
+	if b == nil {
+		return ""
+	}
+	return b.secretDigest
+}
+
+// BindSecrets records, on a runtime copy, the stored registry it was
+// materialized from and the fingerprint of its resolved values.
+func (b *Registry) BindSecrets(source *Registry, digest string) {
+	b.secretSource, b.secretDigest = source, digest
 }
 
 // CredentialUnavailable reports whether a referenced credential of b could

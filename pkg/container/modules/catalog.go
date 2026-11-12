@@ -99,7 +99,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(newBedrockModelResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
+	if err := c.Provide(func(f appregistry.RuntimeFinder, client controlplane.Client, logger *slog.Logger) appcatalog.ServerlessFilter {
+		return appcatalog.NewServerlessFilter(f, client, logger)
+	}); err != nil {
 		return err
 	}
 	// Test-connection reports missing catalog permissions through the same
@@ -112,7 +114,9 @@ func provideCatalogServices(c *container.Container) error {
 	}
 	// One instance serves both roles, so the live listing shares the filter's
 	// cache, its singleflight and its timeout budget.
-	if err := c.Provide(appcatalog.NewLiveCatalog); err != nil {
+	if err := c.Provide(func(f appregistry.RuntimeFinder, source appcatalog.LiveModelSource, logger *slog.Logger) (appcatalog.LiveAvailabilityFilter, appcatalog.LiveCatalogLister) {
+		return appcatalog.NewLiveCatalog(f, source, logger)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewRegistryAvailability); err != nil {

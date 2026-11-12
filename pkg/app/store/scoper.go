@@ -60,7 +60,10 @@ type scoper struct {
 	// already on every replica, so a just-written install can be served from it
 	// until that snapshot arrives. Nil leaves the snapshot as the only source.
 	catalog CatalogReader
-	now     func() time.Time
+	// secretRefs resolves references in the shelf registries. Nil leaves
+	// them as stored; the credential sinks still drop them.
+	secretRefs RegistryMaterializer
+	now        func() time.Time
 	// snapshot reports whether the registry list is a live converge recent
 	// enough to bridge. Nil means there is no snapshot (the control plane's
 	// database, or a test) and a just-written install may still be served
@@ -91,6 +94,19 @@ type SnapshotStandIn func(maxAge time.Duration) bool
 
 // ScoperOption tunes NewScoper.
 type ScoperOption func(*scoper)
+
+// RegistryMaterializer resolves the secret references of registries a
+// gateway reads, returning the input map untouched when none holds one.
+type RegistryMaterializer interface {
+	Registries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
+}
+
+// WithScoperSecretRefs resolves the secret references of the shelf
+// registries the scoper reads, since they come from the repository rather
+// than the gateway's runtime data.
+func WithScoperSecretRefs(m RegistryMaterializer) ScoperOption {
+	return func(s *scoper) { s.secretRefs = m }
+}
 
 // WithScoperModes resolves the principal's Store mode live from the gateway's
 // policies instead of the token claim / gateway default alone.
@@ -232,6 +248,7 @@ func (s *scoper) installedRegistries(
 	if err != nil {
 		return nil, fmt.Errorf("store scoper: list registries: %w", err)
 	}
+	items = s.materialize(ctx, gatewayID, items)
 	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(items))
 	byCode := make(map[string][]*registrydomain.Registry)
 	for _, reg := range items {
@@ -440,6 +457,27 @@ func (s *scoper) clock() time.Time {
 		return s.now()
 	}
 	return time.Now()
+}
+
+// materialize resolves the references of items, keeping their order.
+func (s *scoper) materialize(ctx context.Context, gatewayID ids.GatewayID, items []*registrydomain.Registry) []*registrydomain.Registry {
+	if s.secretRefs == nil || len(items) == 0 {
+		return items
+	}
+	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(items))
+	for _, reg := range items {
+		if reg != nil {
+			byID[reg.ID] = reg
+		}
+	}
+	resolved := s.secretRefs.Registries(ctx, gatewayID, byID)
+	out := make([]*registrydomain.Registry, len(items))
+	for i, reg := range items {
+		if reg != nil {
+			out[i] = resolved[reg.ID]
+		}
+	}
+	return out
 }
 
 func pendingShelfFresh(now, updated time.Time) bool {

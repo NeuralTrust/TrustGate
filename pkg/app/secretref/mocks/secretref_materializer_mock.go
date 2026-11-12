@@ -24,6 +24,115 @@ func (_m *Materializer) EXPECT() *Materializer_Expecter {
 	return &Materializer_Expecter{mock: &_m.Mock}
 }
 
+// GatewayRegistries provides a mock function with given fields: ctx, gatewayID, byID
+func (_m *Materializer) GatewayRegistries(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], byID map[ids.ID[ids.RegistryKind]]*registry.Registry) map[ids.ID[ids.RegistryKind]]*registry.Registry {
+	ret := _m.Called(ctx, gatewayID, byID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GatewayRegistries")
+	}
+
+	var r0 map[ids.ID[ids.RegistryKind]]*registry.Registry
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], map[ids.ID[ids.RegistryKind]]*registry.Registry) map[ids.ID[ids.RegistryKind]]*registry.Registry); ok {
+		r0 = rf(ctx, gatewayID, byID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[ids.ID[ids.RegistryKind]]*registry.Registry)
+		}
+	}
+
+	return r0
+}
+
+// Materializer_GatewayRegistries_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GatewayRegistries'
+type Materializer_GatewayRegistries_Call struct {
+	*mock.Call
+}
+
+// GatewayRegistries is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - byID map[ids.ID[ids.RegistryKind]]*registry.Registry
+func (_e *Materializer_Expecter) GatewayRegistries(ctx interface{}, gatewayID interface{}, byID interface{}) *Materializer_GatewayRegistries_Call {
+	return &Materializer_GatewayRegistries_Call{Call: _e.mock.On("GatewayRegistries", ctx, gatewayID, byID)}
+}
+
+func (_c *Materializer_GatewayRegistries_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], byID map[ids.ID[ids.RegistryKind]]*registry.Registry)) *Materializer_GatewayRegistries_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(map[ids.ID[ids.RegistryKind]]*registry.Registry))
+	})
+	return _c
+}
+
+func (_c *Materializer_GatewayRegistries_Call) Return(_a0 map[ids.ID[ids.RegistryKind]]*registry.Registry) *Materializer_GatewayRegistries_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Materializer_GatewayRegistries_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], map[ids.ID[ids.RegistryKind]]*registry.Registry) map[ids.ID[ids.RegistryKind]]*registry.Registry) *Materializer_GatewayRegistries_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Refresh provides a mock function with given fields: ctx, reg
+func (_m *Materializer) Refresh(ctx context.Context, reg *registry.Registry) (*registry.Registry, bool) {
+	ret := _m.Called(ctx, reg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Refresh")
+	}
+
+	var r0 *registry.Registry
+	var r1 bool
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry) (*registry.Registry, bool)); ok {
+		return rf(ctx, reg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry) *registry.Registry); ok {
+		r0 = rf(ctx, reg)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*registry.Registry)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *registry.Registry) bool); ok {
+		r1 = rf(ctx, reg)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
+// Materializer_Refresh_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Refresh'
+type Materializer_Refresh_Call struct {
+	*mock.Call
+}
+
+// Refresh is a helper method to define mock.On call
+//   - ctx context.Context
+//   - reg *registry.Registry
+func (_e *Materializer_Expecter) Refresh(ctx interface{}, reg interface{}) *Materializer_Refresh_Call {
+	return &Materializer_Refresh_Call{Call: _e.mock.On("Refresh", ctx, reg)}
+}
+
+func (_c *Materializer_Refresh_Call) Run(run func(ctx context.Context, reg *registry.Registry)) *Materializer_Refresh_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*registry.Registry))
+	})
+	return _c
+}
+
+func (_c *Materializer_Refresh_Call) Return(_a0 *registry.Registry, _a1 bool) *Materializer_Refresh_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Materializer_Refresh_Call) RunAndReturn(run func(context.Context, *registry.Registry) (*registry.Registry, bool)) *Materializer_Refresh_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Registries provides a mock function with given fields: ctx, gatewayID, byID
 func (_m *Materializer) Registries(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], byID map[ids.ID[ids.RegistryKind]]*registry.Registry) map[ids.ID[ids.RegistryKind]]*registry.Registry {
 	ret := _m.Called(ctx, gatewayID, byID)

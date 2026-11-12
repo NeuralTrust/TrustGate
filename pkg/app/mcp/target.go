@@ -28,6 +28,9 @@ import (
 )
 
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
+	if reg.CredentialUnavailable() {
+		return Target{}, registrydomain.ErrSecretUnavailable
+	}
 	t := targetFor(ctx, rc, reg)
 	if err := c.resolveURLVariables(ctx, rc, reg, &t); err != nil {
 		return Target{}, err
@@ -125,6 +128,11 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 		URL:      t.URL,
 		Headers:  headers,
 		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+	}
+	if digest := reg.SecretDigest(); digest != "" {
+		// A referenced value can rotate without a registry write; the
+		// fingerprint makes the dialers open a connection with the new one.
+		target.Revision += ":s:" + digest
 	}
 	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
 		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}

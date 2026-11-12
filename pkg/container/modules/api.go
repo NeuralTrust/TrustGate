@@ -293,7 +293,7 @@ func API(c *container.Container) error {
 	}
 	if err := c.Provide(func(
 		p playgroundVerifierParams,
-		finder appregistry.Finder,
+		finder appregistry.RuntimeFinder,
 		catalog appcatalog.Service,
 		availability appcatalog.RegistryAvailability,
 	) (*diagnosticshttp.ListRegistryModelsHandler, error) {
