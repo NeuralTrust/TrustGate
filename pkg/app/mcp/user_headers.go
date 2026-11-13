@@ -62,7 +62,7 @@ func (r *credentialResolver) applyUserHeaders(
 	}
 	label := registryLabelFor(reg)
 	if principal.KeyGroup() != "" || principal.Subject == consumerdomain.AppSubject(rc.Consumer.ID) {
-		return &ApplicationNotConnectedError{Provider: label, Registry: label}
+		return &ApplicationNotConnectedError{Provider: label, Registry: label, UserKeys: true}
 	}
 	gatewayID := rc.Consumer.GatewayID
 	if target.Headers == nil {
@@ -135,14 +135,16 @@ func UserHeaderRejected(cred *vaultdomain.Credential) bool {
 	return cred != nil && !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(time.Now())
 }
 
-// rejectUserHeaders marks every per-user header value the caller sent to this
-// registry as refused, after the upstream answered 401. It reports whether a
-// value was marked, so the caller can tell the person to enter it again rather
-// than retry with the same key.
+// rejectUserHeaders marks the per-user header values the caller sent to this
+// registry as refused, after the upstream answered 401. Only a value that is
+// still the one sent is marked: a person who replaced their key while the call
+// was in flight keeps the new one. It reports whether a value was marked, so
+// the caller can tell the person to enter it again rather than retry.
 func (r *credentialResolver) rejectUserHeaders(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
+	target *Target,
 ) bool {
 	if r.vault == nil || reg == nil || !reg.MCPTarget.HasUserHeaders() {
 		return false
@@ -163,6 +165,9 @@ func (r *credentialResolver) rejectUserHeaders(
 		if err != nil || cred == nil || UserHeaderRejected(cred) {
 			continue
 		}
+		if target == nil || target.Headers[h.Name] != h.FormatValue(cred.AccessToken) {
+			continue
+		}
 		if err := requirer.RequireReconnect(ctx, cred); err != nil && !errors.Is(err, vaultdomain.ErrCredentialChanged) {
 			r.logger.Warn("mcp user headers: could not mark a rejected value",
 				"gateway_id", gatewayID.String(), "registry_id", reg.ID.String(),
@@ -179,17 +184,25 @@ func (r *credentialResolver) rejectUserHeaders(
 }
 
 // refuseRejectedUserHeaders answers an upstream 401 on a registry whose only
-// per-caller credential is its per-user headers: the values are marked
-// refused and the caller gets a connect link to enter them again. The call is
-// not retried, since the same values would be refused again. A registry that
-// also forwards an OAuth credential refreshes that one instead: a 401 does not
-// say which credential failed, and the token is the one that expires.
+// credential is its per-user headers: the values are marked refused and the
+// caller gets a connect link to enter them again. The call is not retried,
+// since the same values would be refused again.
+//
+// A 401 does not say which credential failed. When the auth mode sends one of
+// its own — the admin's static key, a client-credentials token, the caller's
+// forwarded or exchanged token — that one may be the cause, and marking every
+// caller's key refused would make all of them enter it again for nothing, so
+// the 401 is returned as it is.
 func (r *credentialResolver) refuseRejectedUserHeaders(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
+	target *Target,
 ) error {
-	if !r.rejectUserHeaders(ctx, rc, reg) {
+	if auth := reg.MCPTarget.Auth; auth != nil && auth.Mode != registrydomain.MCPAuthModeNone && auth.Mode != "" {
+		return errCredentialRefreshUnsupported
+	}
+	if !r.rejectUserHeaders(ctx, rc, reg, target) {
 		return errCredentialRefreshUnsupported
 	}
 	principal := identity.PrincipalFromContext(ctx)

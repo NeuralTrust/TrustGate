@@ -297,7 +297,7 @@ func (r *credentialResolver) Refresh(
 ) error {
 	cfg := reg.MCPTarget.Auth
 	if cfg == nil || cfg.Mode != registrydomain.MCPAuthModeForwarded {
-		return r.refuseRejectedUserHeaders(ctx, rc, reg)
+		return r.refuseRejectedUserHeaders(ctx, rc, reg, target)
 	}
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
