@@ -481,3 +481,32 @@ func TestStoresChangedDropsDeletedGatewaysFromTheIndex(t *testing.T) {
 		t.Fatal("a deleted gateway must leave the index")
 	}
 }
+
+func TestValuesResolveAndIndexPerSource(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	r := &markerResolver{}
+	inv := &invalidations{}
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
+
+	got := m.Values(context.Background(), gw, SourceConsumers, []Use{
+		{Path: []string{"lb_config", "embedding", "auth", "api_key"}, Raw: refStr("emb#k")},
+		{Path: []string{"x"}, Raw: "secret://vault/payments/db"},
+	})
+	if got[0].Err != nil || got[0].Value == "" || got[0].Value == refStr("emb#k") {
+		t.Fatalf("resolved = %+v", got[0])
+	}
+	if got[1].Err == nil || got[1].Value != "" {
+		t.Fatalf("a disallowed path must come back empty with its error: %+v", got[1])
+	}
+
+	in := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Provider: "openai", Auth: registry.NewAPIKeyAuth(refStr("k#a"))}}
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{in.ID: in})
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{})
+
+	emb, _, _ := domain.Parse(refStr("emb"))
+	r.fire([]domain.Ref{emb})
+	if got := inv.list(); len(got) != 1 || got[0] != gw {
+		t.Fatalf("invalidations = %v; dropping the registries must keep what the consumers use", got)
+	}
+}
