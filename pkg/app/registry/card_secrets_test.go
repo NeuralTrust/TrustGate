@@ -139,3 +139,49 @@ func TestCreateWithARefusedReferenceNeverReadsTheCard(t *testing.T) {
 	})
 	require.ErrorIs(t, err, refdomain.ErrMissingScope)
 }
+
+// cloudResolvingStore stands in for the materializer for a cloud-signed read:
+// it resolves the GCP key.
+type cloudResolvingStore struct{}
+
+func (cloudResolvingStore) Registries(_ context.Context, _ ids.GatewayID, byID map[ids.RegistryID]*domain.Registry) map[ids.RegistryID]*domain.Registry {
+	out := map[ids.RegistryID]*domain.Registry{}
+	for id, r := range byID {
+		c := *r
+		t := *r.A2ATarget
+		cloud := *t.CloudAuth
+		cloud.GCP = &domain.A2AGCPAuth{ServiceAccountJSON: "resolved-key"}
+		t.CloudAuth = &cloud
+		c.A2ATarget = &t
+		out[id] = &c
+	}
+	return out
+}
+
+func referencedVertexTarget() *domain.A2ATarget {
+	return cloudTarget(domain.A2AProviderVertexAgentEngine, &domain.A2ACloudAuth{GCP: &domain.A2AGCPAuth{ServiceAccountJSON: "secret://gcp/agents/sa"}})
+}
+
+func TestCloudSignedCardReadUsesTheResolvedCloudCredential(t *testing.T) {
+	t.Parallel()
+	fetcher := appmocks.NewCardFetcher(t)
+	fetcher.EXPECT().Fetch(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appregistry.FetchedCard{URL: pinnedCardURL, Card: []byte(`{"name":"Travel"}`)}, nil).Once()
+	creds := appmocks.NewCardCredentials(t)
+	creds.EXPECT().Authorizer(mock.Anything, mock.MatchedBy(func(tg *domain.A2ATarget) bool {
+		return tg.CloudAuth.GCP.ServiceAccountJSON == "resolved-key"
+	})).Return(nil, nil).Once()
+	preview := previewWith(t, fetcher, creds, appregistry.WithCardSecrets(cloudResolvingStore{}, acceptRefs{}))
+
+	target := referencedVertexTarget()
+	_, err := preview.Preview(context.Background(), ids.New[ids.GatewayKind](), target)
+	require.NoError(t, err)
+	assert.Equal(t, "secret://gcp/agents/sa", target.CloudAuth.GCP.ServiceAccountJSON, "the saved target keeps the reference")
+}
+
+func TestCloudSignedCardReadWithoutStoresIsRefused(t *testing.T) {
+	t.Parallel()
+	preview := previewWith(t, appmocks.NewCardFetcher(t), appmocks.NewCardCredentials(t))
+	_, err := preview.Preview(context.Background(), ids.New[ids.GatewayKind](), referencedVertexTarget())
+	require.ErrorIs(t, err, domain.ErrSecretUnavailable, "the reference must never be signed with as the key")
+}

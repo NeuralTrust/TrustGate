@@ -19,11 +19,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -427,4 +429,22 @@ func TestVertexStreamIsRefusedBeforeTheAgent(t *testing.T) {
 		assert.Equal(t, a2a.UnsupportedOperation(a2a.Version03), rpcErr)
 	}
 	assert.Zero(t, ag.calls())
+}
+
+func TestCloudSignKeyFollowsTheResolvedSecret(t *testing.T) {
+	t.Parallel()
+	signer := &cloudSigner{}
+	creds := a2a.NewCredentials(nil, nil, signer, false)
+	reg := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), UpdatedAt: time.Unix(10, 0), A2ATarget: foundryTarget()}
+	runtime := *reg
+	runtime.BindSecrets(reg, "digest-1")
+	req := httptest.NewRequest(http.MethodPost, "https://acme.services.ai.azure.com/a2a", nil)
+	require.NoError(t, creds.Sign(context.Background(), &runtime, req))
+	rotated := *reg
+	rotated.BindSecrets(reg, "digest-2")
+	require.NoError(t, creds.Sign(context.Background(), &rotated, req))
+
+	require.Len(t, signer.keys, 2)
+	assert.NotEqual(t, signer.keys[0].Version, signer.keys[1].Version, "a rotated secret must not reuse the cached cloud credential")
+	assert.Contains(t, signer.keys[0].Version, "digest-1")
 }

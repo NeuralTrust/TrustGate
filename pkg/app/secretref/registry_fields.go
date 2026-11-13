@@ -88,6 +88,17 @@ func registryHasRef(r *registry.Registry) bool {
 				return true
 			}
 		}
+		if c := t.CloudAuth; c != nil {
+			if w := c.AWS; w != nil && (domain.IsRef(w.AccessKeyID) || domain.IsRef(w.SecretAccessKey) || domain.IsRef(w.SessionToken)) {
+				return true
+			}
+			if c.Azure != nil && domain.IsRef(c.Azure.ClientSecret) {
+				return true
+			}
+			if c.GCP != nil && domain.IsRef(c.GCP.ServiceAccountJSON) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -156,6 +167,33 @@ func registrySlots(r *registry.Registry) []slot {
 		for k, v := range t.Headers {
 			add(v, "a2a_target", "headers", k)
 		}
+		for _, s := range cloudAuthSlots(t.CloudAuth) {
+			add(s.value, s.path...)
+		}
+	}
+	return out
+}
+
+// cloudAuthSlots lists the credential fields of an A2A cloud_auth with their
+// values, reference-shaped or not.
+func cloudAuthSlots(c *registry.A2ACloudAuth) []slot {
+	if c == nil {
+		return nil
+	}
+	var out []slot
+	add := func(value string, path ...string) {
+		out = append(out, slot{path: append([]string{"a2a_target", "cloud_auth"}, path...), value: value})
+	}
+	if w := c.AWS; w != nil {
+		add(w.AccessKeyID, "aws", "access_key_id")
+		add(w.SecretAccessKey, "aws", "secret_access_key")
+		add(w.SessionToken, "aws", "session_token")
+	}
+	if z := c.Azure; z != nil {
+		add(z.ClientSecret, "azure", "client_secret")
+	}
+	if g := c.GCP; g != nil {
+		add(g.ServiceAccountJSON, "gcp", "service_account_json")
 	}
 	return out
 }
@@ -242,6 +280,22 @@ func copyRegistry(r *registry.Registry) *registry.Registry {
 			}
 			t.Headers = headers
 		}
+		if ca := r.A2ATarget.CloudAuth; ca != nil {
+			cc := *ca
+			if ca.AWS != nil {
+				w := *ca.AWS
+				cc.AWS = &w
+			}
+			if ca.Azure != nil {
+				z := *ca.Azure
+				cc.Azure = &z
+			}
+			if ca.GCP != nil {
+				g := *ca.GCP
+				cc.GCP = &g
+			}
+			t.CloudAuth = &cc
+		}
 		c.A2ATarget = &t
 	}
 	return &c
@@ -256,6 +310,10 @@ func setSlot(c *registry.Registry, path []string, value string) {
 	}
 	if len(path) == 3 && path[0] == "a2a_target" && path[1] == headersKey {
 		c.A2ATarget.Headers[path[2]] = value
+		return
+	}
+	if len(path) == 4 && path[0] == "a2a_target" && path[1] == "cloud_auth" {
+		setCloudAuthSlot(c.A2ATarget.CloudAuth, path[2], path[3], value)
 		return
 	}
 	switch strings.Join(path[:min(len(path), 3)], ".") {
@@ -310,6 +368,21 @@ func setSlot(c *registry.Registry, path []string, value string) {
 		c.A2ATarget.Auth.Value = value
 	case "a2a_target.auth.client_secret":
 		c.A2ATarget.Auth.ClientSecret = value
+	}
+}
+
+func setCloudAuthSlot(c *registry.A2ACloudAuth, cloud, field, value string) {
+	switch cloud + "." + field {
+	case "aws.access_key_id":
+		c.AWS.AccessKeyID = value
+	case "aws.secret_access_key":
+		c.AWS.SecretAccessKey = value
+	case "aws.session_token":
+		c.AWS.SessionToken = value
+	case "azure.client_secret":
+		c.Azure.ClientSecret = value
+	case "gcp.service_account_json":
+		c.GCP.ServiceAccountJSON = value
 	}
 }
 
@@ -400,6 +473,9 @@ func registryEmbedded(r *registry.Registry) []slot {
 		}
 		for k, v := range t.Headers {
 			visit(v, "a2a_target", headersKey, k)
+		}
+		for _, s := range cloudAuthSlots(t.CloudAuth) {
+			visit(s.value, s.path...)
 		}
 	}
 	return out

@@ -27,8 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
-
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -91,8 +89,8 @@ func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key appa2a.
 		return fmt.Errorf("a2a: a cloud credential is sent only over https to %s", host)
 	}
 	c := t.CloudAuth
-	if cloudAuthHoldsReference(c) {
-		return errors.New("a2a: cloud_auth holds a secret reference, which is not resolved there")
+	if c.HoldsReference() {
+		return errors.New("a2a: cloud_auth holds a secret reference this plane did not resolve")
 	}
 	switch {
 	case c == nil:
@@ -287,29 +285,4 @@ func (s *CloudSigner) googleToken(ctx context.Context, g *domain.A2AGCPAuth, key
 	default:
 		return s.gcpDefault.Token(ctx, gcpauth.CloudPlatformScope)
 	}
-}
-
-// cloudAuthHoldsReference reports whether a cloud credential is reference
-// shaped. cloud_auth is not a declared location, so such a value is never
-// resolved and must not reach the cloud provider as a literal credential.
-func cloudAuthHoldsReference(c *domain.A2ACloudAuth) bool {
-	if c == nil {
-		return false
-	}
-	var values []string
-	if c.AWS != nil {
-		values = append(values, c.AWS.AccessKeyID, c.AWS.SecretAccessKey, c.AWS.SessionToken)
-	}
-	if c.Azure != nil {
-		values = append(values, c.Azure.APIKey, c.Azure.ClientSecret)
-	}
-	if c.GCP != nil {
-		values = append(values, c.GCP.ServiceAccountJSON)
-	}
-	for _, v := range values {
-		if secretref.IsRef(v) {
-			return true
-		}
-	}
-	return false
 }

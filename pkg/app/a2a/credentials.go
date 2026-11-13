@@ -133,7 +133,8 @@ func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	auth := reg.A2ATarget.Auth
 	app := consumerdomain.AppSubject(rc.Consumer.ID)
 	trace := IdentityTrace{Mode: string(auth.Mode), SubjectKind: SubjectUser}
-	if reg.CredentialUnavailable() || secretref.IsRef(auth.Value) || secretref.IsRef(auth.ClientSecret) {
+	if reg.CredentialUnavailable() || secretref.IsRef(auth.Value) || secretref.IsRef(auth.ClientSecret) ||
+		(auth.Mode == registrydomain.A2AAuthModeCloud && reg.A2ATarget.CloudAuth.HoldsReference()) {
 		return nil, trace, GatewayFailure(ReasonSecretUnavailable)
 	}
 	if p == nil || p.Subject == app {
@@ -202,7 +203,13 @@ func (c *Credentials) Sign(ctx context.Context, reg *registrydomain.Registry, re
 			}
 		}
 	}
-	return c.cloud.Sign(ctx, reg.A2ATarget, CacheKey{Registry: reg.ID.String(), Version: strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10)}, req)
+	// The digest of a secret-backed credential is part of the version, so a
+	// rotated secret is signed with afresh.
+	version := strconv.FormatInt(reg.UpdatedAt.UnixNano(), 10)
+	if digest := reg.SecretDigest(); digest != "" {
+		version += "|" + digest
+	}
+	return c.cloud.Sign(ctx, reg.A2ATarget, CacheKey{Registry: reg.ID.String(), Version: version}, req)
 }
 
 // cloudMode names the credential a cloud_auth signs with, as the span

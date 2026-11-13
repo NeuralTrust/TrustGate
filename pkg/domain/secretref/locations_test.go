@@ -49,6 +49,11 @@ func populatedRegistry() *registry.Registry {
 		A2ATarget: &registry.A2ATarget{
 			Headers: map[string]string{"X-Token": "v"},
 			Auth:    &registry.MCPAuth{Value: "v", ClientSecret: "v"},
+			CloudAuth: &registry.A2ACloudAuth{
+				AWS:   &registry.A2AAWSAuth{AWSAuth: registry.AWSAuth{AccessKeyID: "v", SecretAccessKey: "v", SessionToken: "v"}},
+				Azure: &registry.AzureAuth{ClientSecret: "v"},
+				GCP:   &registry.A2AGCPAuth{ServiceAccountJSON: "v"},
+			},
 		},
 	}
 }

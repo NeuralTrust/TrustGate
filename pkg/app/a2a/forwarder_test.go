@@ -466,6 +466,10 @@ func TestUnresolvedCredentialIsNotSent(t *testing.T) {
 		"reference value": func(r *registrydomain.Registry) {
 			r.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Key", Value: "secret://vault/agents/key"}
 		},
+		"cloud reference": func(r *registrydomain.Registry) {
+			r.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.A2AAuthModeCloud}
+			r.A2ATarget.CloudAuth = &registrydomain.A2ACloudAuth{GCP: &registrydomain.A2AGCPAuth{ServiceAccountJSON: "secret://gcp/agents/sa"}}
+		},
 	} {
 		reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
 		reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Key", Value: "literal"}

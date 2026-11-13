@@ -160,6 +160,11 @@ func everyLocation() *registry.Registry {
 			URL:     "https://agent",
 			Headers: map[string]string{"X-Agent": refStr("ah#v"), "X-Plain": "plain"},
 			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "X-Key", Value: refStr("av#v"), ClientSecret: refStr("acs#v")},
+			CloudAuth: &registry.A2ACloudAuth{
+				AWS:   &registry.A2AAWSAuth{AWSAuth: registry.AWSAuth{AccessKeyID: refStr("caa#k"), SecretAccessKey: refStr("caa#s"), SessionToken: refStr("caa#t")}},
+				Azure: &registry.AzureAuth{ClientSecret: refStr("caz#s")},
+				GCP:   &registry.A2AGCPAuth{ServiceAccountJSON: refStr("cag")},
+			},
 		},
 	}
 }
@@ -248,6 +253,10 @@ func TestFastPathReturnsTheInput(t *testing.T) {
 	plain.MCPTarget.Auth.Value, plain.MCPTarget.Auth.ClientSecret = "v", ""
 	plain.A2ATarget.Headers = map[string]string{"X": "y"}
 	plain.A2ATarget.Auth.Value, plain.A2ATarget.Auth.ClientSecret = "v", ""
+	plain.A2ATarget.CloudAuth.AWS.SecretAccessKey = "aws-secret"
+	plain.A2ATarget.CloudAuth.AWS.AccessKeyID, plain.A2ATarget.CloudAuth.AWS.SessionToken = "", ""
+	plain.A2ATarget.CloudAuth.Azure.ClientSecret = "azure-secret"
+	plain.A2ATarget.CloudAuth.GCP.ServiceAccountJSON = "{}"
 	byID := map[ids.RegistryID]*registry.Registry{plain.ID: plain}
 	m := newMat(t, MaterializerConfig{})
 	gw := ids.New[ids.GatewayKind]()
