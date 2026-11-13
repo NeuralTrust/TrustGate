@@ -65,23 +65,27 @@ func TestRedisRepository_ProviderPrefixListsAndDeletesEveryPrincipal(t *testing.
 	}
 }
 
-func TestFallbackRepository_ReplicatedWriteReachesBothStores(t *testing.T) {
+func TestFallbackRepository_SharedWriteLandsWhereEveryPlaneReads(t *testing.T) {
 	primary, _, _ := newRedisVaultRepo(t)
 	secondary, _, _ := newRedisVaultRepo(t)
 	repo := vaultrepo.NewFallbackRepository(primary, secondary)
 	ctx := context.Background()
 	gw := ids.New[ids.GatewayKind]()
-	writer, ok := repo.(domain.ReplicatedUpserter)
+	writer, ok := repo.(domain.SharedStoreUpserter)
 	if !ok {
-		t.Fatal("fallback vault does not implement ReplicatedUpserter")
+		t.Fatal("fallback vault does not implement SharedStoreUpserter")
 	}
-	if err := writer.UpsertReplicated(ctx, newTestCredential(t, gw, "ana", "uhdr:r:X-Api-Key", "v", "")); err != nil {
+	if err := writer.UpsertShared(ctx, newTestCredential(t, gw, "ana", "uhdr:r:X-Api-Key", "v", "")); err != nil {
 		t.Fatal(err)
 	}
-	for name, store := range map[string]domain.Repository{"primary": primary, "secondary": secondary} {
-		if _, err := store.Find(ctx, gw, "ana", "uhdr:r:X-Api-Key"); err != nil {
-			t.Fatalf("%s does not hold the value: %v", name, err)
-		}
+	if _, err := secondary.Find(ctx, gw, "ana", "uhdr:r:X-Api-Key"); err != nil {
+		t.Fatalf("the shared store does not hold the value: %v", err)
+	}
+	if _, err := primary.Find(ctx, gw, "ana", "uhdr:r:X-Api-Key"); err == nil {
+		t.Fatal("no copy may stay in the primary, where a data-plane change never reaches")
+	}
+	if _, err := repo.Find(ctx, gw, "ana", "uhdr:r:X-Api-Key"); err != nil {
+		t.Fatalf("the control plane must still read it: %v", err)
 	}
 	lister := repo.(domain.ProviderPrefixStore)
 	list, err := lister.ListByProviderPrefix(ctx, gw, "uhdr:r:")
