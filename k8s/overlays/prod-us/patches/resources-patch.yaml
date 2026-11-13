@@ -31,13 +31,16 @@ spec:
       - name: proxy
         # Request is the HPA denominator, so it tracks steady-state usage and
         # lets the autoscaler react; the limit carries the per-pod burst.
+        # Measured 7d to 2026-11-13, EU prod per pod: CPU p99 79m / max 283m,
+        # working set p99 207Mi / max 268Mi (US lower). At the old 1 CPU / 1Gi
+        # the 80% CPU target sat ~10x above real load and could never fire.
         resources:
           limits:
             cpu: "4"
             memory: 4Gi
           requests:
-            cpu: "1"
-            memory: 1Gi
+            cpu: 250m
+            memory: 512Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -48,12 +51,15 @@ spec:
     spec:
       containers:
       - name: mcp
+        # Measured 7d to 2026-11-13, EU prod per pod: CPU p99 84m / max 233m,
+        # working set p99 268Mi / max 344Mi. Memory request stays at 512Mi so
+        # the 90% memory target sits above the observed max.
         resources:
           limits:
             cpu: "2"
             memory: 2Gi
           requests:
-            cpu: 500m
+            cpu: 200m
             memory: 512Mi
 ---
 apiVersion: apps/v1
@@ -65,10 +71,12 @@ spec:
     spec:
       containers:
       - name: agent
+        # Measured 7d to 2026-11-13, EU prod per pod: CPU p99 21m / max 101m,
+        # working set p99 148Mi / max 165Mi.
         resources:
           limits:
             cpu: "2"
             memory: 2Gi
           requests:
-            cpu: 500m
-            memory: 512Mi
+            cpu: 100m
+            memory: 256Mi
