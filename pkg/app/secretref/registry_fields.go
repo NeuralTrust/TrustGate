@@ -79,6 +79,16 @@ func registryHasRef(r *registry.Registry) bool {
 			}
 		}
 	}
+	if t := r.A2ATarget; t != nil {
+		if a := t.Auth; a != nil && (domain.IsRef(a.Value) || domain.IsRef(a.ClientSecret)) {
+			return true
+		}
+		for _, v := range t.Headers {
+			if domain.IsRef(v) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -136,6 +146,15 @@ func registrySlots(r *registry.Registry) []slot {
 		}
 		for k, v := range t.Headers {
 			add(v, "mcp_target", "headers", k)
+		}
+	}
+	if t := r.A2ATarget; t != nil {
+		if a := t.Auth; a != nil {
+			add(a.Value, "a2a_target", "auth", "value")
+			add(a.ClientSecret, "a2a_target", "auth", "client_secret")
+		}
+		for k, v := range t.Headers {
+			add(v, "a2a_target", "headers", k)
 		}
 	}
 	return out
@@ -210,6 +229,21 @@ func copyRegistry(r *registry.Registry) *registry.Registry {
 		}
 		c.MCPTarget = &t
 	}
+	if r.A2ATarget != nil {
+		t := *r.A2ATarget
+		if r.A2ATarget.Auth != nil {
+			a := *r.A2ATarget.Auth
+			t.Auth = &a
+		}
+		if r.A2ATarget.Headers != nil {
+			headers := make(map[string]string, len(r.A2ATarget.Headers))
+			for k, v := range r.A2ATarget.Headers {
+				headers[k] = v
+			}
+			t.Headers = headers
+		}
+		c.A2ATarget = &t
+	}
 	return &c
 }
 
@@ -218,6 +252,10 @@ func copyRegistry(r *registry.Registry) *registry.Registry {
 func setSlot(c *registry.Registry, path []string, value string) {
 	if len(path) == 3 && path[0] == "mcp_target" && path[1] == headersKey {
 		c.MCPTarget.Headers[path[2]] = value
+		return
+	}
+	if len(path) == 3 && path[0] == "a2a_target" && path[1] == headersKey {
+		c.A2ATarget.Headers[path[2]] = value
 		return
 	}
 	switch strings.Join(path[:min(len(path), 3)], ".") {
@@ -268,6 +306,10 @@ func setSlot(c *registry.Registry, path []string, value string) {
 		c.MCPTarget.Auth.Value = value
 	case "mcp_target.auth.client_secret":
 		c.MCPTarget.Auth.ClientSecret = value
+	case "a2a_target.auth.value":
+		c.A2ATarget.Auth.Value = value
+	case "a2a_target.auth.client_secret":
+		c.A2ATarget.Auth.ClientSecret = value
 	}
 }
 
@@ -349,6 +391,15 @@ func registryEmbedded(r *registry.Registry) []slot {
 		}
 		for k, v := range t.Headers {
 			visit(v, "mcp_target", headersKey, k)
+		}
+	}
+	if t := r.A2ATarget; t != nil {
+		if a := t.Auth; a != nil {
+			visit(a.Value, "a2a_target", "auth", "value")
+			visit(a.ClientSecret, "a2a_target", "auth", "client_secret")
+		}
+		for k, v := range t.Headers {
+			visit(v, "a2a_target", headersKey, k)
 		}
 	}
 	return out

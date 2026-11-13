@@ -221,6 +221,12 @@ func TestValidatorEmbeddedValues(t *testing.T) {
 	if _, err := on.ValidateRegistry(context.Background(), withKey(embedded), stored); err != nil {
 		t.Fatalf("an echoed embedded value must not block unrelated edits: %v", err)
 	}
+	agent := &registry.Registry{ID: ids.New[ids.RegistryKind](), A2ATarget: &registry.A2ATarget{
+		URL: "https://agent", Headers: map[string]string{"X-Agent": embedded},
+	}}
+	if _, err := on.ValidateRegistry(context.Background(), agent, nil); !errors.Is(err, refdomain.ErrInvalidReference) {
+		t.Fatalf("an A2A header embedding a reference: %v", err)
+	}
 }
 
 type logSink struct{ lines []string }

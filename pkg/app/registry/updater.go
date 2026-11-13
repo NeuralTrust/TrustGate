@@ -210,7 +210,7 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 		}
 	}
 	if next.CardURL != prev.CardURL || next.ProtocolVersion != prev.ProtocolVersion || !sameLocator(&next, prev) {
-		if err := u.cards.pin(ctx, &next); err != nil {
+		if err := u.cards.pin(ctx, existing.GatewayID, &next); err != nil {
 			return err
 		}
 	}

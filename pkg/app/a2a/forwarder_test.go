@@ -425,3 +425,38 @@ func TestResolveAgent(t *testing.T) {
 	require.True(t, ok)
 	assert.Same(t, first, got)
 }
+
+func TestForwarderNeverSendsASecretReference(t *testing.T) {
+	t.Parallel()
+	for v, prefix := range versions {
+		ag := newAgent(t, answer(readFixture(t, prefix+".send.response.json")))
+		h := newHarness(t, v, ag.URL, allow)
+		h.agent.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Agent-Key", Value: "s3cret"}
+		h.agent.A2ATarget.Headers = map[string]string{"X-Tenant": "secret://vault/agents/tenant", "X-Plain": "acme"}
+
+		_, rpcErr := h.send(t, readFixture(t, prefix+".send.request.json"), http.Header{})
+		require.Nil(t, rpcErr, prefix)
+		req, _ := ag.request(0)
+		assert.Empty(t, req.Header.Get("X-Tenant"), "%s: a reference-shaped header is never forwarded", prefix)
+		assert.Equal(t, "acme", req.Header.Get("X-Plain"), prefix)
+	}
+}
+
+func TestUnresolvedCredentialIsNotSent(t *testing.T) {
+	t.Parallel()
+	creds := a2a.NewCredentials(nil, nil, nil, false)
+	for name, mutate := range map[string]func(*registrydomain.Registry){
+		"marked unavailable": func(r *registrydomain.Registry) { r.MarkCredentialUnavailable() },
+		"reference value": func(r *registrydomain.Registry) {
+			r.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Key", Value: "secret://vault/agents/key"}
+		},
+	} {
+		reg := a2aRegistry(t, a2a.Version10, "https://travel.example/a2a")
+		reg.A2ATarget.Auth = &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "X-Key", Value: "literal"}
+		mutate(reg)
+		header, _, rpcErr := creds.For(context.Background(), a2aConsumer(reg), reg, nil)
+		require.NotNil(t, rpcErr, name)
+		assert.Equal(t, a2a.ReasonSecretUnavailable, reasonOf(t, rpcErr), name)
+		assert.Nil(t, header, name)
+	}
+}

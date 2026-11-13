@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
@@ -146,12 +148,18 @@ type registrySaveParams struct {
 	// SecretRefs validates secret references on writes; absent on planes
 	// without the control plane's connection store.
 	SecretRefs appsecretstore.RegistryValidator `optional:"true"`
+	// Materializer resolves the secret references of the auth an A2A card
+	// is read with.
+	Materializer appsecretref.Materializer `optional:"true"`
 }
 
 func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.Option {
 	opts := []appregistry.Option{
 		appregistry.WithOpenAPICompiler(compiler),
 		appregistry.WithAgentCards(p.CardFetcher, p.CardCredentials),
+	}
+	if p.Materializer != nil && p.SecretRefs != nil {
+		opts = append(opts, appregistry.WithCardSecrets(p.Materializer, p.SecretRefs))
 	}
 	if p.Auths != nil {
 		opts = append(opts, appregistry.WithAuthLookup(p.Auths))

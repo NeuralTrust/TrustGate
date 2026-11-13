@@ -29,6 +29,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -39,6 +40,9 @@ const (
 	ReasonSigningKeyUnavailable   = "signing_key_unavailable"
 	ReasonClientCredentialsFailed = "client_credentials_failed"
 	ReasonCloudAuthFailed         = "cloud_auth_failed"
+	// ReasonSecretUnavailable: a credential is a secret reference this plane
+	// could not resolve, so the call is not sent.
+	ReasonSecretUnavailable = "secret_unavailable"
 )
 
 // Subject kinds of IdentityTrace.
@@ -129,6 +133,9 @@ func (c *Credentials) For(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	auth := reg.A2ATarget.Auth
 	app := consumerdomain.AppSubject(rc.Consumer.ID)
 	trace := IdentityTrace{Mode: string(auth.Mode), SubjectKind: SubjectUser}
+	if reg.CredentialUnavailable() || secretref.IsRef(auth.Value) || secretref.IsRef(auth.ClientSecret) {
+		return nil, trace, GatewayFailure(ReasonSecretUnavailable)
+	}
 	if p == nil || p.Subject == app {
 		trace.SubjectKind = SubjectApp
 	}
@@ -216,7 +223,9 @@ func cloudMode(c *registrydomain.A2ACloudAuth) string {
 // clientCredentials returns the registry's client_credentials token, cached
 // until shortly before it expires or the registry changes.
 func (c *Credentials) clientCredentials(ctx context.Context, reg *registrydomain.Registry) (string, error) {
-	key := reg.ID.String()
+	// The digest of a secret-backed client secret is part of the key, so a
+	// rotated secret gets its own token.
+	key := reg.ID.String() + "|" + reg.SecretDigest()
 	if token, ok := c.cached(key, reg.UpdatedAt); ok {
 		return token, nil
 	}

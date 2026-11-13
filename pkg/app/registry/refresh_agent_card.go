@@ -62,7 +62,7 @@ func (r *refreshAgentCard) Refresh(ctx context.Context, gatewayID ids.GatewayID,
 	if err := validateSharedDataPlane(ctx, r.shared, gatewayID, pinned); err != nil {
 		return nil, err
 	}
-	fetched, err := r.cards.fetch(ctx, pinned, false)
+	fetched, err := r.cards.fetch(ctx, gatewayID, pinned, false)
 	if err != nil {
 		return nil, err
 	}

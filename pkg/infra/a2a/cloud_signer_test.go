@@ -236,3 +236,12 @@ func TestCloudSignerAssumesTheRoleWithItsExternalID(t *testing.T) {
 	assert.Equal(t, "arn:aws:iam::123456789012:role/tg-agents", forms[0].Get("RoleArn"))
 	assert.Equal(t, "nt-7f3a", forms[0].Get("ExternalId"))
 }
+
+func TestCloudSignerRefusesAReferenceShapedCredential(t *testing.T) {
+	t.Parallel()
+	target := agentCoreStatic()
+	target.CloudAuth.AWS.AccessKeyID = "secret://vault/aws#id"
+	req := newRequest(t, http.MethodPost, target.Endpoint(), `{}`)
+	require.Error(t, NewCloudSigner().Sign(context.Background(), target, appa2a.CacheKey{}, req))
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
