@@ -224,6 +224,7 @@ type Config struct {
 	AdminM2M            AdminM2MConfig
 	Usage               UsageConfig
 	ManagedRegistries   ManagedRegistriesConfig
+	SecretStores        SecretStoresConfig
 }
 
 // ManagedRegistriesConfig holds NeuralTrust's own provider credentials, which
@@ -901,6 +902,10 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	secretStores, err := getSecretStoresConfig()
+	if err != nil {
+		return nil, err
+	}
 	redisConfig := getRedisConfig()
 	cfg := &Config{
 		ClientIP:            clientIP,
@@ -933,6 +938,7 @@ func LoadConfig() (*Config, error) {
 		AdminM2M:            getAdminM2MConfig(),
 		Usage:               getUsageConfig(),
 		ManagedRegistries:   ManagedRegistriesConfig{OpenAIAPIKey: getEnv("MANAGED_OPENAI_API_KEY", "")},
+		SecretStores:        secretStores,
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
 	// a SaaS deployment that already mints M2M tokens needs no extra config.
@@ -1762,6 +1768,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
+		return err
+	}
+	if err := c.validateSecretStores(); err != nil {
 		return err
 	}
 	return nil

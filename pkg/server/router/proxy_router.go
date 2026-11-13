@@ -31,6 +31,10 @@ const DiagnosticsTestConnectionPath = "/__diagnostics/gateways/:gateway_id/regis
 // the customer's network still narrows the catalog.
 const DiagnosticsRegistryModelsPath = "/__diagnostics/gateways/:gateway_id/registries/:registry_id/models"
 
+// DiagnosticsSecretStoreTestPath tests one of this data plane's secret
+// stores, authorized by a control-plane diagnostics token.
+const DiagnosticsSecretStoreTestPath = "/__diagnostics/gateways/:gateway_id/secret-stores/:name/test"
+
 type proxyRouter struct {
 	middlewareTransport *middleware.Transport
 	opsMetrics          *middleware.OpsMetricsMiddleware
@@ -38,6 +42,7 @@ type proxyRouter struct {
 	proxyHandler        *proxyhttp.ForwardedHandler
 	diagnostics         *diagnosticshttp.TestConnectionHandler
 	registryModels      *diagnosticshttp.ListRegistryModelsHandler
+	secretTest          *diagnosticshttp.TestSecretHandler
 }
 
 func NewProxyRouter(
@@ -47,6 +52,7 @@ func NewProxyRouter(
 	opsMetrics *middleware.OpsMetricsMiddleware,
 	diagnostics *diagnosticshttp.TestConnectionHandler,
 	registryModels *diagnosticshttp.ListRegistryModelsHandler,
+	secretTest *diagnosticshttp.TestSecretHandler,
 ) ServerRouter {
 	return &proxyRouter{
 		middlewareTransport: middlewareTransport,
@@ -55,6 +61,7 @@ func NewProxyRouter(
 		proxyHandler:        proxyHandler,
 		diagnostics:         diagnostics,
 		registryModels:      registryModels,
+		secretTest:          secretTest,
 	}
 }
 
@@ -70,6 +77,9 @@ func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
 	// own token auth, and the consumer auth chain would reject them otherwise.
 	app.Post(DiagnosticsTestConnectionPath, r.diagnostics.Handle)
 	app.Get(DiagnosticsRegistryModelsPath, r.registryModels.Handle)
+	if r.secretTest != nil {
+		app.Post(DiagnosticsSecretStoreTestPath, r.secretTest.Handle)
+	}
 
 	installMiddlewares(app, r.middlewareTransport)
 	app.All("/*", r.proxyHandler.Handle)
