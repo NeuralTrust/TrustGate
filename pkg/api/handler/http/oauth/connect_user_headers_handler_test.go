@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
@@ -105,5 +106,21 @@ func TestSaveUserHeaders_OnlyFromTheGatewaysOwnPage(t *testing.T) {
 	remove.Header.Set("Sec-Fetch-Site", "same-origin")
 	if res, _ := send(t, app, remove); res.StatusCode != fiber.StatusOK || !svc.removed {
 		t.Fatalf("remove failed: %d", res.StatusCode)
+	}
+}
+
+// A focused page for a server whose only credential is its keys is not
+// waiting for the server: it is here, with nothing to connect.
+func TestConnectPage_HeaderOnlyServerDoesNotWait(t *testing.T) {
+	t.Parallel()
+	h := newTestConnectHandler(&stubConnectService{page: userHeaderPage("com.keyed/mcp")}, nil, "")
+	h.holdFor = time.Minute
+	started := time.Now()
+	_, body := send(t, connectFlowApp(h), httptest.NewRequest(fiber.MethodGet, "/dev/mcp/connect?ticket=abc", nil))
+	if time.Since(started) > 5*time.Second {
+		t.Fatalf("the page waited for a server that is already here")
+	}
+	if !strings.Contains(body, "/oauth/user-headers/inst-1") {
+		t.Fatalf("no key form: %s", body)
 	}
 }
