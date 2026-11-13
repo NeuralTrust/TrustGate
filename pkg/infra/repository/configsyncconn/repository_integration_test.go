@@ -19,12 +19,15 @@ package configsyncconn
 import (
 	"context"
 	"os"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -225,6 +228,12 @@ func TestIntegration_HeartbeatRecordsReport(t *testing.T) {
 		DeploymentType:     "self-hosted",
 		TrustGuardBaseURL:  "https://trustguard.eu.example.com",
 		TrustGuardClientID: "tgc_eu",
+		AcceptsSecretRefs:  true,
+		SecretStores:       []secretstore.Status{{Name: "vault", Type: secretstore.TypeHashiCorpVault, AllowedPaths: []string{"ai/"}, State: secretstore.StateOK}},
+		SecretRefs: secretstore.RefHealth{Total: 1, Unresolved: 1, Outcomes: []secretstore.RefOutcome{{
+			GatewayID: ids.New[ids.GatewayKind](), Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key",
+			Store: "vault", Path: "ai/k", Class: secretstore.ClassNotFound,
+		}}},
 	}
 	if err := repo.MarkHeartbeat(ctx, scope, "dp-1", hb); err != nil {
 		t.Fatalf("MarkHeartbeat: %v", err)
@@ -239,8 +248,11 @@ func TestIntegration_HeartbeatRecordsReport(t *testing.T) {
 		DeploymentType:     after.DeploymentType,
 		TrustGuardBaseURL:  after.TrustGuardBaseURL,
 		TrustGuardClientID: after.TrustGuardClientID,
+		AcceptsSecretRefs:  after.AcceptsSecretRefs,
+		SecretStores:       after.SecretStores,
+		SecretRefs:         after.SecretRefs,
 	}
-	if got != hb {
+	if !reflect.DeepEqual(got, hb) {
 		t.Fatalf("after heartbeat = %+v, want %+v", got, hb)
 	}
 	if after.LastSeen.Before(before.LastSeen) {

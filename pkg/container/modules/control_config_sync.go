@@ -133,6 +133,9 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := provideSecretStoresAdmin(c); err != nil {
+		return err
+	}
 	if err := c.Provide(func(logger *slog.Logger, store configsyncgrpc.ConnectionStore) *configsyncgrpc.Hub {
 		return configsyncgrpc.NewHub(logger, store)
 	}); err != nil {

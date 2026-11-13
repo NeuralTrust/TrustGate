@@ -200,6 +200,15 @@ func (p *Plugin) CredentialDestinations() []string {
 	return []string{"endpoint"}
 }
 
+// CredentialHosts is where api_key goes: the policy's endpoint.
+func (p *Plugin) CredentialHosts(settings map[string]any) []string {
+	cfg, err := pluginutil.Parse[Settings](settings)
+	if err != nil || cfg.Endpoint == "" {
+		return nil
+	}
+	return []string{cfg.Endpoint}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
