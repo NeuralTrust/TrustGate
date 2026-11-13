@@ -780,3 +780,45 @@ func TestUpdater_Update_RestoresMaskedProviderOptionHeader(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 }
+
+func TestUpdater_Update_UserHeadersKeptWhenOmittedAndClearedWhenEmpty(t *testing.T) {
+	t.Parallel()
+	declared := []domain.MCPUserHeader{{Name: "X-API-Key", Required: true, Secret: true}}
+	cases := []struct {
+		name     string
+		incoming []domain.MCPUserHeader
+		want     int
+	}{
+		{name: "omitted keeps the declarations", incoming: nil, want: 1},
+		{name: "empty list removes them", incoming: []domain.MCPUserHeader{}, want: 0},
+		{name: "a new list replaces them", incoming: []domain.MCPUserHeader{{Name: "X-Account"}, {Name: "X-Key"}}, want: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "keyed", "", &domain.MCPTarget{
+				URL:         "https://keyed.example.com/mcp",
+				UserHeaders: declared,
+			})
+			if err != nil {
+				t.Fatalf("NewMCPRegistry error: %v", err)
+			}
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+			updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+			got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+				ID:        existing.ID,
+				MCPTarget: &domain.MCPTarget{UserHeaders: tc.incoming},
+			})
+			if err != nil {
+				t.Fatalf("Update error: %v", err)
+			}
+			if len(got.MCPTarget.UserHeaders) != tc.want {
+				t.Fatalf("user headers = %+v, want %d", got.MCPTarget.UserHeaders, tc.want)
+			}
+		})
+	}
+}

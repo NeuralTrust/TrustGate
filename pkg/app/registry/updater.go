@@ -248,6 +248,9 @@ func applyMCPTargetUpdate(
 		if incoming.Headers == nil {
 			incoming.Headers = prev.Headers
 		}
+		if incoming.UserHeaders == nil {
+			incoming.UserHeaders = prev.UserHeaders
+		}
 		if incoming.Auth == nil {
 			incoming.Auth = prev.Auth
 		}
