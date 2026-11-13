@@ -24,26 +24,41 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 const (
-	scanPath = "/v1/scan/indirect-prompt-injection"
+	scanPath  = "/v1/scan/indirect-prompt-injection"
+	tokenPath = "/v1/token"
+	// scopeScan is the token scope TrustGuard admits on the scan route only.
+	scopeScan = "scan"
 	// maxTexts and maxTextBytes are what one scan call accepts.
 	maxTexts         = 64
 	maxTextBytes     = 16 << 10
 	maxResponseBytes = 1 << 20
 	defaultTimeout   = 30 * time.Second
+	// tokenRefreshSkew renews a token this long before it expires.
+	tokenRefreshSkew = 30 * time.Second
 )
+
+type cachedToken struct {
+	value     string
+	expiresAt time.Time
+}
 
 type scanner struct {
 	client       *http.Client
-	url          string
+	baseURL      string
 	clientID     string
 	clientSecret string
+
+	mu     sync.Mutex
+	tokens map[ids.GatewayID]cachedToken
 }
 
 // New returns the scanner of the TrustGuard at baseURL, signed in with its
@@ -56,7 +71,13 @@ func New(baseURL, clientID, clientSecret string, timeout time.Duration) appregis
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	return &scanner{client: &http.Client{Timeout: timeout}, url: baseURL + scanPath, clientID: clientID, clientSecret: clientSecret}
+	return &scanner{
+		client:       &http.Client{Timeout: timeout},
+		baseURL:      baseURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		tokens:       map[ids.GatewayID]cachedToken{},
+	}
 }
 
 type scanRequest struct {
@@ -70,11 +91,15 @@ type scanResponse struct {
 	} `json:"results"`
 }
 
-func (s *scanner) ScanIndirectPromptInjection(ctx context.Context, texts []string) ([]appregistry.SkillScan, error) {
+func (s *scanner) ScanIndirectPromptInjection(ctx context.Context, gatewayID ids.GatewayID, texts []string) ([]appregistry.SkillScan, error) {
+	token, err := s.token(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]appregistry.SkillScan, 0, len(texts))
 	for start := 0; start < len(texts); start += maxTexts {
 		batch := texts[start:min(start+maxTexts, len(texts))]
-		scans, err := s.scan(ctx, batch)
+		scans, err := s.scan(ctx, token, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -83,31 +108,13 @@ func (s *scanner) ScanIndirectPromptInjection(ctx context.Context, texts []strin
 	return out, nil
 }
 
-func (s *scanner) scan(ctx context.Context, texts []string) ([]appregistry.SkillScan, error) {
+func (s *scanner) scan(ctx context.Context, token string, texts []string) ([]appregistry.SkillScan, error) {
 	body := scanRequest{Texts: make([]string, len(texts))}
 	for i, text := range texts {
 		body.Texts[i] = truncate(text, maxTextBytes)
 	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(s.clientID, s.clientSecret)
-	res, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("trustguard scan: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("trustguard scan: status %d", res.StatusCode)
-	}
 	var answer scanResponse
-	if err := json.NewDecoder(io.LimitReader(res.Body, maxResponseBytes)).Decode(&answer); err != nil {
+	if err := s.post(ctx, scanPath, token, body, &answer); err != nil {
 		return nil, fmt.Errorf("trustguard scan: %w", err)
 	}
 	if len(answer.Results) != len(texts) {
@@ -118,6 +125,74 @@ func (s *scanner) scan(ctx context.Context, texts []string) ([]appregistry.Skill
 		out[i] = appregistry.SkillScan{Flagged: r.Flagged, Score: r.Score}
 	}
 	return out, nil
+}
+
+type tokenRequest struct {
+	GrantType    string `json:"grant_type"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Scope        string `json:"scope"`
+	GatewayID    string `json:"gateway_id"`
+}
+
+type tokenResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+// token is a scan token for gatewayID, reused until shortly before it expires.
+func (s *scanner) token(ctx context.Context, gatewayID ids.GatewayID) (string, error) {
+	s.mu.Lock()
+	cached, ok := s.tokens[gatewayID]
+	s.mu.Unlock()
+	if ok && time.Now().Before(cached.expiresAt) {
+		return cached.value, nil
+	}
+	var answer tokenResponse
+	err := s.post(ctx, tokenPath, "", tokenRequest{
+		GrantType:    "client_credentials",
+		ClientID:     s.clientID,
+		ClientSecret: s.clientSecret,
+		Scope:        scopeScan,
+		GatewayID:    gatewayID.String(),
+	}, &answer)
+	if err != nil {
+		return "", fmt.Errorf("trustguard scan token: %w", err)
+	}
+	if answer.AccessToken == "" {
+		return "", fmt.Errorf("trustguard scan token: no access_token")
+	}
+	expiresAt := time.Now().Add(time.Duration(answer.ExpiresIn)*time.Second - tokenRefreshSkew)
+	s.mu.Lock()
+	s.tokens[gatewayID] = cachedToken{value: answer.AccessToken, expiresAt: expiresAt}
+	s.mu.Unlock()
+	return answer.AccessToken, nil
+}
+
+// post sends body as JSON to path, with token as its bearer when set, and
+// decodes a 200 answer into out.
+func (s *scanner) post(ctx context.Context, path, token string, body, out any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", res.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(res.Body, maxResponseBytes)).Decode(out)
 }
 
 // truncate cuts text to at most n bytes without splitting a rune.

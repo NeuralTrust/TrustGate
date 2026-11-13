@@ -60,8 +60,9 @@ type SkillScan struct {
 
 //go:generate mockery --name=SkillScanner --dir=. --output=./mocks --filename=registry_skill_scanner_mock.go --case=underscore --with-expecter
 type SkillScanner interface {
-	// ScanIndirectPromptInjection scores each text, in order.
-	ScanIndirectPromptInjection(ctx context.Context, texts []string) ([]SkillScan, error)
+	// ScanIndirectPromptInjection scores each text, in order, for an agent of
+	// gatewayID.
+	ScanIndirectPromptInjection(ctx context.Context, gatewayID ids.GatewayID, texts []string) ([]SkillScan, error)
 }
 
 // agentCards reads and pins the cards of A2A registries.
@@ -80,7 +81,7 @@ type agentCards struct {
 // there is no scanner, no skill, the gateway built the card, or the scan
 // failed: a card that could not be scanned is still pinned, and says so by
 // having no verdicts.
-func (a agentCards) scanSkills(ctx context.Context, t *domain.A2ATarget, card []byte) []domain.SkillVerdict {
+func (a agentCards) scanSkills(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget, card []byte) []domain.SkillVerdict {
 	if a.scanner == nil || t.Provider.BuildsCard() {
 		return nil
 	}
@@ -88,7 +89,7 @@ func (a agentCards) scanSkills(ctx context.Context, t *domain.A2ATarget, card []
 	if len(texts) == 0 {
 		return nil
 	}
-	scans, err := a.scanner.ScanIndirectPromptInjection(ctx, texts)
+	scans, err := a.scanner.ScanIndirectPromptInjection(ctx, gatewayID, texts)
 	if err != nil || len(scans) != len(texts) {
 		slog.WarnContext(ctx, "agent skills not scanned", slog.Any("error", err), slog.Int("skills", len(texts)), slog.Int("results", len(scans)))
 		return nil
@@ -137,7 +138,7 @@ func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.
 	if err := a.probe(ctx, gatewayID, t); err != nil {
 		return err
 	}
-	t.SkillScan = a.scanSkills(ctx, t, t.Card)
+	t.SkillScan = a.scanSkills(ctx, gatewayID, t, t.Card)
 	return nil
 }
 
