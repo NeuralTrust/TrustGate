@@ -14,7 +14,11 @@
 
 package secret
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+)
 
 // Redacted is the prefix the API uses to mark a masked secret. A masked value is
 // the prefix optionally followed by the last few characters of the stored secret
@@ -44,6 +48,11 @@ func Resolve(incoming, existing string) string {
 func Mask(v string) string {
 	if v == "" {
 		return ""
+	}
+	if secretref.IsRef(v) {
+		// A secret reference is a pointer, not a secret: it is returned as
+		// stored so it can be shown and edited, and echoed back unchanged.
+		return v
 	}
 	if len(v) <= revealedTail*2 {
 		return Redacted

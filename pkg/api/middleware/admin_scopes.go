@@ -29,7 +29,15 @@ const (
 	ResourcePolicies   AdminResource = "policies"
 	ResourceConsumers  AdminResource = "consumers"
 	ResourceAuths      AdminResource = "auths"
+	// ResourceSecretStores is read-only: listing stores, their usages and
+	// testing a secret all need secret_stores:read, and so does writing a
+	// secret reference on any entity.
+	ResourceSecretStores AdminResource = "secret_stores"
 )
+
+// ScopeSecretStoresRead is what a service credential needs to read secret
+// stores and to write or retarget a secret reference.
+const ScopeSecretStoresRead = string(ResourceSecretStores) + scopeReadSuffix
 
 const (
 	scopeReadSuffix  = ":read"
@@ -38,8 +46,12 @@ const (
 
 // RequiredScope maps a resource and HTTP method to the scope a service
 // credential must carry. Everything that is not a safe read is treated as a
-// write, so a new mutating route defaults to the stricter scope.
+// write, so a new mutating route defaults to the stricter scope. Secret
+// stores are the exception: their one POST, testing a secret, reads.
 func RequiredScope(resource AdminResource, method string) string {
+	if resource == ResourceSecretStores {
+		return ScopeSecretStoresRead
+	}
 	switch method {
 	case fiber.MethodGet, fiber.MethodHead, fiber.MethodOptions:
 		return string(resource) + scopeReadSuffix

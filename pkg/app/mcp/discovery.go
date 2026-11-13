@@ -199,6 +199,9 @@ func discoverCached[T any](
 	kind string,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
+	if reg.CredentialUnavailable() {
+		return nil, registrydomain.ErrSecretUnavailable
+	}
 	key, cacheable := discoveryKey(ctx, reg, kind)
 	ask := func(ctx context.Context) ([]T, error) { return askUpstream(c, ctx, rc, reg, list) }
 	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {

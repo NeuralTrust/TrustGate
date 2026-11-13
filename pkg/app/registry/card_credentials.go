@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -92,6 +94,9 @@ func (c *cardCredentials) CallAuthorizer(ctx context.Context, t *domain.A2ATarge
 	case domain.MCPAuthModeNone:
 		return nil, true, nil
 	case domain.MCPAuthModeStatic:
+		if secretref.IsRef(t.Auth.Value) {
+			return nil, false, nil
+		}
 		return toHost(host, t.Auth.Header, t.Auth.Value), true, nil
 	case domain.MCPAuthModeClientCredentials:
 		token, err := c.grant(ctx, t.Auth)

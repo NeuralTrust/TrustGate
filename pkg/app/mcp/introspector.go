@@ -49,6 +49,9 @@ func (i *introspector) ListRegistryTools(ctx context.Context, gatewayID ids.Gate
 	if notIntrospectable(reg) {
 		return nil, fmt.Errorf("%w: registry %s", ErrRegistryNotIntrospectable, registryID)
 	}
+	if reg.CredentialUnavailable() {
+		return nil, registrydomain.ErrSecretUnavailable
+	}
 	up, err := i.dialer.Connect(ctx, StaticTarget(reg))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, err)
