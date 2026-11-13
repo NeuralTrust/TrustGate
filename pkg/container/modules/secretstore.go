@@ -65,6 +65,9 @@ func SecretStoresModule(c *container.Container) error {
 	if err := c.Provide(provideSecretStores); err != nil {
 		return err
 	}
+	if err := c.Provide(provideSecretStoreTester); err != nil {
+		return err
+	}
 	if err := c.Provide(func(s *SecretStores) appsecretref.Materializer { return s.Materializer }); err != nil {
 		return err
 	}
@@ -124,6 +127,20 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 		p.Logger.Info("secret stores loaded", slog.Int("stores", len(s.Catalog.Stores())), slog.String("eligibility", string(cfg.Gateways)))
 	}
 	return s, nil
+}
+
+// provideSecretStoreTester serves the admin test and the data-plane
+// diagnostics route alike, against this plane's own catalog.
+func provideSecretStoreTester(cfg *config.Config, stores *SecretStores, gateways gatewaydomain.Repository) appsecretstore.Tester {
+	tc := appsecretstore.TesterConfig{
+		Eligibility: cfg.SecretStores.Gateways,
+		Gateways:    gateways,
+		Timeout:     cfg.SecretStores.FetchTimeout,
+	}
+	if stores.Catalog != nil {
+		tc.Catalog = stores.Catalog
+	}
+	return appsecretstore.NewTester(tc)
 }
 
 // storesChanged drops what was read from stores the store file added,
@@ -199,7 +216,12 @@ func provideSecretStoresAdmin(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(gateways gatewaydomain.Repository, sources appsecretstore.SourceResolver, usages appsecretstore.UsagesFinder) *secretstorehttp.ListHandler {
+	if err := c.Provide(func(gateways gatewaydomain.Repository, sources appsecretstore.SourceResolver, usages appsecretstore.UsagesFinder) *secretstorehttp.ListHandler {
 		return secretstorehttp.NewListHandler(gateways, sources, usages)
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(gateways gatewaydomain.Repository, sources appsecretstore.SourceResolver, tester appsecretstore.Tester) *secretstorehttp.TestHandler {
+		return secretstorehttp.NewTestHandler(gateways, sources, tester)
 	})
 }

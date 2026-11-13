@@ -122,6 +122,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_path_not_allowed", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrDataPlaneTooOld):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "data_plane_too_old", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrTestRunsOnDataPlane):
+		return fiber.StatusConflict, ErrorBody{Error: "test_runs_on_data_plane", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrStoreUnverified):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_store_unverified", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):

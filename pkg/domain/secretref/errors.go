@@ -29,5 +29,6 @@ var (
 	ErrPathNotAllowed         = fmt.Errorf("the path is outside the secret store's allowed paths: %w", commonerrors.ErrValidation)
 	ErrDataPlaneTooOld        = fmt.Errorf("a data plane of this gateway does not understand secret references; upgrade it first: %w", commonerrors.ErrValidation)
 	ErrStoreUnverified        = fmt.Errorf("no data plane of this gateway is connected to confirm the secret store; retry with allow_unverified_secret_refs=true to save it anyway: %w", commonerrors.ErrValidation)
+	ErrTestRunsOnDataPlane    = fmt.Errorf("this gateway's secret stores are configured on its data planes; test them there: %w", commonerrors.ErrConflict)
 	ErrMissingScope           = fmt.Errorf("writing a secret reference requires the secret_stores:read scope: %w", commonerrors.ErrForbidden)
 )
