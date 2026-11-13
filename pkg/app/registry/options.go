@@ -46,6 +46,7 @@ type options struct {
 	openapi    appopenapi.Compiler
 	auths      AuthLookup
 	cards      agentCards
+	scanner    SkillScanner
 	shared     sharedPlane
 	secretRefs SecretRefValidator
 }
@@ -85,6 +86,12 @@ func WithCardSecrets(m RegistryMaterializer, v SecretRefValidator) Option {
 	return func(o *options) { o.cards.secrets, o.cards.refs = m, v }
 }
 
+// WithSkillScanner has TrustGuard score each skill of a card when it is
+// pinned, previewed or compared. Without it skills are not scanned.
+func WithSkillScanner(s SkillScanner) Option {
+	return func(o *options) { o.scanner = s }
+}
+
 // WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
 // an A2A registry on a gateway no data plane of its own serves applies
 // domain.A2ATarget.ValidateSharedDataPlane.
@@ -106,6 +113,7 @@ func applyOptions(opts []Option) options {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	o.cards.scanner = o.scanner
 	return o
 }
 

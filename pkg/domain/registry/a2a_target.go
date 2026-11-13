@@ -70,6 +70,9 @@ type A2ATarget struct {
 	Card              json.RawMessage    `json:"card,omitempty"`
 	CardDigest        string             `json:"card_digest,omitempty"`
 	CardPinnedAt      time.Time          `json:"card_pinned_at,omitzero"`
+	// SkillScan is TrustGuard's verdict on each skill of the pinned card. Nil
+	// when the card was not scanned.
+	SkillScan []SkillVerdict `json:"skill_scan,omitempty"`
 	// UnreadableHeaders names the static headers read from storage whose value
 	// could not be decrypted and was returned empty. Never serialised.
 	UnreadableHeaders []string `json:"-"`
@@ -195,6 +198,7 @@ func (t *A2ATarget) Pin(resolvedURL string, card []byte, now time.Time) error {
 	pinned.Card = card
 	pinned.CardDigest = digest
 	pinned.CardPinnedAt = now.UTC()
+	pinned.SkillScan = nil
 	if pinned.CardAuth == A2ACardAuthSame && hostOf(pinned.Endpoint()) != hostOf(resolvedURL) {
 		return fmt.Errorf("%w: card_auth same sends the credential only to the agent's own host; the card is on %s and the endpoint on %s",
 			ErrInvalidRegistry, hostOf(resolvedURL), hostOf(pinned.Endpoint()))

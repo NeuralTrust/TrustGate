@@ -43,6 +43,9 @@ type A2ATargetResponse struct {
 	Card              json.RawMessage           `json:"card,omitempty" swaggertype:"object"`
 	CardDigest        string                    `json:"card_digest,omitempty"`
 	CardPinnedAt      time.Time                 `json:"card_pinned_at,omitzero"`
+	// SkillScan is TrustGuard's indirect prompt injection verdict on each skill
+	// of the pinned card; absent when the card was not scanned.
+	SkillScan []domain.SkillVerdict `json:"skill_scan,omitempty"`
 }
 
 func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
@@ -73,5 +76,6 @@ func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
 		Card:              t.Card,
 		CardDigest:        t.CardDigest,
 		CardPinnedAt:      t.CardPinnedAt,
+		SkillScan:         t.SkillScan,
 	}
 }
