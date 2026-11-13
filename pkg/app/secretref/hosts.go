@@ -77,6 +77,9 @@ func llmUpstream(t *registry.LLMTarget) string {
 			return t.Auth.Azure.Endpoint
 		}
 		return ""
+	case provider.Watsonx:
+		region, _ := t.ProviderOptions["region"].(string)
+		return provider.WatsonxHost(strings.ToLower(strings.TrimSpace(region)))
 	}
 	return provider.DefaultHost(t.Provider)
 }
@@ -86,6 +89,11 @@ func llmHosts(t *registry.LLMTarget, path []string) []string {
 	upstream := llmUpstream(t)
 	if len(path) < 3 {
 		return nil
+	}
+	// A watsonx credential is an IBM Cloud API key: IAM receives it and
+	// returns the bearer token the upstream receives.
+	if t.Provider == provider.Watsonx {
+		return allOrNone(upstream, provider.WatsonxIAMHost)
 	}
 	switch path[2] {
 	case "aws":

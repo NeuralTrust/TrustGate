@@ -82,6 +82,18 @@ func TestCredentialHostsFollowTheFieldThatSendsThem(t *testing.T) {
 	if got := llmHosts(vertex, []string{"llm_target", "auth", "gcp_service_account"}); !slices.Equal(got, []string{"europe-west1-aiplatform.googleapis.com", "oauth2.googleapis.com"}) {
 		t.Errorf("vertex hosts = %v", got)
 	}
+	watsonx := &registry.LLMTarget{Provider: "watsonx", ProviderOptions: map[string]any{"region": " EU-DE ", "project_id": "p"}}
+	if got := llmHosts(watsonx, []string{"llm_target", "auth", "api_key", "api_key"}); !slices.Equal(got, []string{"eu-de.ml.cloud.ibm.com", "iam.cloud.ibm.com"}) {
+		t.Errorf("watsonx api key hosts = %v, want the region and IBM Cloud IAM", got)
+	}
+	watsonx.ProviderOptions["base_url"] = "https://private.eu-de.ml.cloud.ibm.com"
+	if got := llmHosts(watsonx, []string{"llm_target", "auth", "api_key", "api_key"}); !slices.Equal(got, []string{"private.eu-de.ml.cloud.ibm.com", "iam.cloud.ibm.com"}) {
+		t.Errorf("watsonx honors base_url: %v", got)
+	}
+	unknown := &registry.LLMTarget{Provider: "watsonx", ProviderOptions: map[string]any{"region": "eu-de.attacker.example"}}
+	if got := llmHosts(unknown, []string{"llm_target", "auth", "api_key", "api_key"}); got != nil {
+		t.Errorf("a region that serves no watsonx.ai must leave no host: %v", got)
+	}
 	azure := &registry.LLMTarget{Provider: "azure", ProviderOptions: map[string]any{"base_url": "https://api.openai.com"},
 		Auth: &registry.TargetAuth{Azure: &registry.AzureAuth{Endpoint: "https://acme.attacker.example"}}}
 	if got := llmHosts(azure, []string{"llm_target", "auth", "azure", "api_key"}); !slices.Equal(got, []string{"acme.attacker.example"}) {

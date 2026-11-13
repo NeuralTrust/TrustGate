@@ -20,10 +20,26 @@ import "testing"
 // saying where its credentials go: a store with allowed destinations would
 // otherwise refuse every reference it holds.
 func TestEveryProviderHasAHostRule(t *testing.T) {
-	derived := map[string]bool{Vertex: true, Bedrock: true, Azure: true, OpenAICompatible: true}
+	derived := map[string]bool{Vertex: true, Bedrock: true, Azure: true, OpenAICompatible: true, Watsonx: true}
 	for _, name := range Supported() {
 		if DefaultHost(name) == "" && !derived[name] {
 			t.Errorf("provider %q has no default host and derives none", name)
 		}
+	}
+}
+
+func TestWatsonxHost(t *testing.T) {
+	for _, region := range WatsonxRegions() {
+		if got, want := WatsonxHost(region), region+".ml.cloud.ibm.com"; got != want {
+			t.Errorf("WatsonxHost(%q) = %q, want %q", region, got, want)
+		}
+	}
+	for _, region := range []string{"", "EU-DE", "eu-de.attacker.example", "ap-south-1", "us-south#"} {
+		if got := WatsonxHost(region); got != "" {
+			t.Errorf("WatsonxHost(%q) = %q, want no host", region, got)
+		}
+	}
+	if !HonorsBaseURL(Watsonx) {
+		t.Error("watsonx calls provider_options.base_url when it is set")
 	}
 }
