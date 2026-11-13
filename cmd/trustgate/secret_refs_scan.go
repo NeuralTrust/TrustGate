@@ -52,7 +52,7 @@ func runSecretRefsScan(stdout, stderr io.Writer) int {
 		return scanExitFailed
 	}
 	var findings []appsecretstore.Finding
-	err = c.Invoke(func(repo registrydomain.Repository, gateways gatewaydomain.Repository, entities modules.SecretEntityListers) error {
+	err = c.Invoke(func(repo registrydomain.Repository, gateways gatewaydomain.Repository, entities modules.SecretScanListers) error {
 		ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 		defer cancel()
 		findings, err = appsecretstore.ScanReferences(ctx, appsecretstore.ScanSources{

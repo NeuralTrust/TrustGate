@@ -16,6 +16,7 @@ package secretref
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"testing"
@@ -180,5 +181,20 @@ func TestPrewarmResolvesEveryEntity(t *testing.T) {
 	sort.Strings(got)
 	if len(got) != 2 || got[0] != "vault/llm/idp" || got[1] != "vault/llm/openai" {
 		t.Fatalf("resolved %v; want the entity's allowed reference too", got)
+	}
+}
+
+func TestPrewarmKeepsGoingWhenAnEntityListFails(t *testing.T) {
+	resolver := &scriptedResolver{}
+	p, _ := prewarmFixture(resolver)
+	p.cfg.Entities = []func(context.Context, ids.GatewayID) ([]Use, error){
+		func(context.Context, ids.GatewayID) ([]Use, error) { return nil, errors.New("db down") },
+	}
+	pending, err := p.pass(context.Background())
+	if err != nil || pending != 1 {
+		t.Fatalf("pass = %d, %v; want the failed list counted for a retry", pending, err)
+	}
+	if got := resolver.calls(); len(got) != 1 {
+		t.Fatalf("resolved %v; registries must still be prewarmed", got)
 	}
 }
