@@ -26,6 +26,8 @@ import (
 const (
 	AgentRPCPath  = "/:consumer/agents/:agent"
 	AgentCardPath = AgentRPCPath + "/.well-known/agent-card.json"
+	// AgentChatPath is the OpenAI chat completions bridge to the agent.
+	AgentChatPath = AgentRPCPath + "/v1/chat/completions"
 )
 
 type agentRouter struct {
@@ -70,5 +72,6 @@ func (r *agentRouter) BuildRoutes(app *fiber.App) error {
 
 	app.Get(AgentCardPath, append(r.authTransport.GetMiddlewares(), r.a2aHandler.Card)...)
 	app.Post(AgentRPCPath, append(r.authTransport.GetMiddlewares(), r.a2aHandler.RPC)...)
+	app.Post(AgentChatPath, append(r.authTransport.GetMiddlewares(), r.a2aHandler.ChatCompletions)...)
 	return nil
 }

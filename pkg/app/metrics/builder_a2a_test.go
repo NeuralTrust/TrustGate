@@ -87,6 +87,7 @@ func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"1","parts":[{"text":"Hello!"},{"data":{"a":1}},{"text":"Find flats"}]}}}`:                             "Hello! Find flats",
 		`{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","kind":"message","messageId":"1","parts":[{"kind":"text","text":"Book a trip"},{"kind":"file","file":{"uri":"x"}}]}}}`: "Book a trip",
 		`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"t-1"}}`: "",
+		`{"model":"x","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":[{"type":"text","text":"Flights?"}]}]}`: "Flights?",
 	}
 	for body, want := range cases {
 		rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})

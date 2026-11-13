@@ -158,6 +158,38 @@ API_KEY_2=<another application's key> \
 scripts/a2a-user-check.sh
 ```
 
+### OpenAI chat completions
+
+An application that speaks the OpenAI API can call an agent as a model at
+`POST /{consumer}/agents/{agent}/v1/chat/completions`, with the same
+credentials, policies and ownership as a JSON-RPC call:
+
+```python
+client = OpenAI(base_url="https://<gateway>.agents.<domain>/<consumer>/agents/<agent>/v1",
+                 api_key="unused", default_headers={"X-AG-API-Key": "<key>"})
+reply = client.chat.completions.create(model="agent", messages=[{"role": "user", "content": "Hi"}])
+```
+
+- The last user message (its text, or the text parts of its content) goes to
+  the agent as one A2A message: `message/send` or `SendMessage` by the pinned
+  version. Earlier messages and `model` are ignored: the agent keeps the
+  conversation.
+- The answer is a `chat.completion`: a message's text, else a task's
+  artifacts, else its status message. `usage` is set when the agent reports
+  tokens.
+- The conversation is the agent's contextId. It comes back in the
+  `X-AG-A2A-Context-Id` header and as `a2a_context_id` on the completion and
+  on every chunk; sending the header continues it. A context the caller does
+  not own answers 404.
+- `"stream": true` streams `chat.completion.chunk`s of the agent's text when
+  the agent streams, then a chunk with `finish_reason: "stop"` and
+  `data: [DONE]`. Notes of a working status are not sent. An agent that does
+  not stream answers the whole text as one chunk.
+- Errors are OpenAI errors: a policy block 403 (`policy_blocked`), a rate
+  limit 429, an agent or gateway failure 502 (`upstream_error`), a user
+  identity required 401. In a stream the error is the last event before
+  `[DONE]`.
+
 ## Card pinning
 
 For a `card_url` whose path ends in `.json` or `/agentCard/v1.0` the gateway
