@@ -123,7 +123,7 @@ func (h *UserHeadersHandler) Import(c *fiber.Ctx) error {
 
 // Link godoc
 // @Summary      Issue one person's link to enter their header values
-// @Description  Mints the connect page one person walks to enter their own values for this instance. Hand it to that person: it acts as them.
+// @Description  Mints the connect page one person walks to enter their own values for this instance. Hand it to that person: it acts as them. consumer_path names the virtual MCP that binds the server and is required for a custom server.
 // @Tags         registries
 // @Accept       json
 // @Produce      json

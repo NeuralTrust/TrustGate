@@ -296,6 +296,12 @@ func (s *userHeaderAdmin) Link(
 	}
 	consumerPath = strings.TrimSpace(consumerPath)
 	if consumerPath == "" {
+		// Only a server the Store materialised is reached through the Store; a
+		// custom server is reached through the virtual MCP that binds it, and
+		// a link to the Store would show the person nothing to fill in.
+		if reg.MCPTarget.Origin != domain.MCPOriginStore {
+			return nil, fmt.Errorf("%w: consumer_path is required for a server the Store does not serve", ErrUserHeaderImportInvalid)
+		}
 		consumerPath = appconsumer.MCPPath(consumerdomain.StoreSlug)
 	}
 	ticket, err := s.tickets.CreateResumableServerTicket(
@@ -312,13 +318,12 @@ func (s *userHeaderAdmin) audit(ctx context.Context, event string, gatewayID ids
 	AuditUserHeader(ctx, s.logger, event, gatewayID, registryID, principalSub, header, "admin")
 }
 
-// WriteUserHeaderCredential stores a per-user header value where the MCP data
-// plane reads it. A control-plane vault writes Postgres and reads the shared
-// Redis behind it; the data plane reads only that Redis, so the write goes to
-// both. Writing clears a refusal mark: the value is new.
+// WriteUserHeaderCredential stores a per-user header value in the store every
+// plane reads (see vaultdomain.SharedStoreUpserter). Writing clears a refusal
+// mark: the value is new.
 func WriteUserHeaderCredential(ctx context.Context, vault vaultdomain.Repository, cred *vaultdomain.Credential) error {
-	if replicated, ok := vault.(vaultdomain.ReplicatedUpserter); ok {
-		return replicated.UpsertReplicated(ctx, cred)
+	if shared, ok := vault.(vaultdomain.SharedStoreUpserter); ok {
+		return shared.UpsertShared(ctx, cred)
 	}
 	return vault.Upsert(ctx, cred)
 }

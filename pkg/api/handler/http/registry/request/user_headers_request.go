@@ -20,8 +20,9 @@ type UserHeaderLinkRequest struct {
 	// PrincipalSub is the person: the subject their token carries, or
 	// app:<consumer_id>:<end_user> for an end user an application names.
 	PrincipalSub string `json:"principal_sub"`
-	// ConsumerPath is the virtual MCP the person reaches the server through.
-	// Empty uses the MCP Store.
+	// ConsumerPath is the virtual MCP the person reaches the server through,
+	// e.g. /dev/mcp. Required for a custom server; empty uses the MCP Store,
+	// which serves only the servers it materialised.
 	ConsumerPath string `json:"consumer_path,omitempty"`
 	// ResumeURL is where the page sends the person once they are done.
 	ResumeURL string `json:"resume_url,omitempty"`

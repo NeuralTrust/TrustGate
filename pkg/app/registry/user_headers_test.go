@@ -34,9 +34,9 @@ import (
 // prefixVault is an in-memory vault with the admin prefix operations and a
 // replicated write, recording which path a write took.
 type prefixVault struct {
-	mu         sync.Mutex
-	creds      map[string]*vaultdomain.Credential
-	replicated int
+	mu     sync.Mutex
+	creds  map[string]*vaultdomain.Credential
+	shared int
 }
 
 func newPrefixVault() *prefixVault { return &prefixVault{creds: map[string]*vaultdomain.Credential{}} }
@@ -54,8 +54,8 @@ func (v *prefixVault) Upsert(_ context.Context, c *vaultdomain.Credential) error
 	return nil
 }
 
-func (v *prefixVault) UpsertReplicated(ctx context.Context, c *vaultdomain.Credential) error {
-	v.replicated++
+func (v *prefixVault) UpsertShared(ctx context.Context, c *vaultdomain.Credential) error {
+	v.shared++
 	return v.Upsert(ctx, c)
 }
 
@@ -141,7 +141,7 @@ func TestUserHeaderAdmin_ImportListReset(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 3, n)
-	require.Equal(t, 3, vault.replicated, "admin writes must reach the data plane's store")
+	require.Equal(t, 3, vault.shared, "admin writes must land in the store the data plane reads")
 
 	holders, err := admin.Holders(ctx, gw, reg.ID)
 	require.NoError(t, err)
@@ -204,8 +204,10 @@ func TestUserHeaderAdmin_LinkActsAsThePerson(t *testing.T) {
 	require.Equal(t, reg.ID.String(), tickets.last.instanceID)
 	require.Equal(t, "/dev/mcp", tickets.last.consumerPath)
 
-	_, err = admin.Link(ctx, gw, reg.ID, "app:c1", "", "")
+	_, err = admin.Link(ctx, gw, reg.ID, "app:c1", "/dev/mcp", "")
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	_, err = admin.Link(ctx, gw, reg.ID, "ana", "", "")
+	require.ErrorIs(t, err, commonerrors.ErrValidation, "a custom server's link names the virtual MCP that binds it")
 }
 
 func TestUserHeaderAdmin_RegistryWithoutUserHeaders(t *testing.T) {

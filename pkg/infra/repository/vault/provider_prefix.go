@@ -33,7 +33,7 @@ var (
 	_ domain.ProviderPrefixStore = (*Repository)(nil)
 	_ domain.ProviderPrefixStore = (*redisRepository)(nil)
 	_ domain.ProviderPrefixStore = (*fallbackRepository)(nil)
-	_ domain.ReplicatedUpserter  = (*fallbackRepository)(nil)
+	_ domain.SharedStoreUpserter = (*fallbackRepository)(nil)
 )
 
 // errEmptyProviderPrefix refuses a prefix that would match every credential.
@@ -210,12 +210,9 @@ func (r *fallbackRepository) DeleteByProviderPrefix(ctx context.Context, gateway
 	return total, nil
 }
 
-// UpsertReplicated writes to both stores, so a value an admin sets on the
-// control plane is read by the data plane, which only reads the shared Redis.
-func (r *fallbackRepository) UpsertReplicated(ctx context.Context, c *domain.Credential) error {
-	if err := r.primary.Upsert(ctx, c); err != nil {
-		return err
-	}
+// UpsertShared writes to the shared store behind the primary, the one the
+// data plane reads; the control plane finds it there through the fallback.
+func (r *fallbackRepository) UpsertShared(ctx context.Context, c *domain.Credential) error {
 	return r.fallback.Upsert(ctx, c)
 }
 

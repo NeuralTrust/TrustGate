@@ -42,10 +42,11 @@ type ProviderPrefixStore interface {
 	DeleteByProviderPrefix(ctx context.Context, gatewayID ids.GatewayID, prefix string) (int, error)
 }
 
-// ReplicatedUpserter is a store that can write a credential everywhere it is
-// read from. A control-plane write meant for the MCP data plane uses it: the
-// control plane writes to Postgres, and the data plane reads the shared Redis
-// vault only.
-type ReplicatedUpserter interface {
-	UpsertReplicated(ctx context.Context, c *Credential) error
+// SharedStoreUpserter is a store that can write a credential to the store
+// every plane reads. The control-plane vault writes Postgres and reads the
+// shared Redis behind it; the MCP data plane reads only that Redis. A value a
+// person may write or remove from either plane is kept there alone, so no
+// copy in Postgres outlives a change made on the data plane.
+type SharedStoreUpserter interface {
+	UpsertShared(ctx context.Context, c *Credential) error
 }
