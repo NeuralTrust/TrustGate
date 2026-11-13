@@ -17,6 +17,8 @@ package secretref
 import (
 	"context"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+
 	"encoding/json"
 	"maps"
 
@@ -43,6 +45,9 @@ type EntityRefs struct {
 	// Destination fingerprints where the entity sends its credentials; a
 	// change re-checks every reference it holds.
 	Destination string
+	// Gateway is the gateway itself when the write is to the gateway, which
+	// a create has not stored yet; otherwise it is read by GatewayID.
+	Gateway *gateway.Gateway
 }
 
 // Stored returns what to compare the next write of the entity with.

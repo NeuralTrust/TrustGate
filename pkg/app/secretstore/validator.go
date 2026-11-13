@@ -133,9 +133,12 @@ func (v *registryValidator) ValidateEntity(ctx context.Context, current appsecre
 		parsed = append(parsed, parsedUse{path: strings.Join(u.Path, "."), ref: ref})
 	}
 
-	gw, err := v.gateways.FindByID(ctx, current.GatewayID)
-	if err != nil {
-		return nil, err
+	gw := current.Gateway
+	if gw == nil {
+		var err error
+		if gw, err = v.gateways.FindByID(ctx, current.GatewayID); err != nil {
+			return nil, err
+		}
 	}
 	src, err := v.sources.Source(ctx, gw)
 	if err != nil {

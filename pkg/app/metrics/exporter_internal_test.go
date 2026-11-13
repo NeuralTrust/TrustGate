@@ -198,7 +198,7 @@ func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	p := NewPipeline(nil, cache, nil, internalTestLogger(),
 		telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "default"}})
 
-	overridden := p.resolveTargets([]telemetrydomain.ExporterConfig{
+	overridden := p.resolveTargets("", []telemetrydomain.ExporterConfig{
 		{Name: "primary", Settings: map[string]interface{}{"topic": "other"}},
 	})
 	require.Len(t, overridden, 1)
@@ -208,7 +208,7 @@ func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	require.Len(t, built, 1)
 	assert.Equal(t, "other", built[0].Settings["topic"], "primary must be built from the gateway config, not the default")
 
-	added := p.resolveTargets([]telemetrydomain.ExporterConfig{
+	added := p.resolveTargets("", []telemetrydomain.ExporterConfig{
 		{Name: "other", Settings: map[string]interface{}{"topic": "x"}},
 	})
 	require.Len(t, added, 2, "a differently-named exporter is added on top of the default")
@@ -220,7 +220,7 @@ func TestPipeline_OverrideFailureSkipsTarget(t *testing.T) {
 	p := NewPipeline(nil, cache, nil, internalTestLogger(),
 		telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": "default"}})
 
-	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
+	targets := p.resolveTargets("", []telemetrydomain.ExporterConfig{
 		{Name: "primary", Settings: map[string]interface{}{"topic": "bad"}},
 	})
 
@@ -262,7 +262,7 @@ func TestPipeline_MergeMatrix(t *testing.T) {
 			cache := NewExporterCache(factory, internalTestLogger())
 			p := NewPipeline(nil, cache, nil, internalTestLogger(), tt.defaults...)
 
-			targets := p.resolveTargets(tt.explicit)
+			targets := p.resolveTargets("", tt.explicit)
 
 			if tt.want == nil {
 				require.Nil(t, targets)
@@ -282,7 +282,7 @@ func TestPipeline_ResolveTargetsDedupesDuplicateExplicitByName(t *testing.T) {
 	cache := NewExporterCache(factory, internalTestLogger())
 	p := NewPipeline(nil, cache, nil, internalTestLogger())
 
-	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
+	targets := p.resolveTargets("", []telemetrydomain.ExporterConfig{
 		{Name: "dup", Settings: map[string]interface{}{"topic": "first"}},
 		{Name: "dup", Settings: map[string]interface{}{"topic": "second"}},
 	})
@@ -304,7 +304,7 @@ func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
 
-	targets := p.resolveTargets(nil)
+	targets := p.resolveTargets("", nil)
 	require.Len(t, targets, 2)
 	byName := make(map[string]*fakeExporter, len(targets))
 	for _, tgt := range targets {
@@ -332,7 +332,7 @@ func TestPipeline_SameNameDifferentClassPublishesBoth(t *testing.T) {
 	}
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
 
-	targets := p.resolveTargets(nil)
+	targets := p.resolveTargets("", nil)
 	require.Len(t, targets, 2)
 
 	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
@@ -377,7 +377,7 @@ func TestPipeline_RoutesByDataClass(t *testing.T) {
 		Body:       []byte(`{"choices":[{"message":{"content":"secret answer"}}]}`),
 	}
 
-	targets := p.resolveTargets(nil)
+	targets := p.resolveTargets("", nil)
 	require.Len(t, targets, 2)
 	byName := make(map[string]*fakeExporter, len(targets))
 	for _, tgt := range targets {
@@ -409,7 +409,7 @@ func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
 
-	targets := p.resolveTargets(nil)
+	targets := p.resolveTargets("", nil)
 	require.Len(t, targets, 1)
 	exporter := targets[0].(*fakeExporter)
 
@@ -436,7 +436,7 @@ func TestPipeline_PlaygroundPublishesExportersAndStore(t *testing.T) {
 	}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
 
-	targets := p.resolveTargets(nil)
+	targets := p.resolveTargets("", nil)
 	require.Len(t, targets, 1)
 	exporter := targets[0].(*fakeExporter)
 
@@ -474,7 +474,7 @@ func TestPipeline_GatewayExportersAreBuiltWithTheTenantPolicy(t *testing.T) {
 		telemetrydomain.ExporterConfig{Name: "metadata-otlp", Type: "otlp"},
 		telemetrydomain.ExporterConfig{Name: "raw-postgres", Type: "postgres"})
 
-	p.resolveTargets([]telemetrydomain.ExporterConfig{
+	p.resolveTargets("", []telemetrydomain.ExporterConfig{
 		{Name: "raw-postgres", Type: "postgres", Settings: map[string]interface{}{"dsn_env": "DATABASE_URL"}},
 		{Name: "extra", Type: "otlp"},
 	})
