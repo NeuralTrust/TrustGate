@@ -30,10 +30,12 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -173,6 +175,19 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 // config; only embedding_provider and embedding_model have top-level aliases.
 func (p *Plugin) CredentialPaths() []string {
 	return []string{"embedding.api_key"}
+}
+
+// CredentialHosts is where embedding.api_key goes: the embedding provider's
+// API.
+func (p *Plugin) CredentialHosts(settings map[string]any) []string {
+	cfg, err := pluginutil.Parse[config](settings)
+	if err != nil {
+		return nil
+	}
+	if host := provider.DefaultHost(cfg.provider()); host != "" {
+		return []string{host}
+	}
+	return nil
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {

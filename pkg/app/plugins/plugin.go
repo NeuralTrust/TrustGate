@@ -175,6 +175,32 @@ type CredentialDestinations interface {
 	CredentialDestinations() []string
 }
 
+// CredentialHosts is the optional companion of CredentialSettings that says
+// where a policy's settings send the plugin's credentials: the hosts a
+// store's allowed destinations are checked against. A plugin without it, or
+// one that returns no host, has its referenced credentials refused by such a
+// store.
+type CredentialHosts interface {
+	CredentialHosts(settings map[string]any) []string
+}
+
+// PluginCredentialHosts returns the hosts slug sends its credentials to under
+// settings, or nil when the plugin cannot tell or is unknown.
+func PluginCredentialHosts(reg Registry, slug string, settings map[string]any) []string {
+	if reg == nil {
+		return nil
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return nil
+	}
+	h, ok := p.(CredentialHosts)
+	if !ok {
+		return nil
+	}
+	return h.CredentialHosts(settings)
+}
+
 // PluginCredentialDestinations returns the destination paths bound to slug's
 // credentials, or nil when the plugin declares none or is unknown.
 func PluginCredentialDestinations(reg Registry, slug string) []string {

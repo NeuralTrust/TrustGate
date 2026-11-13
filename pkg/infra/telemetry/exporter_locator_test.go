@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -138,4 +139,18 @@ func TestExporterLocator_BuildInjectsDeclaredClass(t *testing.T) {
 		assert.Equal(t, metricsschema.Metadata, exp.DataClass())
 		assert.Equal(t, 0, exp.setCalls)
 	})
+}
+
+func TestLocatorRefusesAReferenceShapedCredential(t *testing.T) {
+	t.Parallel()
+	locator := newLocator()
+	for _, cfg := range []telemetrydomain.ExporterConfig{
+		{Name: "otel", Type: "otlp", Settings: map[string]any{"endpoint": "https://otel.example:4318", "headers": map[string]any{"Authorization": "secret://vault/otel#token"}}},
+		{Name: "otel", Type: "otlp", Settings: map[string]any{"endpoint": "https://otel.example:4318", "Headers": map[string]string{"X-Key": "SECRET://vault/otel#k"}}},
+		{Name: "pg", Type: "postgres", Settings: map[string]any{"dsn": "secret://vault/pg#dsn"}},
+	} {
+		if _, err := locator.BuildTenant(cfg); err == nil || !strings.Contains(err.Error(), "secret reference") {
+			t.Fatalf("%s: err = %v; an unresolved reference must never be sent", cfg.Name, err)
+		}
+	}
 }

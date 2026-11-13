@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -405,9 +407,9 @@ func backendEmbeddingToDomain(c *registry.EmbeddingConfig) *embedding.Config {
 	}
 	if c.Auth != nil {
 		out.Credentials = embedding.Credentials{
-			APIKey:      c.Auth.APIKey,
+			APIKey:      secretref.Literal(c.Auth.APIKey),
 			HeaderName:  c.Auth.HeaderName,
-			HeaderValue: c.Auth.HeaderValue,
+			HeaderValue: secretref.Literal(c.Auth.HeaderValue),
 		}
 		if out.Credentials.APIKey == "" && out.Credentials.HeaderValue != "" {
 			out.Credentials.APIKey = out.Credentials.HeaderValue

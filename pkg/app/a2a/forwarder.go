@@ -24,6 +24,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -335,6 +337,9 @@ func ownerOf(call *Call) Owner {
 func (x *Exchange) upstreamHeader(ctx context.Context, credential http.Header) http.Header {
 	h := http.Header{}
 	for name, value := range x.call.Agent.A2ATarget.Headers {
+		if secretref.IsRef(value) {
+			continue
+		}
 		h.Set(name, value)
 	}
 	for name, values := range credential {

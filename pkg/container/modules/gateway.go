@@ -67,13 +67,13 @@ func provideGatewayRepository(c *container.Container) error {
 }
 
 func provideGatewayServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
-		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
+	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config, refs secretRefsParams) appgateway.Creator {
+		return appgateway.NewCreator(repo, registries, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg), refs.gatewayOptions()...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
-		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg))
+	if err := c.Provide(func(repo domain.Repository, registries registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config, refs secretRefsParams) appgateway.Updater {
+		return appgateway.NewUpdater(repo, registries, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, reservedGatewayDomains(cfg), refs.gatewayOptions()...)
 	}); err != nil {
 		return err
 	}

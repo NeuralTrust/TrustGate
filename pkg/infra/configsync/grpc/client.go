@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
+
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	usagedomain "github.com/NeuralTrust/TrustGate/pkg/domain/usage"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -63,7 +65,13 @@ type Client struct {
 	usageSink    UsageSink
 	acceptsUsage atomic.Bool
 
-	heartbeat         *snapshotpb.Heartbeat
+	heartbeat *snapshotpb.Heartbeat
+	// secretStores reports the secret stores this plane loaded, read at each
+	// heartbeat; nil reports none.
+	secretStores func() []secretstore.Status
+	// secretRefs reports the outcome of the references this plane resolved,
+	// read at each heartbeat; nil reports none.
+	secretRefs        func() secretstore.RefHealth
 	heartbeatInterval time.Duration
 
 	layered   bool
@@ -199,7 +207,7 @@ func (c *Client) fetchSnapshot(ctx context.Context, etag string) ([]byte, string
 	// worker stops.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID})
+	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID, AcceptsSecretRefs: true})
 	if err != nil {
 		return nil, "", false, fmt.Errorf("configsync: get snapshot: %w", err)
 	}
@@ -351,6 +359,7 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		AcceptsUsageChanges: c.acceptsUsage.Load(),
 		AcceptsManagedLimit: c.acceptsUsage.Load(),
 		AcceptsLayered:      c.layered,
+		AcceptsSecretRefs:   true,
 	}}}
 	helloResult := make(chan error, 1)
 	go func() { helloResult <- stream.Send(hello) }()
@@ -366,8 +375,8 @@ func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncCl
 		streamCancel()
 		return nil, streamErr("send hello", err)
 	}
-	if c.heartbeat != nil {
-		heartbeat := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Heartbeat{Heartbeat: c.heartbeat}}
+	if hb := c.currentHeartbeatLocked(); hb != nil {
+		heartbeat := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Heartbeat{Heartbeat: hb}}
 		heartbeatResult := make(chan error, 1)
 		go func() { heartbeatResult <- stream.Send(heartbeat) }()
 		select {

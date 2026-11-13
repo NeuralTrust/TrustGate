@@ -353,7 +353,7 @@ func (c *client) getOrCreateClient(ctx context.Context, credentials providers.Cr
 			return nil, err
 		}
 		bedrockRuntimeClient := bedrockruntime.NewFromConfig(cfg)
-		c.clientPool.Store(clientKey, bedrockRuntimeClient)
+		c.storeClient(clientKey, credentials, bedrockRuntimeClient)
 		return bedrockRuntimeClient, nil
 	}
 
@@ -378,12 +378,35 @@ func (c *client) getOrCreateClient(ctx context.Context, credentials providers.Cr
 	if runtimeClient == nil {
 		return nil, fmt.Errorf("failed to get runtime client")
 	}
-	c.clientPool.Store(clientKey, runtimeClient)
+	c.storeClient(clientKey, credentials, runtimeClient)
 
 	return runtimeClient, nil
 }
 
+// storeClient pools cl. A client built from referenced credentials replaces
+// every earlier one of the same registry, so rotating a referenced value
+// never grows the pool, which has no eviction.
+func (c *client) storeClient(key string, credentials providers.Credentials, cl *bedrockruntime.Client) {
+	if credentials.PoolKey != "" {
+		prefix := providers.RefPoolKeyPrefix(credentials.PoolKey)
+		c.clientPool.Range(func(k, _ any) bool {
+			if s, ok := k.(string); ok && s != key && strings.HasPrefix(s, prefix) {
+				c.clientPool.Delete(k)
+			}
+			return true
+		})
+	}
+	c.clientPool.Store(key, cl)
+}
+
 func buildClientKey(credentials providers.Credentials) string {
+	if credentials.PoolKey != "" {
+		region := ""
+		if credentials.AwsBedrock != nil {
+			region = credentials.AwsBedrock.Region
+		}
+		return credentials.PoolKey + ":" + region
+	}
 	if credentials.AwsBedrock == nil {
 		return credentials.ApiKey
 	}

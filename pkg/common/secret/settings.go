@@ -350,3 +350,37 @@ func cloneMap(m map[string]any) map[string]any {
 	}
 	return out
 }
+
+// SettingString returns the string at the dotted path of settings, if one is
+// there.
+func SettingString(settings map[string]any, path string) (string, bool) {
+	v, ok := pathGet(settings, strings.Split(path, "."))
+	s, isString := v.(string)
+	return s, ok && isString
+}
+
+// WithSettingStrings returns settings with the string at each dotted path of
+// values replaced. The objects along each path are copied, so settings itself
+// is never modified; a path through a non-object is skipped.
+func WithSettingStrings(settings map[string]any, values map[string]string) map[string]any {
+	out := cloneMap(settings)
+	for path, v := range values {
+		parts := strings.Split(path, ".")
+		cur := out
+		ok := true
+		for _, part := range parts[:len(parts)-1] {
+			next, isMap := cur[part].(map[string]any)
+			if !isMap {
+				ok = false
+				break
+			}
+			cp := cloneMap(next)
+			cur[part] = cp
+			cur = cp
+		}
+		if ok {
+			cur[parts[len(parts)-1]] = v
+		}
+	}
+	return out
+}

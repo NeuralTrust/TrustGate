@@ -17,6 +17,8 @@ package modules
 import (
 	"log/slog"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -73,13 +75,13 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler, refs.consumerOptions()...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Updater {
-		return appconsumer.NewUpdater(repo, registryRepo, authRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appconsumer.Updater {
+		return appconsumer.NewUpdater(repo, registryRepo, authRepo, manager, publisher, logger, sig.Signaler, refs.consumerOptions()...)
 	}); err != nil {
 		return err
 	}
@@ -174,9 +176,15 @@ type dataFinderParams struct {
 	// Budgets is the group budgets' read side: Postgres on the full plane,
 	// the config snapshot on a data plane with no database.
 	Budgets keygroupdomain.Reader `optional:"true"`
+	// SecretRefs resolves the secret references of a gateway's registries
+	// into its runtime data.
+	SecretRefs appsecretref.Materializer `optional:"true"`
 }
 
 func provideDataFinder(p dataFinderParams) appconsumer.DataFinder {
-	return appconsumer.NewDataFinder(p.Consumers, p.Registries, p.Policies, p.Auths, p.PluginRegistry, p.Manager, p.Logger,
-		appconsumer.WithKeyGroupBudgets(p.Budgets))
+	opts := []appconsumer.DataFinderOption{appconsumer.WithKeyGroupBudgets(p.Budgets)}
+	if p.SecretRefs != nil {
+		opts = append(opts, appconsumer.WithSecretReferences(p.SecretRefs))
+	}
+	return appconsumer.NewDataFinder(p.Consumers, p.Registries, p.Policies, p.Auths, p.PluginRegistry, p.Manager, p.Logger, opts...)
 }

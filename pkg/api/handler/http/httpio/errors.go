@@ -22,10 +22,13 @@ import (
 	"runtime"
 	"strings"
 
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
 )
@@ -105,8 +108,28 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_sort", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidFilter):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrMissingScope):
+		return fiber.StatusForbidden, ErrorBody{Error: "missing_scope", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrForbidden):
 		return fiber.StatusForbidden, ErrorBody{Error: "forbidden", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrInvalidReference):
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_secret_reference", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrReferencesNotSupported):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_references_not_supported", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrUnknownStore):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "unknown_secret_store", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrPathNotAllowed):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_path_not_allowed", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrDestinationNotAllowed):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_destination_not_allowed", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrDataPlaneTooOld):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "data_plane_too_old", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrTestRunsOnDataPlane):
+		return fiber.StatusConflict, ErrorBody{Error: "test_runs_on_data_plane", Message: publicMessage(err, "")}
+	case errors.Is(err, registrydomain.ErrSecretUnavailable):
+		return fiber.StatusServiceUnavailable, ErrorBody{Error: "secret_unavailable", Message: publicMessage(err, "")}
+	case errors.Is(err, secretref.ErrStoreUnverified):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_store_unverified", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):
 		body := NotFoundBody()
 		body.Message = notFoundMessage(err)

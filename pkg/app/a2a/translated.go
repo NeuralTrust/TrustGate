@@ -102,10 +102,10 @@ func replyMessage(x *Exchange, text string) (json.RawMessage, *RPCError, bool) {
 // failedCall maps an error status of the provider's API: its credential
 // refused, a request it rejected (with its own message), or a failure.
 func failedCall(status int, message string) (json.RawMessage, *RPCError, bool) {
-	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, GatewayFailure(ReasonUpstreamAuthFailed), false
-	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity || status == http.StatusNotFound:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusNotFound:
 		return nil, agentError(message), true
 	default:
 		return nil, GatewayFailure(ReasonUpstreamError), false

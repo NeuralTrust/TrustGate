@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -39,8 +40,6 @@ const (
 	predictAction    = "predict"
 
 	optKeyAction = "action"
-
-	globalLocation = "global"
 )
 
 var (
@@ -302,12 +301,8 @@ func isModelAllowed(model string, allowed []string) bool {
 	return ok
 }
 
-// The global endpoint is the only location reached through an unprefixed host.
 func vertexHost(location string) string {
-	if location == globalLocation {
-		return "aiplatform.googleapis.com"
-	}
-	return location + "-aiplatform.googleapis.com"
+	return provider.VertexHost(location)
 }
 
 func buildVertexURL(opts providers.VertexOptions, model, action string) string {

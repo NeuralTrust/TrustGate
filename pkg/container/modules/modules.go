@@ -55,6 +55,7 @@ func fullModules() []container.Option {
 		container.WithModule(Gateway),
 		container.WithModule(Registry),
 		container.WithModule(Consumer),
+		container.WithModule(SecretStoresModule),
 		container.WithModule(Catalog),
 		container.WithModule(Store),
 		container.WithModule(Providers),
@@ -77,6 +78,7 @@ func fullModules() []container.Option {
 func dataPlaneModules() []container.Option {
 	return []container.Option{
 		container.WithModule(CoreData),
+		container.WithModule(SecretStoresModule),
 		container.WithModule(API),
 		container.WithModule(Cache),
 		container.WithModule(CacheEvents),

@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -48,15 +50,58 @@ type credentialFinder struct {
 	cache      *cache.TTLMap
 	logger     *slog.Logger
 	defaultIdP *domain.Auth
+	secrets    appsecretref.ValuesResolver
 }
 
-func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, defaultIdP *domain.Auth) CredentialFinder {
-	return &credentialFinder{
+// CredentialFinderOption tunes NewCredentialFinder.
+type CredentialFinderOption func(*credentialFinder)
+
+// WithSecretValues resolves the secret references of the identity providers
+// the finder returns, on a plane that loads a store file.
+func WithSecretValues(r appsecretref.ValuesResolver) CredentialFinderOption {
+	return func(f *credentialFinder) { f.secrets = r }
+}
+
+func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, defaultIdP *domain.Auth, opts ...CredentialFinderOption) CredentialFinder {
+	f := &credentialFinder{
 		repo:       repo,
 		cache:      manager.GetTTLMap(cache.AuthTTLName),
 		logger:     logger,
 		defaultIdP: defaultIdP,
 	}
+	for _, opt := range opts {
+		opt(f)
+	}
+	return f
+}
+
+// resolve replaces the secret references of auths, grouped by gateway, so
+// what is cached and returned never carries one.
+func (f *credentialFinder) resolve(ctx context.Context, auths []*domain.Auth) []*domain.Auth {
+	if f.secrets == nil || len(auths) == 0 {
+		return auths
+	}
+	byGateway := map[ids.GatewayID][]int{}
+	for i, a := range auths {
+		if a != nil && len(appsecretref.AuthRefs(a).Uses) > 0 {
+			byGateway[a.GatewayID] = append(byGateway[a.GatewayID], i)
+		}
+	}
+	if len(byGateway) == 0 {
+		return auths
+	}
+	out := append([]*domain.Auth(nil), auths...)
+	for gw, indexes := range byGateway {
+		group := make([]*domain.Auth, len(indexes))
+		for j, i := range indexes {
+			group[j] = auths[i]
+		}
+		resolved := appsecretref.GatewayAuths(ctx, f.secrets, gw, appsecretref.SourceAuthCredentials, group)
+		for j, i := range indexes {
+			out[i] = resolved[j]
+		}
+	}
+	return out
 }
 
 // OAuth2Auths returns every enabled oauth2 auth, plus the built-in NeuralTrust
@@ -103,6 +148,7 @@ func (f *credentialFinder) OAuth2AuthsForGateway(ctx context.Context, gatewayID 
 	if err != nil {
 		return nil, err
 	}
+	auths = f.resolve(ctx, auths)
 	f.cache.Set(key, auths)
 	return auths, nil
 }
@@ -123,6 +169,7 @@ func (f *credentialFinder) findByType(ctx context.Context, key string, t domain.
 	if err != nil {
 		return nil, err
 	}
+	auths = f.resolve(ctx, auths)
 	f.cache.Set(key, auths)
 	return auths, nil
 }

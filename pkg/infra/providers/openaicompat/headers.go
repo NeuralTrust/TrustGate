@@ -17,6 +17,7 @@ package openaicompat
 import (
 	"net/http"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -26,13 +27,13 @@ func upstreamHeaders(creds providers.Credentials, opts providers.OpenAICompatibl
 	}
 	out := make(map[string]string, len(creds.Headers)+len(opts.Headers))
 	for k, v := range creds.Headers {
-		if k == "" || v == "" {
+		if k == "" || v == "" || secretref.IsRef(v) {
 			continue
 		}
 		out[k] = v
 	}
 	for k, v := range opts.Headers {
-		if k == "" {
+		if k == "" || secretref.IsRef(v) {
 			continue
 		}
 		out[k] = v

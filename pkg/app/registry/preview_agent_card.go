@@ -58,7 +58,7 @@ func (p *previewAgentCard) Preview(ctx context.Context, gatewayID ids.GatewayID,
 	if err := validateSharedDataPlane(ctx, p.shared, gatewayID, target); err != nil {
 		return nil, err
 	}
-	fetched, err := p.cards.fetch(ctx, target, true)
+	fetched, err := p.cards.fetch(ctx, gatewayID, target, true)
 	if err != nil {
 		return nil, err
 	}

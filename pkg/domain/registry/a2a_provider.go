@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"github.com/google/uuid"
 )
 
@@ -230,6 +231,21 @@ func (c *A2ACloudAuth) secretValues() []string {
 	return v
 }
 
+// HoldsReference reports whether a credential of c is still a secret
+// reference: one the plane did not resolve, which must never reach the cloud
+// provider as the credential.
+func (c *A2ACloudAuth) HoldsReference() bool {
+	if c == nil {
+		return false
+	}
+	for _, v := range c.secretValues() {
+		if secretref.IsRef(v) {
+			return true
+		}
+	}
+	return c.Azure != nil && secretref.IsRef(c.Azure.APIKey)
+}
+
 func (c *A2ACloudAuth) validate() error {
 	for _, v := range c.secretValues() {
 		if secret.IsMasked(v) {
@@ -265,7 +281,7 @@ func (c *A2ACloudAuth) validate() error {
 		if g.ServiceAccountJSON != "" && g.ImpersonateServiceAccount != "" {
 			return fmt.Errorf("%w: cloud_auth.gcp takes service_account_json or impersonate_service_account, not both", ErrInvalidRegistry)
 		}
-		if g.ServiceAccountJSON != "" {
+		if g.ServiceAccountJSON != "" && !secretref.IsRef(g.ServiceAccountJSON) {
 			if err := gcpkey.Validate(g.ServiceAccountJSON); err != nil {
 				return fmt.Errorf("%w: cloud_auth.gcp.service_account_json: %w", ErrInvalidRegistry, err)
 			}

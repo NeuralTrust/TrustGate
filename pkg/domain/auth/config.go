@@ -23,6 +23,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
@@ -112,13 +114,15 @@ func (c *OAuth2Config) ExchangeCredentials() (clientID, clientSecret string, ok 
 	if c == nil {
 		return "", "", false
 	}
+	// A secret reference that reached here unresolved is no secret: the
+	// exchange is refused rather than sent with the reference.
 	if strings.TrimSpace(c.ExchangeClientID) != "" {
-		if c.ExchangeClientSecret == "" || c.ExchangeSecretUnreadable {
+		if c.ExchangeClientSecret == "" || c.ExchangeSecretUnreadable || secretref.IsRef(c.ExchangeClientSecret) {
 			return "", "", false
 		}
 		return c.ExchangeClientID, c.ExchangeClientSecret, true
 	}
-	if c.ClientID != "" && c.ClientSecret != "" {
+	if c.ClientID != "" && c.ClientSecret != "" && !secretref.IsRef(c.ClientSecret) {
 		return c.ClientID, c.ClientSecret, true
 	}
 	return "", "", false

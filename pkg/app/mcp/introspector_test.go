@@ -198,3 +198,18 @@ func TestIntrospector_ListRegistryTools_NotAnMCPRegistry(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoMCPRegistries))
 }
+
+func TestIntrospector_ListRegistryTools_UnresolvedSecretIsNeverDialed(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	regID := ids.New[ids.RegistryKind]()
+	reg := introspectableRegistry(gwID, regID)
+	reg.MarkCredentialUnavailable()
+
+	sut := newIntrospectorFor(t, reg, DialerFunc(func(context.Context, Target) (Upstream, error) {
+		t.Fatal("a registry whose secret did not resolve must not be dialed")
+		return nil, nil
+	}))
+
+	_, err := sut.ListRegistryTools(context.Background(), gwID, regID)
+	require.ErrorIs(t, err, registrydomain.ErrSecretUnavailable)
+}
