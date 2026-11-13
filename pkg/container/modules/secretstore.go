@@ -74,7 +74,6 @@ type secretStoresParams struct {
 	Registries registrydomain.Repository
 	Manager    *cache.TTLMapManager
 	Logger     *slog.Logger
-	Entities   SecretEntityListers
 }
 
 // SecretStoresModule provides the plane's secret stores.
@@ -146,7 +145,6 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 			Eligibility: cfg.Gateways,
 			Gateways:    p.Gateways,
 			Registries:  p.Registries,
-			Entities:    p.Entities.prewarm(),
 			Logger:      p.Logger,
 		})
 	}
@@ -193,9 +191,15 @@ func (s *SecretStores) Prewarm() {
 }
 
 // StartServing is Start for a plane that serves traffic: it also prewarms
-// the plane's references, now and after every snapshot apply and store-file
-// reload. The admin only starts, so it never reads secrets it does not use.
-func (s *SecretStores) StartServing() {
+// the references of the plane's registries and of the entities listed by
+// entities, now and after every snapshot apply and store-file reload. The
+// entities are passed here, not built with the stores, so building the
+// stores never needs the repositories and their connections. The admin only
+// starts, so it never reads secrets it does not use.
+func (s *SecretStores) StartServing(entities SecretEntityListers) {
+	if s != nil && s.Prewarmer != nil {
+		s.Prewarmer.SetEntities(entities.prewarm())
+	}
 	s.start(true)
 }
 
