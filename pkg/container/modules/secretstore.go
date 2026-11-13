@@ -18,6 +18,10 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 
 	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
@@ -46,18 +50,27 @@ type SecretStores struct {
 	Catalog      *localfile.Catalog
 	Cache        *appsecretref.Cache
 	Materializer appsecretref.Materializer
-	logger       *slog.Logger
+	// Prewarmer resolves the plane's references in the background; nil
+	// where Cache is.
+	Prewarmer *appsecretref.Prewarmer
+	logger    *slog.Logger
 
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	prewarming atomic.Bool
 }
 
 type secretStoresParams struct {
 	dig.In
-	Config   *config.Config
-	Gateways gatewaydomain.Repository
-	Manager  *cache.TTLMapManager
-	Logger   *slog.Logger
+	Config     *config.Config
+	Gateways   gatewaydomain.Repository
+	Registries registrydomain.Repository
+	// Store is the data plane's config-sync store; absent on planes that
+	// read Postgres.
+	Store   configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+	Manager *cache.TTLMapManager
+	Logger  *slog.Logger
 }
 
 // SecretStoresModule provides the plane's secret stores.
@@ -123,6 +136,17 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 		matCfg.Catalog, matCfg.Resolver = s.Catalog, s.Cache
 	}
 	s.Materializer = appsecretref.NewMaterializer(matCfg)
+	if s.Cache != nil {
+		s.Prewarmer = appsecretref.NewPrewarmer(appsecretref.PrewarmConfig{
+			Catalog:     s.Catalog,
+			Resolver:    s.Cache,
+			Eligibility: cfg.Gateways,
+			Gateways:    p.Gateways,
+			Registries:  p.Registries,
+			Loaded:      configLoaded(p.Store),
+			Logger:      p.Logger,
+		})
+	}
 	if s.Catalog != nil {
 		p.Logger.Info("secret stores loaded", slog.Int("stores", len(s.Catalog.Stores())), slog.String("eligibility", string(cfg.Gateways)))
 	}
@@ -143,6 +167,15 @@ func provideSecretStoreTester(cfg *config.Config, stores *SecretStores, gateways
 	return appsecretstore.NewTester(tc)
 }
 
+// configLoaded reports whether a data plane's config-sync store holds a
+// snapshot; nil on planes that read Postgres.
+func configLoaded(store configsync.ConfigStore[*readmodel.Snapshot]) func() bool {
+	if store == nil {
+		return nil
+	}
+	return func() bool { return store.Version() != "" }
+}
+
 // storesChanged drops what was read from stores the store file added,
 // changed or removed, and rebuilds the gateways that referenced them.
 func (s *SecretStores) storesChanged(names []string) {
@@ -154,6 +187,32 @@ func (s *SecretStores) storesChanged(names []string) {
 	if s.Materializer != nil {
 		s.Materializer.StoresChanged(names)
 	}
+	s.Prewarm()
+}
+
+// Prewarm asks for a background pass over the plane's references; a no-op
+// on a plane without stores or that does not serve traffic.
+func (s *SecretStores) Prewarm() {
+	if s != nil && s.Prewarmer != nil && s.prewarming.Load() {
+		s.Prewarmer.Trigger()
+	}
+}
+
+// StartServing is Start for a plane that serves traffic: it also prewarms
+// the plane's references, now and after every snapshot apply and store-file
+// reload. The admin only starts, so it never reads secrets it does not use.
+func (s *SecretStores) StartServing() {
+	if s == nil || s.Cache == nil {
+		return
+	}
+	s.Start()
+	s.prewarming.Store(true)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.Prewarmer.Run(s.ctx)
+	}()
+	s.Prewarm()
 }
 
 // Start runs the refresh and probe loops and the store file watch, when the
@@ -163,7 +222,7 @@ func (s *SecretStores) Start() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
+	s.ctx, s.cancel = ctx, cancel
 	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()

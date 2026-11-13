@@ -329,7 +329,7 @@ func runPlane(p planeParam, srv server.Server, name string, logger *slog.Logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
-	p.SecretStores.Start()
+	p.SecretStores.StartServing()
 	defer p.SecretStores.Stop()
 	runServer(srv, name, logger)
 }
@@ -344,7 +344,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
-	p.SecretStores.Start()
+	p.SecretStores.StartServing()
 	defer p.SecretStores.Stop()
 	runServer(p.Srv, serverProxy, logger)
 }
@@ -391,7 +391,7 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer startRateLimit(p.RateLimit, logger)()
 	p.Usage.Start()
 	defer p.Usage.Stop()
-	p.SecretStores.Start()
+	p.SecretStores.StartServing()
 	defer p.SecretStores.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
