@@ -16,11 +16,15 @@ package secretstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	refdomain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
 
 type allRegistries struct {
@@ -56,7 +60,7 @@ func TestScanReferences(t *testing.T) {
 	embedded := llmRegistry("Bearer secret://vault/openai")
 	src.all = append(src.all, whole, embedded)
 
-	got, err := ScanReferences(context.Background(), src)
+	got, err := ScanReferences(context.Background(), ScanSources{Registries: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +90,55 @@ func (shrinking) List(context.Context, registry.ListFilter) ([]*registry.Registr
 }
 
 func TestScanReferencesFailsWhenRowsGoUnread(t *testing.T) {
-	if _, err := ScanReferences(context.Background(), shrinking{}); err == nil {
+	if _, err := ScanReferences(context.Background(), ScanSources{Registries: shrinking{}}); err == nil {
 		t.Fatal("a scan that read fewer rows than the total must fail, not report clean")
+	}
+}
+
+type gatewayPages struct{ all []*gateway.Gateway }
+
+func (p gatewayPages) List(_ context.Context, f gateway.ListFilter) ([]*gateway.Gateway, int, error) {
+	start := (f.Page - 1) * f.Size
+	if start >= len(p.all) {
+		return nil, len(p.all), nil
+	}
+	return p.all[start:min(start+f.Size, len(p.all))], len(p.all), nil
+}
+
+func TestScanReferencesReadsEveryEntityOfEveryGateway(t *testing.T) {
+	gateways := gatewayPages{}
+	for range scanPageSize + 1 {
+		gateways.all = append(gateways.all, &gateway.Gateway{ID: ids.New[ids.GatewayKind]()})
+	}
+	target := gateways.all[scanPageSize].ID
+	consumers := func(_ context.Context, gw ids.GatewayID) ([]NamedRefs, error) {
+		if gw != target {
+			return nil, nil
+		}
+		return []NamedRefs{{Name: "travel", EntityRefs: appsecretref.EntityRefs{
+			GatewayID: gw, Entity: refdomain.EntityConsumer, ID: "c1",
+			Uses:     []appsecretref.Use{{Path: []string{"lb_config", "embedding_config", "auth", "api_key"}, Raw: "secret://v/k"}},
+			Embedded: []appsecretref.Use{{Path: []string{"lb_config", "embedding_config", "auth", "header_value"}, Raw: "Bearer secret://v/k"}},
+		}}}, nil
+	}
+	got, err := ScanReferences(context.Background(), ScanSources{
+		Registries: &allRegistries{}, Gateways: gateways, Entities: []EntityLister{consumers},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Entity != "consumer" || got[0].GatewayID != target.String() || got[0].Kind != FindingReference || got[1].Kind != FindingEmbedded {
+		t.Fatalf("findings = %+v", got)
+	}
+}
+
+func TestScanReferencesStopsOnAListerError(t *testing.T) {
+	failing := func(context.Context, ids.GatewayID) ([]NamedRefs, error) { return nil, errors.New("db down") }
+	_, err := ScanReferences(context.Background(), ScanSources{
+		Registries: &allRegistries{}, Gateways: gatewayPages{all: []*gateway.Gateway{{ID: ids.New[ids.GatewayKind]()}}},
+		Entities: []EntityLister{failing},
+	})
+	if err == nil {
+		t.Fatal("a gateway whose entities could not be read must fail the scan, not report clean")
 	}
 }

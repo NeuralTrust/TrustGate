@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strings"
 
-	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	refdomain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
@@ -53,11 +52,13 @@ type UsagesFinder interface {
 
 type usagesFinder struct {
 	registries RegistryLister
+	entities   []EntityLister
 }
 
-// NewUsagesFinder returns a UsagesFinder over the stored registries.
-func NewUsagesFinder(registries RegistryLister) UsagesFinder {
-	return &usagesFinder{registries: registries}
+// NewUsagesFinder returns a UsagesFinder over the stored registries and the
+// entities the listers read.
+func NewUsagesFinder(registries RegistryLister, entities ...EntityLister) UsagesFinder {
+	return &usagesFinder{registries: registries, entities: entities}
 }
 
 func (f *usagesFinder) Usages(ctx context.Context, gatewayID ids.GatewayID) (map[string][]Usage, error) {
@@ -69,26 +70,28 @@ func (f *usagesFinder) Usages(ctx context.Context, gatewayID ids.GatewayID) (map
 			return nil, fmt.Errorf("secret stores: list registries: %w", err)
 		}
 		for _, reg := range batch {
-			uses, _ := appsecretref.RegistryReferences(reg)
-			for _, u := range uses {
-				ref, _, err := refdomain.Parse(u.Raw)
-				if err != nil {
-					continue
-				}
-				out[ref.Store] = append(out[ref.Store], Usage{
-					Entity: string(refdomain.EntityRegistry), ID: reg.ID.String(), Name: reg.Name,
-					Field: strings.Join(u.Path, "."), Reference: u.Raw,
-				})
-			}
+			addUsages(out, registryRefs(reg))
 		}
 		seen += len(batch)
 		if len(batch) == 0 || seen >= total {
 			break
 		}
 	}
+	for _, list := range f.entities {
+		entities, err := list(ctx, gatewayID)
+		if err != nil {
+			return nil, fmt.Errorf("secret stores: %w", err)
+		}
+		for _, e := range entities {
+			addUsages(out, e)
+		}
+	}
 	for name := range out {
 		sort.Slice(out[name], func(i, j int) bool {
 			a, b := out[name][i], out[name][j]
+			if a.Entity != b.Entity {
+				return a.Entity < b.Entity
+			}
 			if a.Name != b.Name {
 				return a.Name < b.Name
 			}
@@ -96,4 +99,17 @@ func (f *usagesFinder) Usages(ctx context.Context, gatewayID ids.GatewayID) (map
 		})
 	}
 	return out, nil
+}
+
+func addUsages(out map[string][]Usage, e NamedRefs) {
+	for _, u := range e.Uses {
+		ref, _, err := refdomain.Parse(u.Raw)
+		if err != nil {
+			continue
+		}
+		out[ref.Store] = append(out[ref.Store], Usage{
+			Entity: string(e.Entity), ID: e.ID, Name: e.Name,
+			Field: strings.Join(u.Path, "."), Reference: u.Raw,
+		})
+	}
 }

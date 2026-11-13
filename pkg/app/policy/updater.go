@@ -120,7 +120,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// rejection on every future save.
 	previousSettings := existing.Settings
 	wasEnabled := existing.Enabled
-	stored := policyRefs(u.registry, existing).Stored()
+	stored := SecretRefs(u.registry, existing).Stored()
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -212,7 +212,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// removed in between.
 	audit := func() {}
 	if u.secretRefs != nil {
-		if audit, err = u.secretRefs.ValidateEntity(ctx, policyRefs(u.registry, existing), stored); err != nil {
+		if audit, err = u.secretRefs.ValidateEntity(ctx, SecretRefs(u.registry, existing), stored); err != nil {
 			return nil, err
 		}
 	}

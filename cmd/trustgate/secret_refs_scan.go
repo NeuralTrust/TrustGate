@@ -23,6 +23,7 @@ import (
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -40,7 +41,7 @@ const (
 
 const scanTimeout = 10 * time.Minute
 
-// runSecretRefsScan reads Postgres through the admin's registry repository,
+// runSecretRefsScan reads Postgres through the admin's repositories,
 // so encrypted credentials are read decrypted, without running migrations
 // or starting any server. It prints gateway, entity, field and kind, never
 // a value.
@@ -51,10 +52,12 @@ func runSecretRefsScan(stdout, stderr io.Writer) int {
 		return scanExitFailed
 	}
 	var findings []appsecretstore.Finding
-	err = c.Invoke(func(repo registrydomain.Repository) error {
+	err = c.Invoke(func(repo registrydomain.Repository, gateways gatewaydomain.Repository, entities modules.SecretEntityListers) error {
 		ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 		defer cancel()
-		findings, err = appsecretstore.ScanReferences(ctx, repo)
+		findings, err = appsecretstore.ScanReferences(ctx, appsecretstore.ScanSources{
+			Registries: repo, Gateways: gateways, Entities: entities.Listers(),
+		})
 		return err
 	})
 	if err != nil {

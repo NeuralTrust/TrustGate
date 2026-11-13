@@ -158,3 +158,27 @@ func TestPrewarmDoesNotRetryDefinitiveFailures(t *testing.T) {
 		t.Fatalf("resolves = %d; a secret that does not exist is not retried in a loop", n)
 	}
 }
+
+func TestPrewarmResolvesEveryEntity(t *testing.T) {
+	resolver := &scriptedResolver{}
+	p, hybrid := prewarmFixture(resolver)
+	p.cfg.Entities = []func(context.Context, ids.GatewayID) ([]Use, error){
+		func(_ context.Context, gw ids.GatewayID) ([]Use, error) {
+			if gw != hybrid {
+				t.Errorf("an ineligible gateway's entities must not be read")
+			}
+			return []Use{
+				{Path: []string{"config", "oauth2", "client_secret"}, Raw: "secret://vault/llm/idp"},
+				{Path: []string{"telemetry", "exporters", "otel", "settings", "dsn"}, Raw: "secret://vault/prod/db"},
+			}, nil
+		},
+	}
+	if pending, err := p.pass(context.Background()); err != nil || pending != 0 {
+		t.Fatalf("pass = %d, %v", pending, err)
+	}
+	got := resolver.calls()
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "vault/llm/idp" || got[1] != "vault/llm/openai" {
+		t.Fatalf("resolved %v; want the entity's allowed reference too", got)
+	}
+}

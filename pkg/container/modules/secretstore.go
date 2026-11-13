@@ -20,27 +20,27 @@ import (
 	"sync"
 	"sync/atomic"
 
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
-
-	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
-
-	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
-	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
-	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
-
 	"go.uber.org/dig"
 
+	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/backends"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/localfile"
 )
@@ -73,6 +73,7 @@ type secretStoresParams struct {
 	Registries registrydomain.Repository
 	Manager    *cache.TTLMapManager
 	Logger     *slog.Logger
+	Entities   SecretEntityListers
 }
 
 // SecretStoresModule provides the plane's secret stores.
@@ -144,6 +145,7 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 			Eligibility: cfg.Gateways,
 			Gateways:    p.Gateways,
 			Registries:  p.Registries,
+			Entities:    p.Entities.prewarm(),
 			Logger:      p.Logger,
 		})
 	}
@@ -259,8 +261,8 @@ func provideSecretStoresAdmin(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo registrydomain.Repository) appsecretstore.UsagesFinder {
-		return appsecretstore.NewUsagesFinder(repo)
+	if err := c.Provide(func(repo registrydomain.Repository, entities SecretEntityListers) appsecretstore.UsagesFinder {
+		return appsecretstore.NewUsagesFinder(repo, entities.Listers()...)
 	}); err != nil {
 		return err
 	}
@@ -277,6 +279,58 @@ func provideSecretStoresAdmin(c *container.Container) error {
 	return c.Provide(func(gateways gatewaydomain.Repository, sources appsecretstore.SourceResolver, tester appsecretstore.Tester) *secretstorehttp.TestHandler {
 		return secretstorehttp.NewTestHandler(gateways, sources, tester)
 	})
+}
+
+// SecretEntityListers reads, as references, the entities besides registries
+// that may hold one.
+// A plane without one of them lists the others.
+type SecretEntityListers struct {
+	dig.In
+	Consumers consumerdomain.Repository `optional:"true"`
+	Policies  policydomain.Repository   `optional:"true"`
+	Auths     authdomain.Repository     `optional:"true"`
+	Gateways  gatewaydomain.Repository  `optional:"true"`
+	Plugins   appplugins.Registry       `optional:"true"`
+}
+
+// Listers returns a lister for every entity the plane can read.
+func (p SecretEntityListers) Listers() []appsecretstore.EntityLister {
+	var out []appsecretstore.EntityLister
+	if p.Gateways != nil {
+		out = append(out, appsecretstore.GatewayReaderLister(p.Gateways))
+	}
+	if p.Consumers != nil {
+		out = append(out, appsecretstore.ConsumerLister(p.Consumers))
+	}
+	if p.Policies != nil {
+		out = append(out, appsecretstore.PolicyLister(p.Policies, func(pol *policydomain.Policy) appsecretref.EntityRefs {
+			return apppolicy.SecretRefs(p.Plugins, pol)
+		}))
+	}
+	if p.Auths != nil {
+		out = append(out, appsecretstore.AuthLister(p.Auths))
+	}
+	return out
+}
+
+// prewarm adapts Listers to the prewarmer, which needs only the references.
+func (p SecretEntityListers) prewarm() []func(context.Context, ids.GatewayID) ([]appsecretref.Use, error) {
+	listers := p.Listers()
+	out := make([]func(context.Context, ids.GatewayID) ([]appsecretref.Use, error), 0, len(listers))
+	for _, list := range listers {
+		out = append(out, func(ctx context.Context, gw ids.GatewayID) ([]appsecretref.Use, error) {
+			entities, err := list(ctx, gw)
+			if err != nil {
+				return nil, err
+			}
+			var uses []appsecretref.Use
+			for _, e := range entities {
+				uses = append(uses, e.Uses...)
+			}
+			return uses, nil
+		})
+	}
+	return out
 }
 
 // secretRefsParams is the write-time validator of secret references, absent
