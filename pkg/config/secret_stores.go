@@ -49,9 +49,6 @@ type SecretStoresConfig struct {
 	// ProbeInterval is SECRET_STORES_PROBE_INTERVAL, how often each store's
 	// credentials are checked.
 	ProbeInterval time.Duration
-	// ReadinessGate is SECRET_STORES_READINESS_GATE: readiness waits until
-	// every reference has resolved or failed for good.
-	ReadinessGate bool
 }
 
 func getSecretStoresConfig() (SecretStoresConfig, error) {
@@ -65,7 +62,6 @@ func getSecretStoresConfig() (SecretStoresConfig, error) {
 		FetchTimeout:    getEnvDuration("SECRET_STORES_FETCH_TIMEOUT", defaultSecretStoresFetchTimeout),
 		RefreshInterval: getEnvDuration("SECRET_STORES_REFRESH_INTERVAL", defaultSecretStoresRefreshInterval),
 		ProbeInterval:   getEnvDuration("SECRET_STORES_PROBE_INTERVAL", defaultSecretStoresProbeInterval),
-		ReadinessGate:   getEnvBool("SECRET_STORES_READINESS_GATE", false),
 	}, nil
 }
 

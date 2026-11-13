@@ -16,10 +16,8 @@ package secretref
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,24 +61,6 @@ type gatewayList []*gateway.Gateway
 
 func (l gatewayList) List(context.Context, gateway.ListFilter) ([]*gateway.Gateway, int, error) {
 	return l, len(l), nil
-}
-
-type swappableGateways struct {
-	mu   sync.Mutex
-	list GatewayLister
-}
-
-func (s *swappableGateways) set(l GatewayLister) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.list = l
-}
-
-func (s *swappableGateways) List(ctx context.Context, f gateway.ListFilter) ([]*gateway.Gateway, int, error) {
-	s.mu.Lock()
-	l := s.list
-	s.mu.Unlock()
-	return l.List(ctx, f)
 }
 
 type registryList map[ids.GatewayID][]*registry.Registry
@@ -151,70 +131,30 @@ func TestPrewarmResolvesWhatTheMaterializerWould(t *testing.T) {
 	}
 }
 
-func TestPrewarmReadinessGate(t *testing.T) {
-	resolver := &scriptedResolver{errs: []error{
-		secretstore.ErrUnavailable,
-		secretstore.ErrUnavailable,
-	}}
+func TestPrewarmRetriesTransientFailures(t *testing.T) {
+	resolver := &scriptedResolver{errs: []error{secretstore.ErrUnavailable, secretstore.ErrUnavailable}}
 	p, _ := prewarmFixture(resolver)
-	if err := p.ReadinessCheck(context.Background()); err != nil {
-		t.Fatalf("before the first trigger the gate must not hold the plane back: %v", err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p.Trigger()
-	if err := p.ReadinessCheck(context.Background()); !errors.Is(err, ErrPrewarmPending) {
-		t.Fatalf("after the trigger and before a clean pass: %v", err)
-	}
 	go p.Run(ctx)
-	waitFor(t, p.Ready)
+	waitFor(t, func() bool { return len(resolver.calls()) == 3 })
+	time.Sleep(50 * time.Millisecond)
 	if n := len(resolver.calls()); n != 3 {
-		t.Fatalf("resolves = %d, want two transient failures retried, then success", n)
-	}
-
-	resolver.mu.Lock()
-	resolver.errs = []error{secretstore.ErrUnavailable}
-	resolver.mu.Unlock()
-	p.Trigger()
-	waitFor(t, func() bool { return len(resolver.calls()) >= 4 })
-	if err := p.ReadinessCheck(context.Background()); err != nil {
-		t.Fatalf("a store blip after the plane became ready must not take it out of rotation: %v", err)
+		t.Fatalf("resolves = %d, want two transient failures retried, then no more passes until a trigger", n)
 	}
 }
 
-func TestPrewarmTreatsDefinitiveFailuresAsDone(t *testing.T) {
+func TestPrewarmDoesNotRetryDefinitiveFailures(t *testing.T) {
 	resolver := &scriptedResolver{errs: []error{secretstore.ErrNotFound}}
 	p, _ := prewarmFixture(resolver)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p.Trigger()
 	go p.Run(ctx)
-	waitFor(t, p.Ready)
-}
-
-func TestPrewarmIsNotReadyUntilTheConfigurationArrives(t *testing.T) {
-	resolver := &scriptedResolver{errs: []error{secretstore.ErrUnavailable, secretstore.ErrUnavailable}}
-	p, _ := prewarmFixture(resolver)
-	gateways := &swappableGateways{}
-	gateways.set(gatewayList{})
-	full := p.cfg.Gateways
-	p.cfg.Gateways = gateways
-	var loaded atomic.Bool
-	p.cfg.Loaded = loaded.Load
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	p.Trigger()
-	go p.Run(ctx)
+	waitFor(t, func() bool { return len(resolver.calls()) == 1 })
 	time.Sleep(50 * time.Millisecond)
-	if p.Ready() {
-		t.Fatal("a clean pass over an empty, not yet loaded configuration must not make the plane ready")
-	}
-
-	gateways.set(full)
-	loaded.Store(true)
-	p.Trigger()
-	waitFor(t, p.Ready)
-	if n := len(resolver.calls()); n != 3 {
-		t.Fatalf("resolves = %d, want two transient failures retried, then success", n)
+	if n := len(resolver.calls()); n != 1 {
+		t.Fatalf("resolves = %d; a secret that does not exist is not retried in a loop", n)
 	}
 }

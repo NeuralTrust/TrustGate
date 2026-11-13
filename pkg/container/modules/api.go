@@ -68,7 +68,6 @@ type healthParams struct {
 	AdminSnapshotReadiness adminSnapshotReadiness                      `optional:"true"`
 	AdminUsageReadiness    adminUsageReadiness                         `optional:"true"`
 	Enforcement            *appusage.Enforcement                       `optional:"true"`
-	SecretStores           *SecretStores                               `optional:"true"`
 	Cfg                    *config.Config
 	Logger                 *slog.Logger
 	// Provider is only a dependency: it guarantees the SDK has installed the
@@ -154,9 +153,6 @@ func API(c *container.Container) error {
 		}
 		if p.AdminUsageReadiness != nil {
 			checks = append(checks, apihandler.ReadinessCheck{Name: "usage_list", Ping: p.AdminUsageReadiness})
-		}
-		if p.Cfg.SecretStores.ReadinessGate && p.SecretStores != nil && p.SecretStores.Prewarmer != nil {
-			checks = append(checks, apihandler.ReadinessCheck{Name: "secret_stores", Ping: p.SecretStores.Prewarmer.ReadinessCheck})
 		}
 		h := apihandler.NewHealthHandler(checks...)
 		if p.Status != nil {
