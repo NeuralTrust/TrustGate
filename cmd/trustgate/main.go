@@ -83,6 +83,13 @@ func main() {
 	}
 
 	plane := serverType()
+	if plane == commandSecretRefsScan {
+		// The findings keep stdout, so a Job or script can parse it; the
+		// logger, built from os.Stdout, writes to stderr instead.
+		findings := os.Stdout
+		os.Stdout = os.Stderr
+		os.Exit(runSecretRefsScan(findings, os.Stderr))
+	}
 	dbless := config.DBLessDataPlaneEnabled() && isDataPlane(plane)
 
 	c, err := container.New(modules.All(plane, dbless)...)
