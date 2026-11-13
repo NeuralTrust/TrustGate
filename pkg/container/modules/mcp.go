@@ -17,6 +17,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
 	"log/slog"
 	"time"
 
@@ -153,7 +154,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideComposer); err != nil {
 		return err
 	}
-	if err := c.Provide(appmcp.NewIntrospector); err != nil {
+	if err := c.Provide(func(registries appregistry.RuntimeFinder, dialer appmcp.Dialer) appmcp.Introspector {
+		return appmcp.NewIntrospector(registries, dialer)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewListRegistryToolsHandler); err != nil {
@@ -329,6 +332,9 @@ type rpcGatewayParams struct {
 	// Snapshot is how this pod's registry list was loaded. On the data plane a
 	// last-known-good or stale list must not be bridged from the catalog.
 	Snapshot *configsync.SnapshotStatus `optional:"true"`
+	// SecretRefs resolves the secret references of the Store's shelf
+	// registries, which the scoper reads outside the gateway's runtime data.
+	SecretRefs appsecretref.Materializer `optional:"true"`
 }
 
 // storeModelsAdapter answers the Store's models tool with the proxy's own
@@ -416,6 +422,9 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		scoperOpts := []appstore.ScoperOption{
 			appstore.WithScoperModes(modes),
 			appstore.WithScoperCatalog(catalog),
+		}
+		if p.SecretRefs != nil {
+			scoperOpts = append(scoperOpts, appstore.WithScoperSecretRefs(p.SecretRefs))
 		}
 		if p.Snapshot != nil {
 			status := p.Snapshot

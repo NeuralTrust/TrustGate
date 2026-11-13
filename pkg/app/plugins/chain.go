@@ -114,7 +114,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 				ID:       id,
 				Slug:     pol.Slug,
 				Name:     pol.Name,
-				Settings: pol.Settings,
+				Settings: withoutSecretReferences(plugin, pol.Settings),
 			},
 			mode:         pol.Mode.Normalize(),
 			priority:     pol.Priority,

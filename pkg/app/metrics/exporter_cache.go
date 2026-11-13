@@ -33,6 +33,10 @@ type ExporterCache struct {
 	now     func() time.Time
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
+	// current maps an owned exporter's identity (gateway, origin, name) to
+	// the key of the entry built for it, so a changed config, such as a
+	// rotated credential, closes the exporter it replaces.
+	current map[string]string
 }
 
 type cacheEntry struct {
@@ -47,6 +51,7 @@ func NewExporterCache(factory ExporterFactory, logger *slog.Logger) *ExporterCac
 		logger:  logger,
 		now:     time.Now,
 		entries: make(map[string]*cacheEntry),
+		current: make(map[string]string),
 	}
 }
 
@@ -65,6 +70,52 @@ func (c *ExporterCache) Resolve(cfgs []telemetrydomain.ExporterConfig) []Exporte
 		items[i] = SourcedExporter{Config: cfg}
 	}
 	return c.ResolveSourced(items)
+}
+
+// ResolveOwned is ResolveSourced for the exporters of one gateway: an
+// exporter of owner whose config changed since the last call is closed once
+// its replacement is resolved, instead of staying open for the process's
+// life. An empty owner is ResolveSourced.
+func (c *ExporterCache) ResolveOwned(owner string, items []SourcedExporter) []Exporter {
+	out := c.ResolveSourced(items)
+	if owner == "" {
+		return out
+	}
+	for _, item := range items {
+		if !item.Tenant {
+			continue
+		}
+		key := "tenant\x00" + exporterCacheKey(item.Config)
+		identity := owner + "\x00" + item.Config.Name
+		c.mu.Lock()
+		previous, had := c.current[identity]
+		c.current[identity] = key
+		var stale *cacheEntry
+		if had && previous != key && !c.usedLocked(previous) {
+			stale = c.entries[previous]
+			delete(c.entries, previous)
+		}
+		c.mu.Unlock()
+		if stale != nil {
+			stale.mu.Lock()
+			if stale.exporter != nil {
+				stale.exporter.Close()
+			}
+			stale.mu.Unlock()
+		}
+	}
+	return out
+}
+
+// usedLocked reports whether any owned exporter still resolves to key: two
+// gateways with the same config share one exporter.
+func (c *ExporterCache) usedLocked(key string) bool {
+	for _, k := range c.current {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveSourced builds the exporters for configs of mixed origin.

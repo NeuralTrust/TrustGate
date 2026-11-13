@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -36,6 +37,10 @@ type TestConnectionInput struct {
 	ProviderOptions map[string]any
 	Auth            *domain.TargetAuth
 }
+
+// StageSecretUnavailable is the stage of a test that could not run because
+// a referenced credential did not resolve.
+const StageSecretUnavailable = "secret_unavailable"
 
 type TestConnectionResult struct {
 	OK         bool
@@ -99,6 +104,14 @@ func NewConnectionTester(
 
 func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (TestConnectionResult, error) {
 	provider, options, auth, err := t.resolveTarget(ctx, in)
+	if errors.Is(err, domain.ErrSecretUnavailable) {
+		return TestConnectionResult{
+			OK:       false,
+			Stage:    StageSecretUnavailable,
+			Provider: provider,
+			Message:  "a credential of this registry is a secret reference that could not be resolved; check the secret store's status",
+		}, nil
+	}
 	if err != nil {
 		return TestConnectionResult{}, err
 	}
@@ -170,6 +183,9 @@ func (t *connectionTester) resolveTarget(
 		reg, err := t.finder.FindByID(ctx, in.GatewayID, *in.RegistryID)
 		if err != nil {
 			return "", nil, nil, err
+		}
+		if reg.CredentialUnavailable() {
+			return reg.Provider(), nil, nil, domain.ErrSecretUnavailable
 		}
 		return reg.Provider(), reg.ProviderOptions(), reg.EffectiveAuth(), nil
 	}

@@ -82,6 +82,8 @@ func buildPipeline(
 	factory appmetrics.ExporterFactory,
 	cache *appmetrics.ExporterCache,
 	playgroundStore *playground.Store,
+	secrets secretValuesParams,
+	stores *SecretStores,
 ) (*appmetrics.Pipeline, error) {
 	if !cfg.Telemetry.Enabled {
 		if cfg.Playground.TraceStoreEnabled {
@@ -100,7 +102,12 @@ func buildPipeline(
 		return nil, err
 	}
 	appmetrics.RegisterConfiguredExportersGauge(defaults, logger)
-	return appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...), nil
+	pipeline := appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...)
+	if secrets.Materializer != nil {
+		pipeline.SetSecretValues(secrets.Materializer)
+		stores.OnInvalidate(pipeline.InvalidateGateway)
+	}
+	return pipeline, nil
 }
 
 func newDefaultExporters(

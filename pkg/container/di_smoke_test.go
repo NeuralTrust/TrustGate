@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -278,5 +279,20 @@ func TestDISmoke_ControlPlane_ResolvesSecretsBackfill(t *testing.T) {
 				t.Fatalf("Invoke(field sealer and repositories): %v", err)
 			}
 		})
+	}
+}
+
+// The pre-upgrade scan must read every entity: a source missing from the
+// admin graph has to fail the scan's start, not drop out of the report.
+func TestDISmoke_Admin_ResolvesSecretScanListers(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
+	c := &container.Container{Container: dig.New(dig.DryRun(true))}
+	for _, opt := range modules.All("admin", false) {
+		if err := opt(c); err != nil {
+			t.Fatalf("modules.All(admin, false): %v", err)
+		}
+	}
+	if err := c.Invoke(func(_ modules.SecretScanListers, _ registrydomain.Repository) {}); err != nil {
+		t.Fatalf("Invoke(secret scan sources): %v", err)
 	}
 }

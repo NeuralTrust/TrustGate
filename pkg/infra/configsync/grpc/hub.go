@@ -38,6 +38,10 @@ type Hub struct {
 	conns  map[*connection]struct{}
 	logger *slog.Logger
 	store  ConnectionStore
+	// withhold, when set, reports whether a notice must not reach a
+	// connection that does not advertise accepts_secret_refs.
+	withhold func(conn *connection, n notice) bool
+	warm     func(scope string, n notice)
 	// presenceMu orders a presence refresh against teardowns: a refresh holds
 	// it exclusively from the snapshot of held streams until its write lands,
 	// and a teardown holds it shared while it marks the stream disconnected,
@@ -56,10 +60,13 @@ type connection struct {
 	instanceID string
 	// layered says the data plane pulls layered snapshots, so it is notified
 	// of manifest versions instead of single-blob versions.
-	layered    bool
-	notices    chan notice
-	revoked    chan struct{}
-	revokeOnce sync.Once
+	layered bool
+	// acceptsSecretRefs says the data plane understands secret references;
+	// without it, notices of versions that hold references are withheld.
+	acceptsSecretRefs bool
+	notices           chan notice
+	revoked           chan struct{}
+	revokeOnce        sync.Once
 
 	ackMu     sync.Mutex
 	lastAcked string
@@ -80,17 +87,18 @@ func NewHub(logger *slog.Logger, store ConnectionStore) *Hub {
 }
 
 func (h *Hub) register(id configsyncrevocation.Identity, instanceID string) *connection {
-	return h.registerStream(id, instanceID, false)
+	return h.registerStream(id, instanceID, false, true)
 }
 
-func (h *Hub) registerStream(id configsyncrevocation.Identity, instanceID string, layered bool) *connection {
+func (h *Hub) registerStream(id configsyncrevocation.Identity, instanceID string, layered, acceptsSecretRefs bool) *connection {
 	conn := &connection{
-		scope:      id.Scope,
-		identity:   id,
-		instanceID: instanceID,
-		layered:    layered,
-		notices:    make(chan notice, 1),
-		revoked:    make(chan struct{}),
+		scope:             id.Scope,
+		identity:          id,
+		instanceID:        instanceID,
+		layered:           layered,
+		acceptsSecretRefs: acceptsSecretRefs,
+		notices:           make(chan notice, 1),
+		revoked:           make(chan struct{}),
 	}
 	h.mu.Lock()
 	h.conns[conn] = struct{}{}
@@ -135,10 +143,11 @@ func (h *Hub) teardown(conn *connection) {
 // Broadcast delivers version to every connected data plane, coalescing to the
 // newest version per connection. It never blocks.
 func (h *Hub) Broadcast(version string) {
+	h.warmOldScopes(func(*connection) bool { return true }, notice{version: version})
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for conn := range h.conns {
-		conn.enqueue(notice{version: version})
+		h.deliver(conn, notice{version: version})
 	}
 }
 
@@ -156,6 +165,11 @@ func (h *Hub) BroadcastScope(scope, version string) {
 // layeredVersion, every other connection of version. An empty layeredVersion
 // notifies every connection of version.
 func (h *Hub) BroadcastScopeLayered(scope, version, layeredVersion string) {
+	inScope := func(c *connection) bool { return c.scope == scope }
+	h.warmOldScopes(inScope, notice{version: version})
+	if layeredVersion != "" {
+		h.warmOldScopes(inScope, notice{version: layeredVersion, layered: true})
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for conn := range h.conns {
@@ -163,11 +177,50 @@ func (h *Hub) BroadcastScopeLayered(scope, version, layeredVersion string) {
 			continue
 		}
 		if conn.layered && layeredVersion != "" {
-			conn.enqueue(notice{version: layeredVersion, layered: true})
+			h.deliver(conn, notice{version: layeredVersion, layered: true})
 			continue
 		}
-		conn.enqueue(notice{version: version})
+		h.deliver(conn, notice{version: version})
 	}
+}
+
+// setWithhold installs the check deliver applies to connections without
+// accepts_secret_refs, and warm, which computes the same verdict for a scope
+// ahead of time so deliver only reads it while the hub is locked.
+func (h *Hub) setWithhold(withhold func(conn *connection, n notice) bool, warm func(scope string, n notice)) {
+	h.mu.Lock()
+	h.withhold, h.warm = withhold, warm
+	h.mu.Unlock()
+}
+
+// warmOldScopes runs warm, outside the hub lock, for every scope that has a
+// matching connection without accepts_secret_refs: scanning a new snapshot
+// version must not hold up registrations and teardowns.
+func (h *Hub) warmOldScopes(match func(*connection) bool, n notice) {
+	h.mu.Lock()
+	warm := h.warm
+	scopes := map[string]struct{}{}
+	if warm != nil {
+		for conn := range h.conns {
+			if !conn.acceptsSecretRefs && match(conn) {
+				scopes[conn.scope] = struct{}{}
+			}
+		}
+	}
+	h.mu.Unlock()
+	for scope := range scopes {
+		warm(scope, n)
+	}
+}
+
+// deliver enqueues n on conn unless conn does not understand secret
+// references and the version holds some. The broadcasts warm the verdict
+// before taking h.mu, so here it is a memo read. Callers hold h.mu.
+func (h *Hub) deliver(conn *connection, n notice) {
+	if !conn.acceptsSecretRefs && h.withhold != nil && h.withhold(conn, n) {
+		return
+	}
+	conn.enqueue(n)
 }
 
 // CloseRevoked ends every registered Sync stream whose verified token satisfies

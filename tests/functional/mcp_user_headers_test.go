@@ -32,22 +32,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// keyedUpstream is an MCP server that authenticates each caller by their own
+// perUserKeyUpstream is an MCP server that authenticates each caller by their own
 // X-API-Key, the way an upstream without OAuth does, and records the keys it
 // was sent.
-type keyedUpstream struct {
+type perUserKeyUpstream struct {
 	server *httptest.Server
 	mu     sync.Mutex
 	keys   []string
 	revoke map[string]bool
 }
 
-func startKeyedUpstream(t *testing.T) *keyedUpstream {
+func startPerUserKeyUpstream(t *testing.T) *perUserKeyUpstream {
 	t.Helper()
 	mcp := sdk.NewServer(&sdk.Implementation{Name: "keyed-upstream", Version: "1.0"}, nil)
 	addTool(mcp, "echo")
 	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return mcp }, nil)
-	up := &keyedUpstream{revoke: map[string]bool{}}
+	up := &perUserKeyUpstream{revoke: map[string]bool{}}
 	up.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-API-Key")
 		up.mu.Lock()
@@ -64,19 +64,19 @@ func startKeyedUpstream(t *testing.T) *keyedUpstream {
 	return up
 }
 
-func (u *keyedUpstream) seen() []string {
+func (u *perUserKeyUpstream) seen() []string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]string(nil), u.keys...)
 }
 
-func (u *keyedUpstream) reset() {
+func (u *perUserKeyUpstream) reset() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.keys = nil
 }
 
-func (u *keyedUpstream) refuse(key string) {
+func (u *perUserKeyUpstream) refuse(key string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.revoke[key] = true
@@ -142,7 +142,7 @@ func enterKeyOnConnectPage(t *testing.T, ticket, registryID string, form url.Val
 // application; each call carries the caller's own key, never the other's, and
 // the key never leaves the gateway.
 func TestMCPUserHeaders_EachPersonSendsTheirOwnKey(t *testing.T) {
-	up := startKeyedUpstream(t)
+	up := startPerUserKeyUpstream(t)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, map[string]any{
 		"name": uniqueName("keyed"), "type": "mcp", "weight": 1,
@@ -259,7 +259,7 @@ func mcpRPCAt(t *testing.T, base, gatewayID, consumerID string, headers map[stri
 // the key the plane sends, and an admin reset reaches it too.
 func TestDBLessMCP_UserHeaderLoadedByAnAdminReachesTheDataPlane(t *testing.T) {
 	defer Track(t, "DBLessDataPlane")()
-	up := startKeyedUpstream(t)
+	up := startPerUserKeyUpstream(t)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("dbless-keyed")})
 	registryID := CreateRegistry(t, gatewayID, map[string]any{
 		"name": uniqueName("keyed"), "type": "mcp", "weight": 1,
@@ -303,7 +303,7 @@ func TestDBLessMCP_UserHeaderLoadedByAnAdminReachesTheDataPlane(t *testing.T) {
 // virtual MCP that binds it, they enter the key on the page, and their calls
 // carry it.
 func TestMCPUserHeaders_OAuthCallerEnrollsThroughAnAdminLink(t *testing.T) {
-	up := startKeyedUpstream(t)
+	up := startPerUserKeyUpstream(t)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, map[string]any{
 		"name": uniqueName("keyed"), "type": "mcp", "weight": 1,
