@@ -77,7 +77,7 @@ func (r *refreshAgentCard) Refresh(ctx context.Context, gatewayID ids.GatewayID,
 	changed := digest != pinned.CardDigest
 	var scan []domain.SkillVerdict
 	if changed {
-		scan = r.cards.scanSkills(ctx, pinned, fetched.Card)
+		scan = r.cards.scanSkills(ctx, gatewayID, pinned, fetched.Card)
 	}
 	return &AgentCardRefresh{
 		Changed:          changed,

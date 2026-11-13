@@ -74,6 +74,6 @@ func (p *previewAgentCard) Preview(ctx context.Context, gatewayID ids.GatewayID,
 		CardDigest:      digest,
 		Versions:        versions,
 		DefaultVersion:  domain.DefaultVersion(versions),
-		SkillScan:       p.cards.scanSkills(ctx, target, fetched.Card),
+		SkillScan:       p.cards.scanSkills(ctx, gatewayID, target, fetched.Card),
 	}, nil
 }

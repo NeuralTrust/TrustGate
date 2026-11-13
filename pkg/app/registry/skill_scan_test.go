@@ -32,7 +32,7 @@ import (
 func scanning(t *testing.T, texts []string, scans []appregistry.SkillScan, err error) *appmocks.SkillScanner {
 	t.Helper()
 	scanner := appmocks.NewSkillScanner(t)
-	scanner.EXPECT().ScanIndirectPromptInjection(mock.Anything, texts).Return(scans, err).Once()
+	scanner.EXPECT().ScanIndirectPromptInjection(mock.Anything, mock.Anything, texts).Return(scans, err).Once()
 	return scanner
 }
 
