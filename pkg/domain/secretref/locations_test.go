@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -145,6 +147,28 @@ func TestConsumerLocationsExist(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("location %s matches no field of an encoded consumer", l)
+		}
+	}
+}
+
+// TestAuthLocationsExist is TestRegistryLocationsExist for auths.
+func TestAuthLocationsExist(t *testing.T) {
+	t.Parallel()
+	a := auth.Auth{Config: auth.Config{OAuth2: &auth.OAuth2Config{ClientSecret: "v", ExchangeClientSecret: "v"}}}
+	leaves := stringLeaves(t, a)
+	for _, l := range secretref.Locations {
+		if l.Entity != secretref.EntityAuth {
+			continue
+		}
+		found := false
+		for _, leaf := range leaves {
+			if l.Matches(secretref.EntityAuth, leaf) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("location %s matches no field of an encoded auth", l)
 		}
 	}
 }

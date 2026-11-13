@@ -27,6 +27,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
@@ -151,7 +153,7 @@ func (v *Validator) introspectRemote(ctx context.Context, raw, key string, cfg *
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if cfg.ClientID != "" {
-		req.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
+		req.SetBasicAuth(cfg.ClientID, secretref.Literal(cfg.ClientSecret))
 	}
 	httpRes, err := v.client.Do(req)
 	if err != nil {

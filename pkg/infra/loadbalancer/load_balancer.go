@@ -407,22 +407,13 @@ func backendEmbeddingToDomain(c *registry.EmbeddingConfig) *embedding.Config {
 	}
 	if c.Auth != nil {
 		out.Credentials = embedding.Credentials{
-			APIKey:      literal(c.Auth.APIKey),
+			APIKey:      secretref.Literal(c.Auth.APIKey),
 			HeaderName:  c.Auth.HeaderName,
-			HeaderValue: literal(c.Auth.HeaderValue),
+			HeaderValue: secretref.Literal(c.Auth.HeaderValue),
 		}
 		if out.Credentials.APIKey == "" && out.Credentials.HeaderValue != "" {
 			out.Credentials.APIKey = out.Credentials.HeaderValue
 		}
 	}
 	return out
-}
-
-// literal drops a reference-shaped value: a secret reference that reaches the
-// balancer unresolved must never be sent as the embedding credential.
-func literal(v string) string {
-	if secretref.IsRef(v) {
-		return ""
-	}
-	return v
 }

@@ -82,13 +82,13 @@ func provideAuthRepository(c *container.Container) error {
 }
 
 func provideAuthServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Creator {
-		return appauth.NewCreator(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appauth.Creator {
+		return appauth.NewCreator(repo, manager, publisher, logger, sig.Signaler, refs.authOptions()...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Updater {
-		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler, utcNow)
+	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appauth.Updater {
+		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler, utcNow, refs.authOptions()...)
 	}); err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func provideAuthServices(c *container.Container) error {
 	if err := c.Provide(appauth.NewAPIKeyFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, cfg *config.Config) appauth.CredentialFinder {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, cfg *config.Config, secrets secretValuesParams) appauth.CredentialFinder {
 		defaultIdP := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
 			Issuer:       cfg.Server.MCPDefaultIdP.Issuer,
 			AuthorizeURL: cfg.Server.MCPDefaultIdP.AuthorizeURL,
@@ -143,7 +143,7 @@ func provideAuthServices(c *container.Container) error {
 			logger.Info("mcp: built-in NeuralTrust default identity provider enabled",
 				slog.String("issuer", defaultIdP.Config.OAuth2.Issuer))
 		}
-		return appauth.NewCredentialFinder(repo, manager, logger, defaultIdP)
+		return appauth.NewCredentialFinder(repo, manager, logger, defaultIdP, secrets.credentialFinderOptions()...)
 	}); err != nil {
 		return err
 	}
