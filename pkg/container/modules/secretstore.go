@@ -269,3 +269,25 @@ func provideSecretStoresAdmin(c *container.Container) error {
 		return secretstorehttp.NewTestHandler(gateways, sources, tester)
 	})
 }
+
+// secretRefsParams is the write-time validator of secret references, absent
+// on planes without the control plane's connection store.
+type secretRefsParams struct {
+	dig.In
+	Validator appsecretstore.RegistryValidator `optional:"true"`
+}
+
+// entity returns the validator as the use cases take it, or nil.
+func (p secretRefsParams) entity() appsecretref.EntityValidator {
+	if p.Validator == nil {
+		return nil
+	}
+	return p.Validator
+}
+
+func (p secretRefsParams) consumerOptions() []appconsumer.SaveOption {
+	if v := p.entity(); v != nil {
+		return []appconsumer.SaveOption{appconsumer.WithSecretRefValidator(v)}
+	}
+	return nil
+}

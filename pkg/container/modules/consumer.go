@@ -75,13 +75,13 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, gateways gatewaydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, gateways, manager, publisher, logger, sig.Signaler, refs.consumerOptions()...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Updater {
-		return appconsumer.NewUpdater(repo, registryRepo, authRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, refs secretRefsParams) appconsumer.Updater {
+		return appconsumer.NewUpdater(repo, registryRepo, authRepo, manager, publisher, logger, sig.Signaler, refs.consumerOptions()...)
 	}); err != nil {
 		return err
 	}

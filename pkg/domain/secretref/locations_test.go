@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
@@ -120,5 +122,29 @@ func TestIsLocation(t *testing.T) {
 	}
 	if secretref.IsLocation("policy", []string{"llm_target", "auth", "api_key", "api_key"}) {
 		t.Error("a location must only match its own entity")
+	}
+}
+
+// TestConsumerLocationsExist is TestRegistryLocationsExist for consumers.
+func TestConsumerLocationsExist(t *testing.T) {
+	t.Parallel()
+	c := consumer.Consumer{LBConfig: &consumer.LBConfig{EmbeddingConfig: &registry.EmbeddingConfig{
+		Auth: &registry.APIKeyAuth{APIKey: "v", HeaderValue: "v"},
+	}}}
+	leaves := stringLeaves(t, c)
+	for _, l := range secretref.Locations {
+		if l.Entity != secretref.EntityConsumer {
+			continue
+		}
+		found := false
+		for _, leaf := range leaves {
+			if l.Matches(secretref.EntityConsumer, leaf) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("location %s matches no field of an encoded consumer", l)
+		}
 	}
 }

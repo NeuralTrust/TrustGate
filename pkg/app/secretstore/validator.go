@@ -76,19 +76,7 @@ type RegistryValidator interface {
 	ValidateRegistry(ctx context.Context, reg *registry.Registry, previous *appsecretref.Stored) (func(), error)
 	// ValidateEntity applies the same checks to the declared locations of any
 	// entity: current is what the write holds, previous what was stored.
-	ValidateEntity(ctx context.Context, current EntityRefs, previous *appsecretref.Stored) (func(), error)
-}
-
-// EntityRefs is what one write of an entity holds at its declared locations.
-type EntityRefs struct {
-	GatewayID ids.GatewayID
-	Entity    refdomain.Entity
-	ID        string
-	Uses      []appsecretref.Use
-	Embedded  []appsecretref.Use
-	// Destination fingerprints where the entity sends its credentials; a
-	// change re-checks every reference it holds.
-	Destination string
+	ValidateEntity(ctx context.Context, current appsecretref.EntityRefs, previous *appsecretref.Stored) (func(), error)
 }
 
 type registryValidator struct {
@@ -112,14 +100,14 @@ type parsedUse struct {
 
 func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, stored *appsecretref.Stored) (func(), error) {
 	uses, embedded := appsecretref.RegistryReferences(reg)
-	return v.ValidateEntity(ctx, EntityRefs{
+	return v.ValidateEntity(ctx, appsecretref.EntityRefs{
 		GatewayID: reg.GatewayID, Entity: refdomain.EntityRegistry, ID: reg.ID.String(),
 		Uses: uses, Embedded: embedded, Destination: appsecretref.RegistryDestination(reg),
 	}, stored)
 }
 
 // ValidateEntity implements RegistryValidator.
-func (v *registryValidator) ValidateEntity(ctx context.Context, current EntityRefs, stored *appsecretref.Stored) (func(), error) {
+func (v *registryValidator) ValidateEntity(ctx context.Context, current appsecretref.EntityRefs, stored *appsecretref.Stored) (func(), error) {
 	var previous []appsecretref.Use
 	if stored != nil {
 		previous = stored.Uses
@@ -180,7 +168,7 @@ func embeddedError(embedded []appsecretref.Use) error {
 
 // audit logs secret_reference_set for every reference a saved write set,
 // changed or removed: what changed and who changed it, never a value.
-func (v *registryValidator) audit(ctx context.Context, current EntityRefs, set, removed []appsecretref.Use) {
+func (v *registryValidator) audit(ctx context.Context, current appsecretref.EntityRefs, set, removed []appsecretref.Use) {
 	actor := callerFrom(ctx).Actor
 	log := func(u appsecretref.Use, action string) {
 		attrs := []any{

@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -405,13 +407,22 @@ func backendEmbeddingToDomain(c *registry.EmbeddingConfig) *embedding.Config {
 	}
 	if c.Auth != nil {
 		out.Credentials = embedding.Credentials{
-			APIKey:      c.Auth.APIKey,
+			APIKey:      literal(c.Auth.APIKey),
 			HeaderName:  c.Auth.HeaderName,
-			HeaderValue: c.Auth.HeaderValue,
+			HeaderValue: literal(c.Auth.HeaderValue),
 		}
 		if out.Credentials.APIKey == "" && out.Credentials.HeaderValue != "" {
 			out.Credentials.APIKey = out.Credentials.HeaderValue
 		}
 	}
 	return out
+}
+
+// literal drops a reference-shaped value: a secret reference that reaches the
+// balancer unresolved must never be sent as the embedding credential.
+func literal(v string) string {
+	if secretref.IsRef(v) {
+		return ""
+	}
+	return v
 }
