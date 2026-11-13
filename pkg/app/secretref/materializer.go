@@ -73,7 +73,32 @@ type Materializer interface {
 	// an upstream rejected its credential. It returns a new copy and true
 	// when a value changed, so the call can be retried once with it.
 	Refresh(ctx context.Context, reg *registry.Registry) (*registry.Registry, bool)
+	// Values resolves the reference-shaped values of uses, declared
+	// locations of other entities of gatewayID, with the same checks as
+	// registries: eligibility, the store's gateway allowlist and allowed
+	// paths. A value that cannot be resolved comes back empty with its
+	// error, never as the reference. With a source, the payloads are
+	// recorded as what that part of the gateway's runtime data uses,
+	// replacing what it used before, so a change invalidates the gateway;
+	// with an empty source nothing is recorded.
+	Values(ctx context.Context, gatewayID ids.GatewayID, source string, uses []Use) []Resolved
 }
+
+// Resolved is the outcome of one Use: the value, or the error that left it
+// empty.
+type Resolved struct {
+	Value string
+	Err   error
+}
+
+// Sources of a gateway's runtime data, for Values.
+const (
+	SourceRegistries = "registries"
+	SourceConsumers  = "consumers"
+	SourcePolicies   = "policies"
+	SourceAuths      = "auths"
+	SourceGateway    = "gateway"
+)
 
 // GatewayFinder reads a gateway's entitlements for the eligibility check.
 type GatewayFinder interface {
@@ -106,10 +131,10 @@ type materializer struct {
 
 	mu sync.Mutex
 	// byPayload maps a payload key to the gateways whose runtime data used
-	// it; byGateway is the reverse, so each materialization replaces its
-	// gateway's entries instead of piling them up.
+	// it; byGateway is the reverse, per source of the gateway's data, so each
+	// materialization replaces its own entries instead of piling them up.
 	byPayload map[string]map[ids.GatewayID]struct{}
-	byGateway map[ids.GatewayID][]string
+	byGateway map[ids.GatewayID]map[string][]string
 }
 
 // NewMaterializer returns a Materializer. With a Resolver, it subscribes to
@@ -126,7 +151,7 @@ func NewMaterializer(cfg MaterializerConfig) Materializer {
 		cfg:       cfg,
 		digestKey: []byte(rand.Text()),
 		byPayload: map[string]map[ids.GatewayID]struct{}{},
-		byGateway: map[ids.GatewayID][]string{},
+		byGateway: map[ids.GatewayID]map[string][]string{},
 	}
 	counter, err := meter.Int64Counter(unresolvedMetric, metric.WithUnit("{reference}"),
 		metric.WithDescription("references left empty while building a gateway's runtime data, by error class"))
@@ -179,7 +204,7 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 	}
 	if len(refs) == 0 {
 		if index {
-			m.index(gatewayID, nil)
+			m.index(gatewayID, SourceRegistries, nil)
 		}
 		return byID
 	}
@@ -194,7 +219,7 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 				used = append(used, p.ref.PayloadKey())
 			}
 		}
-		m.index(gatewayID, used)
+		m.index(gatewayID, SourceRegistries, used)
 	}
 
 	if eligErr := m.resolveAll(ctx, gatewayID, refs); eligErr != nil && index && m.cfg.Invalidate != nil {
@@ -340,25 +365,45 @@ func (m *materializer) reportUnresolved(ctx context.Context, gatewayID ids.Gatew
 	class := secretstore.ClassOf(p.err)
 	attrs := []any{
 		slog.String("gateway_id", gatewayID.String()),
-		slog.String("registry_id", p.registryID.String()),
 		slog.String("location", strings.Join(p.path, ".")),
 		slog.String("error_class", string(class)),
+	}
+	if p.registryID != (ids.RegistryID{}) {
+		attrs = append(attrs, slog.String("registry_id", p.registryID.String()))
 	}
 	if p.parsed {
 		attrs = append(attrs, slog.String("store", p.ref.Store), slog.String("path", p.ref.Path))
 	}
-	m.cfg.Logger.Warn("secret reference unresolved; the registry fails with secret_unavailable", attrs...)
+	m.cfg.Logger.Warn("secret reference unresolved; its credential is left empty", attrs...)
 	if m.unresolved != nil {
 		m.unresolved.Add(ctx, 1, metric.WithAttributes(attribute.String("error_class", string(class))))
 	}
 }
 
-// index records the payloads gatewayID's runtime data used, replacing what
-// it used before.
-func (m *materializer) index(gatewayID ids.GatewayID, payloads []string) {
+// index records the payloads source of gatewayID's runtime data used,
+// replacing what that source used before; the other sources are kept.
+func (m *materializer) index(gatewayID ids.GatewayID, source string, payloads []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, key := range m.byGateway[gatewayID] {
+	before := m.usedLocked(gatewayID)
+	sources := m.byGateway[gatewayID]
+	if len(payloads) == 0 {
+		delete(sources, source)
+	} else {
+		if sources == nil {
+			sources = map[string][]string{}
+			m.byGateway[gatewayID] = sources
+		}
+		sources[source] = payloads
+	}
+	if len(sources) == 0 {
+		delete(m.byGateway, gatewayID)
+	}
+	after := m.usedLocked(gatewayID)
+	for key := range before {
+		if _, ok := after[key]; ok {
+			continue
+		}
 		if set := m.byPayload[key]; set != nil {
 			delete(set, gatewayID)
 			if len(set) == 0 {
@@ -366,12 +411,7 @@ func (m *materializer) index(gatewayID ids.GatewayID, payloads []string) {
 			}
 		}
 	}
-	if len(payloads) == 0 {
-		delete(m.byGateway, gatewayID)
-		return
-	}
-	m.byGateway[gatewayID] = payloads
-	for _, key := range payloads {
+	for key := range after {
 		set := m.byPayload[key]
 		if set == nil {
 			set = map[ids.GatewayID]struct{}{}
@@ -379,6 +419,67 @@ func (m *materializer) index(gatewayID ids.GatewayID, payloads []string) {
 		}
 		set[gatewayID] = struct{}{}
 	}
+}
+
+// unindex removes gatewayID from the index, every source of it.
+func (m *materializer) unindex(gatewayID ids.GatewayID) {
+	m.mu.Lock()
+	sources := make([]string, 0, len(m.byGateway[gatewayID]))
+	for source := range m.byGateway[gatewayID] {
+		sources = append(sources, source)
+	}
+	m.mu.Unlock()
+	for _, source := range sources {
+		m.index(gatewayID, source, nil)
+	}
+}
+
+func (m *materializer) usedLocked(gatewayID ids.GatewayID) map[string]struct{} {
+	used := map[string]struct{}{}
+	for _, payloads := range m.byGateway[gatewayID] {
+		for _, key := range payloads {
+			used[key] = struct{}{}
+		}
+	}
+	return used
+}
+
+// Values implements Materializer.
+func (m *materializer) Values(ctx context.Context, gatewayID ids.GatewayID, source string, uses []Use) []Resolved {
+	out := make([]Resolved, len(uses))
+	if len(uses) == 0 {
+		if source != "" {
+			m.index(gatewayID, source, nil)
+		}
+		return out
+	}
+	refs := make([]*pending, len(uses))
+	var used []string
+	for i, u := range uses {
+		p := &pending{path: u.Path}
+		ref, _, err := domain.Parse(u.Raw)
+		if err != nil {
+			p.err = fmt.Errorf("%w: %v", secretstore.ErrInvalidPayload, err)
+		} else {
+			p.ref, p.parsed = ref, true
+			used = append(used, ref.PayloadKey())
+		}
+		refs[i] = p
+	}
+	if source != "" {
+		m.index(gatewayID, source, used)
+	}
+	if eligErr := m.resolveAll(ctx, gatewayID, refs); eligErr != nil && source != "" && m.cfg.Invalidate != nil {
+		m.cfg.Invalidate(gatewayID)
+	}
+	for i, p := range refs {
+		out[i] = Resolved{Value: p.value, Err: p.err}
+		if p.err != nil {
+			out[i].Value = ""
+			m.reportUnresolved(ctx, gatewayID, p)
+		}
+	}
+	return out
 }
 
 // StoresChanged implements Materializer.
@@ -422,7 +523,7 @@ func (m *materializer) onChange(payloads []domain.Ref) {
 func (m *materializer) invalidate(affected map[ids.GatewayID]struct{}) {
 	for gw := range affected {
 		if m.deleted(gw) {
-			m.index(gw, nil)
+			m.unindex(gw)
 			continue
 		}
 		m.cfg.Invalidate(gw)

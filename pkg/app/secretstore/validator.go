@@ -74,6 +74,21 @@ type RegistryValidator interface {
 	// path. On success it returns the audit to record once the write is
 	// saved: every reference set, changed or removed.
 	ValidateRegistry(ctx context.Context, reg *registry.Registry, previous *appsecretref.Stored) (func(), error)
+	// ValidateEntity applies the same checks to the declared locations of any
+	// entity: current is what the write holds, previous what was stored.
+	ValidateEntity(ctx context.Context, current EntityRefs, previous *appsecretref.Stored) (func(), error)
+}
+
+// EntityRefs is what one write of an entity holds at its declared locations.
+type EntityRefs struct {
+	GatewayID ids.GatewayID
+	Entity    refdomain.Entity
+	ID        string
+	Uses      []appsecretref.Use
+	Embedded  []appsecretref.Use
+	// Destination fingerprints where the entity sends its credentials; a
+	// change re-checks every reference it holds.
+	Destination string
 }
 
 type registryValidator struct {
@@ -96,25 +111,30 @@ type parsedUse struct {
 }
 
 func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, stored *appsecretref.Stored) (func(), error) {
-	all, allEmbedded := appsecretref.RegistryReferences(reg)
+	uses, embedded := appsecretref.RegistryReferences(reg)
+	return v.ValidateEntity(ctx, EntityRefs{
+		GatewayID: reg.GatewayID, Entity: refdomain.EntityRegistry, ID: reg.ID.String(),
+		Uses: uses, Embedded: embedded, Destination: appsecretref.RegistryDestination(reg),
+	}, stored)
+}
+
+// ValidateEntity implements RegistryValidator.
+func (v *registryValidator) ValidateEntity(ctx context.Context, current EntityRefs, stored *appsecretref.Stored) (func(), error) {
 	var previous []appsecretref.Use
 	if stored != nil {
 		previous = stored.Uses
 	}
-	uses := changedUses(all, previous)
-	if stored != nil && stored.Destination != appsecretref.RegistryDestination(reg) {
-		uses = all
+	uses := changedUses(current.Uses, previous)
+	if stored != nil && stored.Destination != current.Destination {
+		uses = current.Uses
 	}
-	removed := removedUses(previous, all)
-	audit := func() { v.audit(ctx, reg, uses, removed) }
-	if len(uses) == 0 {
-		if embedded := changedUses(allEmbedded, previous); len(embedded) > 0 {
-			return nil, embeddedError(embedded)
-		}
-		return audit, nil
-	}
-	if embedded := changedUses(allEmbedded, previous); len(embedded) > 0 {
+	removed := removedUses(previous, current.Uses)
+	audit := func() { v.audit(ctx, current, uses, removed) }
+	if embedded := changedUses(current.Embedded, previous); len(embedded) > 0 {
 		return nil, embeddedError(embedded)
+	}
+	if len(uses) == 0 {
+		return audit, nil
 	}
 	parsed := make([]parsedUse, 0, len(uses))
 	for _, u := range uses {
@@ -125,7 +145,7 @@ func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.
 		parsed = append(parsed, parsedUse{path: strings.Join(u.Path, "."), ref: ref})
 	}
 
-	gw, err := v.gateways.FindByID(ctx, reg.GatewayID)
+	gw, err := v.gateways.FindByID(ctx, current.GatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +167,7 @@ func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.
 	return func() {
 		if unverified {
 			v.logger.Warn("secret references saved without a connected data plane to verify the store",
-				slog.String("gateway_id", reg.GatewayID.String()), slog.String("registry_id", reg.ID.String()))
+				slog.String("gateway_id", current.GatewayID.String()), slog.String("entity", string(current.Entity)), slog.String("id", current.ID))
 		}
 		audit()
 	}, nil
@@ -160,12 +180,13 @@ func embeddedError(embedded []appsecretref.Use) error {
 
 // audit logs secret_reference_set for every reference a saved write set,
 // changed or removed: what changed and who changed it, never a value.
-func (v *registryValidator) audit(ctx context.Context, reg *registry.Registry, set, removed []appsecretref.Use) {
+func (v *registryValidator) audit(ctx context.Context, current EntityRefs, set, removed []appsecretref.Use) {
 	actor := callerFrom(ctx).Actor
 	log := func(u appsecretref.Use, action string) {
 		attrs := []any{
-			slog.String("gateway_id", reg.GatewayID.String()),
-			slog.String("registry_id", reg.ID.String()),
+			slog.String("gateway_id", current.GatewayID.String()),
+			slog.String("entity", string(current.Entity)),
+			slog.String("id", current.ID),
 			slog.String("field", strings.Join(u.Path, ".")),
 			slog.String("action", action),
 			slog.String("actor", actor),
