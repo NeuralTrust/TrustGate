@@ -418,6 +418,12 @@ func (f *dataFinder) loadPolicies(ctx context.Context, gatewayID ids.GatewayID) 
 	if err != nil {
 		return loadedPolicies{}, err
 	}
+	if f.materializer != nil {
+		all = appsecretref.GatewayPolicies(ctx, f.materializer, gatewayID, all, func(slug string) []string {
+			paths, _ := appplugins.PluginCredentialPaths(f.pluginRegistry, slug)
+			return paths
+		})
+	}
 	out := loadedPolicies{
 		everywhere: make([]*policydomain.Policy, 0),
 		onMCP:      make([]*policydomain.Policy, 0),

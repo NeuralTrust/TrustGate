@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -564,5 +566,40 @@ func TestConsumerAccessorsMatchDeclaredLocations(t *testing.T) {
 		if l.Entity == domain.EntityConsumer && !covered[strings.Join(l.Path, ".")] {
 			t.Errorf("declared location %v has no accessor", l.Path)
 		}
+	}
+}
+
+func TestGatewayPoliciesResolvePluginCredentials(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}})
+	guard := &policy.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw, Slug: "bedrock_guardrail", Settings: map[string]any{
+		"credentials":  map[string]any{"access_key_id": refStr("aws#id"), "secret_access_key": "secret://vault/payments/sk"},
+		"guardrail_id": "g-1",
+	}}
+	plain := &policy.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw, Slug: "rate_limiter", Settings: map[string]any{"limit": 10}}
+	paths := func(slug string) []string {
+		if slug == "bedrock_guardrail" {
+			return []string{"credentials.access_key_id", "credentials.secret_access_key"}
+		}
+		return nil
+	}
+
+	out := GatewayPolicies(context.Background(), m, gw, []*policy.Policy{guard, plain}, paths)
+	if out[1] != plain {
+		t.Fatal("a policy without references is returned as it is")
+	}
+	creds := out[0].Settings["credentials"].(map[string]any)
+	if creds["access_key_id"] == refStr("aws#id") || creds["access_key_id"] == "" {
+		t.Fatalf("access_key_id = %v", creds["access_key_id"])
+	}
+	if creds["secret_access_key"] != "" {
+		t.Fatal("a reference outside the allowed paths is left empty")
+	}
+	if guard.Settings["credentials"].(map[string]any)["access_key_id"] != refStr("aws#id") {
+		t.Fatal("the input policy was modified")
+	}
+	if out[0].Settings["guardrail_id"] != "g-1" {
+		t.Fatal("other settings are kept")
 	}
 }
