@@ -182,6 +182,119 @@ func (c *GCPSecretManagerConfig) Validate() error {
 	return nil
 }
 
+// azureVaultDomains are the Key Vault DNS suffixes of the Azure clouds. The
+// token audience is the suffix itself, so a vault URL also picks its cloud.
+var azureVaultDomains = []string{"vault.azure.net", "vault.azure.cn", "vault.usgovcloudapi.net", "vault.microsoftazure.de"}
+
+// AzureKeyVaultConfig reads one Azure Key Vault with the pod's workload
+// identity, or else its managed identity. ClientID picks a user-assigned
+// identity; empty uses the environment's default.
+type AzureKeyVaultConfig struct {
+	VaultURL string `yaml:"vault_url"`
+	ClientID string `yaml:"client_id"`
+}
+
+// StoreType implements TypedConfig.
+func (*AzureKeyVaultConfig) StoreType() Type { return TypeAzureKeyVault }
+
+// Validate implements TypedConfig.
+func (c *AzureKeyVaultConfig) Validate() error {
+	if _, err := c.Audience(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Audience returns the token scope of the vault's cloud.
+func (c *AzureKeyVaultConfig) Audience() (string, error) {
+	u, err := url.Parse(strings.TrimSpace(c.VaultURL))
+	if err != nil || u.Scheme != "https" || u.User != nil || strings.Trim(u.Path, "/") != "" || u.RawQuery != "" {
+		return "", fmt.Errorf("%w: azure_key_vault.vault_url must be https://<vault>.vault.azure.net", ErrInvalidStore)
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, domain := range azureVaultDomains {
+		if name, ok := strings.CutSuffix(host, "."+domain); ok && name != "" && !strings.Contains(name, ".") {
+			return "https://" + domain + "/.default", nil
+		}
+	}
+	return "", fmt.Errorf("%w: azure_key_vault.vault_url must be a Key Vault host such as <vault>.vault.azure.net", ErrInvalidStore)
+}
+
+// CyberArk Conjur authentication methods.
+const (
+	ConjurAuthJWT    = "jwt"
+	ConjurAuthAPIKey = "api_key"
+)
+
+// CyberArkConjurConfig reads variables of one Conjur account. Credentials
+// are never inline: jwt reads a token file (the projected ServiceAccount
+// token by default) and api_key reads a mounted Secret.
+type CyberArkConjurConfig struct {
+	URL        string     `yaml:"url"`
+	Account    string     `yaml:"account"`
+	CACertFile string     `yaml:"ca_cert_file"`
+	Auth       ConjurAuth `yaml:"auth"`
+}
+
+// ConjurAuth is how the plane authenticates to Conjur.
+type ConjurAuth struct {
+	Method     string `yaml:"method"`
+	ServiceID  string `yaml:"service_id"`
+	JWTFile    string `yaml:"jwt_file"`
+	Login      string `yaml:"login"`
+	APIKeyFile string `yaml:"api_key_file"`
+}
+
+// EffectiveMethod returns the method, jwt when unset.
+func (a ConjurAuth) EffectiveMethod() string {
+	if a.Method == "" {
+		return ConjurAuthJWT
+	}
+	return a.Method
+}
+
+// EffectiveJWTFile returns the token file, the projected ServiceAccount
+// token when unset.
+func (a ConjurAuth) EffectiveJWTFile() string {
+	if a.JWTFile == "" {
+		return DefaultServiceAccountTokenFile
+	}
+	return a.JWTFile
+}
+
+// StoreType implements TypedConfig.
+func (*CyberArkConjurConfig) StoreType() Type { return TypeCyberArkConjur }
+
+// Validate implements TypedConfig.
+func (c *CyberArkConjurConfig) Validate() error {
+	if err := validateEndpoint("cyberark_conjur.url", c.URL, true); err != nil {
+		return err
+	}
+	if u, _ := url.Parse(c.URL); u != nil && u.Scheme != "https" {
+		return fmt.Errorf("%w: cyberark_conjur.url must be https", ErrInvalidStore)
+	}
+	if strings.TrimSpace(c.Account) == "" {
+		return fmt.Errorf("%w: cyberark_conjur.account is required", ErrInvalidStore)
+	}
+	if err := validateOptionalFile("cyberark_conjur.ca_cert_file", c.CACertFile); err != nil {
+		return err
+	}
+	switch c.Auth.EffectiveMethod() {
+	case ConjurAuthJWT:
+		if strings.TrimSpace(c.Auth.ServiceID) == "" {
+			return fmt.Errorf("%w: cyberark_conjur.auth.service_id is required for jwt", ErrInvalidStore)
+		}
+		return validateOptionalFile("cyberark_conjur.auth.jwt_file", c.Auth.JWTFile)
+	case ConjurAuthAPIKey:
+		if strings.TrimSpace(c.Auth.Login) == "" {
+			return fmt.Errorf("%w: cyberark_conjur.auth.login is required for api_key", ErrInvalidStore)
+		}
+		return validateRequiredFile("cyberark_conjur.auth.api_key_file", c.Auth.APIKeyFile)
+	default:
+		return fmt.Errorf("%w: cyberark_conjur.auth.method must be %s or %s", ErrInvalidStore, ConjurAuthJWT, ConjurAuthAPIKey)
+	}
+}
+
 // FileConfig reads files under Root, such as mounted Kubernetes Secrets. A
 // reference path is <secret>/<key> under Root.
 type FileConfig struct {
