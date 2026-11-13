@@ -87,6 +87,7 @@ func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"1","parts":[{"text":"Hello!"},{"data":{"a":1}},{"text":"Find flats"}]}}}`:                             "Hello! Find flats",
 		`{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","kind":"message","messageId":"1","parts":[{"kind":"text","text":"Book a trip"},{"kind":"file","file":{"uri":"x"}}]}}}`: "Book a trip",
 		`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"t-1"}}`: "",
+		`{"model":"x","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":[{"type":"text","text":"Flights?"}]}]}`: "Flights?",
 	}
 	for body, want := range cases {
 		rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})
@@ -95,6 +96,21 @@ func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, &infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
 		assert.Equal(t, want, evt.Request.Preview, body)
 	}
+}
+
+// The tokens an agent reports are the event's usage, as an LLM call's are.
+func TestBuilder_A2ATokensAreTheUsage(t *testing.T) {
+	rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})
+	span := rt.StartSpan(trace.SpanA2A, "message/send")
+	span.SetA2A(trace.A2AAttrs{Method: "message/send", Provider: "agentcore_harness", InputTokens: 30, OutputTokens: 12})
+	span.End()
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt,
+		&infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/bot/agents/reg-1"},
+		&infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.Usage)
+	assert.Equal(t, events.Usage{PromptTokens: 30, CompletionTokens: 12, TotalTokens: 42}, *evt.Usage)
 }
 
 // LLM and MCP events carry no a2a block.

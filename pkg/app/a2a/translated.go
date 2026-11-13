@@ -15,6 +15,7 @@
 package a2a
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -39,6 +40,10 @@ import (
 // the message's text and answers with the agent's reply as an A2A 0.3
 // message. The conversation is the call's contextId, or a new one the reply
 // names, so the caller continues it by sending that contextId back.
+//
+// message/stream answers a task as A2A 0.3 streams one: the task working, the
+// agent's text as one artifact appended chunk by chunk, then the task
+// completed.
 
 // codeAgentError is the JSON-RPC code of an error the agent itself answered.
 const codeAgentError = -32603
@@ -58,7 +63,7 @@ func conversation(x *Exchange) string {
 // messageText is the text of the message the caller sent: its text parts,
 // and its data parts as JSON. A file cannot be sent to these agents.
 func messageText(x *Exchange) (string, *RPCError) {
-	if x.kind != KindSend {
+	if x.kind != KindSend && x.kind != KindStream {
 		return "", UnsupportedOperation(x.version)
 	}
 	var texts []string
@@ -124,7 +129,89 @@ type translated struct{}
 
 func (translated) retry(*RPCError, int) (time.Duration, bool) { return 0, false }
 
-func (translated) capabilities() capabilities { return capabilities{jsonrpcOnlyCard: true} }
+func (translated) capabilities() capabilities {
+	return capabilities{streams: true, jsonrpcOnlyCard: true}
+}
+
+// tokenUsage is what an agent reports it used.
+type tokenUsage struct{ input, output int }
+
+func (u *tokenUsage) add(input, output int) {
+	u.input += input
+	u.output += output
+}
+
+// streamTranslator reads a provider's own stream for a message/stream call and
+// sends each A2A 0.3 event as a JSON-RPC response.
+type streamTranslator interface {
+	readStream(x *Exchange, body io.Reader, send func(sseEvent) bool)
+}
+
+// taskStream writes the events of a translated stream.
+type taskStream struct {
+	x          *Exchange
+	send       func(sseEvent) bool
+	taskID     string
+	artifactID string
+	started    bool
+	chunked    bool
+}
+
+func newTaskStream(x *Exchange, send func(sseEvent) bool) *taskStream {
+	return &taskStream{x: x, send: send, taskID: uuid.NewString(), artifactID: uuid.NewString()}
+}
+
+func (t *taskStream) emit(envelope map[string]any) bool {
+	envelope["jsonrpc"] = "2.0"
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return t.send(sseEvent{err: err})
+	}
+	return t.send(sseEvent{data: raw})
+}
+
+func (t *taskStream) start() bool {
+	if t.started {
+		return true
+	}
+	t.started = true
+	return t.emit(map[string]any{"result": map[string]any{
+		"kind": "task", "id": t.taskID, "contextId": conversation(t.x),
+		"status": map[string]any{"state": "working", "timestamp": time.Now().UTC().Format(time.RFC3339)},
+	}})
+}
+
+// text sends a chunk of the agent's answer, appended to the one artifact.
+func (t *taskStream) text(chunk string) bool {
+	if chunk == "" {
+		return true
+	}
+	if !t.start() {
+		return false
+	}
+	ok := t.emit(map[string]any{"result": map[string]any{
+		"kind": "artifact-update", "taskId": t.taskID, "contextId": conversation(t.x), "append": t.chunked,
+		"artifact": map[string]any{"artifactId": t.artifactID, "name": "answer", "parts": []map[string]any{{"kind": "text", "text": chunk}}},
+	}})
+	t.chunked = true
+	return ok
+}
+
+func (t *taskStream) completed() {
+	if !t.start() {
+		return
+	}
+	t.emit(map[string]any{"result": map[string]any{
+		"kind": "status-update", "taskId": t.taskID, "contextId": conversation(t.x), "final": true,
+		"status": map[string]any{"state": "completed", "timestamp": time.Now().UTC().Format(time.RFC3339)},
+	}})
+}
+
+// fail ends the stream with the error the agent answered.
+func (t *taskStream) fail(message string) {
+	e := agentError(message)
+	t.emit(map[string]any{"error": map[string]any{"code": e.Code, "message": e.Message}})
+}
 
 // harness is an Amazon Bedrock AgentCore harness. The conversation is its
 // runtime session: the harness keeps the history of a session itself.
@@ -157,6 +244,54 @@ func (harness) request(ctx context.Context, x *Exchange, endpoint string, h http
 	})
 }
 
+// harnessEvents reads InvokeHarness's event stream from r, calling text with
+// each chunk of an assistant message's text (and "" between messages) until
+// the stream ends, the agent ends it with an error, or text returns false. It
+// records the tokens the metadata events report.
+func harnessEvents(x *Exchange, r io.Reader, text func(chunk string, boundary bool) bool) (agentErr string, err error) {
+	decoder := eventstream.NewDecoder()
+	role := ""
+	for {
+		msg, err := decoder.Decode(r, nil)
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		var event struct {
+			Role    string `json:"role"`
+			Message string `json:"message"`
+			Delta   struct {
+				Text string `json:"text"`
+			} `json:"delta"`
+			Usage struct {
+				InputTokens  int `json:"inputTokens"`
+				OutputTokens int `json:"outputTokens"`
+			} `json:"usage"`
+		}
+		_ = json.Unmarshal(msg.Payload, &event)
+		messageType, eventType := eventHeader(msg.Headers, ":message-type"), eventHeader(msg.Headers, ":event-type")
+		switch {
+		case messageType == "exception" || messageType == "error":
+			return cmp.Or(event.Message, "The agent failed to answer."), nil
+		case eventType == "messageStart":
+			role = event.Role
+			if !text("", true) {
+				return "", nil
+			}
+		case eventType == "contentBlockDelta" && role != "user":
+			if !text(event.Delta.Text, false) {
+				return "", nil
+			}
+		case eventType == "metadata":
+			x.tokens.add(event.Usage.InputTokens, event.Usage.OutputTokens)
+		case eventType == "runtimeClientError" || eventType == "validationException" || eventType == "internalServerException":
+			return cmp.Or(event.Message, "The agent failed to answer."), nil
+		}
+	}
+}
+
 // decode reads InvokeHarness's event stream: the text of the agent's messages,
 // or the error it ended with.
 func (harness) decode(x *Exchange, res *http.Response, body []byte) (json.RawMessage, *RPCError, bool) {
@@ -167,55 +302,67 @@ func (harness) decode(x *Exchange, res *http.Response, body []byte) (json.RawMes
 		_ = json.Unmarshal(body, &aws)
 		return failedCall(res.StatusCode, aws.Message)
 	}
-	var (
-		texts   []string
-		current strings.Builder
-		role    string
-	)
+	var texts []string
+	var current strings.Builder
 	flush := func() {
-		if text := strings.TrimSpace(current.String()); text != "" && role != "user" {
+		if text := strings.TrimSpace(current.String()); text != "" {
 			texts = append(texts, text)
 		}
 		current.Reset()
 	}
-	decoder := eventstream.NewDecoder()
-	reader := bytes.NewReader(body)
-	for {
-		msg, err := decoder.Decode(reader, nil)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
-		}
-		var event struct {
-			Role    string `json:"role"`
-			Message string `json:"message"`
-			Delta   struct {
-				Text string `json:"text"`
-			} `json:"delta"`
-		}
-		_ = json.Unmarshal(msg.Payload, &event)
-		messageType, eventType := eventHeader(msg.Headers, ":message-type"), eventHeader(msg.Headers, ":event-type")
-		switch {
-		case messageType == "exception" || messageType == "error":
-			return nil, agentError(event.Message), true
-		case eventType == "messageStart":
+	agentErr, err := harnessEvents(x, bytes.NewReader(body), func(chunk string, boundary bool) bool {
+		if boundary {
 			flush()
-			role = event.Role
-		case eventType == "contentBlockDelta":
-			current.WriteString(event.Delta.Text)
-		case eventType == "contentBlockStop", eventType == "messageStop":
-			flush()
-		case eventType == "runtimeClientError" || eventType == "validationException" || eventType == "internalServerException":
-			return nil, agentError(event.Message), true
 		}
+		current.WriteString(chunk)
+		return true
+	})
+	if err != nil {
+		return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
+	}
+	if agentErr != "" {
+		return nil, agentError(agentErr), true
 	}
 	flush()
 	if len(texts) == 0 {
 		return nil, agentError("The agent finished without a text answer."), true
 	}
 	return replyMessage(x, strings.Join(texts, "\n\n"))
+}
+
+// readStream relays the harness's text as it comes, a blank line between its
+// messages.
+func (harness) readStream(x *Exchange, body io.Reader, send func(sseEvent) bool) {
+	t := newTaskStream(x, send)
+	ok, wrote, pending := true, false, false
+	agentErr, err := harnessEvents(x, body, func(chunk string, boundary bool) bool {
+		if boundary {
+			pending = wrote
+			return true
+		}
+		if chunk == "" {
+			return true
+		}
+		// A blank line between messages, written before the next text only.
+		if pending {
+			pending = false
+			if ok = t.text("\n\n"); !ok {
+				return false
+			}
+		}
+		wrote = true
+		ok = t.text(chunk)
+		return ok
+	})
+	switch {
+	case !ok:
+	case err != nil:
+		send(sseEvent{err: err})
+	case agentErr != "":
+		t.fail(agentErr)
+	default:
+		t.completed()
+	}
 }
 
 func eventHeader(headers eventstream.Headers, name string) string {
@@ -239,10 +386,40 @@ func (databricks) request(ctx context.Context, x *Exchange, endpoint string, h h
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	return post(ctx, endpoint, h, map[string]any{
+	payload := map[string]any{
 		"input":   []map[string]any{{"role": "user", "content": text}},
 		"context": map[string]any{"conversation_id": conversation(x)},
-	})
+	}
+	if x.kind.Streams() {
+		payload["stream"] = true
+	}
+	for key, value := range databricksInputs(x) {
+		payload[key] = value
+	}
+	return post(ctx, endpoint, h, payload)
+}
+
+// databricksInputs are the ResponsesAgent inputs a caller passes in A2A
+// metadata: custom_inputs (the agent's own inputs) and databricks_options
+// (return_trace…), from the message's metadata or else the call's.
+func databricksInputs(x *Exchange) map[string]json.RawMessage {
+	var params struct {
+		Metadata map[string]json.RawMessage `json:"metadata"`
+		Message  struct {
+			Metadata map[string]json.RawMessage `json:"metadata"`
+		} `json:"message"`
+	}
+	_ = json.Unmarshal(x.call.Request.Params, &params)
+	out := map[string]json.RawMessage{}
+	for _, key := range []string{"custom_inputs", "databricks_options"} {
+		for _, metadata := range []map[string]json.RawMessage{params.Message.Metadata, params.Metadata} {
+			if value, ok := metadata[key]; ok && len(value) > 0 && value[0] == '{' {
+				out[key] = value
+				break
+			}
+		}
+	}
+	return out
 }
 
 // decode reads a Responses-shaped answer: the output_text of its message items.
@@ -255,30 +432,119 @@ func (databricks) decode(x *Exchange, res *http.Response, body []byte) (json.Raw
 		return failedCall(res.StatusCode, dbx.Message)
 	}
 	var answer struct {
-		Output []struct {
-			Type    string `json:"type"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
+		Output []responsesItem `json:"output"`
+		Usage  responsesUsage  `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &answer); err != nil {
 		return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
 	}
+	x.tokens.add(answer.Usage.InputTokens, answer.Usage.OutputTokens)
 	var texts []string
 	for _, item := range answer.Output {
-		if item.Type != "message" {
-			continue
-		}
-		for _, content := range item.Content {
-			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
-				texts = append(texts, content.Text)
-			}
+		if text := item.text(); text != "" {
+			texts = append(texts, text)
 		}
 	}
 	if len(texts) == 0 {
 		return nil, agentError("The agent finished without a text answer."), true
 	}
 	return replyMessage(x, strings.Join(texts, "\n\n"))
+}
+
+// responsesItem is an output item of a Responses-shaped answer.
+type responsesItem struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+// text is the output_text of a message item.
+func (i responsesItem) text() string {
+	if i.Type != "message" {
+		return ""
+	}
+	var texts []string
+	for _, content := range i.Content {
+		if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+			texts = append(texts, content.Text)
+		}
+	}
+	return strings.Join(texts, "\n\n")
+}
+
+type responsesUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+// readStream relays a Responses stream: the output_text deltas as they come,
+// and the text of a message item that came without deltas when it is done.
+func (databricks) readStream(x *Exchange, body io.Reader, send func(sseEvent) bool) {
+	t := newTaskStream(x, send)
+	streamed := map[string]bool{}
+	wrote := false
+	text := func(itemID, chunk string) bool {
+		if chunk == "" {
+			return true
+		}
+		if wrote && !streamed[itemID] {
+			if !t.text("\n\n") {
+				return false
+			}
+		}
+		streamed[itemID], wrote = true, true
+		return t.text(chunk)
+	}
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64<<10), maxEventBytes)
+	for scanner.Scan() {
+		data, ok := bytes.CutPrefix(scanner.Bytes(), []byte("data:"))
+		data = bytes.TrimSpace(data)
+		if !ok || len(data) == 0 || string(data) == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type    string        `json:"type"`
+			ItemID  string        `json:"item_id"`
+			Delta   string        `json:"delta"`
+			Item    responsesItem `json:"item"`
+			Message string        `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Response struct {
+				Usage responsesUsage `json:"usage"`
+			} `json:"response"`
+		}
+		if json.Unmarshal(data, &event) != nil {
+			continue
+		}
+		switch {
+		case event.Error != nil || event.Type == "error" || event.Type == "response.failed":
+			message := event.Message
+			if event.Error != nil {
+				message = cmp.Or(event.Error.Message, message)
+			}
+			t.fail(message)
+			return
+		case event.Type == "response.output_text.delta":
+			if !text(event.ItemID, event.Delta) {
+				return
+			}
+		case event.Type == "response.output_item.done" && !streamed[event.Item.ID]:
+			if !text(event.Item.ID, event.Item.text()) {
+				return
+			}
+		case event.Type == "response.completed":
+			x.tokens.add(event.Response.Usage.InputTokens, event.Response.Usage.OutputTokens)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		send(sseEvent{err: err})
+		return
+	}
+	t.completed()
 }
