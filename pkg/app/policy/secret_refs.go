@@ -44,5 +44,6 @@ func applySaveOptions(opts []SaveOption) saveOptions {
 // SecretRefs is appsecretref.PolicyRefs with p's plugin's declared paths.
 func SecretRefs(reg appplugins.Registry, p *domain.Policy) appsecretref.EntityRefs {
 	paths, _ := appplugins.PluginCredentialPaths(reg, p.Slug)
-	return appsecretref.PolicyRefs(p, paths, appplugins.PluginCredentialDestinations(reg, p.Slug))
+	return appsecretref.PolicyRefs(p, paths, appplugins.PluginCredentialDestinations(reg, p.Slug),
+		appplugins.PluginCredentialHosts(reg, p.Slug, p.Settings))
 }

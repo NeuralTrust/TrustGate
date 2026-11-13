@@ -161,6 +161,7 @@ func secretStoresToProto(in []secretstore.Status) []*snapshotpb.SecretStoreStatu
 		out = append(out, &snapshotpb.SecretStoreStatus{
 			Name: s.Name, Type: string(s.Type), AllowedPaths: s.AllowedPaths,
 			State: string(s.State), ErrorClass: string(s.ErrorClass), CheckedAt: checked, Gateways: gateways,
+			AllowedDestinations: s.AllowedDestinations,
 		})
 	}
 	return out
@@ -189,6 +190,12 @@ func secretStoresFromProto(in []*snapshotpb.SecretStoreStatus) []secretstore.Sta
 				break
 			}
 			st.AllowedPaths = append(st.AllowedPaths, truncateUTF8(p, maxHeartbeatField))
+		}
+		for i, d := range s.GetAllowedDestinations() {
+			if i == maxSecretStoreList {
+				break
+			}
+			st.AllowedDestinations = append(st.AllowedDestinations, truncateUTF8(d, maxHeartbeatField))
 		}
 		for i, raw := range s.GetGateways() {
 			if i == maxSecretStoreList {

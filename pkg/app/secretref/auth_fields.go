@@ -32,11 +32,17 @@ func AuthRefs(a *auth.Auth) EntityRefs {
 		return refs
 	}
 	refs.Destination = strings.Join([]string{c.Issuer, c.TokenURL, c.AuthorizeURL, c.IntrospectionURL, c.UserInfoURL, c.JWKSURL}, "\x00")
-	for _, f := range []struct{ key, value string }{{"client_secret", c.ClientSecret}, {"exchange_client_secret", c.ExchangeClientSecret}} {
+	for _, f := range []struct {
+		key, value string
+		hosts      []string
+	}{
+		{"client_secret", c.ClientSecret, hostList(c.TokenURL, c.IntrospectionURL)},
+		{"exchange_client_secret", c.ExchangeClientSecret, hostList(c.TokenURL)},
+	} {
 		path := []string{"config", "oauth2", f.key}
 		switch {
 		case domain.IsRef(f.value):
-			refs.Uses = append(refs.Uses, Use{Path: path, Raw: f.value})
+			refs.Uses = append(refs.Uses, Use{Path: path, Raw: f.value, Hosts: f.hosts})
 		case domain.ContainsRef(f.value):
 			refs.Embedded = append(refs.Embedded, Use{Path: path, Raw: f.value})
 		}

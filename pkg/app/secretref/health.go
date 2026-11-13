@@ -108,6 +108,9 @@ func (c *Cache) Statuses() []secretstore.Status {
 			Gateways:     append(store.Gateways[:0:0], store.Gateways...),
 			State:        secretstore.StateOK,
 		}
+		if store.AllowedDestinations != nil {
+			st.AllowedDestinations = append([]string{}, store.AllowedDestinations...)
+		}
 		if h, ok := c.health[store.Name]; ok {
 			st.CheckedAt = h.probedAt
 			if h.fetchedAt.After(st.CheckedAt) {

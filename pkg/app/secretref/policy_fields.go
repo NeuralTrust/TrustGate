@@ -31,8 +31,10 @@ const policySettingsKey = "settings"
 
 // PolicyRefs lists the plugin credential paths of p that hold a reference or
 // embed one, and where p sends them: its plugin and the values at the
-// plugin's declared destination paths (an endpoint, a location).
-func PolicyRefs(p *policy.Policy, paths, destinations []string) EntityRefs {
+// plugin's declared destination paths (an endpoint, a location). hosts are the
+// hosts the plugin sends those credentials to under p's settings.
+func PolicyRefs(p *policy.Policy, paths, destinations, hosts []string) EntityRefs {
+	hosts = hostList(hosts...)
 	refs := EntityRefs{GatewayID: p.GatewayID, Entity: domain.EntityPolicy, ID: p.ID.String()}
 	for _, path := range paths {
 		v, ok := secret.SettingString(p.Settings, path)
@@ -42,7 +44,7 @@ func PolicyRefs(p *policy.Policy, paths, destinations []string) EntityRefs {
 		loc := append([]string{policySettingsKey}, strings.Split(path, ".")...)
 		switch {
 		case domain.IsRef(v):
-			refs.Uses = append(refs.Uses, Use{Path: loc, Raw: v})
+			refs.Uses = append(refs.Uses, Use{Path: loc, Raw: v, Hosts: hosts})
 		case domain.ContainsRef(v):
 			refs.Embedded = append(refs.Embedded, Use{Path: loc, Raw: v})
 		}
@@ -56,12 +58,15 @@ func PolicyRefs(p *policy.Policy, paths, destinations []string) EntityRefs {
 	return refs
 }
 
+// PluginCredentials returns, for a policy, its plugin's credential paths and
+// the hosts its settings send them to.
+type PluginCredentials func(p *policy.Policy) (paths, hosts []string)
+
 // GatewayPolicies returns policies with every one whose plugin credentials
 // hold a reference replaced by a copy carrying the resolved values, or empty
-// ones where they do not resolve. pathsFor returns a plugin's credential
-// paths. It records what the gateway's policies use, so a change invalidates
-// the gateway. The input policies are never modified.
-func GatewayPolicies(ctx context.Context, r ValuesResolver, gatewayID ids.GatewayID, policies []*policy.Policy, pathsFor func(slug string) []string) []*policy.Policy {
+// ones where they do not resolve. It records what the gateway's policies use,
+// so a change invalidates the gateway. The input policies are never modified.
+func GatewayPolicies(ctx context.Context, r ValuesResolver, gatewayID ids.GatewayID, policies []*policy.Policy, creds PluginCredentials) []*policy.Policy {
 	type owner struct {
 		index int
 		path  string
@@ -72,7 +77,8 @@ func GatewayPolicies(ctx context.Context, r ValuesResolver, gatewayID ids.Gatewa
 		if p == nil {
 			continue
 		}
-		for _, u := range PolicyRefs(p, pathsFor(p.Slug), nil).Uses {
+		paths, hosts := creds(p)
+		for _, u := range PolicyRefs(p, paths, nil, hosts).Uses {
 			uses = append(uses, u)
 			owners = append(owners, owner{index: i, path: strings.Join(u.Path[1:], ".")})
 		}

@@ -181,6 +181,24 @@ func (p *Plugin) CredentialPaths() []string {
 	}
 }
 
+// CredentialHosts is where the AWS credentials go: the Bedrock runtime of
+// the policy's region, and its STS endpoint when they assume a role.
+func (p *Plugin) CredentialHosts(settings map[string]any) []string {
+	cfg, err := pluginutil.Parse[Settings](settings)
+	if err != nil {
+		return nil
+	}
+	region := cfg.Credentials.AWSRegion
+	if region == "" {
+		region = defaultRegion
+	}
+	hosts := []string{"bedrock-runtime." + region + ".amazonaws.com"}
+	if cfg.Credentials.UseRole {
+		hosts = append(hosts, "sts."+region+".amazonaws.com")
+	}
+	return hosts
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

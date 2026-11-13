@@ -171,10 +171,14 @@ func NewMaterializer(cfg MaterializerConfig) Materializer {
 type pending struct {
 	registryID ids.RegistryID
 	path       []string
-	ref        domain.Ref
-	parsed     bool
-	value      string
-	err        error
+	// hosts are where the value is sent; self marks a value that names its
+	// own host. A store with allowed destinations checks them.
+	hosts  []string
+	self   bool
+	ref    domain.Ref
+	parsed bool
+	value  string
+	err    error
 }
 
 // GatewayRegistries implements Materializer.
@@ -195,7 +199,7 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 			continue
 		}
 		for _, s := range registrySlots(r) {
-			p := &pending{registryID: id, path: s.path}
+			p := &pending{registryID: id, path: s.path, hosts: s.hosts}
 			ref, _, err := domain.Parse(s.value)
 			if err != nil {
 				p.err = fmt.Errorf("%w: %v", secretstore.ErrInvalidPayload, err)
@@ -316,7 +320,7 @@ func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, 
 		if p.err != nil {
 			continue
 		}
-		if err := m.check(gatewayID, p.ref, eligible, eligErr); err != nil {
+		if err := m.check(gatewayID, p, eligible, eligErr); err != nil {
 			p.err = err
 			continue
 		}
@@ -329,7 +333,8 @@ func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, 
 	return eligErr
 }
 
-func (m *materializer) check(gatewayID ids.GatewayID, ref domain.Ref, eligible bool, eligErr error) error {
+func (m *materializer) check(gatewayID ids.GatewayID, p *pending, eligible bool, eligErr error) error {
+	ref := p.ref
 	if m.cfg.Catalog == nil || m.cfg.Resolver == nil {
 		return fmt.Errorf("this plane loads no secret store: %w", secretstore.ErrStoreMissing)
 	}
@@ -343,7 +348,13 @@ func (m *materializer) check(gatewayID ids.GatewayID, ref domain.Ref, eligible b
 	if !ok {
 		return fmt.Errorf("secret store %q: %w", ref.Store, secretstore.ErrStoreMissing)
 	}
-	return store.Allows(gatewayID, ref.Path)
+	if err := store.Allows(gatewayID, ref.Path); err != nil {
+		return err
+	}
+	if p.self {
+		return nil
+	}
+	return store.AllowsDestinations(p.hosts)
 }
 
 // eligible reads the gateway only when needed: under EligibilityAll every
@@ -459,7 +470,7 @@ func (m *materializer) Values(ctx context.Context, gatewayID ids.GatewayID, sour
 	refs := make([]*pending, len(uses))
 	var used []string
 	for i, u := range uses {
-		p := &pending{path: u.Path}
+		p := &pending{path: u.Path, hosts: u.Hosts, self: u.SelfAddressed}
 		ref, _, err := domain.Parse(u.Raw)
 		if err != nil {
 			p.err = fmt.Errorf("%w: %v", secretstore.ErrInvalidPayload, err)

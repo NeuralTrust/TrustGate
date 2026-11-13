@@ -45,6 +45,12 @@ func GatewayRefs(gw *gateway.Gateway) EntityRefs {
 func exporterRefs(exporters []telemetry.ExporterConfig) (uses, embedded []Use, destination string) {
 	var dest []string
 	for _, e := range exporters {
+		var endpoint string
+		for key, value := range e.Settings {
+			if strings.EqualFold(key, "endpoint") {
+				endpoint, _ = value.(string)
+			}
+		}
 		visit := func(value any, path []string) {
 			s, ok := value.(string)
 			if !ok {
@@ -52,7 +58,13 @@ func exporterRefs(exporters []telemetry.ExporterConfig) (uses, embedded []Use, d
 			}
 			switch {
 			case domain.IsRef(s):
-				uses = append(uses, Use{Path: path, Raw: s})
+				u := Use{Path: path, Raw: s}
+				if path[len(path)-1] == "dsn" {
+					u.SelfAddressed = true
+				} else {
+					u.Hosts = hostList(endpoint)
+				}
+				uses = append(uses, u)
 			case domain.ContainsRef(s):
 				embedded = append(embedded, Use{Path: path, Raw: s})
 			}

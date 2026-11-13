@@ -25,6 +25,7 @@ import (
 type slot struct {
 	path  []string
 	value string
+	hosts []string
 }
 
 const headersKey = "headers"
@@ -109,7 +110,7 @@ func registrySlots(r *registry.Registry) []slot {
 	var out []slot
 	add := func(value string, path ...string) {
 		if domain.IsRef(value) {
-			out = append(out, slot{path: path, value: value})
+			out = append(out, slot{path: path, value: value, hosts: registryHosts(r, path)})
 		}
 	}
 	if t := r.LLMTarget; t != nil {
@@ -386,11 +387,17 @@ func setCloudAuthSlot(c *registry.A2ACloudAuth, cloud, field, value string) {
 	}
 }
 
-// Use is a declared location of a registry and the reference-shaped value it
+// Use is a declared location of an entity and the reference-shaped value it
 // holds.
 type Use struct {
 	Path []string
 	Raw  string
+	// Hosts are where the entity sends the value; empty when that cannot be
+	// told, which a store with allowed destinations refuses.
+	Hosts []string
+	// SelfAddressed marks a value that names its own host, such as a
+	// database DSN: no entity field can redirect it.
+	SelfAddressed bool
 }
 
 // RegistryReferences lists the declared locations of r that hold a
@@ -402,7 +409,7 @@ func RegistryReferences(r *registry.Registry) (uses []Use, embedded []Use) {
 		return nil, nil
 	}
 	for _, s := range registrySlots(r) {
-		uses = append(uses, Use{Path: s.path, Raw: s.value})
+		uses = append(uses, Use{Path: s.path, Raw: s.value, Hosts: s.hosts})
 	}
 	for _, s := range registryEmbedded(r) {
 		embedded = append(embedded, Use{Path: s.path, Raw: s.value})

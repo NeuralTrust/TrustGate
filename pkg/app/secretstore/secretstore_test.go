@@ -321,3 +321,35 @@ func TestValidatorRechecksReferencesWhenTheDestinationChanges(t *testing.T) {
 		t.Fatalf("a caller with the scope may move it: %v", err)
 	}
 }
+
+func TestValidatorRefusesADestinationOutsideTheList(t *testing.T) {
+	t.Parallel()
+	g := gw(gateway.DataPlaneHybrid)
+	locked := func(destinations ...string) domain.Status {
+		st := vault(domain.StateOK)
+		st.AllowedDestinations = destinations
+		return st
+	}
+	src := dataPlaneSource(g.ID, []dataplane.Instance{
+		live("dp-1", true, locked("api.openai.com")),
+		live("dp-2", true, locked("api.openai.com", "*.example.com")),
+	}, now)
+	if src.Stores[0].Consistent {
+		t.Fatal("instances that disagree on allowed destinations are not consistent")
+	}
+	v := NewRegistryValidator(fixedSource{src}, gateways{g}, nil)
+	ctx := WithCaller(context.Background(), Caller{MayReference: true})
+	ref := "secret://corp-vault/ai/openai#key"
+
+	allowed := withKey(ref)
+	allowed.GatewayID, allowed.LLMTarget.Provider = g.ID, "openai"
+	if _, err := v.ValidateRegistry(ctx, allowed, nil); err != nil {
+		t.Fatalf("a host every instance allows: %v", err)
+	}
+	partly := withKey(ref)
+	partly.GatewayID, partly.LLMTarget.Provider = g.ID, "openai"
+	partly.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://llm.example.com/v1"}
+	if _, err := v.ValidateRegistry(ctx, partly, nil); !errors.Is(err, refdomain.ErrDestinationNotAllowed) {
+		t.Fatalf("a host one instance refuses must be refused: %v", err)
+	}
+}

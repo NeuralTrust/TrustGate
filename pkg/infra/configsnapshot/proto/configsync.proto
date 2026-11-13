@@ -116,6 +116,9 @@ message SecretStoreStatus {
   // gateways is the store's gateway allowlist; empty admits every eligible
   // gateway the data plane serves.
   repeated string gateways = 7;
+  // allowed_destinations is the store's host allowlist; empty allows any
+  // host (a store file cannot declare an empty one).
+  repeated string allowed_destinations = 8;
 }
 
 message ServerMessage {

@@ -32,6 +32,7 @@ func TestSecretStoresRoundTrip(t *testing.T) {
 		Name: "corp-vault", Type: secretstore.TypeHashiCorpVault, AllowedPaths: []string{"ai/"},
 		Gateways: []ids.GatewayID{ids.New[ids.GatewayKind]()}, State: secretstore.StateAuthFailed,
 		ErrorClass: secretstore.ClassAuthFailed, CheckedAt: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC),
+		AllowedDestinations: []string{"api.openai.com", "*.amazonaws.com"},
 	}, {Name: "env", Type: secretstore.TypeEnv, AllowedPaths: []string{"*"}, State: secretstore.StateOK}}
 	raw, err := encodeSecretStores(in)
 	if err != nil {

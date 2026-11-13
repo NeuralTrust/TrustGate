@@ -30,10 +30,14 @@ func TestSecretStoresHeartbeatRoundTripAndCaps(t *testing.T) {
 	in := []secretstore.Status{{
 		Name: "corp-vault", Type: secretstore.TypeHashiCorpVault, AllowedPaths: []string{"ai/"},
 		Gateways: []ids.GatewayID{gwID}, State: secretstore.StateOK, CheckedAt: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC),
-	}}
+		AllowedDestinations: []string{"api.openai.com"},
+	}, {Name: "open", Type: secretstore.TypeEnv, State: secretstore.StateOK}}
 	got := secretStoresFromProto(secretStoresToProto(in))
-	if len(got) != 1 || got[0].Name != "corp-vault" || got[0].Gateways[0] != gwID || !got[0].CheckedAt.Equal(in[0].CheckedAt) {
+	if len(got) != 2 || got[0].Name != "corp-vault" || got[0].Gateways[0] != gwID || !got[0].CheckedAt.Equal(in[0].CheckedAt) {
 		t.Fatalf("round trip = %+v", got)
+	}
+	if len(got[0].AllowedDestinations) != 1 || got[0].AllowedDestinations[0] != "api.openai.com" || got[1].AllowedDestinations != nil {
+		t.Fatalf("allowed destinations = %v / %v, want the list and an absent one", got[0].AllowedDestinations, got[1].AllowedDestinations)
 	}
 
 	var many []*snapshotpb.SecretStoreStatus

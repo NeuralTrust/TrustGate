@@ -43,7 +43,7 @@ func FromSource(src appsecretstore.Source, usages map[string][]appsecretstore.Us
 	for _, st := range src.Stores {
 		reported[st.Name] = true
 		out.Stores = append(out.Stores, SecretStoreItemResponse{
-			Name: st.Name, Type: string(st.Type), AllowedPaths: nonNil(st.AllowedPaths), Status: st.Status,
+			Name: st.Name, Type: string(st.Type), AllowedPaths: nonNil(st.AllowedPaths), AllowedDestinations: st.AllowedDestinations, Status: st.Status,
 			Consistent: st.Consistent, Usages: len(usages[st.Name]), Instances: instances(st.Instances),
 		})
 	}

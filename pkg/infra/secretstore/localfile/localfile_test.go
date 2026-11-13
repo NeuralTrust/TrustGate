@@ -158,6 +158,8 @@ func TestParseRefuses(t *testing.T) {
 		{"bad duration", store("    type: env\n    env: { prefix: TG_ }\n    cache: { ttl: forever }\n"), "cache.ttl"},
 		{"ttl too short", store("    type: env\n    env: { prefix: TG_ }\n    cache: { ttl: 1s }\n"), "cache.ttl must be at least"},
 		{"invalid store", store("    type: env\n    env: { prefix: \"\" }\n"), "env.prefix"},
+		{"empty destinations", store("    type: env\n    env: { prefix: TG_ }\n    allowed_destinations: []\n"), "allowed_destinations must not be empty"},
+		{"destination url", store("    type: env\n    env: { prefix: TG_ }\n    allowed_destinations: [\"https://api.openai.com\"]\n"), "allowed destination"},
 		{"duplicate", "version: 1\nstores:\n  - { name: s, type: env, allowed_paths: [\"*\"], env: { prefix: A_ } }\n  - { name: s, type: env, allowed_paths: [\"*\"], env: { prefix: B_ } }\n", "declared twice"},
 	}
 	for _, tt := range tests {
@@ -358,5 +360,30 @@ func TestWatchFollowsConfigMapUpdates(t *testing.T) {
 	store, _, _ := c.Get("a")
 	if prefix := store.Config.(*secretstore.EnvConfig).Prefix; prefix != "Q_" {
 		t.Fatalf("prefix = %q after the second update", prefix)
+	}
+}
+
+func TestParseAllowedDestinations(t *testing.T) {
+	t.Parallel()
+	stores, err := localfile.Parse([]byte(`version: 1
+stores:
+  - name: locked
+    type: env
+    allowed_paths: ["*"]
+    allowed_destinations: ["api.openai.com", "*.amazonaws.com"]
+    env: { prefix: TG_A_ }
+  - name: open
+    type: env
+    allowed_paths: ["*"]
+    env: { prefix: TG_B_ }
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := stores[0].AllowedDestinations; len(got) != 2 || got[1] != "*.amazonaws.com" {
+		t.Fatalf("allowed destinations = %v", got)
+	}
+	if stores[1].AllowedDestinations != nil {
+		t.Fatalf("an absent list must stay nil, got %v", stores[1].AllowedDestinations)
 	}
 }

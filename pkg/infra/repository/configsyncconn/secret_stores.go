@@ -26,13 +26,16 @@ import (
 // storedSecretStore is how a reported secret store is kept in the
 // secret_stores column.
 type storedSecretStore struct {
-	Name         string          `json:"name"`
-	Type         string          `json:"type"`
-	AllowedPaths []string        `json:"allowed_paths,omitempty"`
-	Gateways     []ids.GatewayID `json:"gateways,omitempty"`
-	State        string          `json:"state"`
-	ErrorClass   string          `json:"error_class,omitempty"`
-	CheckedAt    *time.Time      `json:"checked_at,omitempty"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	AllowedPaths []string `json:"allowed_paths,omitempty"`
+	// AllowedDestinations is omitted when absent; a store never declares an
+	// empty one.
+	AllowedDestinations []string        `json:"allowed_destinations,omitempty"`
+	Gateways            []ids.GatewayID `json:"gateways,omitempty"`
+	State               string          `json:"state"`
+	ErrorClass          string          `json:"error_class,omitempty"`
+	CheckedAt           *time.Time      `json:"checked_at,omitempty"`
 }
 
 // encodeSecretStores returns the column value: NULL when the data plane
@@ -45,7 +48,7 @@ func encodeSecretStores(in []secretstore.Status) ([]byte, error) {
 	for _, s := range in {
 		st := storedSecretStore{
 			Name: s.Name, Type: string(s.Type), AllowedPaths: s.AllowedPaths, Gateways: s.Gateways,
-			State: string(s.State), ErrorClass: string(s.ErrorClass),
+			State: string(s.State), ErrorClass: string(s.ErrorClass), AllowedDestinations: s.AllowedDestinations,
 		}
 		if !s.CheckedAt.IsZero() {
 			t := s.CheckedAt.UTC()
@@ -74,7 +77,7 @@ func decodeSecretStores(raw []byte) []secretstore.Status {
 	for _, s := range stored {
 		st := secretstore.Status{
 			Name: s.Name, Type: secretstore.Type(s.Type), AllowedPaths: s.AllowedPaths, Gateways: s.Gateways,
-			State: secretstore.State(s.State), ErrorClass: secretstore.Class(s.ErrorClass),
+			State: secretstore.State(s.State), ErrorClass: secretstore.Class(s.ErrorClass), AllowedDestinations: s.AllowedDestinations,
 		}
 		if s.CheckedAt != nil {
 			st.CheckedAt = *s.CheckedAt
