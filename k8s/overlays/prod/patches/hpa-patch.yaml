@@ -73,7 +73,9 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: agentgateway-agent
 spec:
-  minReplicas: 3
+  # Two, as in prod-us: the PDB (maxUnavailable: 1) still keeps one pod through
+  # a drain, and the HPA adds pods under load.
+  minReplicas: 2
   maxReplicas: 20
   metrics:
   - type: Resource
