@@ -1570,6 +1570,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -1590,6 +1592,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       headers:
         additionalProperties:
           type: string
@@ -1605,6 +1609,8 @@ definitions:
         - bedrock_agentcore
         - azure_foundry
         - vertex_agent_engine
+        - agentcore_harness
+        - databricks_agent
         type: string
       url:
         type: string
@@ -1783,6 +1789,34 @@ definitions:
         type: string
       url:
         type: string
+      user_headers:
+        description: |-
+          UserHeaders declares the upstream headers each caller fills with their
+          own value. Omitted on update, the stored declarations are kept; an empty
+          list removes them all.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPUserHeaderRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPUserHeaderRequest:
+    properties:
+      description:
+        description: Description is the help shown to a person entering their value.
+        type: string
+      name:
+        description: Name is the HTTP header sent upstream, e.g. X-API-Key.
+        type: string
+      required:
+        description: Required refuses a call with a connect link until the caller
+          has a value.
+        type: boolean
+      scheme:
+        description: Scheme is written before the value, e.g. Bearer. Empty sends
+          it raw.
+        type: string
+      secret:
+        description: Secret keeps the value masked once entered.
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest:
     properties:
@@ -1791,6 +1825,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -1811,6 +1847,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       headers:
         additionalProperties:
           type: string
@@ -1826,6 +1864,8 @@ definitions:
         - bedrock_agentcore
         - azure_foundry
         - vertex_agent_engine
+        - agentcore_harness
+        - databricks_agent
         type: string
       url:
         type: string
@@ -1952,6 +1992,39 @@ definitions:
         additionalProperties: {}
         type: object
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportRequest:
+    properties:
+      values:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportValue'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportValue:
+    properties:
+      header:
+        type: string
+      principal_sub:
+        type: string
+      value:
+        description: Value is the person's own value, stored encrypted and never returned.
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderLinkRequest:
+    properties:
+      consumer_path:
+        description: |-
+          ConsumerPath is the virtual MCP the person reaches the server through.
+          Empty uses the MCP Store.
+        type: string
+      principal_sub:
+        description: |-
+          PrincipalSub is the person: the subject their token carries, or
+          app:<consumer_id>:<end_user> for an end user an application names.
+        type: string
+      resume_url:
+        description: ResumeURL is where the page sends the person once they are done.
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2AAWSAuthResponse:
     properties:
       access_key_id:
@@ -1990,6 +2063,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -2012,6 +2087,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       endpoint:
         type: string
       headers:
@@ -2216,6 +2293,26 @@ definitions:
         type: string
       url:
         type: string
+      user_headers:
+        description: |-
+          UserHeaders are the upstream headers each caller fills with their own
+          value. Only the declarations: values live per person in the vault.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPUserHeaderResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPUserHeaderResponse:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      required:
+        type: boolean
+      scheme:
+        type: string
+      secret:
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse:
     properties:
@@ -2408,6 +2505,51 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse:
+    properties:
+      count:
+        type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHolderResponse:
+    properties:
+      missing:
+        description: Missing lists the required headers this person has no usable
+          value for.
+        items:
+          type: string
+        type: array
+      principal_sub:
+        type: string
+      values:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderValueResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHoldersResponse:
+    properties:
+      holders:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHolderResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderLinkResponse:
+    properties:
+      consumer_path:
+        type: string
+      ticket:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderValueResponse:
+    properties:
+      header:
+        type: string
+      rejected_at:
+        description: RejectedAt is set when the upstream refused the value with a
+          401.
+        type: string
+      updated_at:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink:
     properties:
@@ -3337,11 +3479,27 @@ definitions:
       runtime_arn:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator:
+    properties:
+      app_url:
+        type: string
+      serving_endpoint:
+        type: string
+      workspace_url:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator:
     properties:
       agent_name:
         type: string
       project_endpoint:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator:
+    properties:
+      harness_arn:
+        type: string
+      qualifier:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator:
@@ -3413,10 +3571,14 @@ definitions:
         type: string
       identity_subject_kind:
         type: string
+      input_tokens:
+        type: integer
       method:
         type: string
       outcome:
         type: string
+      output_tokens:
+        type: integer
       protocol_version:
         type: string
       provider:
@@ -7484,6 +7646,179 @@ paths:
       security:
       - BearerAuth: []
       summary: List an MCP backend's tools
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/user-headers:
+    get:
+      description: Lists every person holding a value for this MCP instance's per-user
+        headers, when each was written and whether the upstream refused it. Values
+        are never returned.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHoldersResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List who holds per-user header values
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/user-headers/links:
+    post:
+      consumes:
+      - application/json
+      description: 'Mints the connect page one person walks to enter their own values
+        for this instance. Hand it to that person: it acts as them.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Whose link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderLinkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderLinkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Issue one person's link to enter their header values
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/user-headers/values:
+    delete:
+      description: Removes the values one person holds for this instance (principal_sub),
+        or every person's when principal_sub is omitted. The next call of each affected
+        person answers with a connect link.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: One person; omitted resets everyone
+        in: query
+        name: principal_sub
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Reset per-user header values
+      tags:
+      - registries
+    put:
+      consumes:
+      - application/json
+      description: Stores values for many people at once (up to 1000 rows). Every
+        row is validated before any is written; values are encrypted and never returned.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Values to load
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Load per-user header values in bulk
       tags:
       - registries
   /v1/gateways/{gateway_id}/registries/from-catalog:
