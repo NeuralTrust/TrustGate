@@ -313,6 +313,25 @@ func (p SecretEntityListers) Listers() []appsecretstore.EntityLister {
 	return out
 }
 
+// SecretScanListers is SecretEntityListers with every source required: the
+// pre-upgrade scan must fail to start, never report clean, when it cannot
+// read an entity.
+type SecretScanListers struct {
+	dig.In
+	Consumers consumerdomain.Repository
+	Policies  policydomain.Repository
+	Auths     authdomain.Repository
+	Gateways  gatewaydomain.Repository
+	Plugins   appplugins.Registry
+}
+
+// Listers returns a lister for every entity besides registries.
+func (p SecretScanListers) Listers() []appsecretstore.EntityLister {
+	return SecretEntityListers{
+		Consumers: p.Consumers, Policies: p.Policies, Auths: p.Auths, Gateways: p.Gateways, Plugins: p.Plugins,
+	}.Listers()
+}
+
 // prewarm adapts Listers to the prewarmer, which needs only the references.
 func (p SecretEntityListers) prewarm() []func(context.Context, ids.GatewayID) ([]appsecretref.Use, error) {
 	listers := p.Listers()

@@ -122,11 +122,12 @@ func (p *Prewarmer) Run(ctx context.Context) {
 // pass resolves every reference once and returns how many failed for a
 // transient reason.
 func (p *Prewarmer) pass(ctx context.Context) (int, error) {
-	refs, err := p.collect(ctx)
+	refs, partial, err := p.collect(ctx)
 	if err != nil {
 		return 0, err
 	}
 	var pending atomic.Int64
+	pending.Add(int64(partial))
 	sem := make(chan struct{}, prewarmConcurrency)
 	var wg sync.WaitGroup
 	for _, ref := range refs {
@@ -145,11 +146,11 @@ func (p *Prewarmer) pass(ctx context.Context) (int, error) {
 
 // collect lists one reference per payload across the eligible gateways,
 // keeping only those whose store admits the gateway and the path, exactly
-// as the materializer would resolve them.
-func (p *Prewarmer) collect(ctx context.Context) ([]domain.Ref, error) {
+// as the materializer would resolve them. partial counts the entity lists it
+// could not read; the pass is retried for them.
+func (p *Prewarmer) collect(ctx context.Context) (refs []domain.Ref, partial int, err error) {
 	seen := map[string]bool{}
-	var refs []domain.Ref
-	err := eachPage(func(page int) (int, int, error) {
+	err = eachPage(func(page int) (int, int, error) {
 		gws, total, err := p.cfg.Gateways.List(ctx, gateway.ListFilter{Page: page, Size: prewarmPageSize})
 		if err != nil {
 			return 0, 0, err
@@ -158,10 +159,11 @@ func (p *Prewarmer) collect(ctx context.Context) ([]domain.Ref, error) {
 			if !secretstore.Eligible(p.cfg.Eligibility, gw) {
 				continue
 			}
-			found, err := p.gatewayRefs(ctx, gw)
+			found, failed, err := p.gatewayRefs(ctx, gw)
 			if err != nil {
 				return 0, 0, err
 			}
+			partial += failed
 			for _, ref := range found {
 				if key := ref.PayloadKey(); !seen[key] {
 					seen[key] = true
@@ -171,10 +173,10 @@ func (p *Prewarmer) collect(ctx context.Context) ([]domain.Ref, error) {
 		}
 		return len(gws), total, nil
 	})
-	return refs, err
+	return refs, partial, err
 }
 
-func (p *Prewarmer) gatewayRefs(ctx context.Context, gw *gateway.Gateway) ([]domain.Ref, error) {
+func (p *Prewarmer) gatewayRefs(ctx context.Context, gw *gateway.Gateway) ([]domain.Ref, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, prewarmGatewayTimeout)
 	defer cancel()
 	var refs []domain.Ref
@@ -203,16 +205,20 @@ func (p *Prewarmer) gatewayRefs(ctx context.Context, gw *gateway.Gateway) ([]dom
 		return len(regs), total, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	failed := 0
 	for _, list := range p.cfg.Entities {
 		uses, err := list(ctx, gw.ID)
 		if err != nil {
-			return nil, err
+			failed++
+			p.cfg.Logger.Warn("secret reference prewarm could not list a gateway's entities",
+				slog.String("gateway_id", gw.ID.String()), slog.String("error", err.Error()))
+			continue
 		}
 		add(uses)
 	}
-	return refs, nil
+	return refs, failed, nil
 }
 
 // eachPage calls list for pages 1, 2, … until it has seen total items or a
