@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -125,8 +127,8 @@ func (p *providerClient) ExchangeCode(ctx context.Context, cfg *registrydomain.M
 	form.Set("code", code)
 	form.Set("redirect_uri", redirectURI)
 	form.Set("client_id", cfg.ClientID)
-	if cfg.ClientSecret != "" {
-		form.Set("client_secret", cfg.ClientSecret)
+	if secret := secretref.Literal(cfg.ClientSecret); secret != "" {
+		form.Set("client_secret", secret)
 	}
 	if verifier != "" {
 		form.Set("code_verifier", verifier)
@@ -142,8 +144,8 @@ func (p *providerClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAut
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("client_id", cfg.ClientID)
-	if cfg.ClientSecret != "" {
-		form.Set("client_secret", cfg.ClientSecret)
+	if secret := secretref.Literal(cfg.ClientSecret); secret != "" {
+		form.Set("client_secret", secret)
 	}
 	if cfg.Resource != "" {
 		form.Set("resource", cfg.Resource)

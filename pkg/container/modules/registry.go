@@ -19,6 +19,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
+	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
+
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -143,12 +147,21 @@ type registrySaveParams struct {
 	CardCredentials appregistry.CardCredentials
 	Gateways        gatewaydomain.Repository
 	Config          *config.Config
+	// SecretRefs validates secret references on writes; absent on planes
+	// without the control plane's connection store.
+	SecretRefs appsecretstore.RegistryValidator `optional:"true"`
+	// Materializer resolves the secret references of the auth an A2A card
+	// is read with.
+	Materializer appsecretref.Materializer `optional:"true"`
 }
 
 func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.Option {
 	opts := []appregistry.Option{
 		appregistry.WithOpenAPICompiler(compiler),
 		appregistry.WithAgentCards(p.CardFetcher, p.CardCredentials),
+	}
+	if p.Materializer != nil && p.SecretRefs != nil {
+		opts = append(opts, appregistry.WithCardSecrets(p.Materializer, p.SecretRefs))
 	}
 	tg := p.Config.TrustGuard.V2
 	if scanner := trustguardscan.New(tg.BaseURL, tg.ClientID, tg.ClientSecret, tg.Timeout); scanner != nil {
@@ -159,6 +172,9 @@ func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.
 	}
 	if p.Config.ConfigSync.SharedDataPlane() {
 		opts = append(opts, appregistry.WithSharedDataPlane(p.Gateways))
+	}
+	if p.SecretRefs != nil {
+		opts = append(opts, appregistry.WithSecretRefValidator(p.SecretRefs))
 	}
 	return opts
 }
@@ -261,7 +277,7 @@ func provideRegistryServices(c *container.Container) error {
 
 type connectionTesterParams struct {
 	dig.In
-	Finder  appregistry.Finder
+	Finder  appregistry.RuntimeFinder
 	Locator factory.ProviderLocator
 	Logger  *slog.Logger
 	// Catalog is optional so a plane without the catalog module still tests

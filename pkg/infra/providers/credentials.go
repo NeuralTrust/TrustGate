@@ -21,7 +21,18 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
+
+// literal drops a secret reference that reached a credential unresolved: it
+// is never sent upstream as if it were the credential. Resolution happens
+// before this point; the registry is marked so the call fails instead.
+func literal(s string) string {
+	if secretref.IsRef(s) {
+		return ""
+	}
+	return s
+}
 
 func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	creds := Credentials{}
@@ -31,8 +42,8 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	switch a.Type {
 	case registry.AuthTypeAPIKey:
 		if a.APIKey != nil {
-			creds.ApiKey = a.APIKey.APIKey
-			if name := strings.TrimSpace(a.APIKey.HeaderName); name != "" && a.APIKey.HeaderValue != "" {
+			creds.ApiKey = literal(a.APIKey.APIKey)
+			if name := strings.TrimSpace(a.APIKey.HeaderName); name != "" && literal(a.APIKey.HeaderValue) != "" {
 				creds.Headers = map[string]string{name: a.APIKey.HeaderValue}
 			}
 		}
@@ -40,9 +51,9 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 		if a.AWS != nil {
 			creds.AwsBedrock = &AwsBedrock{
 				Region:       a.AWS.Region,
-				AccessKey:    a.AWS.AccessKeyID,
-				SecretKey:    a.AWS.SecretAccessKey,
-				SessionToken: a.AWS.SessionToken,
+				AccessKey:    literal(a.AWS.AccessKeyID),
+				SecretKey:    literal(a.AWS.SecretAccessKey),
+				SessionToken: literal(a.AWS.SessionToken),
 				UseRole:      a.AWS.UseRole,
 				RoleARN:      a.AWS.Role,
 			}
@@ -50,7 +61,7 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	case registry.AuthTypeAzure:
 		if a.Azure != nil {
 			mode, _ := a.Azure.CredentialMode()
-			creds.ApiKey = a.Azure.APIKey
+			creds.ApiKey = literal(a.Azure.APIKey)
 			creds.Azure = &Azure{
 				Endpoint:     a.Azure.Endpoint,
 				ApiVersion:   a.Azure.Version,
@@ -58,11 +69,11 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 				UseIdentity:  a.Azure.UseManagedIdentity,
 				TenantID:     a.Azure.TenantID,
 				ClientID:     a.Azure.ClientID,
-				ClientSecret: a.Azure.ClientSecret,
+				ClientSecret: literal(a.Azure.ClientSecret),
 			}
 		}
 	case registry.AuthTypeGCPServiceAccount:
-		if a.GCPServiceAccount != nil && *a.GCPServiceAccount != "" {
+		if a.GCPServiceAccount != nil && literal(*a.GCPServiceAccount) != "" {
 			creds.GCP = &GCP{ServiceAccountJSON: *a.GCPServiceAccount}
 		}
 	case registry.AuthTypeOAuth2:

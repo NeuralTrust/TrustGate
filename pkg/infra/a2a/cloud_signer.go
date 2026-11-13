@@ -89,6 +89,9 @@ func (s *CloudSigner) Sign(ctx context.Context, t *domain.A2ATarget, key appa2a.
 		return fmt.Errorf("a2a: a cloud credential is sent only over https to %s", host)
 	}
 	c := t.CloudAuth
+	if c.HoldsReference() {
+		return errors.New("a2a: cloud_auth holds a secret reference this plane did not resolve")
+	}
 	switch {
 	case c == nil:
 		return errors.New("a2a: the agent has no cloud_auth")

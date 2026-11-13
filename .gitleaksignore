@@ -22,3 +22,5 @@ c2db9eae55225cbd50eeae07e73e11c2d1926e8b:postman/TrustGate-TrustGuard-E2E.postma
 85c20374762fee0cf6fe1e184988a4ef214ecc62:pkg/app/oauth/connect_admin_row_test.go:generic-api-key:147
 # credentials_test.go fake JWT {"alg":"RS256"}.{"sub":"x"}.sig, a bearer that must stay an API key (generic-api-key).
 d2210babd81542e4d28229fcbc37f7bd52fdc1dc:pkg/infra/providers/credentials_test.go:generic-api-key:194
+# mcp_user_headers_test.go fake header value sk-live_abc.123 on a feature branch; every ref is scanned (generic-api-key).
+bb4c66398bdc2315629232d10de4ea81f6dd1e34:pkg/domain/registry/mcp_user_headers_test.go:generic-api-key:108

@@ -58,6 +58,7 @@ type creator struct {
 	auths       AuthLookup
 	cards       agentCards
 	shared      sharedPlane
+	secretRefs  SecretRefValidator
 }
 
 func NewCreator(
@@ -79,6 +80,7 @@ func NewCreator(
 		auths:       o.auths,
 		cards:       o.cards,
 		shared:      o.shared,
+		secretRefs:  o.secretRefs,
 	}
 }
 
@@ -106,9 +108,16 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	if in.Enabled != nil {
 		b.Enabled = *in.Enabled
 	}
+	audit := func() {}
+	if c.secretRefs != nil {
+		if audit, err = c.secretRefs.ValidateRegistry(ctx, b, nil); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.repo.Save(ctx, b); err != nil {
 		return nil, err
 	}
+	audit()
 	c.memoryCache.Set(b.ID.String(), b)
 	if c.signaler != nil {
 		c.signaler.Signal(ctx)
@@ -177,7 +186,7 @@ func (c *creator) prepareA2A(ctx context.Context, in CreateInput) error {
 	if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, &domain.MCPTarget{Auth: in.A2ATarget.Auth}); err != nil {
 		return err
 	}
-	return c.cards.pin(ctx, in.A2ATarget)
+	return c.cards.pin(ctx, in.GatewayID, in.A2ATarget)
 }
 
 func validateProviderOptions(target *domain.LLMTarget) error {

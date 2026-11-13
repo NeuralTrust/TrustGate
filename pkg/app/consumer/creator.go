@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -66,6 +68,7 @@ type creator struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	secretRefs   appsecretref.EntityValidator
 }
 
 func NewCreator(
@@ -76,8 +79,11 @@ func NewCreator(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	opts ...SaveOption,
 ) Creator {
+	o := applySaveOptions(opts)
 	return &creator{
+		secretRefs:   o.secretRefs,
 		repo:         repo,
 		registryRepo: registryRepo,
 		gateways:     gateways,
@@ -126,9 +132,17 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}
+	audit := func() {}
+	if c.secretRefs != nil {
+		var err error
+		if audit, err = c.secretRefs.ValidateEntity(ctx, appsecretref.ConsumerRefs(cons), nil); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
 		return nil, err
 	}
+	audit()
 	c.memoryCache.Set(cons.ID.String(), cons)
 	invalidation.GatewayData(ctx, c.publisher, c.logger, cons.GatewayID)
 	if c.signaler != nil {
