@@ -2488,6 +2488,9 @@ definitions:
         type: array
       consistent:
         type: boolean
+      failing_usages:
+        description: FailingUsages counts the usages a plane reported as unresolved.
+        type: integer
       instances:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance'
@@ -2510,6 +2513,9 @@ definitions:
     properties:
       entity:
         type: string
+      error_class:
+        description: ErrorClass is why a failing reference did not resolve.
+        type: string
       field:
         type: string
       id:
@@ -2517,6 +2523,15 @@ definitions:
       name:
         type: string
       reference:
+        type: string
+      state:
+        description: |-
+          State is what the gateway's planes last reported: ok, failing, or
+          not_reported when none has resolved the reference since it was set.
+        enum:
+        - ok
+        - failing
+        - not_reported
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.TestSecretResponse:
@@ -7966,8 +7981,9 @@ paths:
       - secret-stores
   /v1/gateways/{gateway_id}/secret-stores/{name}/usages:
     get:
-      description: Returns every field of the gateway that references the store, with
-        the reference as stored.
+      description: 'Returns every field of the gateway that references the store,
+        with the reference as stored and what the gateway''s planes last reported
+        about it: ok, failing (with the error class) or not_reported.'
       parameters:
       - description: Gateway id
         format: uuid

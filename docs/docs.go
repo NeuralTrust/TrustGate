@@ -4263,7 +4263,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/secret-stores/{name}/usages": {
             "get": {
-                "description": "Returns every field of the gateway that references the store, with the reference as stored.",
+                "description": "Returns every field of the gateway that references the store, with the reference as stored and what the gateway's planes last reported about it: ok, failing (with the error class) or not_reported.",
                 "produces": [
                     "application/json"
                 ],
@@ -10824,6 +10824,10 @@ const docTemplate = `{
                 "consistent": {
                     "type": "boolean"
                 },
+                "failing_usages": {
+                    "description": "FailingUsages counts the usages a plane reported as unresolved.",
+                    "type": "integer"
+                },
                 "instances": {
                     "type": "array",
                     "items": {
@@ -10856,6 +10860,10 @@ const docTemplate = `{
                 "entity": {
                     "type": "string"
                 },
+                "error_class": {
+                    "description": "ErrorClass is why a failing reference did not resolve.",
+                    "type": "string"
+                },
                 "field": {
                     "type": "string"
                 },
@@ -10867,6 +10875,15 @@ const docTemplate = `{
                 },
                 "reference": {
                     "type": "string"
+                },
+                "state": {
+                    "description": "State is what the gateway's planes last reported: ok, failing, or\nnot_reported when none has resolved the reference since it was set.",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "failing",
+                        "not_reported"
+                    ]
                 }
             }
         },
