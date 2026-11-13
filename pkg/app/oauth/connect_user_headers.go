@@ -18,12 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -36,15 +35,6 @@ var (
 	// ErrUserHeaderInvalid wraps a value or field the form cannot accept. The
 	// text names the header, never the value.
 	ErrUserHeaderInvalid = errors.New("oauth connect: invalid per-user header value")
-)
-
-// Audit events for per-user header values. They carry the header name and an
-// opaque principal reference, never the value.
-const (
-	UserHeaderAuditSet      = "mcp_user_header_set"
-	UserHeaderAuditRemoved  = "mcp_user_header_removed"
-	UserHeaderAuditReset    = "mcp_user_header_reset"
-	UserHeaderAuditImported = "mcp_user_header_imported"
 )
 
 // UserHeaderField is one per-user header as the connect page shows it to the
@@ -210,10 +200,15 @@ func (s *connectService) SaveUserHeaders(ctx context.Context, ticketID, instance
 		writes[h.Name] = value
 	}
 	for name, value := range writes {
-		if err := WriteUserHeaderValue(ctx, s.vault, gatewayID, ticket.PrincipalSub, reg.ID, name, value); err != nil {
+		cred, err := vaultdomain.NewCredential(gatewayID, ticket.PrincipalSub,
+			registrydomain.UserHeaderVaultProvider(reg.ID, name), "", value, "", nil, time.Time{})
+		if err != nil {
 			return err
 		}
-		AuditUserHeader(ctx, UserHeaderAuditSet, gatewayID, reg.ID, ticket.PrincipalSub, name, "self")
+		if err := appregistry.WriteUserHeaderCredential(ctx, s.vault, cred); err != nil {
+			return err
+		}
+		appregistry.AuditUserHeader(ctx, nil, appregistry.UserHeaderAuditSet, gatewayID, reg.ID, ticket.PrincipalSub, name, "self")
 	}
 	return nil
 }
@@ -229,47 +224,10 @@ func (s *connectService) RemoveUserHeaders(ctx context.Context, ticketID, instan
 			return err
 		}
 		if err == nil {
-			AuditUserHeader(ctx, UserHeaderAuditRemoved, gatewayID, reg.ID, ticket.PrincipalSub, h.Name, "self")
+			appregistry.AuditUserHeader(ctx, nil, appregistry.UserHeaderAuditRemoved, gatewayID, reg.ID, ticket.PrincipalSub, h.Name, "self")
 		}
 	}
 	return nil
-}
-
-// WriteUserHeaderValue stores one person's value for one header of one
-// registry instance. Writing clears a refusal mark: the value is new.
-func WriteUserHeaderValue(
-	ctx context.Context,
-	vault vaultdomain.Repository,
-	gatewayID ids.GatewayID,
-	principalSub string,
-	registryID ids.RegistryID,
-	header, value string,
-) error {
-	cred, err := vaultdomain.NewCredential(gatewayID, principalSub,
-		registrydomain.UserHeaderVaultProvider(registryID, header), "", value, "", nil, time.Time{})
-	if err != nil {
-		return err
-	}
-	return vault.Upsert(ctx, cred)
-}
-
-// AuditUserHeader records a change to a person's header value, without it.
-// actor says who made it: "self", "admin" or "upstream".
-func AuditUserHeader(
-	ctx context.Context,
-	event string,
-	gatewayID ids.GatewayID,
-	registryID ids.RegistryID,
-	principalSub, header, actor string,
-) {
-	slog.InfoContext(ctx, "security audit",
-		slog.String("event", event),
-		slog.String("gateway_id", gatewayID.String()),
-		slog.String("registry_id", registryID.String()),
-		slog.String("principal_ref", logref.Opaque(principalSub)),
-		slog.String("header", header),
-		slog.String("actor", actor),
-	)
 }
 
 func lookupFold(values map[string]string, name string) (string, bool) {
