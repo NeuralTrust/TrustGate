@@ -317,7 +317,7 @@ func catalogCustomized(target *registrydomain.MCPTarget) bool {
 	if target.Source != "" && target.Source != registrydomain.MCPSourceRemote {
 		return true
 	}
-	if len(target.Headers) > 0 || len(target.UnreadableHeaders) > 0 {
+	if len(target.Headers) > 0 || len(target.UnreadableHeaders) > 0 || len(target.UserHeaders) > 0 {
 		return true
 	}
 	auth := target.Auth
