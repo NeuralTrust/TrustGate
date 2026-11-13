@@ -173,6 +173,13 @@ const rejectedCredentialRefreshCooldown = 30 * time.Second
 const deadGrantRetryInterval = 15 * time.Minute
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
+	if err := r.applyAuth(ctx, rc, reg, target); err != nil {
+		return err
+	}
+	return r.applyUserHeaders(ctx, rc, reg, target)
+}
+
+func (r *credentialResolver) applyAuth(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
 	if cfg == nil {
 		return nil
@@ -290,7 +297,7 @@ func (r *credentialResolver) Refresh(
 ) error {
 	cfg := reg.MCPTarget.Auth
 	if cfg == nil || cfg.Mode != registrydomain.MCPAuthModeForwarded {
-		return errCredentialRefreshUnsupported
+		return r.refuseRejectedUserHeaders(ctx, rc, reg)
 	}
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
