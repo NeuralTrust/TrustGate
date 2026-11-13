@@ -28,6 +28,9 @@ const (
 	// "settings." followed by one of those paths.
 	EntityPolicy Entity = "policy"
 	EntityAuth   Entity = "auth"
+	// EntityGateway locations name each telemetry exporter by its name, so
+	// the exporters key holds a name rather than an array index.
+	EntityGateway Entity = "gateway"
 )
 
 // Wildcard matches any single key of a JSON object, such as a header name.
@@ -91,6 +94,8 @@ var Locations = []Location{
 	loc(EntityConsumer, "lb_config.embedding_config.auth.header_value"),
 	loc(EntityAuth, "config.oauth2.client_secret"),
 	loc(EntityAuth, "config.oauth2.exchange_client_secret"),
+	loc(EntityGateway, "telemetry.exporters.*.settings.headers.*"),
+	loc(EntityGateway, "telemetry.exporters.*.settings.dsn"),
 }
 
 // IsLocation reports whether path of entity is a declared location.

@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -625,5 +627,30 @@ func TestAuthAccessorsMatchDeclaredLocations(t *testing.T) {
 		ids.New[ids.GatewayKind](), SourceAuths, []*auth.Auth{a})
 	if out[0] == a || out[0].Config.OAuth2.ClientSecret == refStr("c") || a.Config.OAuth2.ClientSecret != refStr("c") {
 		t.Fatal("the copy carries the resolved value and the input is untouched")
+	}
+}
+
+func TestGatewayAccessorsMatchDeclaredLocations(t *testing.T) {
+	t.Parallel()
+	gw := &gateway.Gateway{ID: ids.New[ids.GatewayKind](), Telemetry: &telemetry.Telemetry{Exporters: []telemetry.ExporterConfig{
+		{Name: "otel", Type: "otlp", Settings: map[string]any{"headers": map[string]any{"Authorization": refStr("h")}}},
+		{Name: "pg", Type: "postgres", Settings: map[string]any{"dsn": refStr("d")}},
+	}}}
+	refs := GatewayRefs(gw)
+	if len(refs.Uses) != 2 {
+		t.Fatalf("uses = %v", refs.Uses)
+	}
+	for _, u := range refs.Uses {
+		if !domain.IsLocation(domain.EntityGateway, u.Path) {
+			t.Errorf("accessor path %v is not a declared location", u.Path)
+		}
+	}
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}})
+	out := GatewayExporters(context.Background(), m, gw.ID, gw.Telemetry.Exporters)
+	if out[0].Settings["headers"].(map[string]any)["Authorization"] == refStr("h") || out[1].Settings["dsn"] == refStr("d") {
+		t.Fatal("exporter credentials must be resolved")
+	}
+	if gw.Telemetry.Exporters[1].Settings["dsn"] != refStr("d") {
+		t.Fatal("the gateway's exporters must not be modified")
 	}
 }

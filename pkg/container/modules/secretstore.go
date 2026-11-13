@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -59,6 +61,9 @@ type SecretStores struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	prewarming atomic.Bool
+
+	invalidateMu sync.Mutex
+	invalidators []func(ids.GatewayID)
 }
 
 type secretStoresParams struct {
@@ -104,7 +109,7 @@ func (r runtimeRegistries) FindByID(ctx context.Context, id ids.RegistryID) (*re
 
 func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 	cfg := p.Config.SecretStores
-	s := &SecretStores{logger: p.Logger}
+	s := &SecretStores{logger: p.Logger, invalidators: []func(ids.GatewayID){appconsumer.InvalidateGatewayData(p.Manager)}}
 	if cfg.File != "" {
 		catalog, err := localfile.Open(cfg.File, backends.Factory(context.Background()), localfile.Options{
 			DeploymentType: p.Config.ConfigSync.DeploymentType,
@@ -125,7 +130,7 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 	matCfg := appsecretref.MaterializerConfig{
 		Eligibility: cfg.Gateways,
 		Gateways:    p.Gateways,
-		Invalidate:  appconsumer.InvalidateGatewayData(p.Manager),
+		Invalidate:  s.invalidate,
 		Logger:      p.Logger,
 	}
 	if s.Cache != nil {
@@ -320,6 +325,34 @@ func (p secretValuesParams) credentialFinderOptions() []appauth.CredentialFinder
 func (p secretRefsParams) authOptions() []appauth.SaveOption {
 	if v := p.entity(); v != nil {
 		return []appauth.SaveOption{appauth.WithSecretRefValidator(v)}
+	}
+	return nil
+}
+
+// OnInvalidate adds fn to what runs when a secret a gateway used changes, for
+// caches built from resolved values outside the gateway's runtime data.
+func (s *SecretStores) OnInvalidate(fn func(ids.GatewayID)) {
+	if s == nil {
+		return
+	}
+	s.invalidateMu.Lock()
+	defer s.invalidateMu.Unlock()
+	s.invalidators = append(s.invalidators, fn)
+}
+
+func (s *SecretStores) invalidate(gatewayID ids.GatewayID) {
+	s.invalidateMu.Lock()
+	fns := make([]func(ids.GatewayID), len(s.invalidators))
+	copy(fns, s.invalidators)
+	s.invalidateMu.Unlock()
+	for _, fn := range fns {
+		fn(gatewayID)
+	}
+}
+
+func (p secretRefsParams) gatewayOptions() []appgateway.SaveOption {
+	if v := p.entity(); v != nil {
+		return []appgateway.SaveOption{appgateway.WithSecretRefValidator(v)}
 	}
 	return nil
 }

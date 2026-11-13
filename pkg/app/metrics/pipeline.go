@@ -16,8 +16,13 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
+
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -50,6 +55,70 @@ type Pipeline struct {
 	cache           *ExporterCache
 	playgroundStore PlaygroundTraceStore
 	logger          *slog.Logger
+
+	// secrets resolves the secret references of a gateway's exporters; nil
+	// on a plane without stores. resolved keeps, per gateway, the exporters
+	// it resolved and the stored configs they came from, until the gateway
+	// is invalidated or its configs change.
+	secrets  appsecretref.ValuesResolver
+	mu       sync.Mutex
+	resolved map[string]resolvedExporters
+}
+
+type resolvedExporters struct {
+	source string
+	out    []telemetrydomain.ExporterConfig
+}
+
+// SetSecretValues makes the pipeline resolve the secret references of
+// gateway exporters with r.
+func (p *Pipeline) SetSecretValues(r appsecretref.ValuesResolver) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.secrets = r
+	p.resolved = map[string]resolvedExporters{}
+}
+
+// InvalidateGateway drops the exporters resolved for gatewayID, after a
+// secret they used changed.
+func (p *Pipeline) InvalidateGateway(gatewayID ids.GatewayID) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.resolved, gatewayID.String())
+}
+
+// withSecrets returns explicit with its secret references resolved, reusing
+// the last resolution of the gateway while its configs are unchanged.
+func (p *Pipeline) withSecrets(ctx context.Context, gatewayID string, explicit []telemetrydomain.ExporterConfig) []telemetrydomain.ExporterConfig {
+	p.mu.Lock()
+	secrets := p.secrets
+	p.mu.Unlock()
+	if secrets == nil || len(explicit) == 0 {
+		return explicit
+	}
+	gw, err := ids.Parse[ids.GatewayKind](gatewayID)
+	if err != nil {
+		return explicit
+	}
+	raw, _ := json.Marshal(explicit)
+	source := string(raw)
+	p.mu.Lock()
+	if r, ok := p.resolved[gatewayID]; ok && r.source == source {
+		p.mu.Unlock()
+		return r.out
+	}
+	p.mu.Unlock()
+	out := appsecretref.GatewayExporters(ctx, secrets, gw, explicit)
+	p.mu.Lock()
+	p.resolved[gatewayID] = resolvedExporters{source: source, out: out}
+	p.mu.Unlock()
+	return out
 }
 
 func NewPipeline(
@@ -89,7 +158,7 @@ func (p *Pipeline) publishContext(
 	if p == nil || p.builder == nil || req == nil || resp == nil {
 		return
 	}
-	targets := p.resolveTargets(explicit)
+	targets := p.resolveTargets(req.GatewayID, p.withSecrets(ctx, req.GatewayID, explicit))
 	if len(targets) == 0 && p.playgroundStore == nil {
 		return
 	}
@@ -111,7 +180,7 @@ func (p *Pipeline) PublishTrafficLabels(ctx context.Context, evt *events.Traffic
 	if p == nil || evt == nil {
 		return
 	}
-	for _, exporter := range p.resolveTargets(explicit) {
+	for _, exporter := range p.resolveTargets(evt.GatewayID, p.withSecrets(ctx, evt.GatewayID, explicit)) {
 		labeler, ok := exporter.(LabelExporter)
 		if !ok {
 			continue
@@ -144,7 +213,7 @@ func exporterIdentity(cfg telemetrydomain.ExporterConfig) string {
 	return cfg.Name + "\x00" + string(cfg.Class)
 }
 
-func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []Exporter {
+func (p *Pipeline) resolveTargets(gatewayID string, explicit []telemetrydomain.ExporterConfig) []Exporter {
 	if p.cache == nil {
 		return nil
 	}
@@ -179,7 +248,7 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 	if len(merged) == 0 {
 		return nil
 	}
-	return p.cache.ResolveSourced(merged)
+	return p.cache.ResolveOwned(gatewayID, merged)
 }
 
 func (p *Pipeline) close() {
