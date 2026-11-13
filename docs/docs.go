@@ -4097,7 +4097,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/registries/{id}/user-headers/links": {
             "post": {
-                "description": "Mints the connect page one person walks to enter their own values for this instance. Hand it to that person: it acts as them.",
+                "description": "Mints the connect page one person walks to enter their own values for this instance. Hand it to that person: it acts as them. consumer_path names the virtual MCP that binds the server and is required for a custom server.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10080,7 +10080,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "consumer_path": {
-                    "description": "ConsumerPath is the virtual MCP the person reaches the server through.\nEmpty uses the MCP Store.",
+                    "description": "ConsumerPath is the virtual MCP the person reaches the server through,\ne.g. /dev/mcp. Required for a custom server; empty uses the MCP Store,\nwhich serves only the servers it materialised.",
                     "type": "string"
                 },
                 "principal_sub": {
