@@ -42,6 +42,7 @@ func TestProviderLocator_Get(t *testing.T) {
 		ProviderCohere,
 		ProviderMoonshot,
 		ProviderDigitalOcean,
+		ProviderWatsonx,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)
@@ -149,6 +150,14 @@ func TestProviderLocator_DigitalOceanListsLiveModels(t *testing.T) {
 	_, err := locator.GetModelLister(ProviderDigitalOcean)
 	require.NoError(t, err)
 	_, err = locator.GetTester(ProviderDigitalOcean)
+	require.NoError(t, err)
+}
+
+func TestProviderLocator_WatsonxListsLiveModels(t *testing.T) {
+	locator := NewProviderLocator()
+	_, err := locator.GetModelLister(ProviderWatsonx)
+	require.NoError(t, err)
+	_, err = locator.GetTester(ProviderWatsonx)
 	require.NoError(t, err)
 }
 

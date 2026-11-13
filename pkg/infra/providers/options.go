@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 )
@@ -32,6 +34,10 @@ const (
 	AzureAPIAnthropic    = "anthropic"
 
 	vertexDefaultAPIVersion = "v1"
+
+	// WatsonxDefaultAPIVersion is the watsonx.ai API version date sent when a
+	// registry does not pin one. IBM keys response behaviour to this date.
+	WatsonxDefaultAPIVersion = "2025-10-01"
 )
 
 type AzureOptions struct {
@@ -166,6 +172,96 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 		}
 	}
 
+	return opts, nil
+}
+
+// watsonxRegionEndpoints maps each IBM Cloud region that serves watsonx.ai to
+// its inference endpoint. The region picks the host of a request that carries
+// an IAM token, so only these values are accepted.
+var watsonxRegionEndpoints = map[string]string{
+	"us-south": "https://us-south.ml.cloud.ibm.com",
+	"eu-de":    "https://eu-de.ml.cloud.ibm.com",
+	"eu-gb":    "https://eu-gb.ml.cloud.ibm.com",
+	"jp-tok":   "https://jp-tok.ml.cloud.ibm.com",
+	"au-syd":   "https://au-syd.ml.cloud.ibm.com",
+	"ca-tor":   "https://ca-tor.ml.cloud.ibm.com",
+}
+
+// WatsonxRegions returns the IBM Cloud regions a watsonx registry can target,
+// sorted.
+func WatsonxRegions() []string {
+	regions := make([]string, 0, len(watsonxRegionEndpoints))
+	for region := range watsonxRegionEndpoints {
+		regions = append(regions, region)
+	}
+	sort.Strings(regions)
+	return regions
+}
+
+var (
+	watsonxProjectIDPattern  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	watsonxAPIVersionPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+)
+
+// WatsonxOptions are the provider_options of an IBM watsonx.ai registry.
+// BaseURL replaces the regional endpoint, for private or dedicated endpoints.
+type WatsonxOptions struct {
+	Region     string `mapstructure:"region"`
+	ProjectID  string `mapstructure:"project_id"`
+	APIVersion string `mapstructure:"api_version"`
+	BaseURL    string `mapstructure:"base_url"`
+}
+
+// Endpoint returns the base URL inference and model listing calls go to.
+func (o WatsonxOptions) Endpoint() string {
+	if o.BaseURL != "" {
+		return o.BaseURL
+	}
+	return watsonxRegionEndpoints[o.Region]
+}
+
+func DecodeWatsonxOptions(options map[string]any) (WatsonxOptions, error) {
+	var opts WatsonxOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return WatsonxOptions{}, fmt.Errorf("watsonx: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.Region = strings.ToLower(strings.TrimSpace(opts.Region))
+	opts.ProjectID = strings.ToLower(strings.TrimSpace(opts.ProjectID))
+	opts.APIVersion = strings.TrimSpace(opts.APIVersion)
+	opts.BaseURL = strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
+
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return WatsonxOptions{}, fmt.Errorf("watsonx: %w", err)
+		}
+	}
+	if opts.Region == "" && opts.BaseURL == "" {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.region is required")
+	}
+	if _, ok := watsonxRegionEndpoints[opts.Region]; opts.Region != "" && !ok {
+		return WatsonxOptions{}, fmt.Errorf(
+			"watsonx: provider_options.region must be one of %s, got %q",
+			strings.Join(WatsonxRegions(), ", "), opts.Region,
+		)
+	}
+	if opts.ProjectID == "" {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.project_id is required")
+	}
+	if !watsonxProjectIDPattern.MatchString(opts.ProjectID) {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.project_id must be a watsonx.ai project ID (a UUID)")
+	}
+	if opts.APIVersion == "" {
+		opts.APIVersion = WatsonxDefaultAPIVersion
+	}
+	if !watsonxAPIVersionPattern.MatchString(opts.APIVersion) {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.api_version must be a date in YYYY-MM-DD form")
+	}
+	if _, err := time.Parse(time.DateOnly, opts.APIVersion); err != nil {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.api_version must be a valid date in YYYY-MM-DD form")
+	}
 	return opts, nil
 }
 

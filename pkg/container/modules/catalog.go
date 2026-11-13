@@ -169,9 +169,12 @@ func (s *liveModelSource) Supports(providerCode string) bool {
 }
 
 // Authoritative is true for Azure: a request names a deployment on the
-// resource, so only the resource's own listing can answer.
+// resource, so only the resource's own listing can answer. It is true for
+// watsonx too: each region serves its own set of models, and models.dev
+// prices only some of them, so the region's listing is the list and the
+// catalog lends it prices where a model matches.
 func (s *liveModelSource) Authoritative(providerCode string) bool {
-	return providerCode == providers.ProviderAzure
+	return providerCode == providers.ProviderAzure || providerCode == providers.ProviderWatsonx
 }
 
 func (s *liveModelSource) List(

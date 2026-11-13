@@ -39,6 +39,7 @@ const (
 	ProviderCohere           = provider.Cohere
 	ProviderMoonshot         = provider.Moonshot
 	ProviderDigitalOcean     = provider.DigitalOcean
+	ProviderWatsonx          = provider.Watsonx
 )
 
 type Config struct {
