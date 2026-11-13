@@ -104,6 +104,15 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelReque
 	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	// Upstream stubs in the functional suite listen on loopback.
 	env = append(env, "OUTBOUND_ALLOW_PRIVATE_NETWORKS=true")
+	// Hybrid data planes started by the tests present gateway-scoped signed
+	// tokens; the in-cluster planes keep the shared token.
+	env = append(env, "CONFIG_SYNC_AUTH_MODE=composite")
+	env = append(env, "CONFIG_SYNC_JWT_SECRET="+functionalConfigSyncJWTSecret)
+	env = append(env, "CONFIG_SYNC_JWT_ISSUER="+functionalConfigSyncJWTIssuer)
+	env = append(env, "CONFIG_SYNC_JWT_AUDIENCE="+functionalConfigSyncJWTAudience)
+	// Secret references are accepted for hybrid gateways; no plane of the
+	// suite loads a store file, so the in-cluster planes resolve nothing.
+	env = append(env, "SECRET_STORES_ENABLED=true")
 	// One signing key for every plane, as in production: the agent plane
 	// refuses delegation with an ephemeral key.
 	env = append(env, "STS_SIGNING_KEY="+functionalSTSSigningKey)
