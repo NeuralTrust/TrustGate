@@ -15,7 +15,6 @@
 package registry
 
 import (
-	"cmp"
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -29,11 +28,7 @@ import (
 // managed registry takes changes from.
 func changeContext(c *fiber.Ctx) context.Context {
 	identity := middleware.AdminIdentityFromContext(c)
-	ctx := appsecretstore.WithCaller(c.UserContext(), appsecretstore.Caller{
-		MayReference:    identity.HasScope(middleware.ScopeSecretStoresRead),
-		AllowUnverified: c.QueryBool("allow_unverified_secret_refs"),
-		Actor:           cmp.Or(identity.Email, identity.Subject),
-	})
+	ctx := appsecretstore.WithCaller(c.UserContext(), middleware.SecretRefCaller(c, identity))
 	if identity.Kind == middleware.AdminIdentityPlatform {
 		return appregistry.AsPlatform(ctx)
 	}

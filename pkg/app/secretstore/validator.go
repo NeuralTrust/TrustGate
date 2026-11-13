@@ -48,6 +48,12 @@ func WithCaller(ctx context.Context, c Caller) context.Context {
 	return context.WithValue(ctx, callerKey{}, c)
 }
 
+// CallerFrom returns the caller WithCaller attached to ctx, or the zero
+// caller, which may not reference a store.
+func CallerFrom(ctx context.Context) Caller {
+	return callerFrom(ctx)
+}
+
 func callerFrom(ctx context.Context) Caller {
 	c, _ := ctx.Value(callerKey{}).(Caller)
 	return c

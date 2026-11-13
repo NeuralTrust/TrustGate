@@ -81,3 +81,14 @@ func TestTestHandler_UnsupportedGatewayAnswers422(t *testing.T) {
 	assert.Equal(t, fiber.StatusUnprocessableEntity, code)
 	assert.Contains(t, body, "secret_references_not_supported")
 }
+
+func TestListHandler_UnsupportedGatewayReadsNoUsages(t *testing.T) {
+	app := fiber.New()
+	h := secretstorehttp.NewListHandler(gatewayStub{}, sourceStub{appsecretstore.Source{}}, mocks.NewUsagesFinder(t))
+	app.Get("/v1/gateways/:gateway_id/secret-stores", h.Handle)
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/gateways/"+ids.New[ids.GatewayKind]().String()+"/secret-stores", nil))
+	require.NoError(t, err)
+	raw, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(raw), `"supported":false`, "the usages finder mock fails the test if it is called")
+}
