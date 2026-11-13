@@ -243,9 +243,9 @@ func decodeRPC(body []byte, status int) (result json.RawMessage, rpcErr *RPCErro
 		}
 	}
 	if status < 200 || status > 299 {
-		return nil, GatewayFailure(ReasonUpstreamError), false
+		return nil, upstreamAnswer(ReasonUpstreamError, status), false
 	}
-	return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
+	return nil, upstreamAnswer(ReasonInvalidUpstreamResponse, status), false
 }
 
 // resultContent reads a result or an event and records the task it names.

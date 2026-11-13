@@ -35,6 +35,9 @@ var (
 	// ErrAgentCardUnavailable reports an agent card that could not be fetched
 	// or is not a JSON object with a name.
 	ErrAgentCardUnavailable = fmt.Errorf("registry: agent card unavailable: %w", commonerrors.ErrValidation)
+	// ErrAgentEndpointUnavailable reports an agent whose endpoint did not answer
+	// an A2A JSON-RPC call: a website, a missing path, a refused credential.
+	ErrAgentEndpointUnavailable = fmt.Errorf("registry: agent endpoint did not answer A2A: %w", commonerrors.ErrValidation)
 	// ErrAgentVersionUnsupported reports an A2A version the agent card does not offer.
 	ErrAgentVersionUnsupported = fmt.Errorf("registry: agent version unsupported: %w", commonerrors.ErrValidation)
 )
