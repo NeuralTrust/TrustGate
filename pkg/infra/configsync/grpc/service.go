@@ -56,6 +56,7 @@ type Service struct {
 	revocations  RevocationChecker
 	logger       *slog.Logger
 	helloTimeout time.Duration
+	refs         *refGate
 
 	usage         UsageSource
 	usageGateways GatewayResolver
@@ -75,10 +76,18 @@ func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, revocation
 		logger:       logger,
 		helloTimeout: defaultHelloTimeout,
 		usageRetry:   usageRetryInterval,
+		refs:         newRefGate(logger),
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	hub.setWithhold(func(conn *connection, n notice) bool {
+		if !s.withheld(conn.scope, n) {
+			return false
+		}
+		s.refs.refused(context.Background(), "notice", conn.scope, conn.instanceID, n.version)
+		return true
+	})
 	return s
 }
 
@@ -130,7 +139,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 		identity = configsyncrevocation.Identity{Scope: scope}
 	}
 	layered := hello.GetAcceptsLayered() && s.layeredSource() != nil
-	conn := s.hub.registerStream(identity, hello.GetInstanceId(), layered)
+	conn := s.hub.registerStream(identity, hello.GetInstanceId(), layered, hello.GetAcceptsSecretRefs())
 	defer s.hub.teardown(conn)
 	// The interceptor admitted this token before the stream registered. A
 	// revocation loaded in between is caught here: the refresher swaps the
@@ -141,7 +150,9 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 
 	if n, ok := s.currentNotice(scope, layered); ok && n.version != hello.GetLastAppliedVersion() {
-		conn.enqueue(n)
+		s.hub.mu.Lock()
+		s.hub.deliver(conn, n)
+		s.hub.mu.Unlock()
 	}
 
 	var usageChanges <-chan struct{}
@@ -222,13 +233,23 @@ func sendUsage(stream snapshotpb.ConfigSync_SyncServer, msgs []*snapshotpb.Serve
 }
 
 // GetSnapshot answers not_modified when the DP's applied_version matches current,
-// otherwise streams a SnapshotHeader followed by fixed-size data chunks.
+// otherwise streams a SnapshotHeader followed by fixed-size data chunks. A
+// request without accepts_secret_refs for a snapshot that holds references
+// gets FailedPrecondition secret_refs_unsupported, so a plane that predates
+// them keeps its current configuration instead of forwarding a reference as
+// a credential.
 func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapshotpb.ConfigSync_GetSnapshotServer) error {
 	scope := ScopeFromContext(stream.Context())
 	identity, _ := IdentityFromContext(stream.Context())
 	parts, version, ok := s.source.SnapshotPartsFor(scope)
 	if !ok {
 		return status.Error(codes.Unavailable, "no snapshot available yet")
+	}
+	// Decided on the parts this call serves, before the not-modified
+	// shortcut, so a publish racing the request cannot slip past the check.
+	if !req.GetAcceptsSecretRefs() && s.refs.blobHasRefs(scope, version, parts) {
+		s.refs.refused(stream.Context(), "get_snapshot", scope, req.GetInstanceId(), version)
+		return errSecretRefsUnsupported()
 	}
 	if applied := req.GetAppliedVersion(); applied != "" && applied == version {
 		header := &snapshotpb.SnapshotChunk{Payload: &snapshotpb.SnapshotChunk_Header{Header: &snapshotpb.SnapshotHeader{Version: version, NotModified: true}}}
