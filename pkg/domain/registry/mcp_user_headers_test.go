@@ -105,7 +105,7 @@ func TestValidateUserHeaderValue(t *testing.T) {
 		value string
 		ok    bool
 	}{
-		{"plain key", "sk-live_abc.123", true},
+		{"plain value", "abc.123_xyz", true},
 		{"with space", "abc def", true},
 		{"empty", "  ", false},
 		{"crlf injection", "abc\r\nX-Evil: 1", false},
