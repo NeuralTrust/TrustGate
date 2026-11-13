@@ -340,9 +340,16 @@ func (p SecretScanListers) Listers() []appsecretstore.EntityLister {
 	}.Listers()
 }
 
-// prewarm adapts Listers to the prewarmer, which needs only the references.
+// prewarm adapts the listers to the prewarmer, which needs only the
+// references. It reads only enabled auths, the ones a serving plane
+// resolves, because a DB-less plane's snapshot cannot page through all.
 func (p SecretEntityListers) prewarm() []func(context.Context, ids.GatewayID) ([]appsecretref.Use, error) {
-	listers := p.Listers()
+	serving := p
+	serving.Auths = nil
+	listers := serving.Listers()
+	if p.Auths != nil {
+		listers = append(listers, appsecretstore.EnabledAuthLister(p.Auths))
+	}
 	out := make([]func(context.Context, ids.GatewayID) ([]appsecretref.Use, error), 0, len(listers))
 	for _, list := range listers {
 		out = append(out, func(ctx context.Context, gw ids.GatewayID) ([]appsecretref.Use, error) {
