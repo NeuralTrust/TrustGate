@@ -84,6 +84,72 @@ func (_c *CardCredentials_Authorizer_Call) RunAndReturn(run func(context.Context
 	return _c
 }
 
+// CallAuthorizer provides a mock function with given fields: ctx, t
+func (_m *CardCredentials) CallAuthorizer(ctx context.Context, t *registry.A2ATarget) (appregistry.CardAuthorizer, bool, error) {
+	ret := _m.Called(ctx, t)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CallAuthorizer")
+	}
+
+	var r0 appregistry.CardAuthorizer
+	var r1 bool
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.A2ATarget) (appregistry.CardAuthorizer, bool, error)); ok {
+		return rf(ctx, t)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.A2ATarget) appregistry.CardAuthorizer); ok {
+		r0 = rf(ctx, t)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(appregistry.CardAuthorizer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *registry.A2ATarget) bool); ok {
+		r1 = rf(ctx, t)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, *registry.A2ATarget) error); ok {
+		r2 = rf(ctx, t)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// CardCredentials_CallAuthorizer_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CallAuthorizer'
+type CardCredentials_CallAuthorizer_Call struct {
+	*mock.Call
+}
+
+// CallAuthorizer is a helper method to define mock.On call
+//   - ctx context.Context
+//   - t *registry.A2ATarget
+func (_e *CardCredentials_Expecter) CallAuthorizer(ctx interface{}, t interface{}) *CardCredentials_CallAuthorizer_Call {
+	return &CardCredentials_CallAuthorizer_Call{Call: _e.mock.On("CallAuthorizer", ctx, t)}
+}
+
+func (_c *CardCredentials_CallAuthorizer_Call) Run(run func(ctx context.Context, t *registry.A2ATarget)) *CardCredentials_CallAuthorizer_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*registry.A2ATarget))
+	})
+	return _c
+}
+
+func (_c *CardCredentials_CallAuthorizer_Call) Return(_a0 appregistry.CardAuthorizer, _a1 bool, _a2 error) *CardCredentials_CallAuthorizer_Call {
+	_c.Call.Return(_a0, _a1, _a2)
+	return _c
+}
+
+func (_c *CardCredentials_CallAuthorizer_Call) RunAndReturn(run func(context.Context, *registry.A2ATarget) (appregistry.CardAuthorizer, bool, error)) *CardCredentials_CallAuthorizer_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewCardCredentials creates a new instance of CardCredentials. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewCardCredentials(t interface {

@@ -16,6 +16,7 @@ package a2a
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,4 +138,56 @@ func TestFetchReportsWhatTheRefusalSays(t *testing.T) {
 	_, err := NewCardFetcher(nil).Fetch(context.Background(), srv.URL+"/card.json", nil)
 	require.ErrorIs(t, err, domain.ErrAgentCardUnavailable)
 	assert.Contains(t, err.Error(), "status 400: ValidationException Agent runtime is not configured for A2A")
+}
+
+func TestProbeAcceptsAnAgentAndSaysWhyAnythingElseIsNot(t *testing.T) {
+	netguardtest.Allow(t)
+	var got struct {
+		method, version, key string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&call)
+		got.method, got.version, got.key = call.Method, r.Header.Get("A2A-Version"), r.Header.Get("X-Key")
+		switch r.URL.Path {
+		case "/agent":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"trustgate-probe","error":{"code":-32001,"message":"Task not found"}}`))
+		case "/locked":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/moved":
+			http.Redirect(w, r, "/agent", http.StatusFound)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = w.Write([]byte("<!DOCTYPE html><title>405</title>"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f := NewCardFetcher(nil)
+	authorize := func(r *http.Request) error {
+		r.Header.Set("X-Key", "secret")
+		return nil
+	}
+
+	require.NoError(t, f.Probe(context.Background(), srv.URL+"/agent", domain.A2AVersion10, authorize))
+	assert.Equal(t, "GetTask", got.method)
+	assert.Equal(t, "1.0", got.version)
+	assert.Equal(t, "secret", got.key)
+
+	require.NoError(t, f.Probe(context.Background(), srv.URL+"/agent", domain.A2AVersion03, nil))
+	assert.Equal(t, "tasks/get", got.method)
+
+	err := f.Probe(context.Background(), srv.URL+"/", domain.A2AVersion03, nil)
+	require.ErrorIs(t, err, domain.ErrAgentEndpointUnavailable)
+	assert.Contains(t, err.Error(), "did not answer A2A JSON-RPC: HTTP 405 (text/html)")
+
+	err = f.Probe(context.Background(), srv.URL+"/locked", domain.A2AVersion03, nil)
+	require.ErrorIs(t, err, domain.ErrAgentEndpointUnavailable)
+	assert.Contains(t, err.Error(), "refused the agent's credential: HTTP 401")
+
+	err = f.Probe(context.Background(), srv.URL+"/moved", domain.A2AVersion03, authorize)
+	require.ErrorIs(t, err, domain.ErrAgentEndpointUnavailable, "a redirect is not followed")
+	assert.Contains(t, err.Error(), "HTTP 302")
 }
