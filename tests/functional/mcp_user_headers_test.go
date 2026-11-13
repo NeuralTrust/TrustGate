@@ -17,6 +17,7 @@
 package functional_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -232,4 +234,112 @@ func TestMCPUserHeaders_EachPersonSendsTheirOwnKey(t *testing.T) {
 		status, body = mcpRPC(t, gatewayID, consumerID, endUserHeaders(key, "ana"), "tools/call", echo)
 		_ = requireConsentCause(t, status, body, "user_header_missing")
 	})
+}
+
+// mcpRPCAt is mcpRPC against a given MCP plane.
+func mcpRPCAt(t *testing.T, base, gatewayID, consumerID string, headers map[string]string, method string, params any) (int, map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, base+"/"+ConsumerSlug(t, consumerID)+"/mcp", strings.NewReader(string(raw)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	req.Host = host.(string)
+	return doJSONRequest(t, req)
+}
+
+// On the MCP plane as production runs it — no database, reading the vault
+// from the shared Redis only — a key an admin loads on the control plane is
+// the key the plane sends, and an admin reset reaches it too.
+func TestDBLessMCP_UserHeaderLoadedByAnAdminReachesTheDataPlane(t *testing.T) {
+	defer Track(t, "DBLessDataPlane")()
+	up := startKeyedUpstream(t)
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("dbless-keyed")})
+	registryID := CreateRegistry(t, gatewayID, map[string]any{
+		"name": uniqueName("keyed"), "type": "mcp", "weight": 1,
+		"mcp_target": map[string]any{
+			"url":          up.server.URL,
+			"auth":         map[string]any{"mode": "none"},
+			"user_headers": []map[string]any{{"name": "X-API-Key", "required": true, "secret": true}},
+		},
+	})
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+	importUserHeaders(t, gatewayID, registryID, []map[string]any{
+		{"principal_sub": "app:" + consumerID + ":ana", "header": "X-API-Key", "value": "ana-dbless-key"},
+	})
+	echo := map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "hola"}}
+
+	base, logs := startDBLessMCPPlane(t, GlobalConfig.Server.MCPPort+106, uniqueName("dbless-keyed"))
+	require.Eventually(t, func() bool {
+		up.reset()
+		status, body := mcpRPCAt(t, base, gatewayID, consumerID, endUserHeaders(key, "ana"), "tools/call", echo)
+		if status != http.StatusOK || body["error"] != nil {
+			return false
+		}
+		for _, got := range up.seen() {
+			if got != "ana-dbless-key" {
+				return false
+			}
+		}
+		return len(up.seen()) > 0
+	}, 30*time.Second, 300*time.Millisecond, "the db-less plane never sent the imported key; logs:\n%s", logs.String())
+	require.NotContains(t, logs.String(), "ana-dbless-key", "the key must never reach the plane's logs")
+
+	target := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/user-headers/values", AdminURL, gatewayID, registryID)
+	status, body := sendRequest(t, http.MethodDelete, target, nil, nil)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	status, body = mcpRPCAt(t, base, gatewayID, consumerID, endUserHeaders(key, "ana"), "tools/call", echo)
+	_ = requireConsentCause(t, status, body, "user_header_missing")
+}
+
+// A person who signs in with the customer's IdP (OAuth inbound) holds their
+// own key too: an admin hands them the link for a custom server through the
+// virtual MCP that binds it, they enter the key on the page, and their calls
+// carry it.
+func TestMCPUserHeaders_OAuthCallerEnrollsThroughAnAdminLink(t *testing.T) {
+	up := startKeyedUpstream(t)
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, map[string]any{
+		"name": uniqueName("keyed"), "type": "mcp", "weight": 1,
+		"mcp_target": map[string]any{
+			"url":          up.server.URL,
+			"auth":         map[string]any{"mode": "none"},
+			"user_headers": []map[string]any{{"name": "X-API-Key", "required": true, "secret": true}},
+		},
+	})
+	idp := newOAuthIDPStub(t)
+	consumerID, audience := createOAuthMCPConsumer(t, gatewayID, []string{registryID}, idp)
+	subject := uniqueName("carla")
+	carla := bearerHeaders(idp.mint(t, audience, map[string]any{"sub": subject}))
+	echo := map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "hola"}}
+
+	status, body := mcpRPC(t, gatewayID, consumerID, carla, "tools/call", echo)
+	_ = requireConsentCause(t, status, body, "user_header_missing")
+
+	links := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/user-headers/links", AdminURL, gatewayID, registryID)
+	status, body = sendRequest(t, http.MethodPost, links, nil, map[string]any{"principal_sub": subject})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "a custom server's link must name its virtual MCP: %v", body)
+
+	consumerPath := "/" + ConsumerSlug(t, consumerID) + "/mcp"
+	status, body = sendRequest(t, http.MethodPost, links, nil, map[string]any{"principal_sub": subject, "consumer_path": consumerPath})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	ticket, _ := body["ticket"].(string)
+	require.NotEmpty(t, ticket, "body=%v", body)
+
+	enterKeyOnConnectPage(t, ticket, registryID, url.Values{"X-API-Key": {"carla-key"}})
+
+	up.reset()
+	status, body = mcpRPC(t, gatewayID, consumerID, carla, "tools/call", echo)
+	requireRPCSucceeded(t, status, body)
+	seen := up.seen()
+	require.NotEmpty(t, seen)
+	for _, got := range seen {
+		require.Equal(t, "carla-key", got)
+	}
 }
