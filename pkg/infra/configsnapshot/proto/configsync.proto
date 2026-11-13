@@ -101,6 +101,31 @@ message Heartbeat {
   // accepts_secret_refs repeats Hello.accepts_secret_refs so the control
   // plane can record it with the rest of the heartbeat.
   bool accepts_secret_refs = 7;
+  // secret_refs is the last outcome of the references this data plane
+  // resolved for its gateways: where each one is and what it names, never a
+  // value.
+  SecretRefHealth secret_refs = 8;
+}
+
+// SecretRefHealth counts every reference a data plane resolved and lists
+// their outcomes, failing ones first, up to 200.
+message SecretRefHealth {
+  uint32 total = 1;
+  uint32 unresolved = 2;
+  repeated SecretRefOutcome outcomes = 3;
+}
+
+// SecretRefOutcome is one reference: its gateway, entity, id and field, the
+// store and path it names, and the error class that left it empty (empty
+// when it resolved).
+message SecretRefOutcome {
+  string gateway_id = 1;
+  string entity = 2;
+  string id = 3;
+  string field = 4;
+  string store = 5;
+  string path = 6;
+  string error_class = 7;
 }
 
 // SecretStoreStatus is one secret store a data plane loaded.

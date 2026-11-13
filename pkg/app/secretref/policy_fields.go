@@ -55,7 +55,7 @@ func PolicyRefs(p *policy.Policy, paths, destinations, hosts []string) EntityRef
 		dest = append(dest, path+"="+fmt.Sprint(v))
 	}
 	refs.Destination = strings.Join(dest, "\x00")
-	return refs
+	return refs.owned()
 }
 
 // PluginCredentials returns, for a policy, its plugin's credential paths and

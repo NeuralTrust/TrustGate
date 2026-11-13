@@ -353,3 +353,34 @@ func TestValidatorRefusesADestinationOutsideTheList(t *testing.T) {
 		t.Fatalf("a host one instance refuses must be refused: %v", err)
 	}
 }
+
+func TestUsageStatesFollowTheReportedOutcome(t *testing.T) {
+	t.Parallel()
+	g := gw(gateway.DataPlaneHybrid)
+	report := func(class domain.Class, path string) dataplane.Instance {
+		in := live("dp-"+path+string(class), true, vault(domain.StateOK))
+		in.SecretRefs = domain.RefHealth{Total: 1, Outcomes: []domain.RefOutcome{{
+			GatewayID: g.ID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Store: "corp-vault", Path: path, Class: class,
+		}}}
+		return in
+	}
+	usage := Usage{Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Reference: "secret://corp-vault/ai/openai#key"}
+
+	for name, tt := range map[string]struct {
+		instances []dataplane.Instance
+		state     string
+		class     domain.Class
+	}{
+		"resolved":           {[]dataplane.Instance{report("", "ai/openai")}, RefStateOK, ""},
+		"failing on one":     {[]dataplane.Instance{report("", "ai/openai"), report(domain.ClassAccessDenied, "ai/openai")}, RefStateFailing, domain.ClassAccessDenied},
+		"never resolved":     {[]dataplane.Instance{live("dp-1", true, vault(domain.StateOK))}, RefStateNotReported, ""},
+		"an older reference": {[]dataplane.Instance{report("", "ai/old")}, RefStateNotReported, ""},
+	} {
+		src := dataPlaneSource(g.ID, tt.instances, now)
+		uses := map[string][]Usage{"corp-vault": {usage}}
+		src.Annotate(g.ID, uses)
+		if got := uses["corp-vault"][0]; got.State != tt.state || got.ErrorClass != string(tt.class) {
+			t.Errorf("%s: state = %q %q, want %q %q", name, got.State, got.ErrorClass, tt.state, tt.class)
+		}
+	}
+}

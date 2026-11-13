@@ -39,6 +39,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	secretstoredomain "github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/backends"
@@ -249,12 +250,15 @@ func (s *SecretStores) Stop() {
 func provideSecretStoresAdmin(c *container.Container) error {
 	if err := c.Provide(func(cfg *config.Config, stores *SecretStores, conns *configsyncconnrepo.Repository) appsecretstore.SourceResolver {
 		var health appsecretstore.StoreHealth
+		var refs func() secretstoredomain.RefHealth
 		if stores.Cache != nil {
 			health = stores.Cache
+			refs = stores.Materializer.Health
 		}
 		return appsecretstore.NewSourceResolver(appsecretstore.SourceConfig{
 			Eligibility:   cfg.SecretStores.Gateways,
 			Health:        health,
+			RefHealth:     refs,
 			Instances:     conns,
 			AdminInstance: cfg.ConfigSync.InstanceID,
 		})

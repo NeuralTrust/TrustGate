@@ -68,7 +68,7 @@ func (h *ListHandler) Handle(c *fiber.Ctx) error {
 
 // Usages godoc
 // @Summary      List the usages of a secret store
-// @Description  Returns every field of the gateway that references the store, with the reference as stored.
+// @Description  Returns every field of the gateway that references the store, with the reference as stored and what the gateway's planes last reported about it: ok, failing (with the error class) or not_reported.
 // @Tags         secret-stores
 // @Produce      json
 // @Security     BearerAuth
@@ -106,5 +106,6 @@ func (h *ListHandler) load(c *fiber.Ctx) (appsecretstore.Source, map[string][]ap
 	if err != nil {
 		return appsecretstore.Source{}, nil, err
 	}
+	src.Annotate(gatewayID, uses)
 	return src, uses, nil
 }

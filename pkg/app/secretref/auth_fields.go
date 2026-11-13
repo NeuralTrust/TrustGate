@@ -47,7 +47,7 @@ func AuthRefs(a *auth.Auth) EntityRefs {
 			refs.Embedded = append(refs.Embedded, Use{Path: path, Raw: f.value})
 		}
 	}
-	return refs
+	return refs.owned()
 }
 
 // GatewayAuths returns auths with every one whose identity provider secrets

@@ -68,7 +68,10 @@ type Client struct {
 	heartbeat *snapshotpb.Heartbeat
 	// secretStores reports the secret stores this plane loaded, read at each
 	// heartbeat; nil reports none.
-	secretStores      func() []secretstore.Status
+	secretStores func() []secretstore.Status
+	// secretRefs reports the outcome of the references this plane resolved,
+	// read at each heartbeat; nil reports none.
+	secretRefs        func() secretstore.RefHealth
 	heartbeatInterval time.Duration
 
 	layered   bool

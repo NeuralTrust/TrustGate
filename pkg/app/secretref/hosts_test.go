@@ -154,3 +154,39 @@ func TestDestinationClassOnValues(t *testing.T) {
 		t.Errorf("a use with no host must say why: %v", got[2].Err)
 	}
 }
+
+func TestHealthReportsTheLastOutcomeOfEachReference(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	resolver := &markerResolver{}
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: resolver})
+	if h := m.Health(); h.Total != 0 {
+		t.Fatalf("nothing resolved yet: %+v", h)
+	}
+	good := withKeyFor(gw, refStr("openai#key"))
+	bad := withKeyFor(gw, "secret://vault/prod/key")
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{good.ID: good, bad.ID: bad})
+	m.Values(context.Background(), gw, SourceAuths, []Use{{Path: []string{"config", "oauth2", "client_secret"}, Raw: refStr("idp"), Hosts: []string{"idp"}, Entity: "auth", ID: "a1"}})
+	m.Values(context.Background(), gw, SourceAuthCredentials, []Use{{Path: []string{"config", "oauth2", "client_secret"}, Raw: refStr("idp"), Hosts: []string{"idp"}, Entity: "auth", ID: "a1"}})
+
+	h := m.Health()
+	if h.Total != 3 || h.Unresolved != 1 || len(h.Outcomes) != 3 {
+		t.Fatalf("health = %+v; want three references, the auth counted once", h)
+	}
+	first := h.Outcomes[0]
+	if first.Class != secretstore.ClassPathNotAllowed || first.ID != bad.ID.String() || first.Entity != "registry" || first.Store != "vault" || first.Path != "prod/key" {
+		t.Fatalf("failing outcome = %+v, want it first", first)
+	}
+	if _, ok := h.Find(gw, "registry", good.ID.String(), "llm_target.auth.api_key.api_key", "vault", "ai/openai"); !ok {
+		t.Fatalf("resolved outcome missing: %+v", h.Outcomes)
+	}
+
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{good.ID: good})
+	if h := m.Health(); h.Total != 2 || h.Unresolved != 0 {
+		t.Fatalf("a removed reference must leave the report: %+v", h)
+	}
+}
+
+func withKeyFor(gw ids.GatewayID, key string) *registry.Registry {
+	return &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Provider: "openai", Auth: registry.NewAPIKeyAuth(key)}}
+}

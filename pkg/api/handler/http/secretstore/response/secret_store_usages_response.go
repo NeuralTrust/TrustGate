@@ -23,13 +23,25 @@ type SecretStoreUsageResponse struct {
 	Name      string `json:"name"`
 	Field     string `json:"field"`
 	Reference string `json:"reference"`
+	// State is what the gateway's planes last reported: ok, failing, or
+	// not_reported when none has resolved the reference since it was set.
+	State string `json:"state" enums:"ok,failing,not_reported"`
+	// ErrorClass is why a failing reference did not resolve.
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // FromUsages builds the usages response; never nil.
 func FromUsages(in []appsecretstore.Usage) []SecretStoreUsageResponse {
 	out := make([]SecretStoreUsageResponse, 0, len(in))
 	for _, u := range in {
-		out = append(out, SecretStoreUsageResponse{Entity: u.Entity, ID: u.ID, Name: u.Name, Field: u.Field, Reference: u.Reference})
+		state := u.State
+		if state == "" {
+			state = appsecretstore.RefStateNotReported
+		}
+		out = append(out, SecretStoreUsageResponse{
+			Entity: u.Entity, ID: u.ID, Name: u.Name, Field: u.Field, Reference: u.Reference,
+			State: state, ErrorClass: u.ErrorClass,
+		})
 	}
 	return out
 }
