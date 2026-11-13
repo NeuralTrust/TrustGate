@@ -82,9 +82,6 @@ type GatewayFinder interface {
 
 // MaterializerConfig configures NewMaterializer.
 type MaterializerConfig struct {
-	// Enabled is SECRET_STORES_ENABLED. Disabled, every reference stays
-	// unresolved.
-	Enabled bool
 	// Eligibility is SECRET_STORES_GATEWAYS.
 	Eligibility secretstore.Eligibility
 	// Catalog and Resolver are nil on a plane without a store file, where
@@ -282,7 +279,7 @@ func (m *materializer) Refresh(ctx context.Context, reg *registry.Registry) (*re
 func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, refs []*pending) error {
 	ctx = context.WithoutCancel(ctx)
 	eligible, eligErr := false, error(nil)
-	if m.cfg.Enabled && m.cfg.Catalog != nil && m.cfg.Resolver != nil {
+	if m.cfg.Catalog != nil && m.cfg.Resolver != nil {
 		eligible, eligErr = m.eligible(ctx, gatewayID)
 	}
 	g, gctx := errgroup.WithContext(ctx)
@@ -305,8 +302,8 @@ func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, 
 }
 
 func (m *materializer) check(gatewayID ids.GatewayID, ref domain.Ref, eligible bool, eligErr error) error {
-	if !m.cfg.Enabled || m.cfg.Catalog == nil || m.cfg.Resolver == nil {
-		return fmt.Errorf("secret references are not enabled on this plane: %w", secretstore.ErrStoreMissing)
+	if m.cfg.Catalog == nil || m.cfg.Resolver == nil {
+		return fmt.Errorf("this plane loads no secret store: %w", secretstore.ErrStoreMissing)
 	}
 	if eligErr != nil {
 		return fmt.Errorf("the gateway's eligibility could not be read: %w", secretstore.ErrUnavailable)

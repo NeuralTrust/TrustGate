@@ -188,7 +188,7 @@ func TestMaterializeEveryLocation(t *testing.T) {
 	t.Parallel()
 	in := everyLocation()
 	before := jsonLeaves(t, in)
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}})
 	out := m.Registries(context.Background(), ids.New[ids.GatewayKind](), map[ids.RegistryID]*registry.Registry{in.ID: in})
 	got := out[in.ID]
 	if got == in {
@@ -256,15 +256,14 @@ func TestUnresolvedIsEmptyAndMarked(t *testing.T) {
 		cfg MaterializerConfig
 		ref string
 	}{
-		"feature off":         {MaterializerConfig{Catalog: storeCatalog(), Resolver: &markerResolver{}, Eligibility: secretstore.EligibilityAll}, refStr("k")},
-		"no store file":       {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll}, refStr("k")},
-		"hosted gateway":      {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityHybrid, Gateways: hosted, Catalog: storeCatalog(), Resolver: &markerResolver{}}, refStr("k")},
-		"gateway unreadable":  {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityHybrid, Gateways: &gatewayFinder{err: errors.New("db")}, Catalog: storeCatalog(), Resolver: &markerResolver{}}, refStr("k")},
-		"not in allowlist":    {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(other), Resolver: &markerResolver{}}, refStr("k")},
-		"path not allowed":    {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://vault/payments/db"},
-		"unknown store":       {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://nope/ai/k"},
-		"malformed reference": {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://vault"},
-		"store failure":       {MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityHybrid, Gateways: hybrid, Catalog: storeCatalog(), Resolver: &markerResolver{err: secretstore.ErrNotFound}}, refStr("k")},
+		"no store file":       {MaterializerConfig{Eligibility: secretstore.EligibilityAll}, refStr("k")},
+		"hosted gateway":      {MaterializerConfig{Eligibility: secretstore.EligibilityHybrid, Gateways: hosted, Catalog: storeCatalog(), Resolver: &markerResolver{}}, refStr("k")},
+		"gateway unreadable":  {MaterializerConfig{Eligibility: secretstore.EligibilityHybrid, Gateways: &gatewayFinder{err: errors.New("db")}, Catalog: storeCatalog(), Resolver: &markerResolver{}}, refStr("k")},
+		"not in allowlist":    {MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(other), Resolver: &markerResolver{}}, refStr("k")},
+		"path not allowed":    {MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://vault/payments/db"},
+		"unknown store":       {MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://nope/ai/k"},
+		"malformed reference": {MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}, "secret://vault"},
+		"store failure":       {MaterializerConfig{Eligibility: secretstore.EligibilityHybrid, Gateways: hybrid, Catalog: storeCatalog(), Resolver: &markerResolver{err: secretstore.ErrNotFound}}, refStr("k")},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -287,7 +286,7 @@ func TestUnresolvedIsEmptyAndMarked(t *testing.T) {
 func TestHostedEligibilityReadsTheGatewayOnlyWithReferences(t *testing.T) {
 	t.Parallel()
 	finder := &gatewayFinder{gw: &gateway.Gateway{Entitlements: gateway.Entitlements{DataPlane: gateway.DataPlaneHybrid}}}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityHybrid, Gateways: finder, Catalog: storeCatalog(), Resolver: &markerResolver{}})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityHybrid, Gateways: finder, Catalog: storeCatalog(), Resolver: &markerResolver{}})
 	plain := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth("sk")}}
 	m.Registries(context.Background(), ids.New[ids.GatewayKind](), map[ids.RegistryID]*registry.Registry{plain.ID: plain})
 	if finder.calls.Load() != 0 {
@@ -303,7 +302,7 @@ func TestHostedEligibilityReadsTheGatewayOnlyWithReferences(t *testing.T) {
 func TestReferencesResolveConcurrently(t *testing.T) {
 	t.Parallel()
 	r := &markerResolver{delay: 100 * time.Millisecond}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r})
 	byID := map[ids.RegistryID]*registry.Registry{}
 	for i := range 8 {
 		reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr(string(rune('a' + i))))}}
@@ -329,7 +328,7 @@ func TestChangeDuringTheFirstLoadInvalidatesIt(t *testing.T) {
 	t.Parallel()
 	inv := &invalidations{}
 	r := &selfNotifyingResolver{}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
 	gw := ids.New[ids.GatewayKind]()
 	reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("k"))}}
 	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
@@ -341,7 +340,7 @@ func TestChangeDuringTheFirstLoadInvalidatesIt(t *testing.T) {
 func TestNoStoresSkipsTheGatewayLookup(t *testing.T) {
 	t.Parallel()
 	finder := &gatewayFinder{gw: &gateway.Gateway{}}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityHybrid, Gateways: finder})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityHybrid, Gateways: finder})
 	reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("k"))}}
 	out := m.Registries(context.Background(), ids.New[ids.GatewayKind](), map[ids.RegistryID]*registry.Registry{reg.ID: reg})
 	if !out[reg.ID].CredentialUnavailable() || finder.calls.Load() != 0 {
@@ -353,7 +352,7 @@ func TestChangesInvalidateTheGatewaysThatUsedThem(t *testing.T) {
 	t.Parallel()
 	r := &markerResolver{}
 	inv := &invalidations{}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
 	gwA, gwB := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
 	regA := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("shared#a"))}}
 	regB := &registry.Registry{ID: ids.New[ids.RegistryKind](), LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("other"))}}
@@ -385,7 +384,7 @@ func TestPartialReadersKeepTheGatewayIndex(t *testing.T) {
 	t.Parallel()
 	r := &markerResolver{}
 	inv := &invalidations{}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r, Invalidate: inv.add})
 	gw := ids.New[ids.GatewayKind]()
 	referenced := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("shared"))}}
 	literal := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth("sk")}}
@@ -411,7 +410,7 @@ func TestMaterializeDoesNotKeepAFailedEligibilityRead(t *testing.T) {
 	}}
 	inv := &invalidations{}
 	m := newMat(t, MaterializerConfig{
-		Enabled: true, Eligibility: secretstore.EligibilityHybrid, Catalog: storeCatalog(), Resolver: &markerResolver{},
+		Eligibility: secretstore.EligibilityHybrid, Catalog: storeCatalog(), Resolver: &markerResolver{},
 		Gateways: &gatewayFinder{err: errors.New("read timed out")}, Invalidate: inv.add,
 	})
 	out := m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
@@ -464,7 +463,7 @@ func TestStoresChangedDropsDeletedGatewaysFromTheIndex(t *testing.T) {
 	finder := &gatewayFinder{gw: &gateway.Gateway{ID: gw}}
 	inv := &invalidations{}
 	m := newMat(t, MaterializerConfig{
-		Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{},
+		Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{},
 		Gateways: finder, Invalidate: inv.add,
 	})
 	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})

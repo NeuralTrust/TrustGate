@@ -43,9 +43,9 @@ import (
 )
 
 // SecretStores is what a plane runs to resolve secret references. Catalog
-// and Cache are nil unless SECRET_STORES_ENABLED is set and the plane loads a
-// store file; the materializer always exists, so a reference that reaches a
-// plane without stores is left empty instead of being forwarded.
+// and Cache are nil unless the plane loads a store file; the materializer
+// always exists, so a reference that reaches a plane without stores is left
+// empty instead of being forwarded.
 type SecretStores struct {
 	Catalog      *localfile.Catalog
 	Cache        *appsecretref.Cache
@@ -107,7 +107,7 @@ func (r runtimeRegistries) FindByID(ctx context.Context, id ids.RegistryID) (*re
 func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 	cfg := p.Config.SecretStores
 	s := &SecretStores{logger: p.Logger}
-	if cfg.Enabled && cfg.File != "" {
+	if cfg.File != "" {
 		catalog, err := localfile.Open(cfg.File, backends.Factory(context.Background()), localfile.Options{
 			DeploymentType: p.Config.ConfigSync.DeploymentType,
 			Logger:         p.Logger,
@@ -125,7 +125,6 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 		})
 	}
 	matCfg := appsecretref.MaterializerConfig{
-		Enabled:     cfg.Enabled,
 		Eligibility: cfg.Gateways,
 		Gateways:    p.Gateways,
 		Invalidate:  appconsumer.InvalidateGatewayData(p.Manager),
@@ -259,7 +258,6 @@ func provideSecretStoresAdmin(c *container.Container) error {
 			health = stores.Cache
 		}
 		return appsecretstore.NewSourceResolver(appsecretstore.SourceConfig{
-			Enabled:       cfg.SecretStores.Enabled,
 			Eligibility:   cfg.SecretStores.Gateways,
 			Health:        health,
 			Instances:     conns,
@@ -274,7 +272,7 @@ func provideSecretStoresAdmin(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, sources appsecretstore.SourceResolver, gateways gatewaydomain.Repository, logger *slog.Logger) appsecretstore.RegistryValidator {
-		return appsecretstore.NewRegistryValidator(cfg.SecretStores.Enabled, sources, gateways, logger)
+		return appsecretstore.NewRegistryValidator(sources, gateways, logger)
 	}); err != nil {
 		return err
 	}

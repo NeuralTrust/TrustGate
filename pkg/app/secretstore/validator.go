@@ -65,7 +65,7 @@ type RegistryValidator interface {
 	// not already stored at the same field of previous (the stored
 	// references and embedded values, nil on create), so a client echoing a
 	// stored value back is never refused. For those values it checks, in
-	// order: the feature is enabled, every value is a whole reference that
+	// order: every value is a whole reference that
 	// parses, the gateway is eligible, the caller may reference, and every
 	// reference names a store of the gateway's store source that allows its
 	// path. On success it returns the audit to record once the write is
@@ -74,18 +74,17 @@ type RegistryValidator interface {
 }
 
 type registryValidator struct {
-	enabled  bool
 	sources  SourceResolver
 	gateways GatewayReader
 	logger   *slog.Logger
 }
 
 // NewRegistryValidator returns a RegistryValidator.
-func NewRegistryValidator(enabled bool, sources SourceResolver, gateways GatewayReader, logger *slog.Logger) RegistryValidator {
+func NewRegistryValidator(sources SourceResolver, gateways GatewayReader, logger *slog.Logger) RegistryValidator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &registryValidator{enabled: enabled, sources: sources, gateways: gateways, logger: logger}
+	return &registryValidator{sources: sources, gateways: gateways, logger: logger}
 }
 
 type parsedUse struct {
@@ -99,13 +98,10 @@ func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.
 	removed := removedUses(previous, all)
 	audit := func() { v.audit(ctx, reg, uses, removed) }
 	if len(uses) == 0 {
-		if v.enabled && len(changedUses(allEmbedded, previous)) > 0 {
-			return nil, embeddedError(changedUses(allEmbedded, previous))
+		if embedded := changedUses(allEmbedded, previous); len(embedded) > 0 {
+			return nil, embeddedError(embedded)
 		}
 		return audit, nil
-	}
-	if !v.enabled {
-		return nil, refdomain.ErrReferencesDisabled
 	}
 	if embedded := changedUses(allEmbedded, previous); len(embedded) > 0 {
 		return nil, embeddedError(embedded)

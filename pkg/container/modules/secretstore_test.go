@@ -42,7 +42,7 @@ func TestSecretStoresWithoutAFileOnlyMaterializes(t *testing.T) {
 	t.Parallel()
 	for _, cfg := range []config.SecretStoresConfig{
 		{},
-		{Enabled: true, Gateways: secretstore.EligibilityHybrid},
+		{Gateways: secretstore.EligibilityHybrid},
 	} {
 		s, err := secretStoresFor(t, cfg, "saas")
 		if err != nil {
@@ -63,7 +63,7 @@ func TestSecretStoresLoadTheFileAndRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.SecretStoresConfig{
-		Enabled: true, Gateways: secretstore.EligibilityAll, File: path,
+		Gateways: secretstore.EligibilityAll, File: path,
 		FetchTimeout: time.Second, RefreshInterval: time.Second, ProbeInterval: time.Second,
 	}
 	s, err := secretStoresFor(t, cfg, "self-hosted")

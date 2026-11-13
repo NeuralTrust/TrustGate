@@ -119,7 +119,6 @@ type SourceResolver interface {
 
 // SourceConfig configures NewSourceResolver.
 type SourceConfig struct {
-	Enabled     bool
 	Eligibility domain.Eligibility
 	// Health is the admin's own catalog; nil when the admin loads no store
 	// file, as on NeuralTrust's control plane.
@@ -148,7 +147,7 @@ func NewSourceResolver(cfg SourceConfig) SourceResolver {
 // are left out.
 func (r *sourceResolver) Source(ctx context.Context, gw *gateway.Gateway) (Source, error) {
 	own := gw.ServedByOwnDataPlane()
-	supported := r.cfg.Enabled && domain.Eligible(r.cfg.Eligibility, gw) && (own || r.cfg.Health != nil)
+	supported := domain.Eligible(r.cfg.Eligibility, gw) && (own || r.cfg.Health != nil)
 	if !supported {
 		return Source{}, nil
 	}

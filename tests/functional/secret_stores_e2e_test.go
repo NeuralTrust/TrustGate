@@ -229,7 +229,6 @@ func TestSecretStoresHybridE2E(t *testing.T) {
 	port := GlobalConfig.Server.ProxyPort + 140
 	lkgPath := filepath.Join(t.TempDir(), "snapshot.lkg")
 	overrides := append(dblessOverrides(lkgPath, mintConfigSyncScopedToken(t, gatewayID), uniqueName("vault-dp"), port),
-		"SECRET_STORES_ENABLED=true",
 		"SECRET_STORES_FILE="+writeVaultStoreFile(t, vault.server.URL),
 		"SECRET_STORES_PROBE_INTERVAL=1s",
 		"SECRET_STORES_READINESS_GATE=true",

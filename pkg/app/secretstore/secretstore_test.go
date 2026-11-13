@@ -63,7 +63,7 @@ func resolver(cfg SourceConfig) SourceResolver {
 
 func TestSourceOnNeuralTrustControlPlane(t *testing.T) {
 	t.Parallel()
-	r := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityHybrid, Instances: instances{live("dp-1", true, vault(domain.StateOK))}})
+	r := resolver(SourceConfig{Eligibility: domain.EligibilityHybrid, Instances: instances{live("dp-1", true, vault(domain.StateOK))}})
 	hosted, _ := r.Source(context.Background(), gw(""))
 	dedicated, _ := r.Source(context.Background(), gw(gateway.DataPlaneDedicated))
 	hybrid, _ := r.Source(context.Background(), gw(gateway.DataPlaneHybrid))
@@ -73,17 +73,13 @@ func TestSourceOnNeuralTrustControlPlane(t *testing.T) {
 	if !hybrid.Supported || hybrid.Kind != KindDataPlane || len(hybrid.Stores) != 1 || hybrid.Live != 1 {
 		t.Fatalf("hybrid = %+v", hybrid)
 	}
-	off := resolver(SourceConfig{Eligibility: domain.EligibilityHybrid})
-	if src, _ := off.Source(context.Background(), gw(gateway.DataPlaneHybrid)); src.Supported {
-		t.Fatal("with the feature off nothing is supported")
-	}
 }
 
 func TestSourceOnSelfHostedControlPlane(t *testing.T) {
 	t.Parallel()
 	g := gw("")
 	other := ids.New[ids.GatewayKind]()
-	r := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityAll, AdminInstance: "admin-0",
+	r := resolver(SourceConfig{Eligibility: domain.EligibilityAll, AdminInstance: "admin-0",
 		Health: health{vault(domain.StateOK), {Name: "team-b", Type: domain.TypeEnv, AllowedPaths: []string{"*"}, Gateways: []ids.GatewayID{other}}}})
 	src, err := r.Source(context.Background(), g)
 	if err != nil || !src.Supported || src.Kind != KindControlPlane {
@@ -101,7 +97,7 @@ func TestDataPlaneAggregation(t *testing.T) {
 	stale.LastSeen = now.Add(-time.Hour)
 	odd := vault(domain.StateOK)
 	odd.AllowedPaths = []string{"other/"}
-	r := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityHybrid, Instances: instances{
+	r := resolver(SourceConfig{Eligibility: domain.EligibilityHybrid, Instances: instances{
 		live("dp-1", true, vault(domain.StateOK)),
 		live("dp-2", true, vault(domain.StateAuthFailed)),
 		live("dp-3", false),
@@ -114,7 +110,7 @@ func TestDataPlaneAggregation(t *testing.T) {
 	if st := src.Stores[0]; st.Status != StatusDegraded || len(st.Instances) != 2 || !st.Consistent {
 		t.Fatalf("store %+v", st)
 	}
-	r2 := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityHybrid, Instances: instances{
+	r2 := resolver(SourceConfig{Eligibility: domain.EligibilityHybrid, Instances: instances{
 		live("dp-1", true, vault(domain.StateOK)), live("dp-2", true, odd),
 	}})
 	if src, _ := r2.Source(context.Background(), g); src.Stores[0].Consistent || src.Stores[0].Status != StatusOK {
@@ -125,7 +121,7 @@ func TestDataPlaneAggregation(t *testing.T) {
 		{live("dp-1", true, vault(domain.StateOK)), live("dp-2", true, odd)},
 		{live("dp-2", true, odd), live("dp-1", true, vault(domain.StateOK))},
 	} {
-		r3 := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityHybrid, Instances: order})
+		r3 := resolver(SourceConfig{Eligibility: domain.EligibilityHybrid, Instances: order})
 		src, _ := r3.Source(context.Background(), g)
 		st := src.Stores[0]
 		if !st.AllowsPath("other/x") || !st.AllowsPath(vault(domain.StateOK).AllowedPaths[0]+"x") || st.AllowsPath("nobody/x") {
@@ -158,32 +154,30 @@ func TestValidator(t *testing.T) {
 	may := Caller{MayReference: true}
 	ref := "secret://corp-vault/ai/openai#key"
 	tests := []struct {
-		name    string
-		enabled bool
-		src     Source
-		caller  Caller
-		key     string
-		want    error
+		name   string
+		src    Source
+		caller Caller
+		key    string
+		want   error
 	}{
-		{"literal", true, control, Caller{}, "sk-live", nil},
-		{"disabled", false, control, may, ref, refdomain.ErrReferencesDisabled},
-		{"embedded", true, control, may, "Bearer " + ref, refdomain.ErrInvalidReference},
-		{"malformed", true, control, may, "secret://corp-vault", refdomain.ErrInvalidReference},
-		{"not supported", true, Source{}, may, ref, refdomain.ErrReferencesNotSupported},
-		{"missing scope", true, control, Caller{}, ref, refdomain.ErrMissingScope},
-		{"unknown store", true, control, may, "secret://corp-valt/ai/openai#key", refdomain.ErrUnknownStore},
-		{"path", true, control, may, "secret://corp-vault/payments/db", refdomain.ErrPathNotAllowed},
-		{"env version", true, control, may, "secret://env/TG_SECRET_X?version=2", refdomain.ErrInvalidReference},
-		{"ok control plane", true, control, may, ref, nil},
-		{"ok data plane", true, dp, may, ref, nil},
-		{"unverified", true, Source{Supported: true, Kind: KindDataPlane}, may, ref, refdomain.ErrStoreUnverified},
-		{"unverified opt-in", true, Source{Supported: true, Kind: KindDataPlane}, Caller{MayReference: true, AllowUnverified: true}, ref, nil},
-		{"too old", true, Source{Supported: true, Kind: KindDataPlane, Live: 2, TooOld: []InstanceView{{InstanceID: "dp-2"}}, Stores: control.Stores}, may, ref, refdomain.ErrDataPlaneTooOld},
+		{"literal", control, Caller{}, "sk-live", nil},
+		{"embedded", control, may, "Bearer " + ref, refdomain.ErrInvalidReference},
+		{"malformed", control, may, "secret://corp-vault", refdomain.ErrInvalidReference},
+		{"not supported", Source{}, may, ref, refdomain.ErrReferencesNotSupported},
+		{"missing scope", control, Caller{}, ref, refdomain.ErrMissingScope},
+		{"unknown store", control, may, "secret://corp-valt/ai/openai#key", refdomain.ErrUnknownStore},
+		{"path", control, may, "secret://corp-vault/payments/db", refdomain.ErrPathNotAllowed},
+		{"env version", control, may, "secret://env/TG_SECRET_X?version=2", refdomain.ErrInvalidReference},
+		{"ok control plane", control, may, ref, nil},
+		{"ok data plane", dp, may, ref, nil},
+		{"unverified", Source{Supported: true, Kind: KindDataPlane}, may, ref, refdomain.ErrStoreUnverified},
+		{"unverified opt-in", Source{Supported: true, Kind: KindDataPlane}, Caller{MayReference: true, AllowUnverified: true}, ref, nil},
+		{"too old", Source{Supported: true, Kind: KindDataPlane, Live: 2, TooOld: []InstanceView{{InstanceID: "dp-2"}}, Stores: control.Stores}, may, ref, refdomain.ErrDataPlaneTooOld},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			v := NewRegistryValidator(tt.enabled, fixedSource{tt.src}, gateways{g}, logger)
+			v := NewRegistryValidator(fixedSource{tt.src}, gateways{g}, logger)
 			_, err := v.ValidateRegistry(WithCaller(context.Background(), tt.caller), withKey(tt.key), nil)
 			if (tt.want == nil) != (err == nil) || (tt.want != nil && !errors.Is(err, tt.want)) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
@@ -197,11 +191,11 @@ func TestValidatorAcceptsEchoedReferences(t *testing.T) {
 	ref := "secret://corp-vault/ai/openai#key"
 	stored := withKey(ref)
 	previous, _ := appsecretref.RegistryReferences(stored)
-	v := NewRegistryValidator(false, fixedSource{Source{}}, gateways{gw("")}, nil)
+	v := NewRegistryValidator(fixedSource{Source{}}, gateways{gw("")}, nil)
 	if _, err := v.ValidateRegistry(context.Background(), withKey(ref), previous); err != nil {
-		t.Fatalf("an echoed reference must be kept even with the feature off: %v", err)
+		t.Fatalf("an echoed reference must be kept even where references are no longer supported: %v", err)
 	}
-	if _, err := v.ValidateRegistry(context.Background(), withKey("secret://corp-vault/ai/other"), previous); !errors.Is(err, refdomain.ErrReferencesDisabled) {
+	if _, err := v.ValidateRegistry(context.Background(), withKey("secret://corp-vault/ai/other"), previous); !errors.Is(err, refdomain.ErrReferencesNotSupported) {
 		t.Fatalf("a changed reference: %v", err)
 	}
 }
@@ -209,11 +203,7 @@ func TestValidatorAcceptsEchoedReferences(t *testing.T) {
 func TestValidatorEmbeddedValues(t *testing.T) {
 	t.Parallel()
 	embedded := "Bearer secret://corp-vault/ai/openai"
-	off := NewRegistryValidator(false, fixedSource{Source{}}, gateways{gw("")}, nil)
-	if _, err := off.ValidateRegistry(context.Background(), withKey(embedded), nil); err != nil {
-		t.Fatalf("with the feature off a literal that merely contains the scheme saves as before: %v", err)
-	}
-	on := NewRegistryValidator(true, fixedSource{Source{Supported: true, Kind: KindControlPlane}}, gateways{gw("")}, nil)
+	on := NewRegistryValidator(fixedSource{Source{Supported: true, Kind: KindControlPlane}}, gateways{gw("")}, nil)
 	if _, err := on.ValidateRegistry(context.Background(), withKey(embedded), nil); !errors.Is(err, refdomain.ErrInvalidReference) {
 		t.Fatalf("a new embedded value: %v", err)
 	}
@@ -241,7 +231,7 @@ func TestAuditRunsAfterTheWriteAndCoversRemovals(t *testing.T) {
 	sink := &logSink{}
 	logger := slog.New(slog.NewTextHandler(sink, nil))
 	control := Source{Supported: true, Kind: KindControlPlane, Stores: []StoreView{{Name: "corp-vault", AllowedPaths: []string{"ai/"}}}}
-	v := NewRegistryValidator(true, fixedSource{control}, gateways{gw("")}, logger)
+	v := NewRegistryValidator(fixedSource{control}, gateways{gw("")}, logger)
 	ctx := WithCaller(context.Background(), Caller{MayReference: true, Actor: "ana@example.com"})
 	audit, err := v.ValidateRegistry(ctx, withKey("secret://corp-vault/ai/openai#key"), nil)
 	if err != nil || len(sink.lines) != 0 {

@@ -31,11 +31,9 @@ const (
 
 // SecretStoresConfig controls secret references: credential fields holding
 // secret://store/path#field instead of a value, resolved by the planes that
-// load a store file. Off by default, and off means no new reference is
-// accepted and none is resolved.
+// load a store file. A plane without a store file resolves nothing, and the
+// admin accepts references only for the gateways Gateways admits.
 type SecretStoresConfig struct {
-	// Enabled is SECRET_STORES_ENABLED.
-	Enabled bool
 	// Gateways is SECRET_STORES_GATEWAYS, hybrid (the default) or all: which
 	// gateways may hold references. Only installs where the customer runs
 	// every plane set all.
@@ -62,7 +60,6 @@ func getSecretStoresConfig() (SecretStoresConfig, error) {
 		return SecretStoresConfig{}, fmt.Errorf("%w: SECRET_STORES_GATEWAYS must be %q or %q", errors.ErrInvalidConfig, secretstore.EligibilityHybrid, secretstore.EligibilityAll)
 	}
 	return SecretStoresConfig{
-		Enabled:         getEnvBool("SECRET_STORES_ENABLED", false),
 		Gateways:        gateways,
 		File:            strings.TrimSpace(getEnv("SECRET_STORES_FILE", "")),
 		FetchTimeout:    getEnvDuration("SECRET_STORES_FETCH_TIMEOUT", defaultSecretStoresFetchTimeout),
@@ -73,7 +70,7 @@ func getSecretStoresConfig() (SecretStoresConfig, error) {
 }
 
 // validateSecretStores refuses a store file on a plane that declares itself
-// NeuralTrust's shared SaaS whatever SECRET_STORES_ENABLED says: on those
+// NeuralTrust's shared SaaS: on those
 // planes the pod identity, environment and files are NeuralTrust's, and a
 // tenant must never reach them through a reference.
 func (c *Config) validateSecretStores() error {
@@ -81,7 +78,7 @@ func (c *Config) validateSecretStores() error {
 	if s.File != "" && c.ConfigSync.DeploymentType == InstanceDeploymentSaaS {
 		return fmt.Errorf("%w: SECRET_STORES_FILE must not be set when INSTANCE_DEPLOYMENT_TYPE=%s", errors.ErrInvalidConfig, InstanceDeploymentSaaS)
 	}
-	if !s.Enabled {
+	if s.File == "" {
 		return nil
 	}
 	for _, d := range []struct {
