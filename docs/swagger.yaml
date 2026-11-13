@@ -1570,6 +1570,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -1590,6 +1592,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       headers:
         additionalProperties:
           type: string
@@ -1605,6 +1609,8 @@ definitions:
         - bedrock_agentcore
         - azure_foundry
         - vertex_agent_engine
+        - agentcore_harness
+        - databricks_agent
         type: string
       url:
         type: string
@@ -1791,6 +1797,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -1811,6 +1819,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       headers:
         additionalProperties:
           type: string
@@ -1826,6 +1836,8 @@ definitions:
         - bedrock_agentcore
         - azure_foundry
         - vertex_agent_engine
+        - agentcore_harness
+        - databricks_agent
         type: string
       url:
         type: string
@@ -1990,6 +2002,8 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse:
     properties:
+      agentcore_harness:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator'
       allowed_methods:
         items:
           type: string
@@ -2012,6 +2026,8 @@ definitions:
         type: string
       cloud_auth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse'
+      databricks_agent:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator'
       endpoint:
         type: string
       headers:
@@ -3443,11 +3459,27 @@ definitions:
       runtime_arn:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator:
+    properties:
+      app_url:
+        type: string
+      serving_endpoint:
+        type: string
+      workspace_url:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator:
     properties:
       agent_name:
         type: string
       project_endpoint:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator:
+    properties:
+      harness_arn:
+        type: string
+      qualifier:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator:
@@ -3519,10 +3551,14 @@ definitions:
         type: string
       identity_subject_kind:
         type: string
+      input_tokens:
+        type: integer
       method:
         type: string
       outcome:
         type: string
+      output_tokens:
+        type: integer
       protocol_version:
         type: string
       provider:

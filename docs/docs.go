@@ -9484,6 +9484,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ATargetRequest": {
             "type": "object",
             "properties": {
+                "agentcore_harness": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator"
+                },
                 "allowed_methods": {
                     "type": "array",
                     "items": {
@@ -9513,6 +9516,9 @@ const docTemplate = `{
                 "cloud_auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest"
                 },
+                "databricks_agent": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
@@ -9532,7 +9538,9 @@ const docTemplate = `{
                         "generic",
                         "bedrock_agentcore",
                         "azure_foundry",
-                        "vertex_agent_engine"
+                        "vertex_agent_engine",
+                        "agentcore_harness",
+                        "databricks_agent"
                     ]
                 },
                 "url": {
@@ -9803,6 +9811,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PreviewAgentCardRequest": {
             "type": "object",
             "properties": {
+                "agentcore_harness": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator"
+                },
                 "allowed_methods": {
                     "type": "array",
                     "items": {
@@ -9832,6 +9843,9 @@ const docTemplate = `{
                 "cloud_auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2ACloudAuthRequest"
                 },
+                "databricks_agent": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
@@ -9851,7 +9865,9 @@ const docTemplate = `{
                         "generic",
                         "bedrock_agentcore",
                         "azure_foundry",
-                        "vertex_agent_engine"
+                        "vertex_agent_engine",
+                        "agentcore_harness",
+                        "databricks_agent"
                     ]
                 },
                 "url": {
@@ -10095,6 +10111,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ATargetResponse": {
             "type": "object",
             "properties": {
+                "agentcore_harness": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator"
+                },
                 "allowed_methods": {
                     "type": "array",
                     "items": {
@@ -10127,6 +10146,9 @@ const docTemplate = `{
                 },
                 "cloud_auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.A2ACloudAuthResponse"
+                },
+                "databricks_agent": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator"
                 },
                 "endpoint": {
                     "type": "string"
@@ -12110,6 +12132,20 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.DatabricksLocator": {
+            "type": "object",
+            "properties": {
+                "app_url": {
+                    "type": "string"
+                },
+                "serving_endpoint": {
+                    "type": "string"
+                },
+                "workspace_url": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_registry.FoundryLocator": {
             "type": "object",
             "properties": {
@@ -12117,6 +12153,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_endpoint": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.HarnessLocator": {
+            "type": "object",
+            "properties": {
+                "harness_arn": {
+                    "type": "string"
+                },
+                "qualifier": {
                     "type": "string"
                 }
             }
@@ -12225,11 +12272,17 @@ const docTemplate = `{
                 "identity_subject_kind": {
                     "type": "string"
                 },
+                "input_tokens": {
+                    "type": "integer"
+                },
                 "method": {
                     "type": "string"
                 },
                 "outcome": {
                     "type": "string"
+                },
+                "output_tokens": {
+                    "type": "integer"
                 },
                 "protocol_version": {
                     "type": "string"
