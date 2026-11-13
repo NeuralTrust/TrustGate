@@ -43,6 +43,7 @@ var notDocumented = map[string]string{
 var otherPlanes = map[string]string{
 	"POST /__diagnostics/gateways/{gateway_id}/registries/test-connection":     "proxy router",
 	"GET /__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models": "proxy router",
+	"POST /__diagnostics/gateways/{gateway_id}/secret-stores/{name}/test":      "proxy router",
 	"GET /whoami":                                                        "mcp router",
 	"GET /{slug}/connections":                                            "mcp router",
 	"POST /{slug}/connections/links":                                     "mcp router",

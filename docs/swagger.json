@@ -168,6 +168,79 @@
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/secret-stores/{name}/test": {
+            "post": {
+                "description": "Authenticates to one of this data plane's secret stores and, when a path is given, reads it, enforcing the store's gateway allowlist and allowed paths. Same contract as the admin test. Authorized by a control-plane-minted diagnostics token bound to the gateway. Never returns the value.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "Test a secret store from the data plane",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Store name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "What to read",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_request.TestSecretRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.TestSecretResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
@@ -4080,6 +4153,95 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/secret-stores/{name}/test": {
+            "post": {
+                "description": "Authenticates to the store and, when a path is given, reads it, from the admin itself. Only for a gateway whose stores the admin loads (source control_plane); a gateway served by its own data planes answers 409 test_runs_on_data_plane and is tested through the data plane's diagnostics route. Requires secret_stores:read. Never returns the value.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secret-stores"
+                ],
+                "summary": "Test a secret store",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Store name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "What to read",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_request.TestSecretRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.TestSecretResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -10545,6 +10707,22 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_request.TestSecretRequest": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "example": "api_key"
+                },
+                "path": {
+                    "type": "string",
+                    "example": "ai-gateway/openai"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.ListSecretStoresResponse": {
             "type": "object",
             "properties": {
@@ -10653,6 +10831,29 @@
                 },
                 "reference": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.TestSecretResponse": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "description": "Auth is \"ok\" or the error class of authenticating to the store.",
+                    "type": "string",
+                    "example": "ok"
+                },
+                "latency_ms": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "read": {
+                    "description": "Read is \"ok\", \"skipped\" or the error class of the read.",
+                    "type": "string",
+                    "example": "ok"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "3"
                 }
             }
         },

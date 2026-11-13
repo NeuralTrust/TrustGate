@@ -91,6 +91,9 @@ type AdminRouterDeps struct {
 	// SecretStores serves the secret stores of a gateway; nil where the
 	// plane has no connection store.
 	SecretStores *secretstorehttp.ListHandler
+	// SecretStoreTest tests a secret against the admin's own stores; nil
+	// where SecretStores is.
+	SecretStoreTest *secretstorehttp.TestHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -224,6 +227,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		stores := gw.Group("/:gateway_id/secret-stores", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceSecretStores))
 		stores.Get("", r.deps.SecretStores.Handle)
 		stores.Get("/:name/usages", r.deps.SecretStores.Usages)
+		if r.deps.SecretStoreTest != nil {
+			stores.Post("/:name/test", r.deps.SecretStoreTest.Handle)
+		}
 	}
 
 	policies := gw.Group("/:gateway_id/policies", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourcePolicies))
