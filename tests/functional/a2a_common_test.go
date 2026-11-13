@@ -123,6 +123,13 @@ func (a *fakeAgent) rpc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The gateway probes the endpoint when the agent is registered, asking for
+	// a task that cannot exist. That is not a call a caller made, so it is
+	// answered as an agent would and not recorded.
+	if id, _ := req.Params["id"].(string); strings.HasPrefix(id, "trustgate-probe-") {
+		writeRPCError(w, req.ID, -32001, "Task not found")
+		return
+	}
 	a.mu.Lock()
 	a.calls = append(a.calls, agentCall{Method: req.Method, Header: r.Header.Clone(), Params: req.Params})
 	a.mu.Unlock()
@@ -369,4 +376,11 @@ func a2aErrorData(body map[string]any) map[string]any {
 
 func a2aKey(key string) map[string]string {
 	return map[string]string{"X-AG-API-Key": key}
+}
+
+func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message},
+	})
 }
