@@ -272,12 +272,25 @@ func TestUsages(t *testing.T) {
 		all = append(all, r)
 	}
 	all = append(all, &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: "mcp", MCPTarget: &registry.MCPTarget{Headers: map[string]string{"X": "secret://env/TG_SECRET_X"}}})
-	got, err := NewUsagesFinder(pagedRegistries{all}).Usages(context.Background(), ids.New[ids.GatewayKind]())
+	gwID := ids.New[ids.GatewayKind]()
+	auths := func(_ context.Context, gw ids.GatewayID) ([]NamedRefs, error) {
+		if gw != gwID {
+			t.Errorf("the lister must read the asked gateway")
+		}
+		return []NamedRefs{{Name: "okta", EntityRefs: appsecretref.EntityRefs{
+			GatewayID: gw, Entity: refdomain.EntityAuth, ID: "a1",
+			Uses: []appsecretref.Use{{Path: []string{"config", "oauth2", "client_secret"}, Raw: "secret://env/TG_SECRET_OKTA"}},
+		}}}, nil
+	}
+	got, err := NewUsagesFinder(pagedRegistries{all}, auths).Usages(context.Background(), gwID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got["corp-vault"]) != 5 || len(got["env"]) != 1 || got["env"][0].Field != "mcp_target.headers.X" {
+	if len(got["corp-vault"]) != 5 || len(got["env"]) != 2 {
 		t.Fatalf("usages = %+v", got)
+	}
+	if got["env"][0].Entity != "auth" || got["env"][0].Field != "config.oauth2.client_secret" || got["env"][1].Field != "mcp_target.headers.X" {
+		t.Fatalf("env usages = %+v, want sorted by entity", got["env"])
 	}
 }
 

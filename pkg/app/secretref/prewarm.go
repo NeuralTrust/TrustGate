@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
@@ -52,7 +53,9 @@ type PrewarmConfig struct {
 	Eligibility secretstore.Eligibility
 	Gateways    GatewayLister
 	Registries  RegistryLister
-	Logger      *slog.Logger
+	// Entities lists the references of a gateway's other entities.
+	Entities []func(ctx context.Context, gatewayID ids.GatewayID) ([]Use, error)
+	Logger   *slog.Logger
 }
 
 // Prewarmer resolves, in the background, every reference of the eligible
@@ -175,6 +178,19 @@ func (p *Prewarmer) gatewayRefs(ctx context.Context, gw *gateway.Gateway) ([]dom
 	ctx, cancel := context.WithTimeout(ctx, prewarmGatewayTimeout)
 	defer cancel()
 	var refs []domain.Ref
+	add := func(uses []Use) {
+		for _, u := range uses {
+			ref, ok, err := domain.Parse(u.Raw)
+			if !ok || err != nil {
+				continue
+			}
+			store, _, found := p.cfg.Catalog.Get(ref.Store)
+			if !found || store.Allows(gw.ID, ref.Path) != nil {
+				continue
+			}
+			refs = append(refs, ref)
+		}
+	}
 	err := eachPage(func(page int) (int, int, error) {
 		regs, total, err := p.cfg.Registries.List(ctx, registry.ListFilter{GatewayID: gw.ID, Page: page, Size: prewarmPageSize})
 		if err != nil {
@@ -182,21 +198,21 @@ func (p *Prewarmer) gatewayRefs(ctx context.Context, gw *gateway.Gateway) ([]dom
 		}
 		for _, reg := range regs {
 			uses, _ := RegistryReferences(reg)
-			for _, u := range uses {
-				ref, ok, err := domain.Parse(u.Raw)
-				if !ok || err != nil {
-					continue
-				}
-				store, _, found := p.cfg.Catalog.Get(ref.Store)
-				if !found || store.Allows(gw.ID, ref.Path) != nil {
-					continue
-				}
-				refs = append(refs, ref)
-			}
+			add(uses)
 		}
 		return len(regs), total, nil
 	})
-	return refs, err
+	if err != nil {
+		return nil, err
+	}
+	for _, list := range p.cfg.Entities {
+		uses, err := list(ctx, gw.ID)
+		if err != nil {
+			return nil, err
+		}
+		add(uses)
+	}
+	return refs, nil
 }
 
 // eachPage calls list for pages 1, 2, … until it has seen total items or a

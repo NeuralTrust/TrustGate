@@ -110,7 +110,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	}
 	audit := func() {}
 	if c.secretRefs != nil {
-		if audit, err = c.secretRefs.ValidateEntity(ctx, policyRefs(c.registry, p), nil); err != nil {
+		if audit, err = c.secretRefs.ValidateEntity(ctx, SecretRefs(c.registry, p), nil); err != nil {
 			return nil, err
 		}
 	}
