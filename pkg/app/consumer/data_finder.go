@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"slices"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -56,10 +58,12 @@ type dataFinder struct {
 }
 
 // RegistryMaterializer turns the secret references held by a gateway's
-// registries into values, returning the input map untouched when none holds
-// a reference, and records what the gateway uses so changes invalidate it.
+// registries and other entities into values, returning the input untouched
+// when none holds a reference, and records what the gateway uses so changes
+// invalidate it.
 type RegistryMaterializer interface {
 	GatewayRegistries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
+	Values(ctx context.Context, gatewayID ids.GatewayID, source string, uses []appsecretref.Use) []appsecretref.Resolved
 }
 
 // DataFinderOption tunes NewDataFinder.
@@ -162,6 +166,9 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
+	if f.materializer != nil {
+		consumers = appsecretref.GatewayConsumers(ctx, f.materializer, gatewayID, consumers)
+	}
 	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err

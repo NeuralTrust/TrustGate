@@ -15,8 +15,13 @@
 package secretref
 
 import (
+	"context"
+
 	"encoding/json"
 	"maps"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -26,6 +31,29 @@ import (
 type Stored struct {
 	Uses        []Use
 	Destination string
+}
+
+// EntityRefs is what one write of an entity holds at its declared locations.
+type EntityRefs struct {
+	GatewayID ids.GatewayID
+	Entity    domain.Entity
+	ID        string
+	Uses      []Use
+	Embedded  []Use
+	// Destination fingerprints where the entity sends its credentials; a
+	// change re-checks every reference it holds.
+	Destination string
+}
+
+// Stored returns what to compare the next write of the entity with.
+func (e EntityRefs) Stored() *Stored {
+	return &Stored{Uses: append(append([]Use(nil), e.Uses...), e.Embedded...), Destination: e.Destination}
+}
+
+// EntityValidator checks the references a write of an entity holds before
+// it is saved, and returns the audit to record once it is.
+type EntityValidator interface {
+	ValidateEntity(ctx context.Context, current EntityRefs, previous *Stored) (func(), error)
 }
 
 // StoredOf captures r before a write changes it.

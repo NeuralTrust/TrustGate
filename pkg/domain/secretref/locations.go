@@ -22,6 +22,7 @@ type Entity string
 // Entities with declared locations.
 const (
 	EntityRegistry Entity = "registry"
+	EntityConsumer Entity = "consumer"
 )
 
 // Wildcard matches any single key of a JSON object, such as a header name.
@@ -81,6 +82,8 @@ var Locations = []Location{
 	loc(EntityRegistry, "a2a_target.auth.value"),
 	loc(EntityRegistry, "a2a_target.auth.client_secret"),
 	loc(EntityRegistry, "a2a_target.headers.*"),
+	loc(EntityConsumer, "lb_config.embedding_config.auth.api_key"),
+	loc(EntityConsumer, "lb_config.embedding_config.auth.header_value"),
 }
 
 // IsLocation reports whether path of entity is a declared location.

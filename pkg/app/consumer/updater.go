@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -73,6 +75,7 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	secretRefs   appsecretref.EntityValidator
 }
 
 func NewUpdater(
@@ -83,8 +86,11 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	opts ...SaveOption,
 ) Updater {
+	o := applySaveOptions(opts)
 	return &updater{
+		secretRefs:   o.secretRefs,
 		repo:         repo,
 		registryRepo: registryRepo,
 		authRepo:     authRepo,
@@ -113,6 +119,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.Description = *in.Description
 	}
 	previousType := existing.Type
+	stored := appsecretref.ConsumerRefs(existing).Stored()
 	if in.Type != nil && *in.Type != existing.Type {
 		existing.Type = *in.Type
 		existing.MCP = nil
@@ -170,9 +177,16 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, in.Auths != nil); err != nil {
 		return nil, err
 	}
+	audit := func() {}
+	if u.secretRefs != nil {
+		if audit, err = u.secretRefs.ValidateEntity(ctx, appsecretref.ConsumerRefs(existing), stored); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries), requestedAuthLinks(existing, in.Auths)); err != nil {
 		return nil, err
 	}
+	audit()
 	u.memoryCache.Set(existing.ID.String(), existing)
 	invalidation.GatewayData(ctx, u.publisher, u.logger, existing.GatewayID)
 	if u.signaler != nil {

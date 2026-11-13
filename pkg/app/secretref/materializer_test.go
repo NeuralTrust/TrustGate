@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -221,8 +223,14 @@ func TestMaterializeEveryLocation(t *testing.T) {
 		}
 		resolved++
 	}
-	if resolved != len(domain.Locations) {
-		t.Fatalf("resolved %d locations, the fixture must cover all %d declared ones", resolved, len(domain.Locations))
+	declared := 0
+	for _, l := range domain.Locations {
+		if l.Entity == domain.EntityRegistry {
+			declared++
+		}
+	}
+	if resolved != declared {
+		t.Fatalf("resolved %d locations, the fixture must cover all %d declared registry ones", resolved, declared)
 	}
 }
 
@@ -508,5 +516,53 @@ func TestValuesResolveAndIndexPerSource(t *testing.T) {
 	r.fire([]domain.Ref{emb})
 	if got := inv.list(); len(got) != 1 || got[0] != gw {
 		t.Fatalf("invalidations = %v; dropping the registries must keep what the consumers use", got)
+	}
+}
+
+func embeddingConsumer(gw ids.GatewayID, apiKey string) *consumer.Consumer {
+	return &consumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw, LBConfig: &consumer.LBConfig{
+		EmbeddingConfig: &registry.EmbeddingConfig{Provider: "openai", Model: "text-embedding-3-small", Auth: &registry.APIKeyAuth{APIKey: apiKey}},
+	}}
+}
+
+func TestGatewayConsumersResolveTheEmbeddingCredential(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}})
+	plain := embeddingConsumer(gw, "sk-plain")
+	ref := embeddingConsumer(gw, refStr("emb#k"))
+	bad := embeddingConsumer(gw, "secret://vault/payments/k")
+
+	out := GatewayConsumers(context.Background(), m, gw, []*consumer.Consumer{plain, ref, bad, nil})
+	if out[0] != plain || out[3] != nil {
+		t.Fatal("consumers without references are returned as they are")
+	}
+	if got := out[1].LBConfig.EmbeddingConfig.Auth.APIKey; got == "" || got == refStr("emb#k") {
+		t.Fatalf("resolved key = %q", got)
+	}
+	if ref.LBConfig.EmbeddingConfig.Auth.APIKey != refStr("emb#k") {
+		t.Fatal("the input consumer was modified")
+	}
+	if out[2].LBConfig.EmbeddingConfig.Auth.APIKey != "" {
+		t.Fatal("an unresolved reference is left empty, never sent")
+	}
+}
+
+func TestConsumerAccessorsMatchDeclaredLocations(t *testing.T) {
+	t.Parallel()
+	c := embeddingConsumer(ids.New[ids.GatewayKind](), refStr("a"))
+	c.LBConfig.EmbeddingConfig.Auth.HeaderValue = refStr("b")
+	uses := ConsumerRefs(c).Uses
+	covered := map[string]bool{}
+	for _, u := range uses {
+		if !domain.IsLocation(domain.EntityConsumer, u.Path) {
+			t.Errorf("accessor path %v is not a declared location", u.Path)
+		}
+		covered[strings.Join(u.Path, ".")] = true
+	}
+	for _, l := range domain.Locations {
+		if l.Entity == domain.EntityConsumer && !covered[strings.Join(l.Path, ".")] {
+			t.Errorf("declared location %v has no accessor", l.Path)
+		}
 	}
 }
