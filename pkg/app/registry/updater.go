@@ -117,8 +117,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if in.Enabled != nil {
 		existing.Enabled = *in.Enabled
 	}
-	storedRefs, storedEmbedded := appsecretref.RegistryReferences(existing)
-	storedRefs = append(storedRefs, storedEmbedded...)
+	stored := appsecretref.StoredOf(existing)
 	applyLLMTargetUpdate(existing, in)
 	prevAuth := storedMCPAuth(existing)
 	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
@@ -143,7 +142,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	audit := func() {}
 	if u.secretRefs != nil {
-		if audit, err = u.secretRefs.ValidateRegistry(ctx, existing, storedRefs); err != nil {
+		if audit, err = u.secretRefs.ValidateRegistry(ctx, existing, stored); err != nil {
 			return nil, err
 		}
 	}

@@ -62,15 +62,18 @@ type GatewayReader interface {
 // RegistryValidator checks the secret references a registry write holds.
 type RegistryValidator interface {
 	// ValidateRegistry checks the reference-shaped values of reg that are
-	// not already stored at the same field of previous (the stored
-	// references and embedded values, nil on create), so a client echoing a
-	// stored value back is never refused. For those values it checks, in
+	// not already stored at the same field of previous (what the registry
+	// held before the write, nil on create), so a client echoing a stored
+	// value back is never refused. When the write changes where the registry
+	// sends its credentials, every reference it holds is checked again, as
+	// if newly set: the stored value would otherwise reach the new host
+	// without the caller's scope being checked. For those values it checks, in
 	// order: every value is a whole reference that
 	// parses, the gateway is eligible, the caller may reference, and every
 	// reference names a store of the gateway's store source that allows its
 	// path. On success it returns the audit to record once the write is
 	// saved: every reference set, changed or removed.
-	ValidateRegistry(ctx context.Context, reg *registry.Registry, previous []appsecretref.Use) (func(), error)
+	ValidateRegistry(ctx context.Context, reg *registry.Registry, previous *appsecretref.Stored) (func(), error)
 }
 
 type registryValidator struct {
@@ -92,9 +95,16 @@ type parsedUse struct {
 	ref  refdomain.Ref
 }
 
-func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, previous []appsecretref.Use) (func(), error) {
+func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, stored *appsecretref.Stored) (func(), error) {
 	all, allEmbedded := appsecretref.RegistryReferences(reg)
+	var previous []appsecretref.Use
+	if stored != nil {
+		previous = stored.Uses
+	}
 	uses := changedUses(all, previous)
+	if stored != nil && stored.Destination != appsecretref.RegistryDestination(reg) {
+		uses = all
+	}
 	removed := removedUses(previous, all)
 	audit := func() { v.audit(ctx, reg, uses, removed) }
 	if len(uses) == 0 {

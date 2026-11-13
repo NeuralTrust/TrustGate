@@ -25,7 +25,7 @@ func (_m *RegistryValidator) EXPECT() *RegistryValidator_Expecter {
 }
 
 // ValidateRegistry provides a mock function with given fields: ctx, reg, previous
-func (_m *RegistryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, previous []secretref.Use) (func(), error) {
+func (_m *RegistryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, previous *secretref.Stored) (func(), error) {
 	ret := _m.Called(ctx, reg, previous)
 
 	if len(ret) == 0 {
@@ -34,10 +34,10 @@ func (_m *RegistryValidator) ValidateRegistry(ctx context.Context, reg *registry
 
 	var r0 func()
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry, []secretref.Use) (func(), error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry, *secretref.Stored) (func(), error)); ok {
 		return rf(ctx, reg, previous)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry, []secretref.Use) func()); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.Registry, *secretref.Stored) func()); ok {
 		r0 = rf(ctx, reg, previous)
 	} else {
 		if ret.Get(0) != nil {
@@ -45,7 +45,7 @@ func (_m *RegistryValidator) ValidateRegistry(ctx context.Context, reg *registry
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, *registry.Registry, []secretref.Use) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, *registry.Registry, *secretref.Stored) error); ok {
 		r1 = rf(ctx, reg, previous)
 	} else {
 		r1 = ret.Error(1)
@@ -62,14 +62,14 @@ type RegistryValidator_ValidateRegistry_Call struct {
 // ValidateRegistry is a helper method to define mock.On call
 //   - ctx context.Context
 //   - reg *registry.Registry
-//   - previous []secretref.Use
+//   - previous *secretref.Stored
 func (_e *RegistryValidator_Expecter) ValidateRegistry(ctx interface{}, reg interface{}, previous interface{}) *RegistryValidator_ValidateRegistry_Call {
 	return &RegistryValidator_ValidateRegistry_Call{Call: _e.mock.On("ValidateRegistry", ctx, reg, previous)}
 }
 
-func (_c *RegistryValidator_ValidateRegistry_Call) Run(run func(ctx context.Context, reg *registry.Registry, previous []secretref.Use)) *RegistryValidator_ValidateRegistry_Call {
+func (_c *RegistryValidator_ValidateRegistry_Call) Run(run func(ctx context.Context, reg *registry.Registry, previous *secretref.Stored)) *RegistryValidator_ValidateRegistry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*registry.Registry), args[2].([]secretref.Use))
+		run(args[0].(context.Context), args[1].(*registry.Registry), args[2].(*secretref.Stored))
 	})
 	return _c
 }
@@ -79,7 +79,7 @@ func (_c *RegistryValidator_ValidateRegistry_Call) Return(_a0 func(), _a1 error)
 	return _c
 }
 
-func (_c *RegistryValidator_ValidateRegistry_Call) RunAndReturn(run func(context.Context, *registry.Registry, []secretref.Use) (func(), error)) *RegistryValidator_ValidateRegistry_Call {
+func (_c *RegistryValidator_ValidateRegistry_Call) RunAndReturn(run func(context.Context, *registry.Registry, *secretref.Stored) (func(), error)) *RegistryValidator_ValidateRegistry_Call {
 	_c.Call.Return(run)
 	return _c
 }
