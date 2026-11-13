@@ -78,7 +78,7 @@ type tester struct {
 // NewTester returns a Tester over the plane's own catalog.
 func NewTester(cfg TesterConfig) Tester {
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 2 * time.Second
+		cfg.Timeout = domain.DefaultFetchTimeout
 	}
 	return &tester{cfg: cfg}
 }

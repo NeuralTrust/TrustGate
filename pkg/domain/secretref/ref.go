@@ -99,6 +99,9 @@ func parse(s string) (Ref, error) {
 	var ref Ref
 	rest, rawField, hasField := strings.Cut(rest, "#")
 	if hasField {
+		if strings.ContainsAny(rawField, "?#") {
+			return Ref{}, fmt.Errorf("%w: the field comes last: write ?version= before #field, and percent-encode ? and # inside it", ErrInvalidReference)
+		}
 		field, err := decodeComponent("field", rawField)
 		if err != nil {
 			return Ref{}, err

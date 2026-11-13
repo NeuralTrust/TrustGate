@@ -120,6 +120,18 @@ func TestDataPlaneAggregation(t *testing.T) {
 	if src, _ := r2.Source(context.Background(), g); src.Stores[0].Consistent || src.Stores[0].Status != StatusOK {
 		t.Fatalf("instances that disagree must be flagged: %+v", src.Stores[0])
 	}
+
+	for _, order := range []instances{
+		{live("dp-1", true, vault(domain.StateOK)), live("dp-2", true, odd)},
+		{live("dp-2", true, odd), live("dp-1", true, vault(domain.StateOK))},
+	} {
+		r3 := resolver(SourceConfig{Enabled: true, Eligibility: domain.EligibilityHybrid, Instances: order})
+		src, _ := r3.Source(context.Background(), g)
+		st := src.Stores[0]
+		if !st.AllowsPath("other/x") || !st.AllowsPath(vault(domain.StateOK).AllowedPaths[0]+"x") || st.AllowsPath("nobody/x") {
+			t.Fatalf("a path some instance allows must be admitted whatever the order: %+v", st)
+		}
+	}
 }
 
 type fixedSource struct{ src Source }

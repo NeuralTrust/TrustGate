@@ -769,3 +769,19 @@ func TestInvalidateStoreDuringFetch(t *testing.T) {
 		t.Fatalf("a resolve after invalidation joined the dropped read: %q, %v", v, err)
 	}
 }
+
+func TestForceRefreshOfAnUncachedPayloadKeepsIt(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	r := ref("ai/openai")
+	if _, err := f.cache.ForceRefresh(context.Background(), []domain.Ref{r}); err != nil {
+		t.Fatal(err)
+	}
+	f.cache.refreshTick(context.Background())
+	f.cache.mu.Lock()
+	n := len(f.cache.entries)
+	f.cache.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("entries = %d; a payload read by a forced refresh must not count as idle", n)
+	}
+}

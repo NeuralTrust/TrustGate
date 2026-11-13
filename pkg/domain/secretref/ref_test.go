@@ -90,6 +90,8 @@ func TestParseInvalid(t *testing.T) {
 		"two queries":         "secret://aws/a?version=1&version=2",
 		"empty version":       "secret://aws/a?version=",
 		"empty field":         "secret://aws/a#",
+		"version after field": "secret://aws/a#api_key?version=3",
+		"two fields":          "secret://aws/a#k#v",
 		"leading space":       " secret://aws/a",
 		"trailing newline":    "secret://aws/a\n",
 		"upper-case scheme":   "SECRET://aws/a",

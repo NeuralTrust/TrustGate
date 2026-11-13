@@ -34,9 +34,9 @@ import (
 )
 
 const (
-	defaultFetchTimeout    = 2 * time.Second
-	defaultRefreshInterval = 15 * time.Second
-	defaultProbeInterval   = 60 * time.Second
+	defaultFetchTimeout    = secretstore.DefaultFetchTimeout
+	defaultRefreshInterval = secretstore.DefaultRefreshInterval
+	defaultProbeInterval   = secretstore.DefaultProbeInterval
 
 	defaultIdleEviction = 2 * time.Hour
 
@@ -216,6 +216,7 @@ func (c *Cache) ForceRefresh(ctx context.Context, refs []domain.Ref) (bool, erro
 		c.mu.Lock()
 		e := c.entryLocked(key, ref, store)
 		now := c.now()
+		e.lastUsed = now
 		limited := !e.forcedAt.IsZero() && now.Sub(e.forcedAt) < forcedRefreshGap
 		if !limited {
 			e.forcedAt = now
@@ -312,10 +313,14 @@ func (c *Cache) flight(ctx context.Context, key string, e *entry, backend secret
 		c.mu.Lock()
 		changed := e.apply(c.now(), secret, err)
 		c.recordFetchLocked(e.payload.Store, err)
+		current := c.entries[key] == e
 		c.mu.Unlock()
 		// A listener that resolves this payload must start its own read,
 		// not join this one, which only ends after the listeners return.
-		c.flights.Forget(key)
+		// Once the entry was replaced, the key may belong to a newer read.
+		if current {
+			c.flights.Forget(key)
+		}
 		if changed {
 			c.notify([]domain.Ref{e.payload})
 		}

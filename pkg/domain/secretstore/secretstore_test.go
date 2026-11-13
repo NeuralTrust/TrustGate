@@ -173,6 +173,18 @@ func TestStoreAllows(t *testing.T) {
 	if s.AllowsPath("my-secret") {
 		t.Fatal("* only matches when it is the whole prefix")
 	}
+
+	// A prefix is a plain string prefix, so flat namespaces work: env
+	// variables and secret names without slashes. A directory is written
+	// with its trailing slash.
+	s.AllowedPaths = []string{"TG_SECRET_"}
+	if !s.AllowsPath("TG_SECRET_OPENAI") {
+		t.Fatal("a flat prefix must admit the names it starts")
+	}
+	s.AllowedPaths = []string{"team-a/"}
+	if s.AllowsPath("team-ab/openai") || !s.AllowsPath("team-a/openai") {
+		t.Fatal("a prefix ending in / admits only that directory")
+	}
 }
 
 func TestClassOf(t *testing.T) {

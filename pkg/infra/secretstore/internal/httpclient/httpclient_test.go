@@ -88,3 +88,13 @@ func TestCAFile(t *testing.T) {
 		t.Fatalf("bad CA: %v", err)
 	}
 }
+
+func TestNewLeavesTheResponseDeadlineToTheContext(t *testing.T) {
+	c, err := httpclient.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Transport.(*http.Transport).ResponseHeaderTimeout; got != 0 {
+		t.Fatalf("ResponseHeaderTimeout = %v; a fixed deadline would cap SECRET_STORES_FETCH_TIMEOUT", got)
+	}
+}

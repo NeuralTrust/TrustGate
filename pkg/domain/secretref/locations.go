@@ -58,9 +58,9 @@ func loc(entity Entity, path string) Location {
 	return Location{Entity: entity, Path: strings.Split(path, ".")}
 }
 
-// Locations lists every field that may hold a reference. A location becomes
-// live for validation and resolution as soon as it is listed here, so only
-// fields whose readers resolve references belong in it.
+// Locations lists every field that may hold a reference. The resolving
+// planes read these fields through typed accessors in pkg/app/secretref, and
+// a test there fails while the two disagree: a new location needs both.
 var Locations = []Location{
 	loc(EntityRegistry, "llm_target.auth.api_key.api_key"),
 	loc(EntityRegistry, "llm_target.auth.api_key.header_value"),

@@ -41,6 +41,14 @@ const (
 	TypeEnv               Type = "env"
 )
 
+// Defaults of SECRET_STORES_FETCH_TIMEOUT, SECRET_STORES_REFRESH_INTERVAL and
+// SECRET_STORES_PROBE_INTERVAL, shared by the configuration and the planes.
+const (
+	DefaultFetchTimeout    = 2 * time.Second
+	DefaultRefreshInterval = 15 * time.Second
+	DefaultProbeInterval   = 60 * time.Second
+)
+
 // AllPaths, written explicitly in AllowedPaths, admits every path.
 const AllPaths = "*"
 

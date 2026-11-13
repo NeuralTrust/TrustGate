@@ -395,3 +395,83 @@ func TestPartialReadersKeepTheGatewayIndex(t *testing.T) {
 		t.Fatalf("a partial read dropped the gateway from the index: invalidated %v", got)
 	}
 }
+
+func TestMaterializeDoesNotKeepAFailedEligibilityRead(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{
+		Provider: "openai", Auth: registry.NewAPIKeyAuth(refStr("k#a")),
+	}}
+	inv := &invalidations{}
+	m := newMat(t, MaterializerConfig{
+		Enabled: true, Eligibility: secretstore.EligibilityHybrid, Catalog: storeCatalog(), Resolver: &markerResolver{},
+		Gateways: &gatewayFinder{err: errors.New("read timed out")}, Invalidate: inv.add,
+	})
+	out := m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
+	if !out[reg.ID].CredentialUnavailable() {
+		t.Fatal("without the gateway's eligibility the reference must stay unresolved")
+	}
+	if got := inv.list(); len(got) != 1 || got[0] != gw {
+		t.Fatalf("invalidations = %v; the load must be dropped so the next request reads the gateway again", got)
+	}
+}
+
+// The typed accessors and the declared Locations must name the same fields:
+// a location without an accessor would be validated but never resolved, and
+// an accessor without a location would resolve a field nobody may write.
+func TestRegistryAccessorsMatchDeclaredLocations(t *testing.T) {
+	t.Parallel()
+	reg := everyLocation()
+	if !registryHasRef(reg) {
+		t.Fatal("registryHasRef misses a declared location")
+	}
+	slots := registrySlots(reg)
+	for _, s := range slots {
+		if !domain.IsLocation(domain.EntityRegistry, s.path) {
+			t.Errorf("accessor path %v is not a declared location", s.path)
+		}
+	}
+	for _, l := range domain.Locations {
+		if l.Entity != domain.EntityRegistry {
+			continue
+		}
+		covered := false
+		for _, s := range slots {
+			if l.Matches(domain.EntityRegistry, s.path) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Errorf("declared location %v has no accessor", l.Path)
+		}
+	}
+}
+
+func TestStoresChangedDropsDeletedGatewaysFromTheIndex(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{
+		Provider: "openai", Auth: registry.NewAPIKeyAuth(refStr("k#a")),
+	}}
+	finder := &gatewayFinder{gw: &gateway.Gateway{ID: gw}}
+	inv := &invalidations{}
+	m := newMat(t, MaterializerConfig{
+		Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{},
+		Gateways: finder, Invalidate: inv.add,
+	})
+	m.GatewayRegistries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{reg.ID: reg})
+
+	finder.gw, finder.err = nil, gateway.ErrNotFound
+	m.StoresChanged([]string{"vault"})
+	if got := inv.list(); len(got) != 0 {
+		t.Fatalf("invalidations = %v; a deleted gateway has no data to drop", got)
+	}
+	impl := m.(*materializer)
+	impl.mu.Lock()
+	n := len(impl.byGateway) + len(impl.byPayload)
+	impl.mu.Unlock()
+	if n != 0 {
+		t.Fatal("a deleted gateway must leave the index")
+	}
+}

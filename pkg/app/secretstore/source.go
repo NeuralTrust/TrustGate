@@ -74,6 +74,9 @@ type StoreView struct {
 	// allowed paths or allowlist.
 	Consistent bool
 	Instances  []InstanceView
+	// instancePaths holds each reporting instance's allowed paths, which
+	// differ from AllowedPaths when the store is not Consistent.
+	instancePaths [][]string
 }
 
 // Source is a gateway's store source.
@@ -204,6 +207,7 @@ func dataPlaneSource(gwID ids.GatewayID, instances []dataplane.Instance, now tim
 				view.Consistent = false
 			}
 			view.Instances = append(view.Instances, viewOf(in.ID, in.Version, st))
+			view.instancePaths = append(view.instancePaths, st.AllowedPaths)
 			states[st.Name] = append(states[st.Name], string(st.State))
 		}
 	}
@@ -251,9 +255,19 @@ func aggregate(states []string) string {
 	}
 }
 
-// AllowsPath reports whether path starts with one of the store's allowed
-// prefixes; "*" written explicitly allows every path.
+// AllowsPath reports whether some instance that reports the store allows
+// path, whatever order the instances were listed in; "*" written explicitly
+// allows every path.
 func (s StoreView) AllowsPath(path string) bool {
-	st := domain.Store{AllowedPaths: s.AllowedPaths}
-	return st.AllowsPath(path)
+	if len(s.instancePaths) == 0 {
+		st := domain.Store{AllowedPaths: s.AllowedPaths}
+		return st.AllowsPath(path)
+	}
+	for _, paths := range s.instancePaths {
+		st := domain.Store{AllowedPaths: paths}
+		if st.AllowsPath(path) {
+			return true
+		}
+	}
+	return false
 }
