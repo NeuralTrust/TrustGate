@@ -513,8 +513,8 @@ a single `chat` skill, A2A 0.3, streaming) and pins it like any other.
   message's `metadata`, else the call's `params.metadata`, go to the agent as
   they are.
 - The tokens the agent reports (a harness's `metadata` event, the Responses
-  `usage`) are the event's usage, as an LLM call's: Activity and the Agents
-  dashboard read them.
+  `usage`) are the event's usage, as an LLM call's: Activity shows them on
+  the request.
 - The message's text parts, and its data parts as JSON, are sent as one text.
   A file part answers `-32005`.
 - The conversation is the call's `contextId`, or a new one the reply carries.
