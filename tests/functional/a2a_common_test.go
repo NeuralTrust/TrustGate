@@ -107,6 +107,18 @@ func (a *fakeAgent) count() int {
 	return len(a.calls)
 }
 
+// forgetRegistrationCheck asserts that registering the agent called it once,
+// to ask for a task that does not exist (the endpoint check), then drops that
+// call so a test counts only what the gateway forwards afterwards.
+func (a *fakeAgent) forgetRegistrationCheck(t *testing.T) {
+	t.Helper()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	require.Len(t, a.calls, 1, "registering a generic agent checks its endpoint once")
+	require.Equal(t, a2aMethods[a.version]["get"], a.calls[0].Method, "the endpoint check asks for a task")
+	a.calls = nil
+}
+
 func (a *fakeAgent) last() agentCall {
 	a.mu.Lock()
 	defer a.mu.Unlock()
