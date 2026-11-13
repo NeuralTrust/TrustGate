@@ -24,23 +24,25 @@ import (
 // A2ATargetResponse is an A2A registry's target with its secrets masked.
 // Endpoint is the URL the gateway calls, derived from the locator or the card.
 type A2ATargetResponse struct {
-	Provider          string                   `json:"provider"`
-	CardURL           string                   `json:"card_url,omitempty"`
-	ResolvedCardURL   string                   `json:"resolved_card_url,omitempty"`
-	ProtocolVersion   string                   `json:"protocol_version"`
-	URL               string                   `json:"url,omitempty"`
-	Endpoint          string                   `json:"endpoint"`
-	BedrockAgentCore  *domain.AgentCoreLocator `json:"bedrock_agentcore,omitempty"`
-	AzureFoundry      *domain.FoundryLocator   `json:"azure_foundry,omitempty"`
-	VertexAgentEngine *domain.VertexLocator    `json:"vertex_agent_engine,omitempty"`
-	Headers           map[string]string        `json:"headers,omitempty"`
-	Auth              *MCPAuthResponse         `json:"auth,omitempty"`
-	CloudAuth         *A2ACloudAuthResponse    `json:"cloud_auth,omitempty"`
-	CardAuth          string                   `json:"card_auth,omitempty"`
-	AllowedMethods    []string                 `json:"allowed_methods"`
-	Card              json.RawMessage          `json:"card,omitempty" swaggertype:"object"`
-	CardDigest        string                   `json:"card_digest,omitempty"`
-	CardPinnedAt      time.Time                `json:"card_pinned_at,omitzero"`
+	Provider          string                    `json:"provider"`
+	CardURL           string                    `json:"card_url,omitempty"`
+	ResolvedCardURL   string                    `json:"resolved_card_url,omitempty"`
+	ProtocolVersion   string                    `json:"protocol_version"`
+	URL               string                    `json:"url,omitempty"`
+	Endpoint          string                    `json:"endpoint"`
+	BedrockAgentCore  *domain.AgentCoreLocator  `json:"bedrock_agentcore,omitempty"`
+	AzureFoundry      *domain.FoundryLocator    `json:"azure_foundry,omitempty"`
+	VertexAgentEngine *domain.VertexLocator     `json:"vertex_agent_engine,omitempty"`
+	AgentCoreHarness  *domain.HarnessLocator    `json:"agentcore_harness,omitempty"`
+	Databricks        *domain.DatabricksLocator `json:"databricks_agent,omitempty"`
+	Headers           map[string]string         `json:"headers,omitempty"`
+	Auth              *MCPAuthResponse          `json:"auth,omitempty"`
+	CloudAuth         *A2ACloudAuthResponse     `json:"cloud_auth,omitempty"`
+	CardAuth          string                    `json:"card_auth,omitempty"`
+	AllowedMethods    []string                  `json:"allowed_methods"`
+	Card              json.RawMessage           `json:"card,omitempty" swaggertype:"object"`
+	CardDigest        string                    `json:"card_digest,omitempty"`
+	CardPinnedAt      time.Time                 `json:"card_pinned_at,omitzero"`
 }
 
 func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
@@ -61,6 +63,8 @@ func fromA2ATarget(t *domain.A2ATarget) *A2ATargetResponse {
 		BedrockAgentCore:  t.BedrockAgentCore,
 		AzureFoundry:      t.AzureFoundry,
 		VertexAgentEngine: t.VertexAgentEngine,
+		AgentCoreHarness:  t.AgentCoreHarness,
+		Databricks:        t.Databricks,
 		Headers:           maskHeaders(t.Headers),
 		Auth:              fromMCPAuth(t.Auth),
 		CloudAuth:         fromA2ACloudAuth(t.CloudAuth),

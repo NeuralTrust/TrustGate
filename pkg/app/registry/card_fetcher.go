@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -44,6 +45,10 @@ type CardFetcher interface {
 	Resolve(ctx context.Context, cardURL string, authorize CardAuthorizer) (*FetchedCard, error)
 	// Fetch reads the card at exactly cardURL.
 	Fetch(ctx context.Context, cardURL string, authorize CardAuthorizer) (*FetchedCard, error)
+	// Probe checks that endpoint answers A2A JSON-RPC in version v: it asks
+	// for a task that does not exist, which an agent answers with a JSON-RPC
+	// error and changes nothing.
+	Probe(ctx context.Context, endpoint string, v domain.A2AProtocolVersion, authorize CardAuthorizer) error
 }
 
 // agentCards reads and pins the cards of A2A registries.
@@ -61,9 +66,17 @@ type agentCards struct {
 // With resolve, a generic agent's card is resolved from card_url; otherwise
 // it is read from the pinned or derived location.
 func (a agentCards) fetch(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget, resolve bool) (*FetchedCard, error) {
-	credTarget, err := a.withSecrets(ctx, gatewayID, t)
-	if err != nil {
-		return nil, err
+	// An agent reached through its provider's API publishes no card: the
+	// gateway builds it, and reads nothing.
+	if t.Provider.BuildsCard() {
+		return &FetchedCard{Card: t.BuiltCard()}, nil
+	}
+	credTarget := t
+	if cardReadUsesAuth(t) {
+		var err error
+		if credTarget, err = a.withSecrets(ctx, gatewayID, t); err != nil {
+			return nil, err
+		}
 	}
 	authorize, err := a.credentials.Authorizer(ctx, credTarget)
 	if err != nil {
@@ -75,22 +88,45 @@ func (a agentCards) fetch(ctx context.Context, gatewayID ids.GatewayID, t *domai
 	return a.fetcher.Fetch(ctx, t.CardLocation(), authorize)
 }
 
-// pin resolves t's card and pins it.
+// pin resolves t's card, pins it and, for an agent at any URL, checks that the
+// endpoint the card names answers A2A: a card can sit on a website that is
+// not an agent, and that is better said now than on the first call.
 func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
 	card, err := a.fetch(ctx, gatewayID, t, true)
 	if err != nil {
 		return err
 	}
-	return t.Pin(card.URL, card.Card, time.Now())
+	if err := t.Pin(card.URL, card.Card, time.Now()); err != nil {
+		return err
+	}
+	if t.Provider != domain.A2AProviderGeneric {
+		return nil
+	}
+	callTarget, err := a.withSecrets(ctx, gatewayID, t)
+	if errors.Is(err, domain.ErrSecretUnavailable) {
+		// The call's credential is a reference this plane cannot read, so the
+		// endpoint cannot be asked as the gateway will ask it.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	authorize, ok, err := a.credentials.CallAuthorizer(ctx, callTarget)
+	if err != nil || !ok {
+		// Without the call's own credential (one a user's token sets) the
+		// endpoint cannot be asked as the gateway will ask it.
+		return err
+	}
+	return a.fetcher.Probe(ctx, t.Endpoint(), t.ProtocolVersion, authorize)
 }
 
-// withSecrets returns t with the secret references of its auth resolved when
-// the card is read with that auth, and t itself otherwise. A reference that
+// withSecrets returns t with the secret references of its auth resolved, and
+// t itself when the auth holds none. A reference that
 // cannot be resolved here, as on a control plane without stores, refuses the
 // read rather than sending the reference as the credential; the message says
 // so, since on a gateway served by its own data planes it stays refused.
 func (a agentCards) withSecrets(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget) (*domain.A2ATarget, error) {
-	if t.Auth == nil || !cardReadUsesAuth(t) || (!secretref.IsRef(t.Auth.Value) && !secretref.IsRef(t.Auth.ClientSecret)) {
+	if t.Auth == nil || (!secretref.IsRef(t.Auth.Value) && !secretref.IsRef(t.Auth.ClientSecret)) {
 		return t, nil
 	}
 	if a.secrets == nil || a.refs == nil {

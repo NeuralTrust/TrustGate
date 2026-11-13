@@ -285,6 +285,22 @@ func TestForwarderUpstreamFailures(t *testing.T) {
 	assert.Equal(t, a2a.ReasonUpstreamUnreachable, reasonOf(t, rpcErr))
 }
 
+// A URL that is a website, not an agent, answers HTML with its own status:
+// the error says which, so the caller can tell a missing endpoint from a
+// failing agent.
+func TestForwarderReportsTheStatusOfANonJSONRPCAnswer(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = w.Write([]byte("<!DOCTYPE html><title>405: Method Not Allowed</title>"))
+	})
+	h := newHarness(t, a2a.Version03, ag.URL, allow)
+	_, rpcErr := h.send(t, readFixture(t, "v03.send.request.json"), nil)
+	require.NotNil(t, rpcErr)
+	assert.JSONEq(t, `{"reason":"upstream_error","upstream_status":405}`, string(rpcErr.Data))
+}
+
 func TestForwarderUpstreamTimeout(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})

@@ -15,22 +15,48 @@
 package catalog
 
 import (
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
 )
 
+// grantTypeClientCredentials is the catalog grant with no user redirect.
+const grantTypeClientCredentials = "client_credentials"
+
 type ListMCPServersHandler struct {
 	catalog appcatalog.MCPServerCatalog
+	// oauthPublicBaseURL is the connect redirect origin
+	// (MCP_OAUTH_PUBLIC_BASE_URL). Empty means each connect uses the host it
+	// was requested on, which this admin API cannot know.
+	oauthPublicBaseURL string
 }
 
-func NewListMCPServersHandler(catalog appcatalog.MCPServerCatalog) *ListMCPServersHandler {
-	return &ListMCPServersHandler{catalog: catalog}
+// NewListMCPServersHandler builds the catalog listing. oauthPublicBaseURL is
+// MCP_OAUTH_PUBLIC_BASE_URL; when set, every OAuth server that redirects a user
+// is listed with the exact redirect URI to register with the vendor.
+func NewListMCPServersHandler(catalog appcatalog.MCPServerCatalog, oauthPublicBaseURL string) *ListMCPServersHandler {
+	return &ListMCPServersHandler{
+		catalog:            catalog,
+		oauthPublicBaseURL: strings.TrimRight(strings.TrimSpace(oauthPublicBaseURL), "/"),
+	}
+}
+
+// MCPServerListing is one catalog server as the admin console reads it.
+type MCPServerListing struct {
+	domain.MCPServer
+	// OAuthRedirectURI is the redirect URI the gateway sends when a user
+	// connects this server, for an admin registering a manual OAuth client.
+	// Omitted when the server has no user redirect, or when this deployment
+	// sets no fixed connect origin (MCP_OAUTH_PUBLIC_BASE_URL).
+	OAuthRedirectURI string `json:"oauth_redirect_uri,omitempty"`
 }
 
 type ListMCPServersResponse struct {
-	MCPServers []domain.MCPServer `json:"mcp_servers"`
+	MCPServers []MCPServerListing `json:"mcp_servers"`
 }
 
 // Handle godoc
@@ -43,5 +69,27 @@ type ListMCPServersResponse struct {
 // @Failure      401  {object}  httpio.ErrorBody
 // @Router       /v1/mcp-servers-catalog [get]
 func (h *ListMCPServersHandler) Handle(c *fiber.Ctx) error {
-	return httpio.WriteOK(c, ListMCPServersResponse{MCPServers: h.catalog.ListMCPServers()})
+	servers := h.catalog.ListMCPServers()
+	out := make([]MCPServerListing, 0, len(servers))
+	for _, server := range servers {
+		out = append(out, MCPServerListing{
+			MCPServer:        server,
+			OAuthRedirectURI: h.redirectURI(server),
+		})
+	}
+	return httpio.WriteOK(c, ListMCPServersResponse{MCPServers: out})
+}
+
+// redirectURI is the connect redirect URI for a server whose OAuth sends the
+// user to the vendor. The connect flow keys it on the registry's provider,
+// which a catalog install sets to the catalog code.
+func (h *ListMCPServersHandler) redirectURI(server domain.MCPServer) string {
+	if h.oauthPublicBaseURL == "" || server.OAuth == nil || server.OAuth.GrantType == grantTypeClientCredentials {
+		return ""
+	}
+	code := strings.TrimSpace(server.Code)
+	if code == "" {
+		return ""
+	}
+	return appoauth.ConnectCallbackURL(h.oauthPublicBaseURL, code)
 }

@@ -33,7 +33,7 @@ type vertex struct{}
 
 func (vertex) header(*Exchange, http.Header) {}
 
-func (vertex) request(ctx context.Context, endpoint string, h http.Header, body []byte) (*http.Request, error) {
+func (vertex) request(ctx context.Context, _ *Exchange, endpoint string, h http.Header, body []byte) (*http.Request, error) {
 	call, ok := decodeObject(body)
 	if !ok {
 		return nil, invalidParams()

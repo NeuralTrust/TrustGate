@@ -73,6 +73,8 @@ type Exchange struct {
 	owner    Owner
 	session  string
 	header   http.Header
+	// tokens is what the agent reported it used, when it does.
+	tokens tokenUsage
 
 	span       *trace.Span
 	attrs      trace.A2AAttrs
@@ -219,7 +221,7 @@ func (x *Exchange) post(ctx context.Context, header http.Header, body []byte) (*
 // do sends a JSON-RPC body to the agent as its provider takes it, signed with
 // the registry's cloud credential.
 func (x *Exchange) do(ctx context.Context, header http.Header, body []byte) (*http.Response, error) {
-	req, err := x.provider.request(ctx, x.call.Agent.A2ATarget.Endpoint(), header.Clone(), body)
+	req, err := x.provider.request(ctx, x, x.call.Agent.A2ATarget.Endpoint(), header.Clone(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -245,9 +247,9 @@ func decodeRPC(body []byte, status int) (result json.RawMessage, rpcErr *RPCErro
 		}
 	}
 	if status < 200 || status > 299 {
-		return nil, GatewayFailure(ReasonUpstreamError), false
+		return nil, upstreamAnswer(ReasonUpstreamError, status), false
 	}
-	return nil, GatewayFailure(ReasonInvalidUpstreamResponse), false
+	return nil, upstreamAnswer(ReasonInvalidUpstreamResponse, status), false
 }
 
 // resultContent reads a result or an event and records the task it names.
@@ -314,6 +316,7 @@ func (x *Exchange) finish(rpcErr *RPCError) {
 		}
 		x.span.SetError(rpcErr.Message)
 	}
+	a.InputTokens, a.OutputTokens = x.tokens.input, x.tokens.output
 	x.span.SetA2A(*a)
 	if x.sentAt.IsZero() {
 		x.span.SetLatency(0)

@@ -15,6 +15,7 @@
 package a2a
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,11 +29,13 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
+	"github.com/google/uuid"
 )
 
 const (
 	cardFetchTimeout = 10 * time.Second
 	maxCardBytes     = 1 << 20
+	maxReasonBytes   = 300
 )
 
 var cardProbePaths = []string{"/.well-known/agent-card.json", "/.well-known/agent.json", "/agentCard/v1.0"}
@@ -119,6 +122,9 @@ func (f *cardFetcher) get(ctx context.Context, rawURL string, authorize appregis
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
+		if reason := refusalReason(res); reason != "" {
+			return nil, fmt.Errorf("status %d: %s", res.StatusCode, reason)
+		}
 		return nil, fmt.Errorf("status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, maxCardBytes+1))
@@ -133,4 +139,96 @@ func (f *cardFetcher) get(ctx context.Context, rawURL string, authorize appregis
 		return nil, errors.New("not a JSON object")
 	}
 	return body, nil
+}
+
+// maxProbeBytes bounds the answer read when probing an endpoint.
+const maxProbeBytes = 64 << 10
+
+// Probe asks endpoint for a task that does not exist, as the gateway will call
+// it: tasks/get (0.3) or GetTask (1.0). An agent answers that with a JSON-RPC
+// error and changes nothing; a website, a missing path or a refused credential
+// answers something else, and the error says what.
+func (f *cardFetcher) Probe(ctx context.Context, endpoint string, v domain.A2AProtocolVersion, authorize appregistry.CardAuthorizer) error {
+	fail := func(why string) error {
+		return fmt.Errorf("%w: %s %s", domain.ErrAgentEndpointUnavailable, endpoint, why)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && (u.Scheme != "http" || !netguard.AllowPrivate())) {
+		return fail("is not an https URL")
+	}
+	method := "tasks/get"
+	if v == domain.A2AVersion10 {
+		method = "GetTask"
+	}
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": "trustgate-probe", "method": method,
+		"params": map[string]string{"id": "trustgate-probe-" + uuid.NewString()},
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, cardFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fail("is not a valid URL")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if v == domain.A2AVersion10 {
+		req.Header.Set("A2A-Version", string(domain.A2AVersion10))
+	}
+	if authorize != nil {
+		if err := authorize(req); err != nil {
+			return err
+		}
+	}
+	// A redirect is not the endpoint: a website moving the caller elsewhere.
+	res, err := f.noRedirect.Do(req)
+	if err != nil {
+		return fail("could not be reached: " + err.Error())
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, maxProbeBytes))
+	var answer map[string]json.RawMessage
+	if json.Unmarshal(raw, &answer) == nil && string(answer["jsonrpc"]) == `"2.0"` && (answer["error"] != nil || answer["result"] != nil) {
+		return nil
+	}
+	what := fmt.Sprintf("HTTP %d", res.StatusCode)
+	if ct, _, _ := strings.Cut(res.Header.Get("Content-Type"), ";"); ct != "" {
+		what += " (" + strings.TrimSpace(ct) + ")"
+	}
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return fail("refused the agent's credential: " + what)
+	}
+	return fail("did not answer A2A JSON-RPC: " + what + ". Check the card's url, or set the agent's URL")
+}
+
+// refusalReason is what a JSON error answer says, as AWS, Azure and Google
+// word it ({"message"}, {"Message"}, {"error":{"message"}}), prefixed with
+// AWS's error type. Empty when the answer says nothing readable.
+func refusalReason(res *http.Response) string {
+	var answer struct {
+		Message      string `json:"message"`
+		MessageUpper string `json:"Message"`
+		Error        struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8<<10))
+	_ = json.Unmarshal(body, &answer)
+	message := answer.Message
+	if message == "" {
+		message = answer.MessageUpper
+	}
+	if message == "" {
+		message = answer.Error.Message
+	}
+	if kind, _, _ := strings.Cut(res.Header.Get("X-Amzn-Errortype"), ":"); kind != "" {
+		message = strings.TrimSpace(kind + " " + message)
+	}
+	if len(message) > maxReasonBytes {
+		message = message[:maxReasonBytes] + "…"
+	}
+	return message
 }

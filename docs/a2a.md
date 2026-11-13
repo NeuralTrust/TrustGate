@@ -11,7 +11,9 @@ pinned to one version and the gateway never translates between them.
 
 Everything below applies to every agent. Agents hosted on Amazon Bedrock
 AgentCore, Microsoft Foundry or Google Vertex AI Agent Engine differ only as
-described in [Hosted agents](#hosted-agents).
+described in [Hosted agents](#hosted-agents). Agents that do not speak A2A (an
+AgentCore harness, a Databricks agent) are reached through their provider's
+API, as described in [Translated agents](#translated-agents).
 
 ## Running the plane
 
@@ -156,6 +158,38 @@ API_KEY_2=<another application's key> \
 scripts/a2a-user-check.sh
 ```
 
+### OpenAI chat completions
+
+An application that speaks the OpenAI API can call an agent as a model at
+`POST /{consumer}/agents/{agent}/v1/chat/completions`, with the same
+credentials, policies and ownership as a JSON-RPC call:
+
+```python
+client = OpenAI(base_url="https://<gateway>.agents.<domain>/<consumer>/agents/<agent>/v1",
+                 api_key="unused", default_headers={"X-AG-API-Key": "<key>"})
+reply = client.chat.completions.create(model="agent", messages=[{"role": "user", "content": "Hi"}])
+```
+
+- The last user message (its text, or the text parts of its content) goes to
+  the agent as one A2A message: `message/send` or `SendMessage` by the pinned
+  version. Earlier messages and `model` are ignored: the agent keeps the
+  conversation.
+- The answer is a `chat.completion`: a message's text, else a task's
+  artifacts, else its status message. `usage` is set when the agent reports
+  tokens.
+- The conversation is the agent's contextId. It comes back in the
+  `X-AG-A2A-Context-Id` header and as `a2a_context_id` on the completion and
+  on every chunk; sending the header continues it. A context the caller does
+  not own answers 404.
+- `"stream": true` streams `chat.completion.chunk`s of the agent's text when
+  the agent streams, then a chunk with `finish_reason: "stop"` and
+  `data: [DONE]`. Notes of a working status are not sent. An agent that does
+  not stream answers the whole text as one chunk.
+- Errors are OpenAI errors: a policy block 403 (`policy_blocked`), a rate
+  limit 429, an agent or gateway failure 502 (`upstream_error`), a user
+  identity required 401. In a stream the error is the last event before
+  `[DONE]`.
+
 ## Card pinning
 
 For a `card_url` whose path ends in `.json` or `/agentCard/v1.0` the gateway
@@ -173,6 +207,18 @@ The card must have `name` and offer the chosen version:
   `protocolVersion` starting with `1.0`.
 
 `card_digest` is `sha256:` over the card without `signatures`, keys sorted.
+
+Once the card is pinned, the gateway checks that the endpoint it will call
+answers A2A: it sends `tasks/get` (0.3) or `GetTask` (1.0) for a task that does
+not exist, with the registry's credential, and expects a JSON-RPC response
+(an agent answers with a "task not found" error; nothing changes on its side).
+A website, a missing path, a redirect or a refused credential fails the create
+or update with 422 and says what came back, for example `did not answer A2A
+JSON-RPC: HTTP 405 (text/html)`. A card whose `url` is a website rather than its
+JSON-RPC endpoint needs `url` set on the registry. The check runs for agents
+at any URL, when the call's credential is the registry's own (`none`,
+`static`, `client_credentials`); with an exchange the user's token is not there
+at registration and the check is skipped.
 
 The plane always serves the pinned card, never the live one, with:
 
@@ -392,7 +438,7 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 | `-32007` | Extended card refused | |
 | `-32090` | Blocked by a policy | `{"reason": "policy_blocked" \| "mask_unsupported", "plugin": "<slug>"}` |
 | `-32091` | Rate limited | `{"retry_after": <seconds>}` |
-| `-32092` | The gateway could not complete the call | `{"reason": "<reason>"}` |
+| `-32092` | The gateway could not complete the call | `{"reason": "<reason>"}`; with `upstream_error` and `invalid_upstream_response`, also `upstream_status`, the HTTP status the agent answered with something that was not a JSON-RPC response |
 | `-32093` | The identity mode needs an IdP user | `{"reason": "identity_required"}` |
 
 `-32092` reasons: `upstream_unreachable`, `upstream_timeout`,
@@ -440,3 +486,42 @@ credentials only to that host over HTTPS.
   `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`. Not yet verified against a
   deployed Agent Engine.
 - A credential the gateway cannot obtain answers `-32092` `cloud_auth_failed`.
+
+## Translated agents
+
+`a2a_target.provider` is `agentcore_harness` or `databricks_agent`. These
+agents do not speak A2A: the gateway turns each `message/send` into a call to
+the provider's own API and the answer into an A2A 0.3 message; `message/stream`
+answers as a task (working, the text as one artifact appended chunk by chunk,
+completed). They publish no card, so the gateway builds one (the agent's name,
+a single `chat` skill, A2A 0.3, streaming) and pins it like any other.
+
+| | `agentcore_harness` | `databricks_agent` |
+|---|---|---|
+| Locator | `harness_arn` (`arn:aws:bedrock-agentcore:{region}:{account}:harness/{name}-{id}`), `qualifier` (default `DEFAULT`) | `workspace_url`, and `serving_endpoint` (Model Serving) or `app_url` (`*.databricksapps.com`) |
+| `auth.mode` | `cloud` (`cloud_auth.aws`, as an AgentCore runtime) | `client_credentials` (a service principal; `token_url` defaults to `{workspace_url}/oidc/v1/token`, `scopes` to `all-apis`), or `static` (`Authorization: Bearer` a personal access token) |
+| Gateway calls | `POST /harnesses/invoke` (InvokeHarness), SigV4 `bedrock-agentcore` | `POST {workspace_url}/serving-endpoints/{serving_endpoint}/invocations`, or `POST {app_url}/responses` |
+| Sends | `messages: [{role: user, content: [{text}]}]` | `input: [{role: user, content}]`, `context.conversation_id` |
+| Reads | The text deltas of the event stream's assistant messages | The `output_text` of the `message` output items |
+
+- `message/send` and `message/stream` are forwarded. The tasks a stream names
+  live only for that stream, so `tasks/get`, `tasks/cancel` and
+  `tasks/resubscribe` answer `-32004`. A harness always streams; Databricks
+  gets `stream: true` and its `response.output_text.delta` events are relayed
+  as they come (a message item that came without deltas is sent when done).
+- Databricks: `custom_inputs` and `databricks_options` (JSON objects) in the
+  message's `metadata`, else the call's `params.metadata`, go to the agent as
+  they are.
+- The tokens the agent reports (a harness's `metadata` event, the Responses
+  `usage`) are the event's usage, as an LLM call's: Activity shows them on
+  the request.
+- The message's text parts, and its data parts as JSON, are sent as one text.
+  A file part answers `-32005`.
+- The conversation is the call's `contextId`, or a new one the reply carries.
+  It is bound to its owner like any context. On a harness it is the runtime
+  session (`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`), so the harness keeps
+  the history. A Databricks agent gets it as `context.conversation_id` and
+  keeps the history only if it stores it under that id.
+- An error the agent answers (a harness `runtimeClientError`, a Databricks
+  400) is `-32603` with the agent's message; a refused credential is `-32092`
+  `upstream_auth_failed`.
