@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strings"
 
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -124,6 +126,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "data_plane_too_old", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrTestRunsOnDataPlane):
 		return fiber.StatusConflict, ErrorBody{Error: "test_runs_on_data_plane", Message: publicMessage(err, "")}
+	case errors.Is(err, registrydomain.ErrSecretUnavailable):
+		return fiber.StatusServiceUnavailable, ErrorBody{Error: "secret_unavailable", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrStoreUnverified):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_store_unverified", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):

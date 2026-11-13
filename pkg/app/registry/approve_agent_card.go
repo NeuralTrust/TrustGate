@@ -94,7 +94,7 @@ func (a *approveAgentCard) Approve(ctx context.Context, gatewayID ids.GatewayID,
 	if err := validateSharedDataPlane(ctx, a.shared, gatewayID, reg.A2ATarget); err != nil {
 		return nil, err
 	}
-	fetched, err := a.cards.fetch(ctx, reg.A2ATarget, false)
+	fetched, err := a.cards.fetch(ctx, reg.GatewayID, reg.A2ATarget, false)
 	if err != nil {
 		return nil, err
 	}

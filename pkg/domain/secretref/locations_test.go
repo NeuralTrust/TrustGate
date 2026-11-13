@@ -42,6 +42,10 @@ func populatedRegistry() *registry.Registry {
 			Headers: map[string]string{"X-Token": "v"},
 			Auth:    &registry.MCPAuth{Value: "v", ClientSecret: "v"},
 		},
+		A2ATarget: &registry.A2ATarget{
+			Headers: map[string]string{"X-Token": "v"},
+			Auth:    &registry.MCPAuth{Value: "v", ClientSecret: "v"},
+		},
 	}
 }
 

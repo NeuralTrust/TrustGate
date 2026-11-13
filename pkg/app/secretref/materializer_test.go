@@ -148,6 +148,11 @@ func everyLocation() *registry.Registry {
 			Headers: map[string]string{"X-M": refStr("mh#v"), "X-Literal": "plain"},
 			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "Authorization", Value: refStr("mv#v"), ClientSecret: refStr("mcs#v")},
 		},
+		A2ATarget: &registry.A2ATarget{
+			URL:     "https://agent",
+			Headers: map[string]string{"X-Agent": refStr("ah#v"), "X-Plain": "plain"},
+			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "X-Key", Value: refStr("av#v"), ClientSecret: refStr("acs#v")},
+		},
 	}
 }
 
@@ -227,6 +232,8 @@ func TestFastPathReturnsTheInput(t *testing.T) {
 	plain.LLMTarget.ProviderOptions = map[string]any{"headers": map[string]string{"X": "y"}}
 	plain.MCPTarget.Headers = map[string]string{"X": "y"}
 	plain.MCPTarget.Auth.Value, plain.MCPTarget.Auth.ClientSecret = "v", ""
+	plain.A2ATarget.Headers = map[string]string{"X": "y"}
+	plain.A2ATarget.Auth.Value, plain.A2ATarget.Auth.ClientSecret = "v", ""
 	byID := map[ids.RegistryID]*registry.Registry{plain.ID: plain}
 	m := newMat(t, MaterializerConfig{})
 	gw := ids.New[ids.GatewayKind]()

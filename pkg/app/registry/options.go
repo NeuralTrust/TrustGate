@@ -78,6 +78,13 @@ func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
 	return func(o *options) { o.cards = agentCards{fetcher: fetcher, credentials: credentials} }
 }
 
+// WithCardSecrets resolves the secret references of an A2A registry's auth
+// when its card is read with it, after v accepts them as it would on a write.
+// It applies to the cards set by WithAgentCards, so it comes after it.
+func WithCardSecrets(m RegistryMaterializer, v SecretRefValidator) Option {
+	return func(o *options) { o.cards.secrets, o.cards.refs = m, v }
+}
+
 // WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
 // an A2A registry on a gateway no data plane of its own serves applies
 // domain.A2ATarget.ValidateSharedDataPlane.

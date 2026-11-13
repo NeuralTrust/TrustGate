@@ -186,7 +186,7 @@ func (c *creator) prepareA2A(ctx context.Context, in CreateInput) error {
 	if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, &domain.MCPTarget{Auth: in.A2ATarget.Auth}); err != nil {
 		return err
 	}
-	return c.cards.pin(ctx, in.A2ATarget)
+	return c.cards.pin(ctx, in.GatewayID, in.A2ATarget)
 }
 
 func validateProviderOptions(target *domain.LLMTarget) error {

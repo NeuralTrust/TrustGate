@@ -78,6 +78,9 @@ var Locations = []Location{
 	loc(EntityRegistry, "mcp_target.auth.value"),
 	loc(EntityRegistry, "mcp_target.auth.client_secret"),
 	loc(EntityRegistry, "mcp_target.headers.*"),
+	loc(EntityRegistry, "a2a_target.auth.value"),
+	loc(EntityRegistry, "a2a_target.auth.client_secret"),
+	loc(EntityRegistry, "a2a_target.headers.*"),
 }
 
 // IsLocation reports whether path of entity is a declared location.
