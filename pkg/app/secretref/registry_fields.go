@@ -398,6 +398,10 @@ type Use struct {
 	// SelfAddressed marks a value that names its own host, such as a
 	// database DSN: no entity field can redirect it.
 	SelfAddressed bool
+	// Entity and ID name the entity that holds the value, for the health a
+	// plane reports.
+	Entity domain.Entity
+	ID     string
 }
 
 // RegistryReferences lists the declared locations of r that hold a
@@ -409,7 +413,7 @@ func RegistryReferences(r *registry.Registry) (uses []Use, embedded []Use) {
 		return nil, nil
 	}
 	for _, s := range registrySlots(r) {
-		uses = append(uses, Use{Path: s.path, Raw: s.value, Hosts: s.hosts})
+		uses = append(uses, Use{Path: s.path, Raw: s.value, Hosts: s.hosts, Entity: domain.EntityRegistry, ID: r.ID.String()})
 	}
 	for _, s := range registryEmbedded(r) {
 		embedded = append(embedded, Use{Path: s.path, Raw: s.value})

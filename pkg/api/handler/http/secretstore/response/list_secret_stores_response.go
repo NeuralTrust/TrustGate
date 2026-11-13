@@ -44,7 +44,7 @@ func FromSource(src appsecretstore.Source, usages map[string][]appsecretstore.Us
 		reported[st.Name] = true
 		out.Stores = append(out.Stores, SecretStoreItemResponse{
 			Name: st.Name, Type: string(st.Type), AllowedPaths: nonNil(st.AllowedPaths), AllowedDestinations: st.AllowedDestinations, Status: st.Status,
-			Consistent: st.Consistent, Usages: len(usages[st.Name]), Instances: instances(st.Instances),
+			Consistent: st.Consistent, Usages: len(usages[st.Name]), FailingUsages: failing(usages[st.Name]), Instances: instances(st.Instances),
 		})
 	}
 	for name, uses := range usages {
@@ -53,7 +53,7 @@ func FromSource(src appsecretstore.Source, usages map[string][]appsecretstore.Us
 		}
 		out.Stores = append(out.Stores, SecretStoreItemResponse{
 			Name: name, AllowedPaths: []string{}, Status: appsecretstore.StatusNotReported,
-			Consistent: true, Usages: len(uses), Instances: []SecretStoreInstance{},
+			Consistent: true, Usages: len(uses), FailingUsages: failing(uses), Instances: []SecretStoreInstance{},
 		})
 	}
 	return out
@@ -77,4 +77,14 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+func failing(uses []appsecretstore.Usage) int {
+	n := 0
+	for _, u := range uses {
+		if u.State == appsecretstore.RefStateFailing {
+			n++
+		}
+	}
+	return n
 }

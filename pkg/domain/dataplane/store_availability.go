@@ -55,6 +55,7 @@ type Instance struct {
 	// about secret references.
 	AcceptsSecretRefs bool
 	SecretStores      []secretstore.Status
+	SecretRefs        secretstore.RefHealth
 }
 
 // Live reports whether the instance is connected and was seen within

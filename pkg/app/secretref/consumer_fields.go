@@ -53,7 +53,7 @@ func ConsumerRefs(c *consumer.Consumer) EntityRefs {
 			refs.Embedded = append(refs.Embedded, Use{Path: path, Raw: f.value})
 		}
 	}
-	return refs
+	return refs.owned()
 }
 
 // GatewayConsumers returns consumers with every one whose embedding

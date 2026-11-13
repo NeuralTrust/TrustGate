@@ -73,6 +73,9 @@ type Materializer interface {
 	// an upstream rejected its credential. It returns a new copy and true
 	// when a value changed, so the call can be retried once with it.
 	Refresh(ctx context.Context, reg *registry.Registry) (*registry.Registry, bool)
+	// Health reports the last outcome of every reference resolved for a
+	// gateway's runtime data, failing ones first.
+	Health() secretstore.RefHealth
 	// Values resolves the reference-shaped values of uses, declared
 	// locations of other entities of gatewayID, with the same checks as
 	// registries: eligibility, the store's gateway allowlist and allowed
@@ -138,6 +141,10 @@ type materializer struct {
 	// materialization replaces its own entries instead of piling them up.
 	byPayload map[string]map[ids.GatewayID]struct{}
 	byGateway map[ids.GatewayID]map[string][]string
+	// outcomes holds, per gateway and source, the outcome of each reference
+	// the last materialization of that source resolved; each one replaces
+	// what its source held, so removed references leave it.
+	outcomes map[ids.GatewayID]map[string][]secretstore.RefOutcome
 }
 
 // NewMaterializer returns a Materializer. With a Resolver, it subscribes to
@@ -155,6 +162,7 @@ func NewMaterializer(cfg MaterializerConfig) Materializer {
 		digestKey: []byte(rand.Text()),
 		byPayload: map[string]map[ids.GatewayID]struct{}{},
 		byGateway: map[ids.GatewayID]map[string][]string{},
+		outcomes:  map[ids.GatewayID]map[string][]secretstore.RefOutcome{},
 	}
 	counter, err := meter.Int64Counter(unresolvedMetric, metric.WithUnit("{reference}"),
 		metric.WithDescription("references left empty while building a gateway's runtime data, by error class"))
@@ -170,7 +178,10 @@ func NewMaterializer(cfg MaterializerConfig) Materializer {
 
 type pending struct {
 	registryID ids.RegistryID
-	path       []string
+	// entity and id name the entity that holds the reference.
+	entity string
+	id     string
+	path   []string
 	// hosts are where the value is sent; self marks a value that names its
 	// own host. A store with allowed destinations checks them.
 	hosts  []string
@@ -199,7 +210,7 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 			continue
 		}
 		for _, s := range registrySlots(r) {
-			p := &pending{registryID: id, path: s.path, hosts: s.hosts}
+			p := &pending{registryID: id, entity: string(domain.EntityRegistry), id: id.String(), path: s.path, hosts: s.hosts}
 			ref, _, err := domain.Parse(s.value)
 			if err != nil {
 				p.err = fmt.Errorf("%w: %v", secretstore.ErrInvalidPayload, err)
@@ -212,6 +223,7 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 	if len(refs) == 0 {
 		if index {
 			m.index(gatewayID, SourceRegistries, nil)
+			m.record(gatewayID, SourceRegistries, nil)
 		}
 		return byID
 	}
@@ -236,6 +248,9 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 		m.cfg.Invalidate(gatewayID)
 	}
 
+	if index {
+		m.record(gatewayID, SourceRegistries, refs)
+	}
 	out := make(map[ids.RegistryID]*registry.Registry, len(byID))
 	for id, r := range byID {
 		out[id] = r
@@ -446,6 +461,90 @@ func (m *materializer) unindex(gatewayID ids.GatewayID) {
 	for _, source := range sources {
 		m.index(gatewayID, source, nil)
 	}
+	m.mu.Lock()
+	delete(m.outcomes, gatewayID)
+	m.mu.Unlock()
+}
+
+// record replaces what source of gatewayID's runtime data last resolved.
+func (m *materializer) record(gatewayID ids.GatewayID, source string, refs []*pending) {
+	outcomes := make([]secretstore.RefOutcome, 0, len(refs))
+	for _, p := range refs {
+		o := secretstore.RefOutcome{
+			GatewayID: gatewayID, Entity: p.entity, ID: p.id, Field: strings.Join(p.path, "."),
+			Class: secretstore.ClassOf(p.err),
+		}
+		if p.parsed {
+			o.Store, o.Path = p.ref.Store, p.ref.Path
+		}
+		outcomes = append(outcomes, o)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sources := m.outcomes[gatewayID]
+	if len(outcomes) == 0 {
+		delete(sources, source)
+		if len(sources) == 0 {
+			delete(m.outcomes, gatewayID)
+		}
+		return
+	}
+	if sources == nil {
+		sources = map[string][]secretstore.RefOutcome{}
+		m.outcomes[gatewayID] = sources
+	}
+	sources[source] = outcomes
+}
+
+// Health implements Materializer. A reference two sources resolved, such as
+// an auth read for the runtime data and for the credential finder, counts
+// once, failing if either failed.
+func (m *materializer) Health() secretstore.RefHealth {
+	type key struct {
+		gw                             ids.GatewayID
+		entity, id, field, store, path string
+	}
+	m.mu.Lock()
+	merged := map[key]secretstore.RefOutcome{}
+	for _, sources := range m.outcomes {
+		for _, outcomes := range sources {
+			for _, o := range outcomes {
+				k := key{o.GatewayID, o.Entity, o.ID, o.Field, o.Store, o.Path}
+				if prev, ok := merged[k]; ok && prev.Class != "" {
+					continue
+				}
+				merged[k] = o
+			}
+		}
+	}
+	m.mu.Unlock()
+	h := secretstore.RefHealth{Total: len(merged), Outcomes: make([]secretstore.RefOutcome, 0, len(merged))}
+	for _, o := range merged {
+		if o.Class != "" {
+			h.Unresolved++
+		}
+		h.Outcomes = append(h.Outcomes, o)
+	}
+	sort.Slice(h.Outcomes, func(i, j int) bool {
+		a, b := h.Outcomes[i], h.Outcomes[j]
+		if (a.Class != "") != (b.Class != "") {
+			return a.Class != ""
+		}
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.Entity != b.Entity {
+			return a.Entity < b.Entity
+		}
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		return a.Field < b.Field
+	})
+	if len(h.Outcomes) > secretstore.MaxRefOutcomes {
+		h.Outcomes = h.Outcomes[:secretstore.MaxRefOutcomes]
+	}
+	return h
 }
 
 func (m *materializer) usedLocked(gatewayID ids.GatewayID) map[string]struct{} {
@@ -464,13 +563,14 @@ func (m *materializer) Values(ctx context.Context, gatewayID ids.GatewayID, sour
 	if len(uses) == 0 {
 		if source != "" {
 			m.index(gatewayID, source, nil)
+			m.record(gatewayID, source, nil)
 		}
 		return out
 	}
 	refs := make([]*pending, len(uses))
 	var used []string
 	for i, u := range uses {
-		p := &pending{path: u.Path, hosts: u.Hosts, self: u.SelfAddressed}
+		p := &pending{path: u.Path, hosts: u.Hosts, self: u.SelfAddressed, entity: string(u.Entity), id: u.ID}
 		ref, _, err := domain.Parse(u.Raw)
 		if err != nil {
 			p.err = fmt.Errorf("%w: %v", secretstore.ErrInvalidPayload, err)
@@ -485,6 +585,9 @@ func (m *materializer) Values(ctx context.Context, gatewayID ids.GatewayID, sour
 	}
 	if eligErr := m.resolveAll(ctx, gatewayID, refs); eligErr != nil && source != "" && m.cfg.Invalidate != nil {
 		m.cfg.Invalidate(gatewayID)
+	}
+	if source != "" {
+		m.record(gatewayID, source, refs)
 	}
 	for i, p := range refs {
 		out[i] = Resolved{Value: p.value, Err: p.err}

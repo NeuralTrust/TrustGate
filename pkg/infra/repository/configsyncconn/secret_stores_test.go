@@ -45,3 +45,24 @@ func TestSecretStoresRoundTrip(t *testing.T) {
 		t.Fatal("a broken column must read as no report")
 	}
 }
+
+func TestSecretRefsRoundTrip(t *testing.T) {
+	t.Parallel()
+	if raw, err := encodeSecretRefs(secretstore.RefHealth{}); err != nil || raw != nil {
+		t.Fatalf("no references must store NULL: %q %v", raw, err)
+	}
+	in := secretstore.RefHealth{Total: 1, Unresolved: 1, Outcomes: []secretstore.RefOutcome{{
+		GatewayID: ids.New[ids.GatewayKind](), Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key",
+		Store: "vault", Path: "ai/k", Class: secretstore.ClassAccessDenied,
+	}}}
+	raw, err := encodeSecretRefs(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeSecretRefs(raw); !reflect.DeepEqual(got, in) {
+		t.Fatalf("round trip = %+v", got)
+	}
+	if got := decodeSecretRefs([]byte("{")); got.Total != 0 {
+		t.Fatal("a broken column must read as no report")
+	}
+}

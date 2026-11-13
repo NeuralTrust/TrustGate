@@ -39,7 +39,7 @@ func GatewayRefs(gw *gateway.Gateway) EntityRefs {
 	}
 	uses, embedded, dest := exporterRefs(gw.Telemetry.Exporters)
 	refs.Uses, refs.Embedded, refs.Destination = uses, embedded, dest
-	return refs
+	return refs.owned()
 }
 
 func exporterRefs(exporters []telemetry.ExporterConfig) (uses, embedded []Use, destination string) {
@@ -100,6 +100,9 @@ func exporterRefs(exporters []telemetry.ExporterConfig) (uses, embedded []Use, d
 // change invalidates the gateway. The input is never modified.
 func GatewayExporters(ctx context.Context, r ValuesResolver, gatewayID ids.GatewayID, exporters []telemetry.ExporterConfig) []telemetry.ExporterConfig {
 	uses, _, _ := exporterRefs(exporters)
+	for i := range uses {
+		uses[i].Entity, uses[i].ID = domain.EntityGateway, gatewayID.String()
+	}
 	resolved := r.Values(ctx, gatewayID, SourceGateway, uses)
 	if len(uses) == 0 {
 		return exporters

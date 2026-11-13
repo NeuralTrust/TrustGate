@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -52,6 +53,14 @@ func (c *Client) SetSecretStoreReporter(fn func() []secretstore.Status) {
 	c.secretStores = fn
 }
 
+// SetSecretRefReporter makes every heartbeat carry the reference outcomes fn
+// returns at that moment.
+func (c *Client) SetSecretRefReporter(fn func() secretstore.RefHealth) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.secretRefs = fn
+}
+
 // currentHeartbeat is the heartbeat to send now: the fixed fields, the
 // secret references capability this build always has, and the secret stores
 // as they are now. Nil before SetHeartbeat.
@@ -63,7 +72,7 @@ func (c *Client) currentHeartbeat() *snapshotpb.Heartbeat {
 
 // currentHeartbeatLocked is currentHeartbeat for a caller that holds c.mu.
 func (c *Client) currentHeartbeatLocked() *snapshotpb.Heartbeat {
-	base, report := c.heartbeat, c.secretStores
+	base, report, refs := c.heartbeat, c.secretStores, c.secretRefs
 	if base == nil {
 		return nil
 	}
@@ -71,6 +80,9 @@ func (c *Client) currentHeartbeatLocked() *snapshotpb.Heartbeat {
 	hb.AcceptsSecretRefs = true
 	if report != nil {
 		hb.SecretStores = secretStoresToProto(report())
+	}
+	if refs != nil {
+		hb.SecretRefs = refHealthToProto(refs())
 	}
 	return hb
 }
@@ -144,7 +156,50 @@ func heartbeatFromProto(hb *snapshotpb.Heartbeat) dataplane.Heartbeat {
 		TrustGuardClientID: truncateUTF8(hb.GetTrustguardClientId(), maxHeartbeatField),
 		AcceptsSecretRefs:  hb.GetAcceptsSecretRefs(),
 		SecretStores:       secretStoresFromProto(hb.GetSecretStores()),
+		SecretRefs:         refHealthFromProto(hb.GetSecretRefs()),
 	}
+}
+
+func refHealthToProto(h secretstore.RefHealth) *snapshotpb.SecretRefHealth {
+	if h.Total == 0 {
+		return nil
+	}
+	out := &snapshotpb.SecretRefHealth{Total: uint32(min(h.Total, math.MaxUint32)), Unresolved: uint32(min(h.Unresolved, math.MaxUint32))} // #nosec G115 -- clamped to the uint32 range
+	for _, o := range h.Outcomes {
+		out.Outcomes = append(out.Outcomes, &snapshotpb.SecretRefOutcome{
+			GatewayId: o.GatewayID.String(), Entity: o.Entity, Id: o.ID, Field: o.Field,
+			Store: o.Store, Path: o.Path, ErrorClass: string(o.Class),
+		})
+	}
+	return out
+}
+
+// refHealthFromProto keeps what a data plane reports within bounds: at most
+// MaxRefOutcomes outcomes, capped fields, and only gateway ids that parse.
+func refHealthFromProto(in *snapshotpb.SecretRefHealth) secretstore.RefHealth {
+	if in == nil {
+		return secretstore.RefHealth{}
+	}
+	out := secretstore.RefHealth{Total: int(in.GetTotal()), Unresolved: int(in.GetUnresolved())}
+	for i, o := range in.GetOutcomes() {
+		if i == secretstore.MaxRefOutcomes {
+			break
+		}
+		gw, err := ids.Parse[ids.GatewayKind](o.GetGatewayId())
+		if err != nil {
+			continue
+		}
+		out.Outcomes = append(out.Outcomes, secretstore.RefOutcome{
+			GatewayID: gw,
+			Entity:    truncateUTF8(o.GetEntity(), maxHeartbeatField),
+			ID:        truncateUTF8(o.GetId(), maxHeartbeatField),
+			Field:     truncateUTF8(o.GetField(), maxHeartbeatField),
+			Store:     truncateUTF8(o.GetStore(), maxHeartbeatField),
+			Path:      truncateUTF8(o.GetPath(), maxHeartbeatField),
+			Class:     secretstore.Class(truncateUTF8(o.GetErrorClass(), maxHeartbeatField)),
+		})
+	}
+	return out
 }
 
 func secretStoresToProto(in []secretstore.Status) []*snapshotpb.SecretStoreStatus {

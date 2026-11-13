@@ -82,6 +82,7 @@ func ConfigSyncData(c *container.Container) error {
 		})
 		if stores != nil && stores.Cache != nil {
 			client.SetSecretStoreReporter(stores.Cache.Statuses)
+			client.SetSecretRefReporter(stores.Materializer.Health)
 		}
 		return client, nil
 	}); err != nil {

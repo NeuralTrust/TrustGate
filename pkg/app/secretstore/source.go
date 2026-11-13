@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	refdomain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 )
 
@@ -93,6 +94,49 @@ type Source struct {
 	// TooOld lists live data planes that do not understand references.
 	TooOld []InstanceView
 	Stores []StoreView
+	// refs is what each live instance, or the admin, last reported about
+	// the references it resolved.
+	refs []domain.RefHealth
+}
+
+// Usage states.
+const (
+	RefStateOK          = "ok"
+	RefStateFailing     = "failing"
+	RefStateNotReported = "not_reported"
+)
+
+// Annotate sets the State and ErrorClass of every usage of gw.
+func (s Source) Annotate(gw ids.GatewayID, usages map[string][]Usage) {
+	for _, list := range usages {
+		for i := range list {
+			state, class := s.RefState(gw, list[i])
+			list[i].State, list[i].ErrorClass = state, string(class)
+		}
+	}
+}
+
+// RefState returns the state of usage u of gateway gw: failing, with the
+// class, when any reporter left it unresolved; ok when one resolved it;
+// not_reported otherwise, as for a reference no plane has resolved since it
+// was written.
+func (s Source) RefState(gw ids.GatewayID, u Usage) (state string, class domain.Class) {
+	ref, _, err := refdomain.Parse(u.Reference)
+	if err != nil {
+		return RefStateNotReported, ""
+	}
+	state = RefStateNotReported
+	for _, h := range s.refs {
+		o, ok := h.Find(gw, u.Entity, u.ID, u.Field, ref.Store, ref.Path)
+		if !ok {
+			continue
+		}
+		if o.Class != "" {
+			return RefStateFailing, o.Class
+		}
+		state = RefStateOK
+	}
+	return state, ""
 }
 
 // Store returns the store named name, if the source has it.
@@ -127,7 +171,10 @@ type SourceConfig struct {
 	Eligibility domain.Eligibility
 	// Health is the admin's own catalog; nil when the admin loads no store
 	// file, as on NeuralTrust's control plane.
-	Health    StoreHealth
+	Health StoreHealth
+	// RefHealth is what the admin observed about the references it resolved
+	// itself; nil when it loads no store file.
+	RefHealth func() domain.RefHealth
 	Instances InstanceLister
 	// AdminInstance names the admin replica in a control_plane listing.
 	AdminInstance string
@@ -157,7 +204,11 @@ func (r *sourceResolver) Source(ctx context.Context, gw *gateway.Gateway) (Sourc
 		return Source{}, nil
 	}
 	if !own {
-		return Source{Supported: true, Kind: KindControlPlane, Stores: r.adminStores(gw.ID)}, nil
+		src := Source{Supported: true, Kind: KindControlPlane, Stores: r.adminStores(gw.ID)}
+		if r.cfg.RefHealth != nil {
+			src.refs = []domain.RefHealth{r.cfg.RefHealth()}
+		}
+		return src, nil
 	}
 	if r.cfg.Instances == nil {
 		return Source{Supported: true, Kind: KindDataPlane}, nil
@@ -198,6 +249,7 @@ func dataPlaneSource(gwID ids.GatewayID, instances []dataplane.Instance, now tim
 			src.TooOld = append(src.TooOld, InstanceView{InstanceID: in.ID, Version: in.Version, State: InstanceStateTooOld})
 			continue
 		}
+		src.refs = append(src.refs, in.SecretRefs)
 		for _, st := range in.SecretStores {
 			if !admits(st.Gateways, gwID) {
 				continue

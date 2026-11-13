@@ -20,9 +20,11 @@ type SecretStoreItemResponse struct {
 	Type         string   `json:"type"`
 	AllowedPaths []string `json:"allowed_paths"`
 	// AllowedDestinations is omitted when the store allows any host.
-	AllowedDestinations []string              `json:"allowed_destinations,omitempty"`
-	Status              string                `json:"status" enums:"ok,degraded,down,not_reported"`
-	Consistent          bool                  `json:"consistent"`
-	Usages              int                   `json:"usages"`
-	Instances           []SecretStoreInstance `json:"instances"`
+	AllowedDestinations []string `json:"allowed_destinations,omitempty"`
+	Status              string   `json:"status" enums:"ok,degraded,down,not_reported"`
+	Consistent          bool     `json:"consistent"`
+	Usages              int      `json:"usages"`
+	// FailingUsages counts the usages a plane reported as unresolved.
+	FailingUsages int                   `json:"failing_usages"`
+	Instances     []SecretStoreInstance `json:"instances"`
 }

@@ -86,3 +86,60 @@ func decodeSecretStores(raw []byte) []secretstore.Status {
 	}
 	return out
 }
+
+// storedSecretRefs is how reference health is kept in the secret_refs column.
+type storedSecretRefs struct {
+	Total      int                `json:"total"`
+	Unresolved int                `json:"unresolved"`
+	Outcomes   []storedRefOutcome `json:"outcomes,omitempty"`
+}
+
+type storedRefOutcome struct {
+	GatewayID  ids.GatewayID `json:"gateway_id"`
+	Entity     string        `json:"entity"`
+	ID         string        `json:"id"`
+	Field      string        `json:"field"`
+	Store      string        `json:"store,omitempty"`
+	Path       string        `json:"path,omitempty"`
+	ErrorClass string        `json:"error_class,omitempty"`
+}
+
+// encodeSecretRefs returns the column value: NULL when the data plane
+// resolved no reference.
+func encodeSecretRefs(h secretstore.RefHealth) ([]byte, error) {
+	if h.Total == 0 {
+		return nil, nil
+	}
+	out := storedSecretRefs{Total: h.Total, Unresolved: h.Unresolved}
+	for _, o := range h.Outcomes {
+		out.Outcomes = append(out.Outcomes, storedRefOutcome{
+			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field,
+			Store: o.Store, Path: o.Path, ErrorClass: string(o.Class),
+		})
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("configsyncconn: encode secret refs: %w", err)
+	}
+	return raw, nil
+}
+
+// decodeSecretRefs reads the column back; a value that does not decode is
+// treated as no report.
+func decodeSecretRefs(raw []byte) secretstore.RefHealth {
+	if len(raw) == 0 {
+		return secretstore.RefHealth{}
+	}
+	var stored storedSecretRefs
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return secretstore.RefHealth{}
+	}
+	out := secretstore.RefHealth{Total: stored.Total, Unresolved: stored.Unresolved}
+	for _, o := range stored.Outcomes {
+		out.Outcomes = append(out.Outcomes, secretstore.RefOutcome{
+			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field,
+			Store: o.Store, Path: o.Path, Class: secretstore.Class(o.ErrorClass),
+		})
+	}
+	return out
+}

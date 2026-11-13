@@ -39,6 +39,9 @@ type Heartbeat struct {
 	// SecretStores are the secret stores the data plane loaded: metadata and
 	// health only.
 	SecretStores []secretstore.Status
+	// SecretRefs is the last outcome of the references the data plane
+	// resolved: where each one is and what it names, never a value.
+	SecretRefs secretstore.RefHealth
 }
 
 // Deployment types a data plane reports in its heartbeat.

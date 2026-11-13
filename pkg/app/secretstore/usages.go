@@ -34,6 +34,10 @@ type Usage struct {
 	Name      string
 	Field     string
 	Reference string
+	// State and ErrorClass are what the gateway's planes last reported about
+	// the reference: set by Source.Annotate.
+	State      string
+	ErrorClass string
 }
 
 // RegistryLister pages through a gateway's registries as stored.

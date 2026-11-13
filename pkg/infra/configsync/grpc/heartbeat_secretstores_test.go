@@ -15,6 +15,7 @@
 package grpc
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -70,5 +71,29 @@ func TestHeartbeatCarriesLiveSecretStores(t *testing.T) {
 	}
 	if c.heartbeat.GetSecretStores() != nil {
 		t.Fatal("the base heartbeat must not be modified")
+	}
+}
+
+func TestSecretRefsHeartbeatRoundTripAndCaps(t *testing.T) {
+	t.Parallel()
+	if refHealthToProto(secretstore.RefHealth{}) != nil {
+		t.Fatal("a plane that resolved nothing sends no report")
+	}
+	gwID := ids.New[ids.GatewayKind]()
+	in := secretstore.RefHealth{Total: 2, Unresolved: 1, Outcomes: []secretstore.RefOutcome{
+		{GatewayID: gwID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Store: "vault", Path: "ai/k", Class: secretstore.ClassNotFound},
+		{GatewayID: gwID, Entity: "auth", ID: "a1", Field: "config.oauth2.client_secret", Store: "vault", Path: "ai/idp"},
+	}}
+	if got := refHealthFromProto(refHealthToProto(in)); !reflect.DeepEqual(got, in) {
+		t.Fatalf("round trip = %+v", got)
+	}
+	big := &snapshotpb.SecretRefHealth{Total: 1000}
+	for range secretstore.MaxRefOutcomes + 10 {
+		big.Outcomes = append(big.Outcomes, &snapshotpb.SecretRefOutcome{GatewayId: gwID.String(), Field: strings.Repeat("f", 1000)})
+	}
+	big.Outcomes = append([]*snapshotpb.SecretRefOutcome{{GatewayId: "not-a-uuid"}}, big.Outcomes...)
+	capped := refHealthFromProto(big)
+	if len(capped.Outcomes) != secretstore.MaxRefOutcomes-1 || len(capped.Outcomes[0].Field) > maxHeartbeatField || capped.Total != 1000 {
+		t.Fatalf("caps not applied: %d outcomes, field %d bytes", len(capped.Outcomes), len(capped.Outcomes[0].Field))
 	}
 }

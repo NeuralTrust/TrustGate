@@ -50,6 +50,14 @@ type EntityRefs struct {
 	Gateway *gateway.Gateway
 }
 
+// owned returns e with every use naming e as its owner.
+func (e EntityRefs) owned() EntityRefs {
+	for i := range e.Uses {
+		e.Uses[i].Entity, e.Uses[i].ID = e.Entity, e.ID
+	}
+	return e
+}
+
 // Stored returns what to compare the next write of the entity with.
 func (e EntityRefs) Stored() *Stored {
 	return &Stored{Uses: append(append([]Use(nil), e.Uses...), e.Embedded...), Destination: e.Destination}
