@@ -29,6 +29,7 @@ type AgentCardPreview struct {
 	CardDigest      string
 	Versions        []domain.A2AProtocolVersion
 	DefaultVersion  domain.A2AProtocolVersion
+	SkillScan       []domain.SkillVerdict
 }
 
 //go:generate mockery --name=PreviewAgentCard --dir=. --output=./mocks --filename=registry_preview_agent_card_mock.go --case=underscore --with-expecter
@@ -73,5 +74,6 @@ func (p *previewAgentCard) Preview(ctx context.Context, gatewayID ids.GatewayID,
 		CardDigest:      digest,
 		Versions:        versions,
 		DefaultVersion:  domain.DefaultVersion(versions),
+		SkillScan:       p.cards.scanSkills(ctx, target, fetched.Card),
 	}, nil
 }

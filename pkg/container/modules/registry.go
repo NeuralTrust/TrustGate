@@ -47,6 +47,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trustguardscan"
 	"go.uber.org/dig"
 )
 
@@ -136,7 +137,8 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 // registrySaveParams carries what a save needs beyond the repository: the
 // auth repository that checks an exchange's identity_id (optional, so a
 // container without auths still boots and refuses targets that set it), the
-// agent card reader, and the gateways a SaaS deployment checks A2A cloud
+// agent card reader, TrustGuard's scan of agent skills when the gateway has
+// TrustGuard credentials, and the gateways a SaaS deployment checks A2A cloud
 // credentials against.
 type registrySaveParams struct {
 	dig.In
@@ -160,6 +162,10 @@ func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.
 	}
 	if p.Materializer != nil && p.SecretRefs != nil {
 		opts = append(opts, appregistry.WithCardSecrets(p.Materializer, p.SecretRefs))
+	}
+	tg := p.Config.TrustGuard.V2
+	if scanner := trustguardscan.New(tg.BaseURL, tg.ClientID, tg.ClientSecret, tg.Timeout); scanner != nil {
+		opts = append(opts, appregistry.WithSkillScanner(scanner))
 	}
 	if p.Auths != nil {
 		opts = append(opts, appregistry.WithAuthLookup(p.Auths))

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -51,6 +52,18 @@ type CardFetcher interface {
 	Probe(ctx context.Context, endpoint string, v domain.A2AProtocolVersion, authorize CardAuthorizer) error
 }
 
+// SkillScan is TrustGuard's indirect prompt injection verdict on one text.
+type SkillScan struct {
+	Flagged bool
+	Score   float64
+}
+
+//go:generate mockery --name=SkillScanner --dir=. --output=./mocks --filename=registry_skill_scanner_mock.go --case=underscore --with-expecter
+type SkillScanner interface {
+	// ScanIndirectPromptInjection scores each text, in order.
+	ScanIndirectPromptInjection(ctx context.Context, texts []string) ([]SkillScan, error)
+}
+
 // agentCards reads and pins the cards of A2A registries.
 type agentCards struct {
 	fetcher     CardFetcher
@@ -60,6 +73,31 @@ type agentCards struct {
 	// refuses such a read.
 	secrets RegistryMaterializer
 	refs    SecretRefValidator
+	scanner SkillScanner
+}
+
+// scanSkills is TrustGuard's verdict on each skill of t's card, or nil when
+// there is no scanner, no skill, the gateway built the card, or the scan
+// failed: a card that could not be scanned is still pinned, and says so by
+// having no verdicts.
+func (a agentCards) scanSkills(ctx context.Context, t *domain.A2ATarget, card []byte) []domain.SkillVerdict {
+	if a.scanner == nil || t.Provider.BuildsCard() {
+		return nil
+	}
+	skillIDs, texts := domain.SkillTexts(card)
+	if len(texts) == 0 {
+		return nil
+	}
+	scans, err := a.scanner.ScanIndirectPromptInjection(ctx, texts)
+	if err != nil || len(scans) != len(texts) {
+		slog.WarnContext(ctx, "agent skills not scanned", slog.Any("error", err), slog.Int("skills", len(texts)), slog.Int("results", len(scans)))
+		return nil
+	}
+	out := make([]domain.SkillVerdict, len(scans))
+	for i, scan := range scans {
+		out[i] = domain.SkillVerdict{SkillID: skillIDs[i], Flagged: scan.Flagged, Score: scan.Score}
+	}
+	return out
 }
 
 // fetch reads t's card, a target of gatewayID, with its card credential.
@@ -96,6 +134,16 @@ func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.
 	if err := t.Pin(card.URL, card.Card, time.Now()); err != nil {
 		return err
 	}
+	if err := a.probe(ctx, gatewayID, t); err != nil {
+		return err
+	}
+	t.SkillScan = a.scanSkills(ctx, t, t.Card)
+	return nil
+}
+
+// probe asks a generic agent's endpoint, signed in as calls will be, whether
+// it answers A2A.
+func (a agentCards) probe(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
 	if t.Provider != domain.A2AProviderGeneric {
 		return nil
 	}
