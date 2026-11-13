@@ -249,3 +249,56 @@ func TestRefresh_UpstreamRejectsUserHeader(t *testing.T) {
 		}
 	})
 }
+
+func TestRefresh_UserHeaderRejectionIsNarrow(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	rc := mcpConsumer(gw)
+	ctx := principalCtx(&identity.Principal{Subject: "ana"})
+
+	t.Run("a key replaced while the call was in flight is kept", func(t *testing.T) {
+		t.Parallel()
+		vault := userHeaderVault{&memVault{}}
+		reg := regWithUserHeaders(gw, registrydomain.MCPUserHeader{Name: "X-API-Key", Required: true})
+		storeUserHeader(t, vault.memVault, gw, "ana", reg, "X-API-Key", "old")
+		r := NewCredentialResolver(nil, vault, &stubConnect{}, nil, discardLogger()).(*credentialResolver)
+		target := targetFor(ctx, rc, reg)
+		if err := r.Apply(ctx, rc, reg, &target); err != nil {
+			t.Fatal(err)
+		}
+		storeUserHeader(t, vault.memVault, gw, "ana", reg, "X-API-Key", "new")
+		if err := r.Refresh(ctx, rc, reg, &target); !errors.Is(err, errCredentialRefreshUnsupported) {
+			t.Fatalf("Refresh() = %v, want the 401 returned as is", err)
+		}
+		next := targetFor(ctx, rc, reg)
+		if err := r.Apply(ctx, rc, reg, &next); err != nil || next.Headers["X-API-Key"] != "new" {
+			t.Fatalf("the new key was marked refused: %v %q", err, next.Headers["X-API-Key"])
+		}
+	})
+
+	t.Run("an auth mode with a credential of its own leaves the keys alone", func(t *testing.T) {
+		t.Parallel()
+		vault := userHeaderVault{&memVault{}}
+		reg, err := registrydomain.NewMCPRegistry(gw, "both", "", &registrydomain.MCPTarget{
+			URL:         "https://both.example.com/mcp",
+			Auth:        &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer admin"},
+			UserHeaders: []registrydomain.MCPUserHeader{{Name: "X-API-Key", Required: true}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		storeUserHeader(t, vault.memVault, gw, "ana", reg, "X-API-Key", "ana-key")
+		r := NewCredentialResolver(nil, vault, &stubConnect{}, nil, discardLogger()).(*credentialResolver)
+		target := targetFor(ctx, rc, reg)
+		if err := r.Apply(ctx, rc, reg, &target); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Refresh(ctx, rc, reg, &target); !errors.Is(err, errCredentialRefreshUnsupported) {
+			t.Fatalf("Refresh() = %v, want the 401 returned as is", err)
+		}
+		next := targetFor(ctx, rc, reg)
+		if err := r.Apply(ctx, rc, reg, &next); err != nil {
+			t.Fatalf("ana's key was marked refused for the admin's credential: %v", err)
+		}
+	})
+}
