@@ -231,7 +231,6 @@ func TestSecretStoresHybridE2E(t *testing.T) {
 	overrides := append(dblessOverrides(lkgPath, mintConfigSyncScopedToken(t, gatewayID), uniqueName("vault-dp"), port),
 		"SECRET_STORES_FILE="+writeVaultStoreFile(t, vault.server.URL),
 		"SECRET_STORES_PROBE_INTERVAL=1s",
-		"SECRET_STORES_READINESS_GATE=true",
 		"CONFIG_SYNC_HEARTBEAT_INTERVAL=1s",
 	)
 	base, logs := startDBLessProxyPlane(t, port, overrides)
@@ -266,7 +265,7 @@ func TestSecretStoresHybridE2E(t *testing.T) {
 
 	require.True(t, pollProxyServedAt(t, base, apiKey, path, "secret-stores-marker", 30*time.Second),
 		"the data plane never served with the credential read from the vault")
-	require.True(t, pollDBLessReady(base, 10*time.Second), "the readiness gate never opened")
+	require.True(t, pollDBLessReady(base, 10*time.Second), "the data plane never reported ready")
 	assert.Contains(t, upstream.keysSeen(), key1)
 
 	t.Run("data-plane test reports the outcome, never the value", func(t *testing.T) {

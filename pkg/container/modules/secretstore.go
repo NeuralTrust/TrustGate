@@ -20,9 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
-	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
-
 	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
@@ -65,11 +62,8 @@ type secretStoresParams struct {
 	Config     *config.Config
 	Gateways   gatewaydomain.Repository
 	Registries registrydomain.Repository
-	// Store is the data plane's config-sync store; absent on planes that
-	// read Postgres.
-	Store   configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
-	Manager *cache.TTLMapManager
-	Logger  *slog.Logger
+	Manager    *cache.TTLMapManager
+	Logger     *slog.Logger
 }
 
 // SecretStoresModule provides the plane's secret stores.
@@ -141,7 +135,6 @@ func provideSecretStores(p secretStoresParams) (*SecretStores, error) {
 			Eligibility: cfg.Gateways,
 			Gateways:    p.Gateways,
 			Registries:  p.Registries,
-			Loaded:      configLoaded(p.Store),
 			Logger:      p.Logger,
 		})
 	}
@@ -163,15 +156,6 @@ func provideSecretStoreTester(cfg *config.Config, stores *SecretStores, gateways
 		tc.Catalog = stores.Catalog
 	}
 	return appsecretstore.NewTester(tc)
-}
-
-// configLoaded reports whether a data plane's config-sync store holds a
-// snapshot; nil on planes that read Postgres.
-func configLoaded(store configsync.ConfigStore[*readmodel.Snapshot]) func() bool {
-	if store == nil {
-		return nil
-	}
-	return func() bool { return store.Version() != "" }
 }
 
 // storesChanged drops what was read from stores the store file added,

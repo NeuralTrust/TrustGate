@@ -16,7 +16,6 @@ package secretref
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -36,10 +35,6 @@ const (
 	prewarmGatewayTimeout = 10 * time.Second
 )
 
-// ErrPrewarmPending is what the readiness gate reports until the first
-// prewarm pass leaves no reference failing for a transient reason.
-var ErrPrewarmPending = errors.New("secret stores: references not prewarmed yet")
-
 // GatewayLister pages through the gateways a plane serves.
 type GatewayLister interface {
 	List(ctx context.Context, filter gateway.ListFilter) ([]*gateway.Gateway, int, error)
@@ -57,24 +52,19 @@ type PrewarmConfig struct {
 	Eligibility secretstore.Eligibility
 	Gateways    GatewayLister
 	Registries  RegistryLister
-	// Loaded reports whether the plane has its configuration yet. A data
-	// plane receives it asynchronously from config-sync, so a pass that ran
-	// before is not a reason to report ready. Nil means always loaded, as on
-	// a plane that reads Postgres.
-	Loaded func() bool
-	Logger *slog.Logger
+	Logger      *slog.Logger
 }
 
 // Prewarmer resolves, in the background, every reference of the eligible
 // gateways a plane serves, so the first request does not wait for a store.
 // A pass runs on Trigger: after a snapshot apply, a store-file reload or the
 // first load. A pass that leaves a reference failing for a transient reason
-// is retried with backoff.
+// is retried with backoff. It never holds readiness back: a plane serves as
+// soon as it has its configuration, and a request whose secret is not read
+// yet reads it then.
 type Prewarmer struct {
 	cfg     PrewarmConfig
 	trigger chan struct{}
-	started atomic.Bool
-	ready   atomic.Bool
 	// minBackoff and maxBackoff space the retries of a pass that left a
 	// reference failing for a transient reason.
 	minBackoff, maxBackoff time.Duration
@@ -89,28 +79,12 @@ func NewPrewarmer(cfg PrewarmConfig) *Prewarmer {
 }
 
 // Trigger asks for a pass; triggers that arrive during a pass coalesce into
-// one more pass. The first trigger also arms the readiness gate.
+// one more pass.
 func (p *Prewarmer) Trigger() {
-	p.started.Store(true)
 	select {
 	case p.trigger <- struct{}{}:
 	default:
 	}
-}
-
-// Ready reports whether a pass that started with the plane's configuration
-// loaded has completed with no reference failing for a transient reason. It
-// stays true afterwards: a store blip once the plane serves must not take it
-// out of rotation.
-func (p *Prewarmer) Ready() bool { return p.ready.Load() }
-
-// ReadinessCheck is the SECRET_STORES_READINESS_GATE check. A plane that
-// never triggers the prewarmer, such as the admin, is not held back by it.
-func (p *Prewarmer) ReadinessCheck(context.Context) error {
-	if !p.started.Load() || p.Ready() {
-		return nil
-	}
-	return ErrPrewarmPending
 }
 
 // Run serves triggers until ctx is done.
@@ -125,18 +99,14 @@ func (p *Prewarmer) Run(ctx context.Context) {
 		case <-retry:
 		}
 		retry = nil
-		loaded := p.cfg.Loaded == nil || p.cfg.Loaded()
 		pending, err := p.pass(ctx)
 		if ctx.Err() != nil {
 			return
 		}
-		if err == nil && pending == 0 && loaded {
-			p.ready.Store(true)
+		if err == nil && pending == 0 {
 			backoff = p.minBackoff
 			continue
 		}
-		// A pass before the configuration arrived, or one that left
-		// references failing for a transient reason, is retried.
 		if err != nil {
 			p.cfg.Logger.Warn("secret reference prewarm could not list the plane's configuration",
 				slog.String("error", err.Error()))
