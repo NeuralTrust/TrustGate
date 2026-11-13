@@ -89,6 +89,7 @@ func newApp(t *testing.T, agentURL string) (*fiber.App, *registrydomain.Registry
 	}
 	app.Get(router.AgentCardPath, withConsumer, h.Card)
 	app.Post(router.AgentRPCPath, withConsumer, h.RPC)
+	app.Post(router.AgentChatPath, withConsumer, h.ChatCompletions)
 	return app, reg
 }
 
@@ -189,4 +190,118 @@ func TestRPCStreamsServerSentEvents(t *testing.T) {
 		require.True(t, ok)
 		assert.JSONEq(t, `{"jsonrpc":"2.0","id":"caller-id","result":{"message":{"messageId":"m`+string(rune('1'+i))+`","role":"ROLE_AGENT","parts":[{"text":"`+text+`"}]}}}`, data)
 	}
+}
+
+func chatRequest(t *testing.T, path, body, contextID string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if contextID != "" {
+		req.Header.Set(appa2a.HeaderA2AContextID, contextID)
+	}
+	return req
+}
+
+// An OpenAI client calls the agent as a model: the last user message goes as
+// one A2A message, the answer is a chat completion, and the context the
+// agent opened continues on the next request.
+func TestChatCompletionsCallsTheAgentAsAModel(t *testing.T) {
+	var sent []map[string]any
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&call)
+		sent = append(sent, call)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"a","result":{"task":{"id":"t-1","contextId":"c-1","status":{"state":"TASK_STATE_COMPLETED"},` +
+			`"artifacts":[{"artifactId":"a-1","parts":[{"text":"Two flights "},{"text":"found."}]}]}}}`))
+	}))
+	t.Cleanup(agent.Close)
+	app, reg := newApp(t, agent.URL)
+	path := "/research-bot/agents/" + reg.ID.String() + "/v1/chat/completions"
+	body := `{"model":"anything","messages":[{"role":"system","content":"Be brief"},{"role":"user","content":"Hi"},` +
+		`{"role":"assistant","content":"Hello"},{"role":"user","content":[{"type":"text","text":"Flights to Rome?"}]}]}`
+
+	resp, err := app.Test(chatRequest(t, path, body, ""), -1)
+	require.NoError(t, err)
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	assert.Equal(t, "c-1", resp.Header.Get(appa2a.HeaderA2AContextID))
+	var completion struct {
+		Object  string `json:"object"`
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &completion))
+	assert.Equal(t, "chat.completion", completion.Object)
+	assert.Equal(t, "Travel planner", completion.Model)
+	require.Len(t, completion.Choices, 1)
+	assert.Equal(t, "Two flights found.", completion.Choices[0].Message.Content)
+	assert.Equal(t, "stop", completion.Choices[0].FinishReason)
+
+	require.Len(t, sent, 1)
+	assert.Equal(t, "SendMessage", sent[0]["method"])
+	message := sent[0]["params"].(map[string]any)["message"].(map[string]any)
+	assert.Equal(t, []any{map[string]any{"text": "Flights to Rome?"}}, message["parts"])
+
+	status, _ := do(t, app, chatRequest(t, path, `{"messages":[{"role":"user","content":"Cheaper?"}]}`, "c-1"))
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, sent, 2)
+	assert.Equal(t, "c-1", sent[1]["params"].(map[string]any)["message"].(map[string]any)["contextId"])
+
+	status, raw = do(t, app, chatRequest(t, path, `{"messages":[{"role":"user","content":"Hi"}]}`, "someone-elses"))
+	assert.Equal(t, http.StatusNotFound, status, "a context the caller does not own: %s", raw)
+}
+
+func TestChatCompletionsStreamsChunks(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"task":{"id":"t-1","contextId":"c-1","status":{"state":"TASK_STATE_WORKING"}}}`,
+			`{"statusUpdate":{"taskId":"t-1","contextId":"c-1","status":{"state":"TASK_STATE_WORKING","message":{"messageId":"p","role":"ROLE_AGENT","parts":[{"text":"thinking"}]}}}}`,
+			`{"artifactUpdate":{"taskId":"t-1","contextId":"c-1","artifact":{"artifactId":"a","parts":[{"text":"Two "}]}}}`,
+			`{"artifactUpdate":{"taskId":"t-1","contextId":"c-1","append":true,"artifact":{"artifactId":"a","parts":[{"text":"flights."}]}}}`,
+			`{"statusUpdate":{"taskId":"t-1","contextId":"c-1","status":{"state":"TASK_STATE_COMPLETED"},"final":true}}`,
+		} {
+			_, _ = w.Write([]byte(`data: {"jsonrpc":"2.0","id":"a","result":` + e + "}\n\n"))
+		}
+	}))
+	t.Cleanup(agent.Close)
+	app, reg := newApp(t, agent.URL)
+
+	status, raw := do(t, app, chatRequest(t, "/research-bot/agents/"+reg.ID.String()+"/v1/chat/completions",
+		`{"stream":true,"messages":[{"role":"user","content":"Flights?"}]}`, ""))
+	require.Equal(t, http.StatusOK, status)
+	frames := strings.Split(strings.TrimSpace(string(raw)), "\n\n")
+	require.Len(t, frames, 4, string(raw))
+	var texts []string
+	for _, f := range frames[:2] {
+		var chunk struct {
+			Object  string `json:"object"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Context string `json:"a2a_context_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(f, "data: ")), &chunk))
+		assert.Equal(t, "chat.completion.chunk", chunk.Object)
+		assert.Equal(t, "c-1", chunk.Context)
+		texts = append(texts, chunk.Choices[0].Delta.Content)
+	}
+	assert.Equal(t, []string{"Two ", "flights."}, texts, "a working status's note is not the answer")
+	assert.Contains(t, frames[2], `"finish_reason":"stop"`)
+	assert.Equal(t, "data: [DONE]", frames[3])
+}
+
+func TestChatCompletionsRefusesARequestWithoutAUserMessage(t *testing.T) {
+	app, reg := newApp(t, "https://agent.example/a2a")
+	status, raw := do(t, app, chatRequest(t, "/research-bot/agents/"+reg.ID.String()+"/v1/chat/completions", `{"messages":[{"role":"system","content":"x"}]}`, ""))
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Contains(t, string(raw), "invalid_request_error")
 }

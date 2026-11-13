@@ -84,6 +84,9 @@ func a2aMessagePreview(body string) string {
 	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
 		return ""
 	}
+	if len(envelope.Params.Message.Parts) == 0 {
+		return chatBridgePreview(body)
+	}
 	texts := make([]string, 0, len(envelope.Params.Message.Parts))
 	for _, part := range envelope.Params.Message.Parts {
 		if part.Text != "" && (part.Kind == "" || part.Kind == "text") {
@@ -91,6 +94,39 @@ func a2aMessagePreview(body string) string {
 		}
 	}
 	return truncatePreview(events.RedactCredentialsInText(strings.Join(texts, " "), maxPreviewRunes))
+}
+
+// chatBridgePreview is the last user message of an OpenAI chat completions
+// request, which the agent plane's bridge sends to the agent.
+func chatBridgePreview(body string) string {
+	var chat struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal([]byte(body), &chat) != nil {
+		return ""
+	}
+	for i := len(chat.Messages) - 1; i >= 0; i-- {
+		if chat.Messages[i].Role != "user" {
+			continue
+		}
+		var text string
+		if json.Unmarshal(chat.Messages[i].Content, &text) != nil {
+			var parts []struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(chat.Messages[i].Content, &parts)
+			texts := make([]string, 0, len(parts))
+			for _, p := range parts {
+				texts = append(texts, p.Text)
+			}
+			text = strings.Join(texts, " ")
+		}
+		return truncatePreview(events.RedactCredentialsInText(text, maxPreviewRunes))
+	}
+	return ""
 }
 
 // firstStringArgument walks params.arguments as a token stream because a Go
