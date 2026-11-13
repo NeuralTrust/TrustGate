@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 // AgentCardRefreshResponse compares a registry's live card with the pinned one.
@@ -29,17 +30,21 @@ type AgentCardRefreshResponse struct {
 	SkillsAdded   []string        `json:"skills_added"`
 	SkillsRemoved []string        `json:"skills_removed"`
 	FetchedCard   json.RawMessage `json:"fetched_card" swaggertype:"object"`
+	// FetchedSkillScan is TrustGuard's verdict on each skill of the fetched
+	// card; absent when the card did not change or was not scanned.
+	FetchedSkillScan []domain.SkillVerdict `json:"fetched_skill_scan,omitempty"`
 }
 
 func FromAgentCardRefresh(r *appregistry.AgentCardRefresh) AgentCardRefreshResponse {
 	return AgentCardRefreshResponse{
-		Changed:       r.Changed,
-		PinnedDigest:  r.PinnedDigest,
-		FetchedDigest: r.FetchedDigest,
-		ChangedFields: nonNil(r.ChangedFields),
-		SkillsAdded:   nonNil(r.SkillsAdded),
-		SkillsRemoved: nonNil(r.SkillsRemoved),
-		FetchedCard:   r.FetchedCard,
+		Changed:          r.Changed,
+		PinnedDigest:     r.PinnedDigest,
+		FetchedDigest:    r.FetchedDigest,
+		ChangedFields:    nonNil(r.ChangedFields),
+		SkillsAdded:      nonNil(r.SkillsAdded),
+		SkillsRemoved:    nonNil(r.SkillsRemoved),
+		FetchedCard:      r.FetchedCard,
+		FetchedSkillScan: r.FetchedSkillScan,
 	}
 }
 

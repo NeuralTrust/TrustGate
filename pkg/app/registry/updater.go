@@ -184,7 +184,7 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 	if next.AllowedMethods == nil {
 		next.AllowedMethods = prev.AllowedMethods
 	}
-	next.ResolvedCardURL, next.Card, next.CardDigest, next.CardPinnedAt = prev.ResolvedCardURL, prev.Card, prev.CardDigest, prev.CardPinnedAt
+	next.ResolvedCardURL, next.Card, next.CardDigest, next.CardPinnedAt, next.SkillScan = prev.ResolvedCardURL, prev.Card, prev.CardDigest, prev.CardPinnedAt, prev.SkillScan
 	next.Normalize()
 	next.ResolveSecretsFrom(prev)
 	if err := next.Validate(); err != nil {

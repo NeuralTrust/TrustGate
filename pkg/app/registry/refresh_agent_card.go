@@ -31,6 +31,9 @@ type AgentCardRefresh struct {
 	SkillsAdded   []string
 	SkillsRemoved []string
 	FetchedCard   json.RawMessage
+	// FetchedSkillScan is TrustGuard's verdict on the fetched card's skills,
+	// when the card changed.
+	FetchedSkillScan []domain.SkillVerdict
 }
 
 //go:generate mockery --name=RefreshAgentCard --dir=. --output=./mocks --filename=registry_refresh_agent_card_mock.go --case=underscore --with-expecter
@@ -71,13 +74,19 @@ func (r *refreshAgentCard) Refresh(ctx context.Context, gatewayID ids.GatewayID,
 		return nil, err
 	}
 	added, removed := domain.SkillDiff(pinned.Card, fetched.Card)
+	changed := digest != pinned.CardDigest
+	var scan []domain.SkillVerdict
+	if changed {
+		scan = r.cards.scanSkills(ctx, pinned, fetched.Card)
+	}
 	return &AgentCardRefresh{
-		Changed:       digest != pinned.CardDigest,
-		PinnedDigest:  pinned.CardDigest,
-		FetchedDigest: digest,
-		ChangedFields: domain.ChangedFields(pinned.Card, fetched.Card),
-		SkillsAdded:   added,
-		SkillsRemoved: removed,
-		FetchedCard:   fetched.Card,
+		Changed:          changed,
+		PinnedDigest:     pinned.CardDigest,
+		FetchedDigest:    digest,
+		ChangedFields:    domain.ChangedFields(pinned.Card, fetched.Card),
+		SkillsAdded:      added,
+		SkillsRemoved:    removed,
+		FetchedCard:      fetched.Card,
+		FetchedSkillScan: scan,
 	}, nil
 }
