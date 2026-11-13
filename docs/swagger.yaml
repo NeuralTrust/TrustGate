@@ -2477,6 +2477,11 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse:
     properties:
+      allowed_destinations:
+        description: AllowedDestinations is omitted when the store allows any host.
+        items:
+          type: string
+        type: array
       allowed_paths:
         items:
           type: string

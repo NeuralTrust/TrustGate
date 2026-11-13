@@ -10808,6 +10808,13 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse": {
             "type": "object",
             "properties": {
+                "allowed_destinations": {
+                    "description": "AllowedDestinations is omitted when the store allows any host.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "allowed_paths": {
                     "type": "array",
                     "items": {
