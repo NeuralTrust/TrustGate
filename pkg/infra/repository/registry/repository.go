@@ -226,6 +226,8 @@ func (r *Repository) PinA2ACard(
 		"bedrock_agentcore":   pinned.BedrockAgentCore,
 		"azure_foundry":       pinned.AzureFoundry,
 		"vertex_agent_engine": pinned.VertexAgentEngine,
+		"agentcore_harness":   pinned.AgentCoreHarness,
+		"databricks_agent":    pinned.Databricks,
 	}
 	locatorBytes, err := json.Marshal(locator)
 	if err != nil {
@@ -242,7 +244,9 @@ func (r *Repository) PinA2ACard(
 		   AND jsonb_strip_nulls(jsonb_build_object(
 		         'bedrock_agentcore', a2a_target->'bedrock_agentcore',
 		         'azure_foundry', a2a_target->'azure_foundry',
-		         'vertex_agent_engine', a2a_target->'vertex_agent_engine'))
+		         'vertex_agent_engine', a2a_target->'vertex_agent_engine',
+		         'agentcore_harness', a2a_target->'agentcore_harness',
+		         'databricks_agent', a2a_target->'databricks_agent'))
 		       = jsonb_strip_nulls($8::jsonb)`
 	err = r.withGatewayMarkedTx(ctx, gatewayID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID, cardBytes, updatedAt, fromDigest, pinned.CardURL, string(pinned.ProtocolVersion), locatorBytes)

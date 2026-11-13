@@ -132,6 +132,10 @@ type A2AAttrs struct {
 	IdentityMode        string
 	IdentitySubjectKind string
 	RPCErrorCode        int
+	// InputTokens and OutputTokens are what an agent reports it used, when it
+	// does (an AgentCore harness, a Databricks agent).
+	InputTokens  int
+	OutputTokens int
 }
 
 // MCPPolicyScope records how the scoped policies of a consumer applied to one

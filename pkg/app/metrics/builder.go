@@ -485,6 +485,11 @@ func (b *Builder) buildA2A(
 	evt.Kind = events.KindA2A
 	a2a, upstreamMs := foldA2ASpans(requestTrace)
 	evt.A2A = a2a
+	// Tokens an agent reports go where an LLM call's do, so usage and the
+	// dashboards read them the same way.
+	if a2a != nil && a2a.InputTokens+a2a.OutputTokens > 0 {
+		evt.Usage = &events.Usage{PromptTokens: a2a.InputTokens, CompletionTokens: a2a.OutputTokens, TotalTokens: a2a.InputTokens + a2a.OutputTokens}
+	}
 
 	policies := b.foldPluginSpans(requestTrace)
 	evt.PolicyChain = policies.chain
@@ -500,6 +505,7 @@ func (b *Builder) buildA2A(
 	}
 
 	b.fillRequest(evt, req, nil)
+	evt.Request.Preview = a2aMessagePreview(evt.Request.Body)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
 	if a2a != nil && a2a.Outcome == a2aOutcomeUpstreamTimeout {

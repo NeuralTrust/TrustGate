@@ -25,18 +25,33 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	infrajwt "github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
 
-const agentIdPIssuer = "https://idp.example.com"
+const (
+	agentIdPIssuer        = "https://idp.example.com"
+	agentPlaygroundSecret = "agent-playground-secret"
+)
+
+func agentPlaygroundToken(t *testing.T, slug string) string {
+	t.Helper()
+	claims := &infrajwt.Claims{UserID: "user-1", Purpose: infrajwt.PurposePlayground, ConsumerSlug: slug}
+	claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(agentPlaygroundSecret))
+	require.NoError(t, err)
+	return token
+}
 
 type keyFinder map[string]*authdomain.Auth
 
@@ -71,11 +86,12 @@ type agentFixture struct {
 	mtls     *fakeMTLSValidator
 	got      *identity.Principal
 	consumer *appconsumer.RoutableConsumer
+	auth     *appauth.AuthContext
 }
 
 func newAgentFixture(t *testing.T) *agentFixture {
 	t.Helper()
-	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	appKey, err := authdomain.NewAPIKeyAuth(gw.ID, "bot-key", true, nil)
 	require.NoError(t, err)
 	otherKey, err := authdomain.NewAPIKeyAuth(gw.ID, "other-key", true, nil)
@@ -118,12 +134,15 @@ func newAgentFixture(t *testing.T) *agentFixture {
 		[]string{"0.0.0.0/0", "::/0"},
 	)
 	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{{Consumer: bot}, {Consumer: other}, {Consumer: tools}})
-	m := middleware.NewAgentAuthMiddleware(resolver, stubDataFinder{data: data}, stubGatewayFinder{gw: gw})
+	playground := apiresolver.NewPlaygroundIdentityResolver(
+		infrajwt.NewPlaygroundVerifier(&config.ServerConfig{SecretKey: agentPlaygroundSecret}, nil))
+	m := middleware.NewAgentAuthMiddleware(resolver, stubDataFinder{data: data}, stubGatewayFinder{gw: gw}, playground)
 
 	f.app = fiber.New()
 	f.app.Post("/:consumer/agents/:agent", m.Middleware(), func(c *fiber.Ctx) error {
 		f.got = identity.PrincipalFromContext(c.UserContext())
 		f.consumer, _ = appconsumer.ConsumerFromContext(c.UserContext())
+		f.auth, _ = appauth.AuthContextFromContext(c.UserContext())
 		return c.SendStatus(fiber.StatusOK)
 	})
 	return f
@@ -131,7 +150,7 @@ func newAgentFixture(t *testing.T) *agentFixture {
 
 func (f *agentFixture) call(t *testing.T, path string, headers map[string]string) int {
 	t.Helper()
-	f.got, f.consumer = nil, nil
+	f.got, f.consumer, f.auth = nil, nil, nil
 	req := httptest.NewRequest(fiber.MethodPost, path, nil)
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -232,4 +251,23 @@ func TestAgentAuth_RefusesMCPSessionTokens(t *testing.T) {
 	_, signer := sessionVerifier(t)
 	token := mintSession(t, signer, jwt.MapClaims{"sub": "u", "authid": f.appKey.ID.String(), "token_use": "mcp_session"})
 	require.Equal(t, fiber.StatusUnauthorized, f.call(t, "/bot/agents/research", map[string]string{"Authorization": "Bearer " + token}))
+}
+
+// The console's playground calls an agent with a playground token bound to the
+// application: it runs as the console user inside it, and is marked as a
+// playground call. A token for another application, or a forged one, is refused.
+func TestAgentAuth_PlaygroundToken(t *testing.T) {
+	f := newAgentFixture(t)
+
+	headers := func(token string) map[string]string {
+		return map[string]string{apiresolver.HeaderPlaygroundToken: token, apiresolver.HeaderGatewaySlug: "acme"}
+	}
+	require.Equal(t, fiber.StatusOK, f.call(t, "/bot/agents/a-1", headers(agentPlaygroundToken(t, "bot"))))
+	require.Equal(t, "bot", f.consumer.Consumer.Slug)
+	require.Equal(t, consumerdomain.EndUserSubject(f.bot.ID, "user-1"), f.got.Subject)
+	require.Equal(t, appauth.MethodPlayground, f.auth.Method)
+
+	require.Equal(t, fiber.StatusForbidden, f.call(t, "/bot/agents/a-1", headers(agentPlaygroundToken(t, "other"))))
+	require.Equal(t, fiber.StatusUnauthorized, f.call(t, "/bot/agents/a-1", headers("forged")))
+	require.Equal(t, fiber.StatusNotFound, f.call(t, "/tools/agents/a-1", headers(agentPlaygroundToken(t, "tools"))))
 }

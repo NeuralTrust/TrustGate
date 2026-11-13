@@ -21,18 +21,20 @@ import (
 // A2ATargetRequest is the agent an A2A registry points at. The pinned card
 // fields are read-only and never taken from a request.
 type A2ATargetRequest struct {
-	Provider          string                   `json:"provider,omitempty" enums:"generic,bedrock_agentcore,azure_foundry,vertex_agent_engine"`
-	CardURL           string                   `json:"card_url,omitempty"`
-	ProtocolVersion   string                   `json:"protocol_version,omitempty" enums:"0.3,1.0"`
-	URL               string                   `json:"url,omitempty"`
-	BedrockAgentCore  *domain.AgentCoreLocator `json:"bedrock_agentcore,omitempty"`
-	AzureFoundry      *domain.FoundryLocator   `json:"azure_foundry,omitempty"`
-	VertexAgentEngine *domain.VertexLocator    `json:"vertex_agent_engine,omitempty"`
-	Headers           map[string]string        `json:"headers,omitempty"`
-	Auth              *MCPAuthRequest          `json:"auth,omitempty"`
-	CloudAuth         *A2ACloudAuthRequest     `json:"cloud_auth,omitempty"`
-	CardAuth          string                   `json:"card_auth,omitempty" enums:"same,client_credentials,cloud"`
-	AllowedMethods    []string                 `json:"allowed_methods,omitempty"`
+	Provider          string                    `json:"provider,omitempty" enums:"generic,bedrock_agentcore,azure_foundry,vertex_agent_engine,agentcore_harness,databricks_agent"`
+	CardURL           string                    `json:"card_url,omitempty"`
+	ProtocolVersion   string                    `json:"protocol_version,omitempty" enums:"0.3,1.0"`
+	URL               string                    `json:"url,omitempty"`
+	BedrockAgentCore  *domain.AgentCoreLocator  `json:"bedrock_agentcore,omitempty"`
+	AzureFoundry      *domain.FoundryLocator    `json:"azure_foundry,omitempty"`
+	VertexAgentEngine *domain.VertexLocator     `json:"vertex_agent_engine,omitempty"`
+	AgentCoreHarness  *domain.HarnessLocator    `json:"agentcore_harness,omitempty"`
+	Databricks        *domain.DatabricksLocator `json:"databricks_agent,omitempty"`
+	Headers           map[string]string         `json:"headers,omitempty"`
+	Auth              *MCPAuthRequest           `json:"auth,omitempty"`
+	CloudAuth         *A2ACloudAuthRequest      `json:"cloud_auth,omitempty"`
+	CardAuth          string                    `json:"card_auth,omitempty" enums:"same,client_credentials,cloud"`
+	AllowedMethods    []string                  `json:"allowed_methods,omitempty"`
 }
 
 func (t *A2ATargetRequest) ToDomain() *domain.A2ATarget {
@@ -47,6 +49,8 @@ func (t *A2ATargetRequest) ToDomain() *domain.A2ATarget {
 		BedrockAgentCore:  t.BedrockAgentCore,
 		AzureFoundry:      t.AzureFoundry,
 		VertexAgentEngine: t.VertexAgentEngine,
+		AgentCoreHarness:  t.AgentCoreHarness,
+		Databricks:        t.Databricks,
 		Headers:           t.Headers,
 		Auth:              t.Auth.ToDomain(),
 		CloudAuth:         t.CloudAuth.toDomain(),

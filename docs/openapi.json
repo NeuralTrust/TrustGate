@@ -13934,106 +13934,6 @@
                     }
                 }
             },
-            "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer": {
-                "type": "object",
-                "properties": {
-                    "auth_headers": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPAuthHeader"
-                        }
-                    },
-                    "auth_hint": {
-                        "description": "none | static | oauth",
-                        "type": "string"
-                    },
-                    "auth_methods": {
-                        "description": "AuthMethods lists every auth method an operator may pick when installing\nthis server: \"static\" (API key / header) and/or \"oauth\". It is the\nauthoritative declaration the UI uses to decide whether to offer a choice\nof auth (both present) or a single fixed method. AuthHint stays the coarse\ndefault/prefill; AuthMethods is the full menu. Empty ⇒ derive from AuthHint.",
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "capabilities": {
-                        "description": "Capabilities are the three “What you can do” lines the Employee Portal\nshows. Seeded when curated; otherwise derived from Tools at catalog load.",
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "category": {
-                        "type": "string"
-                    },
-                    "code": {
-                        "type": "string"
-                    },
-                    "config_guide": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide"
-                    },
-                    "description": {
-                        "type": "string"
-                    },
-                    "display_name": {
-                        "type": "string"
-                    },
-                    "metadata": {
-                        "type": "object",
-                        "additionalProperties": {}
-                    },
-                    "oauth": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
-                    },
-                    "platform_client": {
-                        "type": "boolean"
-                    },
-                    "relevance": {
-                        "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
-                        "type": "integer"
-                    },
-                    "requires_auth": {
-                        "type": "boolean"
-                    },
-                    "requires_config": {
-                        "description": "RequiresConfig reports whether the operator must supply input before the\nserver can be connected (a required URL variable, a static secret, or a\nmanual/tenant OAuth client). When false the UI can connect it by default\nwithout a configuration step: public servers, and OAuth servers whose\nclient self-registers (registration \"auto\") where the user simply logs in\nat runtime.",
-                        "type": "boolean"
-                    },
-                    "scopes": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "self_service": {
-                        "description": "SelfService reports whether a user can install this server from the Store\nwith nothing configured by an admin: OAuth with dynamic client registration\nor a platform-held client, a public server, or a static server whose only\ncredential is a per-user secret URL variable. False means an admin must\nconnect an instance first (a shared API key, a manual OAuth client, or a\nclient_credentials grant).\n\nDeclared per entry in the catalog seed as self_service, not derived: the\nanswer is a property of the server, and reading it off the entry is how it\nstays legible. The one thing that moves it is a platform-held OAuth\nclient, which the seed cannot know (see applyPlatformOAuth). The zero\nvalue is the conservative answer.",
-                        "type": "boolean"
-                    },
-                    "source": {
-                        "type": "string"
-                    },
-                    "tools": {
-                        "description": "Tools is a snapshot of the server's advertised tools, captured by an\nunauthenticated tools/list where the server allows it. It is a preview for\nthe catalog UI; the authoritative per-connection tool set is discovered at\nruntime by the gateway's introspector (and may be tenant/user-specific).\nEmpty when the server requires auth to list tools.",
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPTool"
-                        }
-                    },
-                    "transport": {
-                        "type": "string"
-                    },
-                    "url": {
-                        "type": "string"
-                    },
-                    "url_variables": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariable"
-                        }
-                    },
-                    "vendor": {
-                        "type": "string"
-                    }
-                }
-            },
             "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPTool": {
                 "type": "object",
                 "properties": {
@@ -14889,8 +14789,112 @@
                     "mcp_servers": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer"
+                            "$ref": "#/components/schemas/pkg_api_handler_http_catalog.MCPServerListing"
                         }
+                    }
+                }
+            },
+            "pkg_api_handler_http_catalog.MCPServerListing": {
+                "type": "object",
+                "properties": {
+                    "auth_headers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPAuthHeader"
+                        }
+                    },
+                    "auth_hint": {
+                        "description": "none | static | oauth",
+                        "type": "string"
+                    },
+                    "auth_methods": {
+                        "description": "AuthMethods lists every auth method an operator may pick when installing\nthis server: \"static\" (API key / header) and/or \"oauth\". It is the\nauthoritative declaration the UI uses to decide whether to offer a choice\nof auth (both present) or a single fixed method. AuthHint stays the coarse\ndefault/prefill; AuthMethods is the full menu. Empty ⇒ derive from AuthHint.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "capabilities": {
+                        "description": "Capabilities are the three “What you can do” lines the Employee Portal\nshows. Seeded when curated; otherwise derived from Tools at catalog load.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "category": {
+                        "type": "string"
+                    },
+                    "code": {
+                        "type": "string"
+                    },
+                    "config_guide": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "display_name": {
+                        "type": "string"
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "oauth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
+                    },
+                    "oauth_redirect_uri": {
+                        "description": "OAuthRedirectURI is the redirect URI the gateway sends when a user\nconnects this server, for an admin registering a manual OAuth client.\nOmitted when the server has no user redirect, or when this deployment\nsets no fixed connect origin (MCP_OAUTH_PUBLIC_BASE_URL).",
+                        "type": "string"
+                    },
+                    "platform_client": {
+                        "type": "boolean"
+                    },
+                    "relevance": {
+                        "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
+                        "type": "integer"
+                    },
+                    "requires_auth": {
+                        "type": "boolean"
+                    },
+                    "requires_config": {
+                        "description": "RequiresConfig reports whether the operator must supply input before the\nserver can be connected (a required URL variable, a static secret, or a\nmanual/tenant OAuth client). When false the UI can connect it by default\nwithout a configuration step: public servers, and OAuth servers whose\nclient self-registers (registration \"auto\") where the user simply logs in\nat runtime.",
+                        "type": "boolean"
+                    },
+                    "scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "self_service": {
+                        "description": "SelfService reports whether a user can install this server from the Store\nwith nothing configured by an admin: OAuth with dynamic client registration\nor a platform-held client, a public server, or a static server whose only\ncredential is a per-user secret URL variable. False means an admin must\nconnect an instance first (a shared API key, a manual OAuth client, or a\nclient_credentials grant).\n\nDeclared per entry in the catalog seed as self_service, not derived: the\nanswer is a property of the server, and reading it off the entry is how it\nstays legible. The one thing that moves it is a platform-held OAuth\nclient, which the seed cannot know (see applyPlatformOAuth). The zero\nvalue is the conservative answer.",
+                        "type": "boolean"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "tools": {
+                        "description": "Tools is a snapshot of the server's advertised tools, captured by an\nunauthenticated tools/list where the server allows it. It is a preview for\nthe catalog UI; the authoritative per-connection tool set is discovered at\nruntime by the gateway's introspector (and may be tenant/user-specific).\nEmpty when the server requires auth to list tools.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPTool"
+                        }
+                    },
+                    "transport": {
+                        "type": "string"
+                    },
+                    "url": {
+                        "type": "string"
+                    },
+                    "url_variables": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariable"
+                        }
+                    },
+                    "vendor": {
+                        "type": "string"
                     }
                 }
             },

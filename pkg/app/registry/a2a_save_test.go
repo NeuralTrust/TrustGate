@@ -16,6 +16,7 @@ package registry_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -44,6 +45,7 @@ func anonymousCards(t *testing.T) *appmocks.CardCredentials {
 	t.Helper()
 	creds := appmocks.NewCardCredentials(t)
 	creds.EXPECT().Authorizer(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+	creds.EXPECT().CallAuthorizer(mock.Anything, mock.Anything).Return(nil, true, nil).Maybe()
 	return creds
 }
 
@@ -59,6 +61,7 @@ func TestCreatorA2APinsTheCard(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	fetcher := servingCard(t, "https://travel.example.com", "https://travel.example.com/.well-known/agent.json", agentCard10)
+	fetcher.EXPECT().Probe(mock.Anything, "https://travel.example.com/a2a", domain.A2AVersion10, mock.Anything).Return(nil).Once()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil,
@@ -75,6 +78,43 @@ func TestCreatorA2APinsTheCard(t *testing.T) {
 	assert.Equal(t, domain.MCPAuthModeNone, b.A2ATarget.Auth.Mode)
 	assert.NotEmpty(t, b.A2ATarget.CardDigest)
 	assert.False(t, b.A2ATarget.CardPinnedAt.IsZero())
+}
+
+// A card on a website that is not an agent: its endpoint does not answer
+// A2A, and the agent is not saved.
+func TestCreatorA2ARefusesAnEndpointThatIsNotAnAgent(t *testing.T) {
+	t.Parallel()
+	fetcher := servingCard(t, "https://shop.example.com", "https://shop.example.com/.well-known/agent-card.json", agentCard03)
+	fetcher.EXPECT().Probe(mock.Anything, "https://travel.example.com/rpc", domain.A2AVersion03, mock.Anything).
+		Return(fmt.Errorf("%w: https://travel.example.com/rpc did not answer A2A JSON-RPC: HTTP 405 (text/html)", domain.ErrAgentEndpointUnavailable)).Once()
+	creator := appregistry.NewCreator(repomocks.NewRepository(t), newCacheManager(), newTestLogger(), nil, nil,
+		appregistry.WithAgentCards(fetcher, anonymousCards(t)))
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: ids.New[ids.GatewayKind](), Name: "Shop", Type: domain.TypeA2A,
+		A2ATarget: &domain.A2ATarget{CardURL: "https://shop.example.com"},
+	})
+	require.ErrorIs(t, err, domain.ErrAgentEndpointUnavailable)
+	assert.Contains(t, err.Error(), "HTTP 405")
+}
+
+// A credential only a user's request carries cannot ask the endpoint at
+// registration: the agent is saved without the check.
+func TestCreatorA2ASkipsTheCheckWithoutTheCallsCredential(t *testing.T) {
+	t.Parallel()
+	fetcher := servingCard(t, "https://travel.example.com", "https://travel.example.com/.well-known/agent.json", agentCard10)
+	creds := appmocks.NewCardCredentials(t)
+	creds.EXPECT().Authorizer(mock.Anything, mock.Anything).Return(nil, nil).Once()
+	creds.EXPECT().CallAuthorizer(mock.Anything, mock.Anything).Return(nil, false, nil).Once()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil, appregistry.WithAgentCards(fetcher, creds))
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: ids.New[ids.GatewayKind](), Name: "Travel planner", Type: domain.TypeA2A,
+		A2ATarget: &domain.A2ATarget{CardURL: "https://travel.example.com"},
+	})
+	require.NoError(t, err)
 }
 
 func TestCreatorA2ARefusesAVersionTheCardDoesNotOffer(t *testing.T) {
@@ -184,6 +224,7 @@ func TestUpdaterA2ARepinsWhenTheCardURLChanges(t *testing.T) {
 	existing := pinnedA2ARegistry(t)
 	repo, publisher := expectSavedUpdate(t, existing)
 	fetcher := servingCard(t, "https://planner.example.com", "https://planner.example.com/.well-known/agent-card.json", agentCard03)
+	fetcher.EXPECT().Probe(mock.Anything, "https://travel.example.com/rpc", domain.A2AVersion03, mock.Anything).Return(nil).Once()
 	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil,
 		appregistry.WithAgentCards(fetcher, anonymousCards(t)))
 
