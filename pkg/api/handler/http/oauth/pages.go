@@ -53,6 +53,7 @@ type connectPageView struct {
 	Providers    []providerView
 	ResumeURL    template.URL
 	Owner        ownerView
+	UserHeaders  []appoauth.UserHeaderServer
 }
 
 // ownerView is who an account connected from a page is linked to: Name is
@@ -115,7 +116,9 @@ func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, fl
 	connectPageReferrerPolicy(c)
 	// A ticket minted for one server (e.g. a Store install) shows the focused
 	// single-server page instead of the full provider grid.
-	if strings.TrimSpace(page.Code) != "" {
+	// A server whose only per-person credential is its header keys has no
+	// account row to focus on: the page lists the keys instead.
+	if strings.TrimSpace(page.Code) != "" && (len(page.UserHeaders) == 0 || len(providerRowsForPage(page)) > 0) {
 		return renderSingleConnectPage(c, page, ticket, flash, justConnected, catalog)
 	}
 	return renderHTML(c, connectPageTmpl, connectPageView{
@@ -125,6 +128,7 @@ func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, fl
 		Providers:    decorateProviders(catalog, page.Providers),
 		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
 		Owner:        ownerOf(page.Principal),
+		UserHeaders:  page.UserHeaders,
 	})
 }
 
@@ -185,6 +189,7 @@ type singleConnectView struct {
 	Items       []string
 	ItemsMore   int
 	Owner       ownerView
+	UserHeaders []appoauth.UserHeaderServer
 }
 
 // providerRowsForPage narrows a page's rows to the server it is scoped to: the
@@ -214,11 +219,12 @@ func providerRowsForPage(page *appoauth.ConnectPage) []appoauth.ProviderStatus {
 // no connection (or is not on this consumer) and the page says so.
 func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, justConnected bool, catalog appcatalog.MCPServerCatalog) error {
 	view := singleConnectView{
-		Ticket:    ticket,
-		Flash:     flash,
-		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
-		Owner:     ownerOf(page.Principal),
-		AppName:   page.ClientName,
+		Ticket:      ticket,
+		Flash:       flash,
+		ResumeURL:   template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
+		Owner:       ownerOf(page.Principal),
+		AppName:     page.ClientName,
+		UserHeaders: page.UserHeaders,
 	}
 	var granted []string
 	for _, p := range providerRowsForPage(page) {
