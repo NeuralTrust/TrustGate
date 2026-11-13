@@ -97,7 +97,10 @@ const (
 	SourceConsumers  = "consumers"
 	SourcePolicies   = "policies"
 	SourceAuths      = "auths"
-	SourceGateway    = "gateway"
+	// SourceAuthCredentials is the identity providers the credential finder
+	// caches apart from the gateway's runtime data.
+	SourceAuthCredentials = "auth_credentials"
+	SourceGateway         = "gateway"
 )
 
 // GatewayFinder reads a gateway's entitlements for the eligibility check.

@@ -57,6 +57,15 @@ func IsRef(s string) bool {
 	return len(s) >= len(Scheme) && strings.EqualFold(s[:len(Scheme)], Scheme)
 }
 
+// Literal returns v, or "" when v is shaped like a reference: a reference
+// that reaches a sender unresolved must never be sent as the credential.
+func Literal(v string) string {
+	if IsRef(v) {
+		return ""
+	}
+	return v
+}
+
 // ContainsRef reports whether s contains Scheme anywhere, in any letter case,
 // such as "Bearer secret://…". Only a whole value can be a reference, so at a
 // declared location such a value is refused rather than stored as a literal

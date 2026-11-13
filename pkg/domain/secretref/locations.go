@@ -27,6 +27,7 @@ const (
 	// declares its own as settings paths (CredentialPaths), so they are
 	// "settings." followed by one of those paths.
 	EntityPolicy Entity = "policy"
+	EntityAuth   Entity = "auth"
 )
 
 // Wildcard matches any single key of a JSON object, such as a header name.
@@ -88,6 +89,8 @@ var Locations = []Location{
 	loc(EntityRegistry, "a2a_target.headers.*"),
 	loc(EntityConsumer, "lb_config.embedding_config.auth.api_key"),
 	loc(EntityConsumer, "lb_config.embedding_config.auth.header_value"),
+	loc(EntityAuth, "config.oauth2.client_secret"),
+	loc(EntityAuth, "config.oauth2.exchange_client_secret"),
 }
 
 // IsLocation reports whether path of entity is a declared location.

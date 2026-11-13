@@ -111,16 +111,22 @@ func NewDataFinder(
 }
 
 // InvalidateGatewayData returns a function that drops, on this replica only,
-// everything built from a gateway's registries: its runtime data and its
-// load balancers, which hold the registries they route to. Deleting bumps
+// everything built from a gateway's secret-bearing entities: its runtime
+// data, its load balancers, which hold the registries they route to, and the
+// identity providers the credential finder caches. Deleting bumps
 // each map's generation, so a load already in flight does not write the old
 // data back.
 func InvalidateGatewayData(manager *cache.TTLMapManager) func(ids.GatewayID) {
 	data := manager.GetTTLMap(cache.ConsumerDataTTLName)
 	balancers := manager.GetTTLMap(cache.LoadBalancerTTLName)
+	auths := manager.GetTTLMap(cache.AuthTTLName)
 	return func(gatewayID ids.GatewayID) {
 		data.Delete(gatewayID.String())
 		balancers.DeleteByPrefix(gatewayID.String() + ":")
+		// The credential finder caches identity providers apart from the
+		// gateway's data, keyed by internal names: dropping them all is what
+		// the gateway-data invalidation event does too.
+		auths.Clear()
 	}
 }
 
@@ -454,11 +460,17 @@ func (f *dataFinder) loadAuths(
 ) (map[ids.AuthID]*authdomain.Auth, error) {
 	idList := uniqueIDs(consumers, slugAuthIDs)
 	if len(idList) == 0 {
+		if f.materializer != nil {
+			f.materializer.Values(ctx, gatewayID, appsecretref.SourceAuths, nil)
+		}
 		return map[ids.AuthID]*authdomain.Auth{}, nil
 	}
 	found, err := f.authRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return nil, err
+	}
+	if f.materializer != nil {
+		found = appsecretref.GatewayAuths(ctx, f.materializer, gatewayID, appsecretref.SourceAuths, found)
 	}
 	byID := make(map[ids.AuthID]*authdomain.Auth, len(found))
 	for _, a := range found {

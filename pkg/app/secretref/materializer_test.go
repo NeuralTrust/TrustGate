@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -601,5 +603,27 @@ func TestGatewayPoliciesResolvePluginCredentials(t *testing.T) {
 	}
 	if out[0].Settings["guardrail_id"] != "g-1" {
 		t.Fatal("other settings are kept")
+	}
+}
+
+func TestAuthAccessorsMatchDeclaredLocations(t *testing.T) {
+	t.Parallel()
+	a := &auth.Auth{Config: auth.Config{OAuth2: &auth.OAuth2Config{ClientSecret: refStr("c"), ExchangeClientSecret: refStr("x")}}}
+	covered := map[string]bool{}
+	for _, u := range AuthRefs(a).Uses {
+		if !domain.IsLocation(domain.EntityAuth, u.Path) {
+			t.Errorf("accessor path %v is not a declared location", u.Path)
+		}
+		covered[strings.Join(u.Path, ".")] = true
+	}
+	for _, l := range domain.Locations {
+		if l.Entity == domain.EntityAuth && !covered[strings.Join(l.Path, ".")] {
+			t.Errorf("declared location %v has no accessor", l.Path)
+		}
+	}
+	out := GatewayAuths(context.Background(), newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: &markerResolver{}}),
+		ids.New[ids.GatewayKind](), SourceAuths, []*auth.Auth{a})
+	if out[0] == a || out[0].Config.OAuth2.ClientSecret == refStr("c") || a.Config.OAuth2.ClientSecret != refStr("c") {
+		t.Fatal("the copy carries the resolved value and the input is untouched")
 	}
 }

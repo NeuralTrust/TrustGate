@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 
 	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
@@ -297,6 +299,27 @@ func (p secretRefsParams) consumerOptions() []appconsumer.SaveOption {
 func (p secretRefsParams) policyOptions() []apppolicy.SaveOption {
 	if v := p.entity(); v != nil {
 		return []apppolicy.SaveOption{apppolicy.WithSecretRefValidator(v)}
+	}
+	return nil
+}
+
+// secretValuesParams is the plane's materializer, for readers outside the
+// gateway's runtime data.
+type secretValuesParams struct {
+	dig.In
+	Materializer appsecretref.Materializer `optional:"true"`
+}
+
+func (p secretValuesParams) credentialFinderOptions() []appauth.CredentialFinderOption {
+	if p.Materializer == nil {
+		return nil
+	}
+	return []appauth.CredentialFinderOption{appauth.WithSecretValues(p.Materializer)}
+}
+
+func (p secretRefsParams) authOptions() []appauth.SaveOption {
+	if v := p.entity(); v != nil {
+		return []appauth.SaveOption{appauth.WithSecretRefValidator(v)}
 	}
 	return nil
 }
