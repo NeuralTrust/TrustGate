@@ -24,9 +24,13 @@ import (
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
 
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
+	if reg.CredentialUnavailable() {
+		return Target{}, registrydomain.ErrSecretUnavailable
+	}
 	t := targetFor(ctx, rc, reg)
 	if err := c.resolveURLVariables(ctx, rc, reg, &t); err != nil {
 		return Target{}, err
@@ -112,15 +116,23 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	t := reg.MCPTarget
 	headers := make(map[string]string, len(t.Headers)+1)
 	for k, v := range t.Headers {
+		if secretref.IsRef(v) {
+			continue
+		}
 		headers[k] = v
 	}
-	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
+	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic && !secretref.IsRef(t.Auth.Value) {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
 	target := Target{
 		URL:      t.URL,
 		Headers:  headers,
 		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+	}
+	if digest := reg.SecretDigest(); digest != "" {
+		// A referenced value can rotate without a registry write; the
+		// fingerprint makes the dialers open a connection with the new one.
+		target.Revision += ":s:" + digest
 	}
 	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
 		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}

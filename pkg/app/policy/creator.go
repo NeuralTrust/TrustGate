@@ -19,6 +19,8 @@ import (
 	"errors"
 	"log/slog"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -58,6 +60,7 @@ type creator struct {
 	memoryCache  *cache.TTLMap
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	secretRefs   appsecretref.EntityValidator
 }
 
 func NewCreator(
@@ -68,8 +71,10 @@ func NewCreator(
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	opts ...SaveOption,
 ) Creator {
 	return &creator{
+		secretRefs:   applySaveOptions(opts).secretRefs,
 		repo:         repo,
 		levels:       levels,
 		registryRepo: registryRepo,
@@ -103,11 +108,18 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	if err := validateMCPScope(ctx, c.registryRepo, c.registry, in.GatewayID, in.Slug, p.MCPScope); err != nil {
 		return nil, err
 	}
+	audit := func() {}
+	if c.secretRefs != nil {
+		if audit, err = c.secretRefs.ValidateEntity(ctx, SecretRefs(c.registry, p), nil); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.levels.Check(ctx, p, func(ctx context.Context) error {
 		return c.repo.Save(ctx, p)
 	}); err != nil {
 		return nil, err
 	}
+	audit()
 	c.memoryCache.Set(p.ID.String(), p)
 	if c.signaler != nil {
 		c.signaler.Signal(ctx)

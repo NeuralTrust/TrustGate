@@ -300,3 +300,24 @@ func TestNewPluginRegistry_StreamInspectorsRefuseANewStreamingOptOut(t *testing.
 		assert.NoError(t, reg.ValidateSettingsWrite(slug, withEnabled(base(), true), nil), slug)
 	}
 }
+
+// TestCredentialPluginsSayWhereTheirCredentialsGo fails when a plugin that
+// takes credentials does not tell where it sends them: a store with allowed
+// destinations would refuse every reference in its policies.
+func TestCredentialPluginsSayWhereTheirCredentialsGo(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	checked := 0
+	for _, name := range reg.Names() {
+		p, _ := reg.Get(name)
+		if _, ok := p.(appplugins.CredentialSettings); !ok {
+			continue
+		}
+		checked++
+		if _, ok := p.(appplugins.CredentialHosts); !ok {
+			t.Errorf("plugin %q takes credentials but does not implement CredentialHosts", name)
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("checked %d credential plugins, want every registered one", checked)
+	}
+}

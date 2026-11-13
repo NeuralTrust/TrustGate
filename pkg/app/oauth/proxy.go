@@ -28,6 +28,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -344,8 +346,8 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	form.Set("redirect_uri", baseURL+CallbackPath)
 	form.Set("client_id", cfg.ClientID)
 	form.Set("code_verifier", pending.CodeVerifier)
-	if cfg.ClientSecret != "" {
-		form.Set("client_secret", cfg.ClientSecret)
+	if secret := secretref.Literal(cfg.ClientSecret); secret != "" {
+		form.Set("client_secret", secret)
 	}
 	token, err := p.idp.tokenCall(ctx, endpoints.token, form)
 	if err != nil {
@@ -965,8 +967,8 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", req.RefreshToken)
 	form.Set("client_id", cfg.ClientID)
-	if cfg.ClientSecret != "" {
-		form.Set("client_secret", cfg.ClientSecret)
+	if secret := secretref.Literal(cfg.ClientSecret); secret != "" {
+		form.Set("client_secret", secret)
 	}
 	if scope := upstreamScopes(cfg, ""); scope != "" {
 		form.Set("scope", scope)

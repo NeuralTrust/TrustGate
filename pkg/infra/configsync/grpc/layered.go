@@ -57,6 +57,9 @@ func (s *Service) currentNotice(scope string, layered bool) (notice, bool) {
 // GetManifest returns the caller's layered manifest, or not_modified when its
 // applied version is current. It answers Unimplemented while no layered
 // snapshot is published, which a data plane treats as "pull the single blob".
+// Like GetSnapshot, it refuses a manifest whose fragments hold secret
+// references to a request without accepts_secret_refs. GetFragments needs no
+// check of its own: it serves only digests of manifests of the caller's scope.
 func (s *Service) GetManifest(ctx context.Context, req *snapshotpb.GetManifestRequest) (*snapshotpb.Manifest, error) {
 	identity, _ := IdentityFromContext(ctx)
 	if s.revoked(identity) {
@@ -66,9 +69,14 @@ func (s *Service) GetManifest(ctx context.Context, req *snapshotpb.GetManifestRe
 	if source == nil {
 		return nil, status.Error(codes.Unimplemented, "layered snapshots are not served")
 	}
-	manifest, ok := source.ManifestFor(ScopeFromContext(ctx))
+	scope := ScopeFromContext(ctx)
+	manifest, ok := source.ManifestFor(scope)
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "no layered snapshot is published")
+	}
+	if !req.GetAcceptsSecretRefs() && s.refs.manifestHasRefs(scope, manifest, source) {
+		s.refs.refused(ctx, "get_manifest", scope, req.GetInstanceId(), manifest.Version)
+		return nil, errSecretRefsUnsupported()
 	}
 	if applied := req.GetAppliedVersion(); applied != "" && applied == manifest.Version {
 		return &snapshotpb.Manifest{Version: manifest.Version, NotModified: true}, nil

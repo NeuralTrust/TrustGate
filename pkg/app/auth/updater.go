@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -53,6 +55,7 @@ type updater struct {
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
 	now          func() time.Time
+	secretRefs   appsecretref.EntityValidator
 }
 
 func NewUpdater(
@@ -63,8 +66,10 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	now func() time.Time,
+	opts ...SaveOption,
 ) Updater {
 	return &updater{
+		secretRefs:   applySaveOptions(opts).secretRefs,
 		repo:         repo,
 		consumerRepo: consumerRepo,
 		memoryCache:  manager.GetTTLMap(cache.AuthTTLName),
@@ -89,6 +94,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	}
 	previousType := existing.Type
 	previousEnabled := existing.Enabled
+	stored := appsecretref.AuthRefs(existing).Stored()
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -127,9 +133,16 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 			return nil, err
 		}
 	}
+	audit := func() {}
+	if u.secretRefs != nil {
+		if audit, err = u.secretRefs.ValidateEntity(ctx, appsecretref.AuthRefs(existing), stored); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
+	audit()
 	u.memoryCache.Set(existing.ID.String(), existing)
 	if existing.KeyHash != "" {
 		u.keyCache.Set(existing.KeyHash, existing)
