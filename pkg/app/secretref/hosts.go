@@ -60,7 +60,7 @@ func allOrNone(raws ...string) []string {
 // llmUpstream is the host an LLM target calls: its base_url, or the
 // provider's own.
 func llmUpstream(t *registry.LLMTarget) string {
-	if v, ok := t.ProviderOptions["base_url"].(string); ok && strings.TrimSpace(v) != "" {
+	if v, ok := t.ProviderOptions["base_url"].(string); ok && strings.TrimSpace(v) != "" && provider.HonorsBaseURL(t.Provider) {
 		return v
 	}
 	switch t.Provider {

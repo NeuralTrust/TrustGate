@@ -168,7 +168,7 @@ func refHealthToProto(h secretstore.RefHealth) *snapshotpb.SecretRefHealth {
 	for _, o := range h.Outcomes {
 		out.Outcomes = append(out.Outcomes, &snapshotpb.SecretRefOutcome{
 			GatewayId: o.GatewayID.String(), Entity: o.Entity, Id: o.ID, Field: o.Field,
-			Store: o.Store, Path: o.Path, ErrorClass: string(o.Class),
+			Reference: o.Reference, Store: o.Store, Path: o.Path, ErrorClass: string(o.Class),
 		})
 	}
 	return out
@@ -194,6 +194,7 @@ func refHealthFromProto(in *snapshotpb.SecretRefHealth) secretstore.RefHealth {
 			Entity:    truncateUTF8(o.GetEntity(), maxHeartbeatField),
 			ID:        truncateUTF8(o.GetId(), maxHeartbeatField),
 			Field:     truncateUTF8(o.GetField(), maxHeartbeatField),
+			Reference: truncateUTF8(o.GetReference(), maxHeartbeatURL),
 			Store:     truncateUTF8(o.GetStore(), maxHeartbeatField),
 			Path:      truncateUTF8(o.GetPath(), maxHeartbeatField),
 			Class:     secretstore.Class(truncateUTF8(o.GetErrorClass(), maxHeartbeatField)),

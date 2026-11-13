@@ -127,7 +127,7 @@ func (s Source) RefState(gw ids.GatewayID, u Usage) (state string, class domain.
 	}
 	state = RefStateNotReported
 	for _, h := range s.refs {
-		o, ok := h.Find(gw, u.Entity, u.ID, u.Field, ref.Store, ref.Path)
+		o, ok := h.Find(gw, u.Entity, u.ID, u.Field, ref.String())
 		if !ok {
 			continue
 		}

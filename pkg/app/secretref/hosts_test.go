@@ -82,6 +82,15 @@ func TestCredentialHostsFollowTheFieldThatSendsThem(t *testing.T) {
 	if got := llmHosts(vertex, []string{"llm_target", "auth", "gcp_service_account"}); !slices.Equal(got, []string{"europe-west1-aiplatform.googleapis.com", "oauth2.googleapis.com"}) {
 		t.Errorf("vertex hosts = %v", got)
 	}
+	azure := &registry.LLMTarget{Provider: "azure", ProviderOptions: map[string]any{"base_url": "https://api.openai.com"},
+		Auth: &registry.TargetAuth{Azure: &registry.AzureAuth{Endpoint: "https://acme.attacker.example"}}}
+	if got := llmHosts(azure, []string{"llm_target", "auth", "azure", "api_key"}); !slices.Equal(got, []string{"acme.attacker.example"}) {
+		t.Errorf("azure ignores base_url, so its endpoint is the host: %v", got)
+	}
+	bedrock := &registry.LLMTarget{Provider: "bedrock", Auth: &registry.TargetAuth{AWS: &registry.AWSAuth{Region: "x.attacker.example#"}}}
+	if got := llmHosts(bedrock, []string{"llm_target", "auth", "aws", "access_key_id"}); got != nil {
+		t.Errorf("a region that is not a host label must leave no host: %v", got)
+	}
 	if got := llmHosts(&registry.LLMTarget{Provider: "openai_compatible"}, []string{"llm_target", "auth", "api_key", "api_key"}); got != nil {
 		t.Errorf("a target without a base_url has no host, got %v", got)
 	}
@@ -174,10 +183,10 @@ func TestHealthReportsTheLastOutcomeOfEachReference(t *testing.T) {
 		t.Fatalf("health = %+v; want three references, the auth counted once", h)
 	}
 	first := h.Outcomes[0]
-	if first.Class != secretstore.ClassPathNotAllowed || first.ID != bad.ID.String() || first.Entity != "registry" || first.Store != "vault" || first.Path != "prod/key" {
+	if first.Class != secretstore.ClassPathNotAllowed || first.ID != bad.ID.String() || first.Entity != "registry" || first.Store != "vault" || first.Path != "prod/key" || first.Reference != "secret://vault/prod/key" {
 		t.Fatalf("failing outcome = %+v, want it first", first)
 	}
-	if _, ok := h.Find(gw, "registry", good.ID.String(), "llm_target.auth.api_key.api_key", "vault", "ai/openai"); !ok {
+	if _, ok := h.Find(gw, "registry", good.ID.String(), "llm_target.auth.api_key.api_key", "secret://vault/ai/openai#key"); !ok {
 		t.Fatalf("resolved outcome missing: %+v", h.Outcomes)
 	}
 

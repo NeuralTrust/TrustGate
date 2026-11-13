@@ -116,8 +116,8 @@ message SecretRefHealth {
 }
 
 // SecretRefOutcome is one reference: its gateway, entity, id and field, the
-// store and path it names, and the error class that left it empty (empty
-// when it resolved).
+// reference in its canonical form with the store and path it names, and the
+// error class that left it empty (empty when it resolved).
 message SecretRefOutcome {
   string gateway_id = 1;
   string entity = 2;
@@ -126,6 +126,7 @@ message SecretRefOutcome {
   string store = 5;
   string path = 6;
   string error_class = 7;
+  string reference = 8;
 }
 
 // SecretStoreStatus is one secret store a data plane loaded.

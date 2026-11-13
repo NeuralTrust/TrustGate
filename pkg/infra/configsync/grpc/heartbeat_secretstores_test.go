@@ -81,7 +81,7 @@ func TestSecretRefsHeartbeatRoundTripAndCaps(t *testing.T) {
 	}
 	gwID := ids.New[ids.GatewayKind]()
 	in := secretstore.RefHealth{Total: 2, Unresolved: 1, Outcomes: []secretstore.RefOutcome{
-		{GatewayID: gwID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Store: "vault", Path: "ai/k", Class: secretstore.ClassNotFound},
+		{GatewayID: gwID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Reference: "secret://vault/ai/k", Store: "vault", Path: "ai/k", Class: secretstore.ClassNotFound},
 		{GatewayID: gwID, Entity: "auth", ID: "a1", Field: "config.oauth2.client_secret", Store: "vault", Path: "ai/idp"},
 	}}
 	if got := refHealthFromProto(refHealthToProto(in)); !reflect.DeepEqual(got, in) {

@@ -357,10 +357,10 @@ func TestValidatorRefusesADestinationOutsideTheList(t *testing.T) {
 func TestUsageStatesFollowTheReportedOutcome(t *testing.T) {
 	t.Parallel()
 	g := gw(gateway.DataPlaneHybrid)
-	report := func(class domain.Class, path string) dataplane.Instance {
-		in := live("dp-"+path+string(class), true, vault(domain.StateOK))
+	report := func(class domain.Class, reference string) dataplane.Instance {
+		in := live("dp-"+reference+string(class), true, vault(domain.StateOK))
 		in.SecretRefs = domain.RefHealth{Total: 1, Outcomes: []domain.RefOutcome{{
-			GatewayID: g.ID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Store: "corp-vault", Path: path, Class: class,
+			GatewayID: g.ID, Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key", Reference: reference, Class: class,
 		}}}
 		return in
 	}
@@ -371,10 +371,12 @@ func TestUsageStatesFollowTheReportedOutcome(t *testing.T) {
 		state     string
 		class     domain.Class
 	}{
-		"resolved":           {[]dataplane.Instance{report("", "ai/openai")}, RefStateOK, ""},
-		"failing on one":     {[]dataplane.Instance{report("", "ai/openai"), report(domain.ClassAccessDenied, "ai/openai")}, RefStateFailing, domain.ClassAccessDenied},
+		"resolved":           {[]dataplane.Instance{report("", "secret://corp-vault/ai/openai#key")}, RefStateOK, ""},
+		"failing on one":     {[]dataplane.Instance{report("", "secret://corp-vault/ai/openai#key"), report(domain.ClassAccessDenied, "secret://corp-vault/ai/openai#key")}, RefStateFailing, domain.ClassAccessDenied},
 		"never resolved":     {[]dataplane.Instance{live("dp-1", true, vault(domain.StateOK))}, RefStateNotReported, ""},
-		"an older reference": {[]dataplane.Instance{report("", "ai/old")}, RefStateNotReported, ""},
+		"an older reference": {[]dataplane.Instance{report("", "secret://corp-vault/ai/old#key")}, RefStateNotReported, ""},
+		"another field":      {[]dataplane.Instance{report("", "secret://corp-vault/ai/openai#other")}, RefStateNotReported, ""},
+		"another version":    {[]dataplane.Instance{report("", "secret://corp-vault/ai/openai?version=2#key")}, RefStateNotReported, ""},
 	} {
 		src := dataPlaneSource(g.ID, tt.instances, now)
 		uses := map[string][]Usage{"corp-vault": {usage}}
@@ -382,5 +384,28 @@ func TestUsageStatesFollowTheReportedOutcome(t *testing.T) {
 		if got := uses["corp-vault"][0]; got.State != tt.state || got.ErrorClass != string(tt.class) {
 			t.Errorf("%s: state = %q %q, want %q %q", name, got.State, got.ErrorClass, tt.state, tt.class)
 		}
+	}
+}
+
+func TestValidatorRechecksAReferenceSentToANewHost(t *testing.T) {
+	t.Parallel()
+	g := gw(gateway.DataPlaneHybrid)
+	control := Source{Supported: true, Kind: KindControlPlane, Stores: []StoreView{{Name: "corp-vault", Type: domain.TypeHashiCorpVault, AllowedPaths: []string{"ai/"}}}}
+	v := NewRegistryValidator(fixedSource{control}, gateways{g}, nil)
+	agent := func(cardAuth registry.A2ACardAuth) *registry.Registry {
+		r := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: g.ID, Type: registry.TypeA2A, A2ATarget: &registry.A2ATarget{
+			URL: "https://agent.example/a2a", CardURL: "https://cards.example", CardAuth: cardAuth,
+			Auth: &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "X-Key", Value: "secret://corp-vault/ai/agent"},
+		}}
+		r.A2ATarget.Normalize()
+		return r
+	}
+	previous := appsecretref.StoredOf(agent(""))
+	noScope := WithCaller(context.Background(), Caller{})
+	if _, err := v.ValidateRegistry(noScope, agent(""), previous); err != nil {
+		t.Fatalf("an echoed reference needs no scope: %v", err)
+	}
+	if _, err := v.ValidateRegistry(noScope, agent(registry.A2ACardAuthSame), previous); !errors.Is(err, refdomain.ErrMissingScope) {
+		t.Fatalf("sending the stored reference to the card host too must be checked again: %v", err)
 	}
 }

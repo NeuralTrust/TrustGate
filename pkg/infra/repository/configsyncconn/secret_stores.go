@@ -99,6 +99,7 @@ type storedRefOutcome struct {
 	Entity     string        `json:"entity"`
 	ID         string        `json:"id"`
 	Field      string        `json:"field"`
+	Reference  string        `json:"reference,omitempty"`
 	Store      string        `json:"store,omitempty"`
 	Path       string        `json:"path,omitempty"`
 	ErrorClass string        `json:"error_class,omitempty"`
@@ -113,7 +114,7 @@ func encodeSecretRefs(h secretstore.RefHealth) ([]byte, error) {
 	out := storedSecretRefs{Total: h.Total, Unresolved: h.Unresolved}
 	for _, o := range h.Outcomes {
 		out.Outcomes = append(out.Outcomes, storedRefOutcome{
-			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field,
+			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field, Reference: o.Reference,
 			Store: o.Store, Path: o.Path, ErrorClass: string(o.Class),
 		})
 	}
@@ -137,7 +138,7 @@ func decodeSecretRefs(raw []byte) secretstore.RefHealth {
 	out := secretstore.RefHealth{Total: stored.Total, Unresolved: stored.Unresolved}
 	for _, o := range stored.Outcomes {
 		out.Outcomes = append(out.Outcomes, secretstore.RefOutcome{
-			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field,
+			GatewayID: o.GatewayID, Entity: o.Entity, ID: o.ID, Field: o.Field, Reference: o.Reference,
 			Store: o.Store, Path: o.Path, Class: secretstore.Class(o.ErrorClass),
 		})
 	}

@@ -20,14 +20,15 @@ import "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 const MaxRefOutcomes = 200
 
 // RefOutcome is the last outcome of one reference a plane resolved for a
-// gateway's runtime data: where it is (entity, id, field), what it names
-// (store, path) and the error class that left it empty, "" when it resolved.
-// It never holds a value.
+// gateway's runtime data: where it is (entity, id, field), the reference in
+// its canonical form with the store and path it names, and the error class
+// that left it empty, "" when it resolved. It never holds a value.
 type RefOutcome struct {
 	GatewayID ids.GatewayID
 	Entity    string
 	ID        string
 	Field     string
+	Reference string
 	Store     string
 	Path      string
 	Class     Class
@@ -43,11 +44,12 @@ type RefHealth struct {
 	Outcomes   []RefOutcome
 }
 
-// Find returns the outcome of the reference raw-named by store and path at
-// field of entity id in gw, if h holds it.
-func (h RefHealth) Find(gw ids.GatewayID, entity, id, field, store, path string) (RefOutcome, bool) {
+// Find returns the outcome of reference, in its canonical form, at field of
+// entity id in gw, if h holds it. A field that now holds another reference,
+// even one that differs only in its version or field, is not found.
+func (h RefHealth) Find(gw ids.GatewayID, entity, id, field, reference string) (RefOutcome, bool) {
 	for _, o := range h.Outcomes {
-		if o.GatewayID == gw && o.Entity == entity && o.ID == id && o.Field == field && o.Store == store && o.Path == path {
+		if o.GatewayID == gw && o.Entity == entity && o.ID == id && o.Field == field && o.Reference == reference {
 			return o, true
 		}
 	}
