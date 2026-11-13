@@ -55,13 +55,13 @@ func (s resolvingStore) Registries(_ context.Context, _ ids.GatewayID, byID map[
 // acceptRefs and refuseRefs stand in for the write-time validator.
 type acceptRefs struct{}
 
-func (acceptRefs) ValidateRegistry(context.Context, *domain.Registry, []appsecretref.Use) (func(), error) {
+func (acceptRefs) ValidateRegistry(context.Context, *domain.Registry, *appsecretref.Stored) (func(), error) {
 	return func() {}, nil
 }
 
 type refuseRefs struct{}
 
-func (refuseRefs) ValidateRegistry(context.Context, *domain.Registry, []appsecretref.Use) (func(), error) {
+func (refuseRefs) ValidateRegistry(context.Context, *domain.Registry, *appsecretref.Stored) (func(), error) {
 	return nil, refdomain.ErrMissingScope
 }
 

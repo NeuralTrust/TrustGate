@@ -53,7 +53,7 @@ type options struct {
 // SecretRefValidator checks the secret references a registry write holds,
 // against what is already stored at the same fields.
 type SecretRefValidator interface {
-	ValidateRegistry(ctx context.Context, reg *domain.Registry, previous []appsecretref.Use) (func(), error)
+	ValidateRegistry(ctx context.Context, reg *domain.Registry, previous *appsecretref.Stored) (func(), error)
 }
 
 // WithSecretRefValidator checks every secret reference a create or update

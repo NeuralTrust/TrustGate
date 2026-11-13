@@ -189,8 +189,7 @@ func TestValidator(t *testing.T) {
 func TestValidatorAcceptsEchoedReferences(t *testing.T) {
 	t.Parallel()
 	ref := "secret://corp-vault/ai/openai#key"
-	stored := withKey(ref)
-	previous, _ := appsecretref.RegistryReferences(stored)
+	previous := appsecretref.StoredOf(withKey(ref))
 	v := NewRegistryValidator(fixedSource{Source{}}, gateways{gw("")}, nil)
 	if _, err := v.ValidateRegistry(context.Background(), withKey(ref), previous); err != nil {
 		t.Fatalf("an echoed reference must be kept even where references are no longer supported: %v", err)
@@ -207,8 +206,7 @@ func TestValidatorEmbeddedValues(t *testing.T) {
 	if _, err := on.ValidateRegistry(context.Background(), withKey(embedded), nil); !errors.Is(err, refdomain.ErrInvalidReference) {
 		t.Fatalf("a new embedded value: %v", err)
 	}
-	_, stored := appsecretref.RegistryReferences(withKey(embedded))
-	if _, err := on.ValidateRegistry(context.Background(), withKey(embedded), stored); err != nil {
+	if _, err := on.ValidateRegistry(context.Background(), withKey(embedded), appsecretref.StoredOf(withKey(embedded))); err != nil {
 		t.Fatalf("an echoed embedded value must not block unrelated edits: %v", err)
 	}
 	agent := &registry.Registry{ID: ids.New[ids.RegistryKind](), A2ATarget: &registry.A2ATarget{
@@ -241,8 +239,7 @@ func TestAuditRunsAfterTheWriteAndCoversRemovals(t *testing.T) {
 	if len(sink.lines) != 1 || !strings.Contains(sink.lines[0], "action=set") || !strings.Contains(sink.lines[0], "actor=ana@example.com") || !strings.Contains(sink.lines[0], "store=corp-vault") {
 		t.Fatalf("audit = %v", sink.lines)
 	}
-	previous, _ := appsecretref.RegistryReferences(withKey("secret://corp-vault/ai/openai#key"))
-	audit, err = v.ValidateRegistry(ctx, withKey("sk-literal"), previous)
+	audit, err = v.ValidateRegistry(ctx, withKey("sk-literal"), appsecretref.StoredOf(withKey("secret://corp-vault/ai/openai#key")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,5 +278,33 @@ func TestUsages(t *testing.T) {
 	}
 	if len(got["corp-vault"]) != 5 || len(got["env"]) != 1 || got["env"][0].Field != "mcp_target.headers.X" {
 		t.Fatalf("usages = %+v", got)
+	}
+}
+
+func TestValidatorRechecksReferencesWhenTheDestinationChanges(t *testing.T) {
+	t.Parallel()
+	control := Source{Supported: true, Kind: KindControlPlane, Stores: []StoreView{{Name: "corp-vault", Type: domain.TypeHashiCorpVault, AllowedPaths: []string{"ai/"}}}}
+	v := NewRegistryValidator(fixedSource{control}, gateways{gw("")}, nil)
+	ref := "secret://corp-vault/ai/openai#key"
+	stored := withKey(ref)
+	stored.LLMTarget.Provider = "openai"
+	stored.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://api.openai.com/v1"}
+	previous := appsecretref.StoredOf(stored)
+	noScope := WithCaller(context.Background(), Caller{})
+
+	same := withKey(ref)
+	same.LLMTarget.Provider = "openai"
+	same.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://api.openai.com/v1", "headers": map[string]any{"X": "y"}}
+	if _, err := v.ValidateRegistry(noScope, same, previous); err != nil {
+		t.Fatalf("an echoed reference with the same destination needs no scope: %v", err)
+	}
+	moved := withKey(ref)
+	moved.LLMTarget.Provider = "openai"
+	moved.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://attacker.example/v1"}
+	if _, err := v.ValidateRegistry(noScope, moved, previous); !errors.Is(err, refdomain.ErrMissingScope) {
+		t.Fatalf("a new base_url must re-check the echoed reference: %v", err)
+	}
+	if _, err := v.ValidateRegistry(WithCaller(context.Background(), Caller{MayReference: true}), moved, previous); err != nil {
+		t.Fatalf("a caller with the scope may move it: %v", err)
 	}
 }
