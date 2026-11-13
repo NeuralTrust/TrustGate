@@ -85,6 +85,7 @@ const (
 	errCodeNoModelAccess         = "no_model_access"
 	errCodeModelNotSupported     = "model_not_supported"
 	errCodeProviderCredential    = "provider_credential_error"
+	errCodeSecretUnavailable     = "secret_unavailable"
 	errCodeCallerCredential      = "invalid_provider_credential"
 	errCodeBackendError          = "backend_error"
 	errCodeUpstreamTimeout       = adapter.UpstreamTimeoutCode
@@ -892,6 +893,11 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: modelDeniedMessage(err)}
+	case errors.Is(err, registrydomain.ErrSecretUnavailable):
+		return fiber.StatusServiceUnavailable, httpio.ErrorBody{
+			Error:   errCodeSecretUnavailable,
+			Message: registrydomain.ErrSecretUnavailable.Error(),
+		}
 	case errors.Is(err, registrydomain.ErrCallerCredentialRejected):
 		return fiber.StatusUnauthorized, httpio.ErrorBody{
 			Error:   errCodeCallerCredential,

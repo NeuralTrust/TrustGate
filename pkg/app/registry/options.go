@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -41,11 +43,24 @@ type GatewayLookup interface {
 type Option func(*options)
 
 type options struct {
-	openapi appopenapi.Compiler
-	auths   AuthLookup
-	cards   agentCards
-	scanner SkillScanner
-	shared  sharedPlane
+	openapi    appopenapi.Compiler
+	auths      AuthLookup
+	cards      agentCards
+	scanner    SkillScanner
+	shared     sharedPlane
+	secretRefs SecretRefValidator
+}
+
+// SecretRefValidator checks the secret references a registry write holds,
+// against what is already stored at the same fields.
+type SecretRefValidator interface {
+	ValidateRegistry(ctx context.Context, reg *domain.Registry, previous *appsecretref.Stored) (func(), error)
+}
+
+// WithSecretRefValidator checks every secret reference a create or update
+// adds or changes before it is saved.
+func WithSecretRefValidator(v SecretRefValidator) Option {
+	return func(o *options) { o.secretRefs = v }
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.
@@ -62,6 +77,13 @@ func WithAuthLookup(l AuthLookup) Option {
 // WithAgentCards lets a save of an A2A registry read and pin its agent card.
 func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
 	return func(o *options) { o.cards = agentCards{fetcher: fetcher, credentials: credentials} }
+}
+
+// WithCardSecrets resolves the secret references of an A2A registry's auth
+// when its card is read with it, after v accepts them as it would on a write.
+// It applies to the cards set by WithAgentCards, so it comes after it.
+func WithCardSecrets(m RegistryMaterializer, v SecretRefValidator) Option {
+	return func(o *options) { o.cards.secrets, o.cards.refs = m, v }
 }
 
 // WithSkillScanner has TrustGuard score each skill of a card when it is

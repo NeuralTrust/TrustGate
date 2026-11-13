@@ -141,6 +141,9 @@ type forwarder struct {
 	// managedLimit tells whether a tenant's managed registries are blocked;
 	// nil when the plane enforces no usage.
 	managedLimit ManagedLimit
+	// secrets re-reads a registry's secret references after its upstream
+	// rejected the credential; nil when the plane resolves none.
+	secrets SecretRefresher
 
 	nativeToolHold   time.Duration
 	nativeLookupWait time.Duration
@@ -149,6 +152,19 @@ type forwarder struct {
 
 // ForwarderOption configures an optional forwarder capability.
 type ForwarderOption func(*forwarder)
+
+// SecretRefresher re-reads the secret references of a registry the upstream
+// rejected and returns a fresh copy when a value changed.
+type SecretRefresher interface {
+	Refresh(ctx context.Context, reg *domain.Registry) (*domain.Registry, bool)
+}
+
+// WithSecretRefresher retries a call once, on the same registry, when its
+// upstream rejects a credential read from a secret reference that has
+// rotated since it was resolved.
+func WithSecretRefresher(r SecretRefresher) ForwarderOption {
+	return func(f *forwarder) { f.secrets = r }
+}
 
 // ManagedLimit tells whether the managed registries of a tenant must be
 // skipped because its usage is exhausted.
@@ -417,6 +433,10 @@ func (f *forwarder) invokeWithFailover(
 			dto.request.SentModel = ""
 			startedAt := time.Now()
 			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
+			if fresh, ok := f.refreshRejectedSecret(ctx, bk, resp); ok {
+				bk = fresh
+				resp, err = f.invokeOnce(ctx, bk, dto.request, stream)
+			}
 			if resp != nil {
 				dto.request.SentModel = resp.SentModel
 			}
@@ -525,8 +545,8 @@ func (f *forwarder) onlyBlockedManagedLeft(ctx context.Context, rc *appconsumer.
 
 // reachableRegistries lists every registry the failover loop could try for
 // the route: the pinned registry, the chain, or the balancer's routes plus the
-// consumer's fallback registries. known is false when that set cannot be told
-// for sure.
+// consumer's fallback registries. known is false when that set cannot be
+// determined with certainty.
 func reachableRegistries(rc *appconsumer.RoutableConsumer, route routedBackend) ([]*domain.Registry, bool) {
 	out := []*domain.Registry{route.route.Registry}
 	switch {
@@ -882,8 +902,8 @@ func (f *forwarder) finalizeStream(
 // The headers cannot be the ones the outcome carries. They were cloned from the
 // provider's streaming response, and text/event-stream in front of a plugin's
 // body is a content type the body does not have: an SSE client reads it as a
-// stream that never yields an event and never ends. Content-Type is replaced
-// for the same reason pluginErrorResult sets it, and Transfer-Encoding goes
+// stream that never yields an event and never ends. Content-Type is replaced,
+// as pluginErrorResult does and with the same reason, and Transfer-Encoding goes
 // with it because it described a response that is no longer being sent.
 func (f *forwarder) shortCircuitStream(
 	ctx context.Context,
@@ -1098,4 +1118,24 @@ func (f *forwarder) finalizeBodyGated(
 		Body:       pluginResp.Body,
 		Upstream:   native,
 	}), nil
+}
+
+// refreshRejectedSecret reports whether a call that the upstream answered
+// 401 or 403 should be retried with a fresh copy of bk: its credential came
+// from a secret reference, the response was not streamed, and re-reading
+// the reference found a new value. The refresher limits re-reads per
+// reference, so a key that is simply wrong does not hammer the store.
+func (f *forwarder) refreshRejectedSecret(ctx context.Context, bk *domain.Registry, resp *ProviderResponse) (*domain.Registry, bool) {
+	if f.secrets == nil || resp == nil || resp.Stream != nil || bk.SecretSource() == nil {
+		return nil, false
+	}
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		return nil, false
+	}
+	fresh, ok := f.secrets.Refresh(ctx, bk)
+	if ok {
+		f.logger.Info("upstream rejected a referenced credential that has rotated; retrying once with the new value",
+			slog.String("registry_id", bk.ID.String()))
+	}
+	return fresh, ok && fresh != nil
 }

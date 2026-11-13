@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
+
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -146,6 +148,7 @@ func originHost(u *url.URL) string {
 }
 
 func (r *TokenRevoker) postRevoke(ctx context.Context, endpoint, token, hint, clientID, secret, method string) error {
+	secret = secretref.Literal(secret)
 	form := url.Values{}
 	form.Set("token", token)
 	form.Set("token_type_hint", hint)

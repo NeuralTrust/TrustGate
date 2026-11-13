@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -73,6 +75,7 @@ type updater struct {
 	signaler         configsyncport.SnapshotSignaler
 	rateLimitEnabled bool
 	reservedDomains  []string
+	secretRefs       appsecretref.EntityValidator
 }
 
 func NewUpdater(
@@ -85,8 +88,10 @@ func NewUpdater(
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
 	reservedDomains []string,
+	opts ...SaveOption,
 ) Updater {
 	return &updater{
+		secretRefs:       applySaveOptions(opts).secretRefs,
 		reservedDomains:  reservedDomains,
 		repo:             repo,
 		registries:       registries,
@@ -104,6 +109,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
+	stored := appsecretref.GatewayRefs(g).Stored()
 	if err := telemetry.KeepOmittedCredentials(in.Telemetry, g.Telemetry); err != nil {
 		return nil, fmt.Errorf("invalid telemetry exporter: %v: %w", err, commonerrors.ErrValidation)
 	}
@@ -202,6 +208,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 			maxInstances = limits.MaxInstances
 		}
 	}
+	audit := func() {}
+	if u.secretRefs != nil {
+		if audit, err = u.secretRefs.ValidateEntity(ctx, appsecretref.GatewayRefs(g), stored); err != nil {
+			return nil, err
+		}
+	}
 	if maxInstances > 0 {
 		err = u.repo.UpdateWithTenantCap(ctx, g, tenantID, maxInstances)
 	} else {
@@ -210,6 +222,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
+	audit()
 	deleteGatewayCache(u.memoryCache, &old)
 	setGatewayCache(u.memoryCache, g)
 	invalidation.GatewayData(ctx, u.publisher, u.logger, g.ID)

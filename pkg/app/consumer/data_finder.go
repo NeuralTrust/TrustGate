@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"slices"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -50,6 +52,18 @@ type dataFinder struct {
 	// budgets loads the group budgets with the gateway's data. Nil: no group
 	// key is held to a budget on this plane.
 	budgets keygroupdomain.Reader
+	// materializer replaces the secret references of the loaded registries
+	// with their values. Nil leaves registries as stored.
+	materializer RegistryMaterializer
+}
+
+// RegistryMaterializer turns the secret references held by a gateway's
+// registries and other entities into values, returning the input untouched
+// when none holds a reference, and records what the gateway uses so changes
+// invalidate it.
+type RegistryMaterializer interface {
+	GatewayRegistries(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) map[ids.RegistryID]*registrydomain.Registry
+	Values(ctx context.Context, gatewayID ids.GatewayID, source string, uses []appsecretref.Use) []appsecretref.Resolved
 }
 
 // DataFinderOption tunes NewDataFinder.
@@ -60,6 +74,13 @@ type DataFinderOption func(*dataFinder)
 // request.
 func WithKeyGroupBudgets(r keygroupdomain.Reader) DataFinderOption {
 	return func(f *dataFinder) { f.budgets = r }
+}
+
+// WithSecretReferences resolves the secret references of a gateway's
+// registries when its data is built. The values live only in the cached
+// data, never in the repositories or the shared registry cache.
+func WithSecretReferences(m RegistryMaterializer) DataFinderOption {
+	return func(f *dataFinder) { f.materializer = m }
 }
 
 func NewDataFinder(
@@ -87,6 +108,26 @@ func NewDataFinder(
 		}
 	}
 	return f
+}
+
+// InvalidateGatewayData returns a function that drops, on this replica only,
+// everything built from a gateway's secret-bearing entities: its runtime
+// data, its load balancers, which hold the registries they route to, and the
+// identity providers the credential finder caches. Deleting bumps
+// each map's generation, so a load already in flight does not write the old
+// data back.
+func InvalidateGatewayData(manager *cache.TTLMapManager) func(ids.GatewayID) {
+	data := manager.GetTTLMap(cache.ConsumerDataTTLName)
+	balancers := manager.GetTTLMap(cache.LoadBalancerTTLName)
+	auths := manager.GetTTLMap(cache.AuthTTLName)
+	return func(gatewayID ids.GatewayID) {
+		data.Delete(gatewayID.String())
+		balancers.DeleteByPrefix(gatewayID.String() + ":")
+		// The credential finder caches identity providers apart from the
+		// gateway's data, keyed by internal names: dropping them all is what
+		// the gateway-data invalidation event does too.
+		auths.Clear()
+	}
 }
 
 func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID ids.GatewayID) (*Data, error) {
@@ -131,9 +172,15 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
+	if f.materializer != nil {
+		consumers = appsecretref.GatewayConsumers(ctx, f.materializer, gatewayID, consumers)
+	}
 	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err
+	}
+	if f.materializer != nil {
+		backendByID = f.materializer.GatewayRegistries(ctx, gatewayID, backendByID)
 	}
 	loaded, err := f.loadPolicies(ctx, gatewayID)
 	if err != nil {
@@ -377,6 +424,12 @@ func (f *dataFinder) loadPolicies(ctx context.Context, gatewayID ids.GatewayID) 
 	if err != nil {
 		return loadedPolicies{}, err
 	}
+	if f.materializer != nil {
+		all = appsecretref.GatewayPolicies(ctx, f.materializer, gatewayID, all, func(p *policydomain.Policy) ([]string, []string) {
+			paths, _ := appplugins.PluginCredentialPaths(f.pluginRegistry, p.Slug)
+			return paths, appplugins.PluginCredentialHosts(f.pluginRegistry, p.Slug, p.Settings)
+		})
+	}
 	out := loadedPolicies{
 		everywhere: make([]*policydomain.Policy, 0),
 		onMCP:      make([]*policydomain.Policy, 0),
@@ -407,11 +460,17 @@ func (f *dataFinder) loadAuths(
 ) (map[ids.AuthID]*authdomain.Auth, error) {
 	idList := uniqueIDs(consumers, slugAuthIDs)
 	if len(idList) == 0 {
+		if f.materializer != nil {
+			f.materializer.Values(ctx, gatewayID, appsecretref.SourceAuths, nil)
+		}
 		return map[ids.AuthID]*authdomain.Auth{}, nil
 	}
 	found, err := f.authRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return nil, err
+	}
+	if f.materializer != nil {
+		found = appsecretref.GatewayAuths(ctx, f.materializer, gatewayID, appsecretref.SourceAuths, found)
 	}
 	byID := make(map[ids.AuthID]*authdomain.Auth, len(found))
 	for _, a := range found {

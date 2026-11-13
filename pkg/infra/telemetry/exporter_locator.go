@@ -16,6 +16,9 @@ package telemetry
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -70,6 +73,9 @@ func (l *ExporterLocator) BuildTenant(cfg telemetrydomain.ExporterConfig) (appme
 }
 
 func (l *ExporterLocator) build(cfg telemetrydomain.ExporterConfig, tenant bool) (appmetrics.Exporter, error) {
+	if holdsSecretReference(cfg.Settings) {
+		return nil, fmt.Errorf("exporter %q: a credential is a secret reference this plane did not resolve", cfg.Name)
+	}
 	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
 		return nil, fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
@@ -115,4 +121,34 @@ func (l *ExporterLocator) validate(cfg telemetrydomain.ExporterConfig, tenant bo
 		return fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
 	return nil
+}
+
+// holdsSecretReference reports whether the OTLP headers or the postgres dsn
+// of settings are shaped like a secret reference: one that reaches a build
+// unresolved must never be sent to the collector or the database.
+func holdsSecretReference(settings map[string]any) bool {
+	for key, value := range settings {
+		switch {
+		case strings.EqualFold(key, "dsn"):
+			if s, ok := value.(string); ok && secretref.IsRef(s) {
+				return true
+			}
+		case strings.EqualFold(key, "headers"):
+			switch headers := value.(type) {
+			case map[string]any:
+				for _, h := range headers {
+					if s, ok := h.(string); ok && secretref.IsRef(s) {
+						return true
+					}
+				}
+			case map[string]string:
+				for _, h := range headers {
+					if secretref.IsRef(h) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
