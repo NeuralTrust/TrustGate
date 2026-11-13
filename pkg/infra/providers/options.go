@@ -18,11 +18,12 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/mitchellh/mapstructure"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 const (
@@ -175,29 +176,6 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	return opts, nil
 }
 
-// watsonxRegionEndpoints maps each IBM Cloud region that serves watsonx.ai to
-// its inference endpoint. The region picks the host of a request that carries
-// an IAM token, so only these values are accepted.
-var watsonxRegionEndpoints = map[string]string{
-	"us-south": "https://us-south.ml.cloud.ibm.com",
-	"eu-de":    "https://eu-de.ml.cloud.ibm.com",
-	"eu-gb":    "https://eu-gb.ml.cloud.ibm.com",
-	"jp-tok":   "https://jp-tok.ml.cloud.ibm.com",
-	"au-syd":   "https://au-syd.ml.cloud.ibm.com",
-	"ca-tor":   "https://ca-tor.ml.cloud.ibm.com",
-}
-
-// WatsonxRegions returns the IBM Cloud regions a watsonx registry can target,
-// sorted.
-func WatsonxRegions() []string {
-	regions := make([]string, 0, len(watsonxRegionEndpoints))
-	for region := range watsonxRegionEndpoints {
-		regions = append(regions, region)
-	}
-	sort.Strings(regions)
-	return regions
-}
-
 var (
 	watsonxProjectIDPattern  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	watsonxAPIVersionPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
@@ -217,7 +195,7 @@ func (o WatsonxOptions) Endpoint() string {
 	if o.BaseURL != "" {
 		return o.BaseURL
 	}
-	return watsonxRegionEndpoints[o.Region]
+	return "https://" + provider.WatsonxHost(o.Region)
 }
 
 func DecodeWatsonxOptions(options map[string]any) (WatsonxOptions, error) {
@@ -241,10 +219,10 @@ func DecodeWatsonxOptions(options map[string]any) (WatsonxOptions, error) {
 	if opts.Region == "" && opts.BaseURL == "" {
 		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.region is required")
 	}
-	if _, ok := watsonxRegionEndpoints[opts.Region]; opts.Region != "" && !ok {
+	if opts.Region != "" && provider.WatsonxHost(opts.Region) == "" {
 		return WatsonxOptions{}, fmt.Errorf(
 			"watsonx: provider_options.region must be one of %s, got %q",
-			strings.Join(WatsonxRegions(), ", "), opts.Region,
+			strings.Join(provider.WatsonxRegions(), ", "), opts.Region,
 		)
 	}
 	if opts.ProjectID == "" {

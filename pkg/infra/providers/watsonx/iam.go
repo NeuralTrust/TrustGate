@@ -30,13 +30,14 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const (
-	iamTokenURL     = "https://iam.cloud.ibm.com/identity/token" // #nosec G101 -- public IBM Cloud IAM endpoint, not a credential
-	iamAPIKeyGrant  = "urn:ibm:params:oauth:grant-type:apikey"   // #nosec G101 -- OAuth grant type identifier, not a credential
+	iamTokenURL     = "https://" + provider.WatsonxIAMHost + "/identity/token" // #nosec G101 -- public IBM Cloud IAM endpoint, not a credential
+	iamAPIKeyGrant  = "urn:ibm:params:oauth:grant-type:apikey"                 // #nosec G101 -- OAuth grant type identifier, not a credential
 	iamTimeout      = 10 * time.Second
 	iamMaxBody      = 64 << 10
 	maxCachedTokens = 256
