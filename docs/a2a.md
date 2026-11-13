@@ -176,6 +176,18 @@ The card must have `name` and offer the chosen version:
 
 `card_digest` is `sha256:` over the card without `signatures`, keys sorted.
 
+Once the card is pinned, the gateway checks that the endpoint it will call
+answers A2A: it sends `tasks/get` (0.3) or `GetTask` (1.0) for a task that does
+not exist, with the registry's credential, and expects a JSON-RPC response
+(an agent answers with a "task not found" error; nothing changes on its side).
+A website, a missing path, a redirect or a refused credential fails the create
+or update with 422 and says what came back, for example `did not answer A2A
+JSON-RPC: HTTP 405 (text/html)`. A card whose `url` is a website rather than its
+JSON-RPC endpoint needs `url` set on the registry. The check runs for agents
+at any URL, when the call's credential is the registry's own (`none`,
+`static`, `client_credentials`); with an exchange the user's token is not there
+at registration and the check is skipped.
+
 The plane always serves the pinned card, never the live one, with:
 
 - the gateway's URL as the only JSON-RPC interface;
@@ -394,7 +406,7 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 | `-32007` | Extended card refused | |
 | `-32090` | Blocked by a policy | `{"reason": "policy_blocked" \| "mask_unsupported", "plugin": "<slug>"}` |
 | `-32091` | Rate limited | `{"retry_after": <seconds>}` |
-| `-32092` | The gateway could not complete the call | `{"reason": "<reason>"}` |
+| `-32092` | The gateway could not complete the call | `{"reason": "<reason>"}`; with `upstream_error` and `invalid_upstream_response`, also `upstream_status`, the HTTP status the agent answered with something that was not a JSON-RPC response |
 | `-32093` | The identity mode needs an IdP user | `{"reason": "identity_required"}` |
 
 `-32092` reasons: `upstream_unreachable`, `upstream_timeout`,
