@@ -304,6 +304,10 @@ func (f *liveAvailabilityFilter) registryModels(
 		f.debugSkip(in, "registry provider mismatch", nil)
 		return nil, fmt.Errorf("%w: registry serves provider %s, not %s", commonerrors.ErrValidation, reg.Provider(), in.ProviderCode)
 	}
+	if reg.CredentialUnavailable() {
+		f.debugSkip(in, "credential unavailable", nil)
+		return nil, registrydomain.ErrSecretUnavailable
+	}
 	auth := reg.EffectiveAuth()
 	if auth == nil || auth.Type == registrydomain.AuthTypeOAuth2 {
 		f.debugSkip(in, "unsupported auth for live listing", nil)

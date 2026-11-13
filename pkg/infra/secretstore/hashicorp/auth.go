@@ -41,8 +41,10 @@ func (b *Backend) ensureToken(ctx context.Context) (string, error) {
 	if token, ok := b.currentToken(); ok {
 		return token, nil
 	}
-	b.loginMu.Lock()
-	defer b.loginMu.Unlock()
+	if err := b.lockLogin(ctx); err != nil {
+		return "", err
+	}
+	defer b.unlockLogin()
 	if token, ok := b.currentToken(); ok {
 		return token, nil
 	}
@@ -82,8 +84,10 @@ func (b *Backend) expired() bool {
 // was attempted and failed returns its own error, so a store that cannot be
 // reached is not mistaken for a revoked secret.
 func (b *Backend) reloginAfterDenied(ctx context.Context, used string) (string, error) {
-	b.loginMu.Lock()
-	defer b.loginMu.Unlock()
+	if err := b.lockLogin(ctx); err != nil {
+		return "", err
+	}
+	defer b.unlockLogin()
 	b.mu.Lock()
 	current, last := b.token, b.lastLogin
 	b.mu.Unlock()
@@ -104,7 +108,20 @@ func (b *Backend) dropToken(used string) {
 	}
 }
 
-// loginLocked logs in with the configured method. The caller holds loginMu.
+// lockLogin takes the login slot, or gives up when ctx ends first.
+func (b *Backend) lockLogin(ctx context.Context) error {
+	select {
+	case b.login <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%w: waiting for another login to the store: %v", secretstore.ErrUnavailable, ctx.Err())
+	}
+}
+
+func (b *Backend) unlockLogin() { <-b.login }
+
+// loginLocked logs in with the configured method. The caller holds the login
+// slot.
 func (b *Backend) loginLocked(ctx context.Context) (string, error) {
 	auth := b.cfg.Auth
 	now := b.now()

@@ -15,8 +15,6 @@
 package response
 
 import (
-	"time"
-
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 )
 
@@ -32,26 +30,6 @@ type ListSecretStoresResponse struct {
 	LiveInstances int                       `json:"live_instances"`
 	TooOld        []SecretStoreInstance     `json:"too_old"`
 	Stores        []SecretStoreItemResponse `json:"stores"`
-}
-
-// SecretStoreItemResponse is one store.
-type SecretStoreItemResponse struct {
-	Name         string                `json:"name"`
-	Type         string                `json:"type"`
-	AllowedPaths []string              `json:"allowed_paths"`
-	Status       string                `json:"status" enums:"ok,degraded,down,not_reported"`
-	Consistent   bool                  `json:"consistent"`
-	Usages       int                   `json:"usages"`
-	Instances    []SecretStoreInstance `json:"instances"`
-}
-
-// SecretStoreInstance is what one plane reports about a store.
-type SecretStoreInstance struct {
-	InstanceID string     `json:"instance_id"`
-	Version    string     `json:"version,omitempty"`
-	State      string     `json:"state"`
-	ErrorClass string     `json:"error_class,omitempty"`
-	CheckedAt  *time.Time `json:"checked_at,omitempty"`
 }
 
 // FromSource builds the response. Stores referenced by the gateway but not

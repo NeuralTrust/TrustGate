@@ -35,7 +35,9 @@ const MaxBodyBytes = 1 << 20
 
 // New returns a client that trusts caFile when set, and the system roots
 // otherwise. It honours the environment's proxy settings, which customer
-// networks often require. Requests are bounded by their context.
+// networks often require. Requests are bounded by their context, which
+// carries SECRET_STORES_FETCH_TIMEOUT, so the transport sets no response
+// deadline of its own that could cut a longer configured timeout short.
 func New(caFile string) (*http.Client, error) {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if caFile != "" {
@@ -50,13 +52,12 @@ func New(caFile string) (*http.Client, error) {
 		tlsConfig.RootCAs = pool
 	}
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSClientConfig:       tlsConfig,
-		TLSHandshakeTimeout:   5 * time.Second,
-		MaxIdleConnsPerHost:   4,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSClientConfig:     tlsConfig,
+		TLSHandshakeTimeout: 5 * time.Second,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	return &http.Client{
 		Transport: transport,

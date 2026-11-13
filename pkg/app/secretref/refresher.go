@@ -49,11 +49,8 @@ type dueFetch struct {
 	entry *entry
 }
 
-// refreshTick evicts payloads nobody resolved within the idle window, withdraws values
-// past their stale window, and re-reads every payload that is due: values from
-// 80 % of their TTL (with per-entry jitter) and failures once their backoff
-// or negative TTL ran out, so a recovered store reaches dependents that were
-// built without the value.
+// refreshTick also retries failures, so a recovered store reaches the
+// dependents that were built without the value.
 func (c *Cache) refreshTick(ctx context.Context) {
 	now := c.now()
 	var expired []domain.Ref

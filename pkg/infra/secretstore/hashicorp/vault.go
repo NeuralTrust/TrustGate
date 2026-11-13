@@ -49,7 +49,9 @@ type Backend struct {
 	now      func() time.Time
 	readFile func(string) ([]byte, error)
 
-	loginMu sync.Mutex
+	// login holds one slot: one login or renewal runs at a time, and a
+	// caller waiting for it gives up when its context ends.
+	login chan struct{}
 
 	mu        sync.Mutex
 	token     string
@@ -71,7 +73,7 @@ func New(cfg *secretstore.HashiCorpVaultConfig) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{cfg: cfg, base: base, client: client, now: time.Now, readFile: os.ReadFile}, nil
+	return &Backend{cfg: cfg, base: base, client: client, now: time.Now, readFile: os.ReadFile, login: make(chan struct{}, 1)}, nil
 }
 
 // Fetch implements secretstore.Backend.

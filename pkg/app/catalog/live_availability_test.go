@@ -540,3 +540,26 @@ func TestLiveCatalog_ReportsNothingWhenTheProviderCannotBeAsked(t *testing.T) {
 
 	assert.Nil(t, got, "an unreachable endpoint leaves the empty catalog as it was")
 }
+
+func TestLiveAvailabilityFilter_UnresolvedSecretNeverReachesTheProvider(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: liveIDs("never-asked")}
+	reg := azureRegistry(apiKeyAuth(""))
+	reg.MarkCredentialUnavailable()
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).Return(reg, nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	_, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("gpt-4o"),
+	})
+
+	require.ErrorIs(t, err, registrydomain.ErrSecretUnavailable)
+	assert.Zero(t, source.calls, "a blank credential must never be sent to the provider")
+}

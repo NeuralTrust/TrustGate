@@ -87,7 +87,7 @@ func NewService(hub *Hub, source SnapshotSource, logger *slog.Logger, revocation
 		}
 		s.refs.refused(context.Background(), "notice", conn.scope, conn.instanceID, n.version)
 		return true
-	})
+	}, func(scope string, n notice) { s.withheld(scope, n) })
 	return s
 }
 
@@ -150,6 +150,9 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	}
 
 	if n, ok := s.currentNotice(scope, layered); ok && n.version != hello.GetLastAppliedVersion() {
+		if !conn.acceptsSecretRefs {
+			s.withheld(scope, n)
+		}
 		s.hub.mu.Lock()
 		s.hub.deliver(conn, n)
 		s.hub.mu.Unlock()

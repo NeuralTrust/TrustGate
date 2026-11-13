@@ -424,3 +424,21 @@ func TestErrorsNeverCarrySecretsOrTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitingForALoginHonoursTheContext(t *testing.T) {
+	t.Parallel()
+	b, _ := newBackend(t, newFakeVault(), secretstore.HashiCorpVaultConfig{Auth: secretstore.VaultAuth{Method: secretstore.VaultAuthToken, TokenFile: "/etc/token"}})
+	b.login <- struct{}{}
+	defer func() { <-b.login }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := b.Fetch(ctx, "ai/openai", "")
+	if !errors.Is(err, secretstore.ErrUnavailable) {
+		t.Fatalf("err = %v, want unavailable while another login holds the slot", err)
+	}
+	if waited := time.Since(started); waited > time.Second {
+		t.Fatalf("waited %v; the caller must give up when its context ends", waited)
+	}
+}

@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	defaultSecretStoresFetchTimeout    = 2 * time.Second
-	defaultSecretStoresRefreshInterval = 15 * time.Second
-	defaultSecretStoresProbeInterval   = 60 * time.Second
+	defaultSecretStoresFetchTimeout    = secretstore.DefaultFetchTimeout
+	defaultSecretStoresRefreshInterval = secretstore.DefaultRefreshInterval
+	defaultSecretStoresProbeInterval   = secretstore.DefaultProbeInterval
 )
 
 // SecretStoresConfig controls secret references: credential fields holding

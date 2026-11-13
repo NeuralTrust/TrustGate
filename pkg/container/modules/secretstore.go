@@ -55,7 +55,6 @@ type SecretStores struct {
 	Prewarmer *appsecretref.Prewarmer
 	logger    *slog.Logger
 
-	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	prewarming atomic.Bool
@@ -202,27 +201,21 @@ func (s *SecretStores) Prewarm() {
 // the plane's references, now and after every snapshot apply and store-file
 // reload. The admin only starts, so it never reads secrets it does not use.
 func (s *SecretStores) StartServing() {
-	if s == nil || s.Cache == nil {
-		return
-	}
-	s.Start()
-	s.prewarming.Store(true)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.Prewarmer.Run(s.ctx)
-	}()
-	s.Prewarm()
+	s.start(true)
 }
 
 // Start runs the refresh and probe loops and the store file watch, when the
 // plane loads a store file. Stop ends them.
 func (s *SecretStores) Start() {
+	s.start(false)
+}
+
+func (s *SecretStores) start(prewarm bool) {
 	if s == nil || s.Cache == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.ctx, s.cancel = ctx, cancel
+	s.cancel = cancel
 	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
@@ -234,6 +227,16 @@ func (s *SecretStores) Start() {
 			s.logger.Error("secret store file watch stopped; changes need a restart", slog.String("error", err.Error()))
 		}
 	}()
+	if !prewarm {
+		return
+	}
+	s.prewarming.Store(true)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.Prewarmer.Run(ctx)
+	}()
+	s.Prewarm()
 }
 
 // Stop ends the loops Start began and waits for them.

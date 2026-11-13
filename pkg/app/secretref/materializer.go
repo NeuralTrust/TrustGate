@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -199,7 +200,12 @@ func (m *materializer) materialize(ctx context.Context, gatewayID ids.GatewayID,
 		m.index(gatewayID, used)
 	}
 
-	m.resolveAll(ctx, gatewayID, refs)
+	if eligErr := m.resolveAll(ctx, gatewayID, refs); eligErr != nil && index && m.cfg.Invalidate != nil {
+		// The eligibility read failed, not the gateway: dropping its data
+		// moves the cache generation on, so this load is not kept and the
+		// next request reads the gateway again.
+		m.cfg.Invalidate(gatewayID)
+	}
 
 	out := make(map[ids.RegistryID]*registry.Registry, len(byID))
 	for id, r := range byID {
@@ -267,12 +273,13 @@ func (m *materializer) Refresh(ctx context.Context, reg *registry.Registry) (*re
 	return fresh, true
 }
 
-// resolveAll checks and resolves every reference, reading distinct payloads
-// concurrently so a gateway with many references waits about one fetch. The
+// resolveAll checks and resolves every reference and returns the error of
+// reading the gateway's eligibility, if any. Distinct payloads are read
+// concurrently, so a gateway with many references waits about one fetch. The
 // result is cached with the gateway's data, which is built once for every
 // concurrent request, so it must not depend on the first caller staying:
 // reads run detached from its cancellation, bounded by the fetch timeout.
-func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, refs []*pending) {
+func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, refs []*pending) error {
 	ctx = context.WithoutCancel(ctx)
 	eligible, eligErr := false, error(nil)
 	if m.cfg.Enabled && m.cfg.Catalog != nil && m.cfg.Resolver != nil {
@@ -294,6 +301,7 @@ func (m *materializer) resolveAll(ctx context.Context, gatewayID ids.GatewayID, 
 		})
 	}
 	_ = g.Wait() // the goroutines record their outcome on p and never fail the group
+	return eligErr
 }
 
 func (m *materializer) check(gatewayID ids.GatewayID, ref domain.Ref, eligible bool, eligErr error) error {
@@ -301,7 +309,7 @@ func (m *materializer) check(gatewayID ids.GatewayID, ref domain.Ref, eligible b
 		return fmt.Errorf("secret references are not enabled on this plane: %w", secretstore.ErrStoreMissing)
 	}
 	if eligErr != nil {
-		return fmt.Errorf("the gateway's eligibility could not be read: %w", secretstore.ErrNotAllowed)
+		return fmt.Errorf("the gateway's eligibility could not be read: %w", secretstore.ErrUnavailable)
 	}
 	if !eligible {
 		return fmt.Errorf("the gateway may not use secret references: %w", secretstore.ErrNotAllowed)
@@ -393,9 +401,7 @@ func (m *materializer) StoresChanged(names []string) {
 		}
 	}
 	m.mu.Unlock()
-	for gw := range affected {
-		m.cfg.Invalidate(gw)
-	}
+	m.invalidate(affected)
 }
 
 func (m *materializer) onChange(payloads []domain.Ref) {
@@ -410,7 +416,28 @@ func (m *materializer) onChange(payloads []domain.Ref) {
 		}
 	}
 	m.mu.Unlock()
+	m.invalidate(affected)
+}
+
+// invalidate drops the runtime data of the affected gateways. A gateway that
+// no longer exists leaves the index instead, so deleted gateways do not
+// accumulate in it.
+func (m *materializer) invalidate(affected map[ids.GatewayID]struct{}) {
 	for gw := range affected {
+		if m.deleted(gw) {
+			m.index(gw, nil)
+			continue
+		}
 		m.cfg.Invalidate(gw)
 	}
+}
+
+func (m *materializer) deleted(gatewayID ids.GatewayID) bool {
+	if m.cfg.Gateways == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), eligibilityTimeout)
+	defer cancel()
+	_, err := m.cfg.Gateways.FindByID(ctx, gatewayID)
+	return errors.Is(err, commonerrors.ErrNotFound)
 }
