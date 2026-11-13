@@ -111,6 +111,28 @@ func AuthLister(repo AuthReader) EntityLister {
 	}
 }
 
+// EnabledAuthReader lists a gateway's enabled auths of one type; a DB-less
+// data plane's snapshot repository serves it, while it cannot page.
+type EnabledAuthReader interface {
+	ListEnabledByGatewayAndType(ctx context.Context, gatewayID ids.GatewayID, authType auth.Type) ([]*auth.Auth, error)
+}
+
+// EnabledAuthLister lists the identity provider secrets of a gateway's
+// enabled OAuth 2.0 auths: what a plane that serves traffic resolves.
+func EnabledAuthLister(repo EnabledAuthReader) EntityLister {
+	return func(ctx context.Context, gatewayID ids.GatewayID) ([]NamedRefs, error) {
+		auths, err := repo.ListEnabledByGatewayAndType(ctx, gatewayID, auth.TypeOAuth2)
+		if err != nil {
+			return nil, fmt.Errorf("list auths: %w", err)
+		}
+		out := make([]NamedRefs, 0, len(auths))
+		for _, a := range auths {
+			out = append(out, NamedRefs{EntityRefs: appsecretref.AuthRefs(a), Name: a.Name})
+		}
+		return out, nil
+	}
+}
+
 // GatewayReaderLister lists the gateway's own telemetry credentials.
 func GatewayReaderLister(repo GatewayReader) EntityLister {
 	return func(ctx context.Context, gatewayID ids.GatewayID) ([]NamedRefs, error) {
