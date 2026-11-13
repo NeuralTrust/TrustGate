@@ -138,6 +138,7 @@ func ConfigSyncData(c *container.Container) error {
 		logger *slog.Logger,
 		cfg *config.Config,
 		status *configsync.SnapshotStatus,
+		stores *SecretStores,
 	) *configsync.Worker[*readmodel.Snapshot] {
 		return configsync.NewWorker(fetcher, store, transport, lkg, codec, logger, configsync.WorkerConfig{
 			PollInterval: cfg.ConfigSync.PollInterval,
@@ -145,6 +146,7 @@ func ConfigSyncData(c *container.Container) error {
 			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
 		}, configsync.WithStatus[*readmodel.Snapshot](status), configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
 			cacheManager.ClearAllTTLMaps()
+			stores.Prewarm()
 			logger.Debug("config-sync applied new snapshot; cleared derived caches",
 				slog.String("component", "configsync"))
 		}))
