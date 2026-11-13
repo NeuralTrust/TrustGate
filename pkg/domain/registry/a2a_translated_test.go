@@ -93,7 +93,7 @@ func TestDatabricksLocator(t *testing.T) {
 }
 
 // The gateway builds the card of an agent that publishes none, and it pins
-// like any other: A2A 0.3, no streaming.
+// like any other: A2A 0.3, with streaming.
 func TestBuiltCardPins(t *testing.T) {
 	t.Parallel()
 	target := harnessTarget()
@@ -113,7 +113,7 @@ func TestBuiltCardPins(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(target.Card, &card))
 	assert.Equal(t, "harness_0m4lj", card.Name)
-	assert.False(t, card.Capabilities.Streaming)
+	assert.True(t, card.Capabilities.Streaming)
 	assert.Len(t, card.Skills, 1)
 
 	target.ProtocolVersion = registry.A2AVersion10
