@@ -88,7 +88,7 @@ func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *regis
 	t := StaticTarget(reg)
 	if rc != nil && rc.Consumer != nil {
 		t.PinKey = fmt.Sprintf("%s:%s:%s", rc.Consumer.GatewayID, rc.Consumer.ID, reg.ID)
-		if perPrincipalAuth(reg) {
+		if perPrincipalAuth(reg) || reg.MCPTarget.HasUserHeaders() {
 			if p := identity.PrincipalFromContext(ctx); p != nil {
 				t.PinKey += ":" + p.Subject
 			}
