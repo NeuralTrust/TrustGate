@@ -71,6 +71,8 @@ type Exchange struct {
 	owner    Owner
 	session  string
 	header   http.Header
+	// tokens is what the agent reported it used, when it does.
+	tokens tokenUsage
 
 	span       *trace.Span
 	attrs      trace.A2AAttrs
@@ -312,6 +314,7 @@ func (x *Exchange) finish(rpcErr *RPCError) {
 		}
 		x.span.SetError(rpcErr.Message)
 	}
+	a.InputTokens, a.OutputTokens = x.tokens.input, x.tokens.output
 	x.span.SetA2A(*a)
 	if x.sentAt.IsZero() {
 		x.span.SetLatency(0)
