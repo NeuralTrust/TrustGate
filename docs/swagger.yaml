@@ -2013,8 +2013,9 @@ definitions:
     properties:
       consumer_path:
         description: |-
-          ConsumerPath is the virtual MCP the person reaches the server through.
-          Empty uses the MCP Store.
+          ConsumerPath is the virtual MCP the person reaches the server through,
+          e.g. /dev/mcp. Required for a custom server; empty uses the MCP Store,
+          which serves only the servers it materialised.
         type: string
       principal_sub:
         description: |-
@@ -7691,7 +7692,8 @@ paths:
       consumes:
       - application/json
       description: 'Mints the connect page one person walks to enter their own values
-        for this instance. Hand it to that person: it acts as them.'
+        for this instance. Hand it to that person: it acts as them. consumer_path
+        names the virtual MCP that binds the server and is required for a custom server.'
       parameters:
       - description: Gateway id
         format: uuid
