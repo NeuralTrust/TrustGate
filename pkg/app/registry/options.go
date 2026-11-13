@@ -44,6 +44,7 @@ type options struct {
 	openapi appopenapi.Compiler
 	auths   AuthLookup
 	cards   agentCards
+	scanner SkillScanner
 	shared  sharedPlane
 }
 
@@ -61,6 +62,12 @@ func WithAuthLookup(l AuthLookup) Option {
 // WithAgentCards lets a save of an A2A registry read and pin its agent card.
 func WithAgentCards(fetcher CardFetcher, credentials CardCredentials) Option {
 	return func(o *options) { o.cards = agentCards{fetcher: fetcher, credentials: credentials} }
+}
+
+// WithSkillScanner has TrustGuard score each skill of a card when it is
+// pinned, previewed or compared. Without it skills are not scanned.
+func WithSkillScanner(s SkillScanner) Option {
+	return func(o *options) { o.scanner = s }
 }
 
 // WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
@@ -84,6 +91,7 @@ func applyOptions(opts []Option) options {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	o.cards.scanner = o.scanner
 	return o
 }
 

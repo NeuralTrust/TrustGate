@@ -104,3 +104,14 @@ func TestDefaultVersion(t *testing.T) {
 	assert.Equal(t, A2AVersion03, DefaultVersion([]A2AProtocolVersion{A2AVersion03}))
 	assert.Empty(t, DefaultVersion(nil))
 }
+
+func TestSkillTextsReadsEachSkillWithAnID(t *testing.T) {
+	card := `{"name":"Travel","skills":[
+		{"id":"book","name":"Book a trip","description":"Books flights.","examples":["Fly to Rome"," "]},
+		{"name":"No id"},
+		{"id":"empty"},
+		{"id":"odd","name":"Odd","examples":"not a list"}]}`
+	ids, texts := SkillTexts([]byte(card))
+	assert.Equal(t, []string{"book", "odd"}, ids)
+	assert.Equal(t, []string{"Book a trip\nBooks flights.\nFly to Rome", "Odd"}, texts)
+}

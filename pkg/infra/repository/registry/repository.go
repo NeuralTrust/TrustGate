@@ -217,6 +217,7 @@ func (r *Repository) PinA2ACard(
 		"card":              pinned.Card,
 		"card_digest":       pinned.CardDigest,
 		"card_pinned_at":    pinned.CardPinnedAt,
+		"skill_scan":        pinned.SkillScan,
 	}
 	cardBytes, err := json.Marshal(card)
 	if err != nil {

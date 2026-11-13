@@ -262,6 +262,24 @@ POST /v1/gateways/{gateway_id}/registries/{id}/agent-card/approve
 | 409 | The live card has another digest |
 | 422 | The registry is not A2A, or the new card no longer offers the pinned version |
 
+### Skill scan
+
+Each skill of a card the agent publishes (its name, description and
+examples, as one text) is scored by TrustGuard's indirect prompt injection
+model when the card is previewed, pinned, approved, or refreshed with a
+change. The gateway calls `POST {TRUSTGUARD_V2_BASE_URL}/v1/scan/indirect-prompt-injection`
+with `TRUSTGUARD_V2_CLIENT_ID` and `TRUSTGUARD_V2_CLIENT_SECRET`; no policy is
+involved, and nothing is blocked.
+
+```json
+"skill_scan": [{"skill_id": "refund_invoice", "flagged": false, "score": 0.02}]
+```
+
+It is `skill_scan` on the registry's `a2a_target` and on a preview, and
+`fetched_skill_scan` on a refresh. Absent means not scanned: no TrustGuard
+credentials, a card without skills, a card the gateway builds, or TrustGuard
+did not answer. A card that could not be scanned is still pinned.
+
 ## Identity
 
 `a2a_target.auth.mode`:
