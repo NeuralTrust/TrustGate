@@ -404,6 +404,17 @@ stores:
 	require.Equal(t, http.StatusCreated, status, "the admin validates the reference against its own catalog: %v", body)
 	registryID, _ := body["id"].(string)
 
+	status, body = admin(http.MethodPost, "/v1/gateways/"+gatewayID+"/auths", map[string]any{
+		"name": uniqueName("idp"), "type": "oauth2",
+		"config": map[string]any{"oauth2": map[string]any{
+			"issuer": "https://issuer.example.com", "audiences": []string{"gateway"},
+			"jwks_url": "https://issuer.example.com/.well-known/jwks.json", "token_url": "https://issuer.example.com/token",
+			"authorize_url": "https://issuer.example.com/authorize", "client_id": "gateway",
+			"client_secret": "secret://files/llm/openai",
+		}},
+	})
+	require.Equal(t, http.StatusCreated, status, "a console user may reference a store from any entity, not only registries: %v", body)
+
 	status, body = admin(http.MethodPost, "/v1/gateways/"+gatewayID+"/registries/test-connection", map[string]any{"registry_id": registryID})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	assert.Equal(t, true, body["ok"], "test-connection resolves the reference: %v", body)
