@@ -71,12 +71,9 @@ func (a agentCards) fetch(ctx context.Context, gatewayID ids.GatewayID, t *domai
 	if t.Provider.BuildsCard() {
 		return &FetchedCard{Card: t.BuiltCard()}, nil
 	}
-	credTarget := t
-	if cardReadUsesAuth(t) {
-		var err error
-		if credTarget, err = a.withSecrets(ctx, gatewayID, t); err != nil {
-			return nil, err
-		}
+	credTarget, err := a.withSecrets(ctx, gatewayID, t, cardReadUsesAuth(t), cardReadUsesCloud(t))
+	if err != nil {
+		return nil, err
 	}
 	authorize, err := a.credentials.Authorizer(ctx, credTarget)
 	if err != nil {
@@ -102,7 +99,7 @@ func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.
 	if t.Provider != domain.A2AProviderGeneric {
 		return nil
 	}
-	callTarget, err := a.withSecrets(ctx, gatewayID, t)
+	callTarget, err := a.withSecrets(ctx, gatewayID, t, true, false)
 	if errors.Is(err, domain.ErrSecretUnavailable) {
 		// The call's credential is a reference this plane cannot read, so the
 		// endpoint cannot be asked as the gateway will ask it.
@@ -120,23 +117,34 @@ func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.
 	return a.fetcher.Probe(ctx, t.Endpoint(), t.ProtocolVersion, authorize)
 }
 
-// withSecrets returns t with the secret references of its auth resolved, and
-// t itself when the auth holds none. A reference that
-// cannot be resolved here, as on a control plane without stores, refuses the
-// read rather than sending the reference as the credential; the message says
-// so, since on a gateway served by its own data planes it stays refused.
-func (a agentCards) withSecrets(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget) (*domain.A2ATarget, error) {
-	if t.Auth == nil || (!secretref.IsRef(t.Auth.Value) && !secretref.IsRef(t.Auth.ClientSecret)) {
+// withSecrets returns t with the secret references of the credentials a
+// request sends resolved: its auth when auth, its cloud_auth when cloud. It
+// returns t itself when those hold none. A reference that cannot be resolved
+// here, as on a control plane without stores, refuses the read rather than
+// sending the reference as the credential; the message says so, since on a
+// gateway served by its own data planes it stays refused.
+func (a agentCards) withSecrets(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget, auth, cloud bool) (*domain.A2ATarget, error) {
+	authRef := auth && t.Auth != nil && (secretref.IsRef(t.Auth.Value) || secretref.IsRef(t.Auth.ClientSecret))
+	cloudRef := cloud && t.CloudAuth.HoldsReference()
+	if !authRef && !cloudRef {
 		return t, nil
 	}
 	if a.secrets == nil || a.refs == nil {
 		return nil, fmt.Errorf("%w: the card is read with a secret reference this plane cannot resolve", domain.ErrSecretUnavailable)
 	}
-	// Only the auth is read: the card request carries no static header, so a
-	// header reference that does not resolve must not refuse the read.
-	authOnly := *t
-	authOnly.Headers = nil
-	probe := &domain.Registry{GatewayID: gatewayID, Type: domain.TypeA2A, A2ATarget: &authOnly}
+	// Only the credentials the request sends are read: a reference it does
+	// not send must not refuse it. Static headers are never sent here.
+	sent := *t
+	sent.Headers = nil
+	if !authRef && t.Auth != nil {
+		bare := *t.Auth
+		bare.Value, bare.ClientSecret = "", ""
+		sent.Auth = &bare
+	}
+	if !cloudRef {
+		sent.CloudAuth = nil
+	}
+	probe := &domain.Registry{GatewayID: gatewayID, Type: domain.TypeA2A, A2ATarget: &sent}
 	// The card URL can come from the caller, so the reference must pass the
 	// write checks (scope, store, allowed path) before its value is read and
 	// sent there.
@@ -147,7 +155,14 @@ func (a agentCards) withSecrets(ctx context.Context, gatewayID ids.GatewayID, t 
 	if resolved == nil || resolved.CredentialUnavailable() {
 		return nil, fmt.Errorf("%w: the card credential's secret reference did not resolve", domain.ErrSecretUnavailable)
 	}
-	return resolved.A2ATarget, nil
+	out := *resolved.A2ATarget
+	if !authRef {
+		out.Auth = t.Auth
+	}
+	if !cloudRef {
+		out.CloudAuth = t.CloudAuth
+	}
+	return &out, nil
 }
 
 // cardReadUsesAuth reports whether reading t's card sends its auth: a generic
@@ -158,4 +173,11 @@ func cardReadUsesAuth(t *domain.A2ATarget) bool {
 		return t.CardAuth == domain.A2ACardAuthSame
 	}
 	return t.Auth.Mode != domain.A2AAuthModeCloud && t.CardAuth != domain.A2ACardAuthCloud
+}
+
+// cardReadUsesCloud reports whether reading t's card is signed with its cloud
+// credential.
+func cardReadUsesCloud(t *domain.A2ATarget) bool {
+	return t.Provider != domain.A2AProviderGeneric &&
+		((t.Auth != nil && t.Auth.Mode == domain.A2AAuthModeCloud) || t.CardAuth == domain.A2ACardAuthCloud)
 }

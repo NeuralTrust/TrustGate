@@ -41,3 +41,26 @@ func TestValidateAcceptsReferencesAtEveryCredential(t *testing.T) {
 		t.Error("a literal GCP key must still be checked")
 	}
 }
+
+func TestCloudAuthAcceptsReferences(t *testing.T) {
+	t.Parallel()
+	ref := "secret://corp-vault/ai/key"
+	for _, c := range []*A2ACloudAuth{
+		{AWS: &A2AAWSAuth{AWSAuth: AWSAuth{AccessKeyID: ref, SecretAccessKey: ref, SessionToken: ref}}},
+		{Azure: &AzureAuth{TenantID: "t", ClientID: "c", ClientSecret: ref}},
+		{GCP: &A2AGCPAuth{ServiceAccountJSON: ref}},
+	} {
+		if err := c.validate(); err != nil {
+			t.Errorf("%s cloud_auth with a reference: %v", c.kind(), err)
+		}
+		if !c.HoldsReference() {
+			t.Errorf("%s cloud_auth: HoldsReference = false", c.kind())
+		}
+	}
+	if err := (&A2ACloudAuth{GCP: &A2AGCPAuth{ServiceAccountJSON: "not json"}}).validate(); err == nil {
+		t.Error("a literal GCP key must still be checked")
+	}
+	if (&A2ACloudAuth{Azure: &AzureAuth{ClientSecret: "literal"}}).HoldsReference() || (*A2ACloudAuth)(nil).HoldsReference() {
+		t.Error("HoldsReference must be false without a reference")
+	}
+}
