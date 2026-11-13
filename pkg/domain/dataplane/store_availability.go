@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
+
 	"golang.org/x/mod/semver"
 )
 
@@ -45,9 +47,20 @@ const connectedInstanceState = "connected"
 // Instance is one data-plane stream of a gateway, as the control plane
 // recorded it. Version is empty when the data plane never sent a heartbeat.
 type Instance struct {
+	ID       string
 	State    string
 	LastSeen time.Time
 	Version  string
+	// AcceptsSecretRefs and SecretStores are what the instance last reported
+	// about secret references.
+	AcceptsSecretRefs bool
+	SecretStores      []secretstore.Status
+}
+
+// Live reports whether the instance is connected and was seen within
+// InstanceFreshness of now.
+func (in Instance) Live(now time.Time) bool {
+	return in.State == connectedInstanceState && now.Sub(in.LastSeen) <= InstanceFreshness
 }
 
 // StoreAvailability is whether the data planes of one gateway serve the LLM

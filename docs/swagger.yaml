@@ -2409,6 +2409,84 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.ListSecretStoresResponse:
+    properties:
+      live_instances:
+        description: LiveInstances counts the live data planes of a data_plane source.
+        type: integer
+      source:
+        description: |-
+          Source is where the stores are configured: data_plane (the Helm values
+          of the gateway's data plane) or control_plane (the platform's Helm
+          values). Empty when not supported.
+        enum:
+        - data_plane
+        - control_plane
+        type: string
+      stores:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse'
+        type: array
+      supported:
+        description: Supported is false when the gateway cannot hold secret references.
+        type: boolean
+      too_old:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance:
+    properties:
+      checked_at:
+        type: string
+      error_class:
+        type: string
+      instance_id:
+        type: string
+      state:
+        type: string
+      version:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse:
+    properties:
+      allowed_paths:
+        items:
+          type: string
+        type: array
+      consistent:
+        type: boolean
+      instances:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance'
+        type: array
+      name:
+        type: string
+      status:
+        enum:
+        - ok
+        - degraded
+        - down
+        - not_reported
+        type: string
+      type:
+        type: string
+      usages:
+        type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreUsageResponse:
+    properties:
+      entity:
+        type: string
+      field:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      reference:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink:
     properties:
       code:
@@ -7656,6 +7734,92 @@ paths:
       summary: Validate an OpenAPI document
       tags:
       - registries
+  /v1/gateways/{gateway_id}/secret-stores:
+    get:
+      description: Returns the secret stores a gateway may reference, where they are
+        configured and how healthy each is. Never returns addresses, credentials or
+        values.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.ListSecretStoresResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List secret stores
+      tags:
+      - secret-stores
+  /v1/gateways/{gateway_id}/secret-stores/{name}/usages:
+    get:
+      description: Returns every field of the gateway that references the store, with
+        the reference as stored.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Store name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreUsageResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the usages of a secret store
+      tags:
+      - secret-stores
   /v1/gateways/{gateway_id}/store/access-policies:
     get:
       description: Returns every per-principal Store access level (open | curated

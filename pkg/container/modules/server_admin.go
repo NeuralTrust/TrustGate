@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
+
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
@@ -90,6 +92,7 @@ type adminRouterParams struct {
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount is absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler `optional:"true"`
+	SecretStores          *secretstorehttp.ListHandler       `optional:"true"`
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -194,6 +197,7 @@ func ServerAdmin(c *container.Container) error {
 				AgentCard:                 p.AgentCard,
 				ListRegistryTools:         p.ListRegistryTools,
 				RegistrySharedAccount:     p.RegistrySharedAccount,
+				SecretStores:              p.SecretStores,
 				CreatePolicy:              p.CreatePolicy,
 				GetPolicy:                 p.GetPolicy,
 				ListPolicy:                p.ListPolicy,

@@ -20,6 +20,8 @@ package dataplane
 import (
 	"net/url"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 )
 
 // Heartbeat is what a data plane reports on its Sync stream: the build it runs,
@@ -31,6 +33,12 @@ type Heartbeat struct {
 	DeploymentType     string
 	TrustGuardBaseURL  string
 	TrustGuardClientID string
+	// AcceptsSecretRefs is set by data planes that resolve secret references
+	// and never forward a reference-shaped value as a credential.
+	AcceptsSecretRefs bool
+	// SecretStores are the secret stores the data plane loaded: metadata and
+	// health only.
+	SecretStores []secretstore.Status
 }
 
 // Deployment types a data plane reports in its heartbeat.
@@ -60,8 +68,8 @@ type StreamKey struct {
 
 // ReportableURL returns raw without userinfo, query or fragment, where
 // credentials usually go. The path is kept, since a TrustGuard base URL may
-// carry one, so a secret placed in the path is reported as is. It returns ""
-// for a value that is not an absolute http(s) URL.
+// carry one, so a secret placed in the path is reported as is. A value that
+// is not an absolute http(s) URL returns "".
 func ReportableURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
