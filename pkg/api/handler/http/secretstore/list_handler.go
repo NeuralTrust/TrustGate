@@ -102,6 +102,11 @@ func (h *ListHandler) load(c *fiber.Ctx) (appsecretstore.Source, map[string][]ap
 	if err != nil {
 		return appsecretstore.Source{}, nil, err
 	}
+	// A gateway that cannot hold references has no usages to show; reading
+	// every entity of it would only cost the console's every form open.
+	if !src.Supported {
+		return src, nil, nil
+	}
 	uses, err := h.usages.Usages(ctx, gatewayID)
 	if err != nil {
 		return appsecretstore.Source{}, nil, err
