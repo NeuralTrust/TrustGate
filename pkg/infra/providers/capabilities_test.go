@@ -42,6 +42,7 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 		factory.ProviderCohere,
 		factory.ProviderMoonshot,
 		factory.ProviderDigitalOcean,
+		factory.ProviderWatsonx,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)

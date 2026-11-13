@@ -31,6 +31,9 @@ func ValidateProviderOptions(provider string, options map[string]any) error {
 	case ProviderBedrock:
 		_, err := DecodeBedrockOptions(options)
 		return err
+	case ProviderWatsonx:
+		_, err := DecodeWatsonxOptions(options)
+		return err
 	default:
 		return nil
 	}

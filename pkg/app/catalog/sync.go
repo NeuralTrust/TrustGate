@@ -76,6 +76,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderCohere, "Cohere", "cohere"},
 	{providers.ProviderMoonshot, "Moonshot AI", "openai"},
 	{providers.ProviderDigitalOcean, "DigitalOcean", "openai"},
+	{providers.ProviderWatsonx, "IBM watsonx.ai", "openai"},
 }
 
 // manualSeedModels are models a provider serves that models.dev does not
@@ -142,6 +143,7 @@ var modelsDevProviderToCode = map[string]string{
 	"cohere":         providers.ProviderCohere,
 	"moonshotai":     providers.ProviderMoonshot,
 	"digitalocean":   providers.ProviderDigitalOcean,
+	"watsonx":        providers.ProviderWatsonx,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.

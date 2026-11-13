@@ -99,6 +99,43 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			},
 		},
 	},
+	providers.ProviderWatsonx: {
+		{
+			Key:         "region",
+			Label:       "Region",
+			Type:        OptionFieldTypeEnum,
+			Description: "IBM Cloud region of the watsonx.ai service instance.",
+			Required:    true,
+			Enum: []appplugins.EnumOption{
+				{Value: "us-south", Label: "Dallas (us-south)"},
+				{Value: "eu-de", Label: "Frankfurt (eu-de)"},
+				{Value: "eu-gb", Label: "London (eu-gb)"},
+				{Value: "jp-tok", Label: "Tokyo (jp-tok)"},
+				{Value: "au-syd", Label: "Sydney (au-syd)"},
+				{Value: "ca-tor", Label: "Toronto (ca-tor)"},
+			},
+		},
+		{
+			Key:         "project_id",
+			Label:       "Project ID",
+			Type:        OptionFieldTypeString,
+			Description: "watsonx.ai project ID (Project > Manage > General). Every call is billed to this project.",
+			Required:    true,
+		},
+		{
+			Key:         "api_version",
+			Label:       "API Version",
+			Type:        OptionFieldTypeString,
+			Description: "watsonx.ai API version date (YYYY-MM-DD).",
+			Default:     providers.WatsonxDefaultAPIVersion,
+		},
+		{
+			Key:         "base_url",
+			Label:       "Base URL",
+			Type:        OptionFieldTypeString,
+			Description: "Optional override of the regional endpoint, e.g. a private endpoint (http/https).",
+		},
+	},
 	providers.ProviderVertex: {
 		{
 			Key:         "project",

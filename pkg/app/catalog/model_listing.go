@@ -199,9 +199,12 @@ func isOpaqueModelRef(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), opaqueModelRefPrefix)
 }
 
+// The stored catalog cannot prove a model absent for these providers: Azure
+// names deployments, openai_compatible endpoints are self-hosted, and
+// models.dev prices only some of the models a watsonx region serves.
 func providerListingIsNotAuthoritative(providerCode string) bool {
 	switch providerCode {
-	case providers.ProviderAzure, providers.ProviderOpenAICompatible:
+	case providers.ProviderAzure, providers.ProviderOpenAICompatible, providers.ProviderWatsonx:
 		return true
 	default:
 		return false
