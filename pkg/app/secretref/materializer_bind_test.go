@@ -39,7 +39,7 @@ func (r *switchingResolver) ForceRefresh(context.Context, []domain.Ref) (bool, e
 func TestCopiesAreBoundToTheirSourceAndFingerprinted(t *testing.T) {
 	t.Parallel()
 	r := &switchingResolver{value: "k1"}
-	m := newMat(t, MaterializerConfig{Enabled: true, Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r})
+	m := newMat(t, MaterializerConfig{Eligibility: secretstore.EligibilityAll, Catalog: storeCatalog(), Resolver: r})
 	gw := ids.New[ids.GatewayKind]()
 	src := &registry.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gw, LLMTarget: &registry.LLMTarget{Auth: registry.NewAPIKeyAuth(refStr("k"))}}
 	first := m.Registries(context.Background(), gw, map[ids.RegistryID]*registry.Registry{src.ID: src})[src.ID]

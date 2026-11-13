@@ -29,7 +29,7 @@ func secretStoresEnv(t *testing.T) {
 	t.Helper()
 	minimumEnv(t)
 	for _, key := range []string{
-		"SECRET_STORES_ENABLED", "SECRET_STORES_GATEWAYS", "SECRET_STORES_FILE",
+		"SECRET_STORES_GATEWAYS", "SECRET_STORES_FILE",
 		"SECRET_STORES_FETCH_TIMEOUT", "SECRET_STORES_REFRESH_INTERVAL",
 		"SECRET_STORES_PROBE_INTERVAL", "SECRET_STORES_READINESS_GATE",
 		"INSTANCE_DEPLOYMENT_TYPE",
@@ -56,16 +56,15 @@ func TestLoadConfig_SecretStoresDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_SecretStoresEnabledWithoutFile(t *testing.T) {
+func TestLoadConfig_SecretStoresWithoutFileOnSaaS(t *testing.T) {
 	secretStoresEnv(t)
-	t.Setenv("SECRET_STORES_ENABLED", "true")
 	t.Setenv("INSTANCE_DEPLOYMENT_TYPE", InstanceDeploymentSaaS)
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("NeuralTrust's admin runs enabled with no store file: %v", err)
+		t.Fatalf("NeuralTrust's admin runs with no store file: %v", err)
 	}
-	if !cfg.SecretStores.Enabled || cfg.SecretStores.File != "" {
+	if cfg.SecretStores.File != "" {
 		t.Fatalf("SecretStores = %+v", cfg.SecretStores)
 	}
 }
@@ -102,13 +101,13 @@ func TestLoadConfig_SecretStoresRejects(t *testing.T) {
 			mention: "SECRET_STORES_GATEWAYS",
 		},
 		{
-			name:    "store file on a saas plane, flag off",
+			name:    "store file on a saas plane",
 			env:     map[string]string{"SECRET_STORES_FILE": file, "INSTANCE_DEPLOYMENT_TYPE": "saas"},
 			mention: "SECRET_STORES_FILE",
 		},
 		{
-			name:    "store file on a saas plane, flag on",
-			env:     map[string]string{"SECRET_STORES_ENABLED": "true", "SECRET_STORES_FILE": file, "INSTANCE_DEPLOYMENT_TYPE": "SaaS"},
+			name:    "store file on a saas plane, any case",
+			env:     map[string]string{"SECRET_STORES_FILE": file, "INSTANCE_DEPLOYMENT_TYPE": "SaaS"},
 			mention: "SECRET_STORES_FILE",
 		},
 	}
@@ -128,7 +127,6 @@ func TestLoadConfig_SecretStoresRejects(t *testing.T) {
 
 func TestLoadConfig_SecretStoresFileOnSelfHostedPlane(t *testing.T) {
 	secretStoresEnv(t)
-	t.Setenv("SECRET_STORES_ENABLED", "true")
 	t.Setenv("SECRET_STORES_GATEWAYS", "all")
 	t.Setenv("SECRET_STORES_FILE", " /etc/trustgate/secret-stores.yaml ")
 
@@ -174,13 +172,13 @@ func TestSaaSOverlaysKeepSecretStoresOff(t *testing.T) {
 }
 
 func TestValidateSecretStoresDurations(t *testing.T) {
-	c := &Config{SecretStores: SecretStoresConfig{Enabled: true, FetchTimeout: time.Second, RefreshInterval: time.Second}}
+	c := &Config{SecretStores: SecretStoresConfig{File: "/etc/stores.yaml", FetchTimeout: time.Second, RefreshInterval: time.Second}}
 	err := c.validateSecretStores()
 	if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "SECRET_STORES_PROBE_INTERVAL") {
 		t.Fatalf("validateSecretStores() = %v, want SECRET_STORES_PROBE_INTERVAL refused", err)
 	}
-	c.SecretStores.Enabled = false
+	c.SecretStores.File = ""
 	if err := c.validateSecretStores(); err != nil {
-		t.Fatalf("a disabled, hand-built config must validate: %v", err)
+		t.Fatalf("a plane without a store file needs no store timings: %v", err)
 	}
 }

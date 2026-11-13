@@ -29,7 +29,6 @@ func TestSecretReferenceErrorCodes(t *testing.T) {
 		code   string
 	}{
 		secretref.ErrInvalidReference:       {400, "invalid_secret_reference"},
-		secretref.ErrReferencesDisabled:     {422, "secret_references_disabled"},
 		secretref.ErrReferencesNotSupported: {422, "secret_references_not_supported"},
 		secretref.ErrUnknownStore:           {422, "unknown_secret_store"},
 		secretref.ErrPathNotAllowed:         {422, "secret_path_not_allowed"},

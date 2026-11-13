@@ -23,7 +23,6 @@ import (
 // Errors of a write that holds secret references. Each maps to a stable
 // error code of the admin API.
 var (
-	ErrReferencesDisabled     = fmt.Errorf("secret references are not enabled on this control plane: %w", commonerrors.ErrValidation)
 	ErrReferencesNotSupported = fmt.Errorf("this gateway cannot hold secret references: its planes are not operated by you: %w", commonerrors.ErrValidation)
 	ErrUnknownStore           = fmt.Errorf("no secret store with that name is available to this gateway: %w", commonerrors.ErrValidation)
 	ErrPathNotAllowed         = fmt.Errorf("the path is outside the secret store's allowed paths: %w", commonerrors.ErrValidation)

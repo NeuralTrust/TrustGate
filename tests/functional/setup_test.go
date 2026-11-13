@@ -110,9 +110,6 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelReque
 	env = append(env, "CONFIG_SYNC_JWT_SECRET="+functionalConfigSyncJWTSecret)
 	env = append(env, "CONFIG_SYNC_JWT_ISSUER="+functionalConfigSyncJWTIssuer)
 	env = append(env, "CONFIG_SYNC_JWT_AUDIENCE="+functionalConfigSyncJWTAudience)
-	// Secret references are accepted for hybrid gateways; no plane of the
-	// suite loads a store file, so the in-cluster planes resolve nothing.
-	env = append(env, "SECRET_STORES_ENABLED=true")
 	// One signing key for every plane, as in production: the agent plane
 	// refuses delegation with an ephemeral key.
 	env = append(env, "STS_SIGNING_KEY="+functionalSTSSigningKey)

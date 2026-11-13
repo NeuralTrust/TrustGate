@@ -114,8 +114,6 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusForbidden, ErrorBody{Error: "forbidden", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrInvalidReference):
 		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_secret_reference", Message: publicMessage(err, "")}
-	case errors.Is(err, secretref.ErrReferencesDisabled):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_references_disabled", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrReferencesNotSupported):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_references_not_supported", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrUnknownStore):
