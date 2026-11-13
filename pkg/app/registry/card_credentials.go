@@ -37,6 +37,10 @@ type CardCredentials interface {
 	// Authorizer returns what signs the requests that read t's card, or nil
 	// to read it anonymously.
 	Authorizer(ctx context.Context, t *domain.A2ATarget) (CardAuthorizer, error)
+	// CallAuthorizer returns what signs a call to a generic agent's endpoint
+	// as the gateway signs it, or false when that credential is a user's
+	// (an exchange), which no request has at registration.
+	CallAuthorizer(ctx context.Context, t *domain.A2ATarget) (CardAuthorizer, bool, error)
 }
 
 var _ CardCredentials = (*cardCredentials)(nil)
@@ -80,6 +84,36 @@ func (c *cardCredentials) Authorizer(ctx context.Context, t *domain.A2ATarget) (
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: a %s agent needs a credential to read its card", domain.ErrAgentCardUnavailable, t.Provider)
+}
+
+func (c *cardCredentials) CallAuthorizer(ctx context.Context, t *domain.A2ATarget) (CardAuthorizer, bool, error) {
+	host := cardHost(t.Endpoint())
+	switch t.Auth.Mode {
+	case domain.MCPAuthModeNone:
+		return nil, true, nil
+	case domain.MCPAuthModeStatic:
+		return toHost(host, t.Auth.Header, t.Auth.Value), true, nil
+	case domain.MCPAuthModeClientCredentials:
+		token, err := c.grant(ctx, t.Auth)
+		if err != nil {
+			return nil, false, fmt.Errorf("%w: the agent's credential: %w", domain.ErrAgentEndpointUnavailable, err)
+		}
+		return toHost(host, "Authorization", "Bearer "+token), true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+// toHost sets header on a request to host only: the endpoint's own, over the
+// scheme the gateway will call it with.
+func toHost(host, header, value string) CardAuthorizer {
+	return func(r *http.Request) error {
+		if !strings.EqualFold(r.URL.Host, host) {
+			return fmt.Errorf("%w: the agent's credential is sent only to %s", domain.ErrAgentEndpointUnavailable, host)
+		}
+		r.Header.Set(header, value)
+		return nil
+	}
 }
 
 func (c *cardCredentials) generic(ctx context.Context, t *domain.A2ATarget) (CardAuthorizer, error) {

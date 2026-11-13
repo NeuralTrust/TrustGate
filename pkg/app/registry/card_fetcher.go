@@ -40,6 +40,10 @@ type CardFetcher interface {
 	Resolve(ctx context.Context, cardURL string, authorize CardAuthorizer) (*FetchedCard, error)
 	// Fetch reads the card at exactly cardURL.
 	Fetch(ctx context.Context, cardURL string, authorize CardAuthorizer) (*FetchedCard, error)
+	// Probe checks that endpoint answers A2A JSON-RPC in version v: it asks
+	// for a task that does not exist, which an agent answers with a JSON-RPC
+	// error and changes nothing.
+	Probe(ctx context.Context, endpoint string, v domain.A2AProtocolVersion, authorize CardAuthorizer) error
 }
 
 // agentCards reads and pins the cards of A2A registries.
@@ -67,11 +71,25 @@ func (a agentCards) fetch(ctx context.Context, t *domain.A2ATarget, resolve bool
 	return a.fetcher.Fetch(ctx, t.CardLocation(), authorize)
 }
 
-// pin resolves t's card and pins it.
+// pin resolves t's card, pins it and, for an agent at any URL, checks that the
+// endpoint the card names answers A2A: a card can sit on a website that is
+// not an agent, and that is better said now than on the first call.
 func (a agentCards) pin(ctx context.Context, t *domain.A2ATarget) error {
 	card, err := a.fetch(ctx, t, true)
 	if err != nil {
 		return err
 	}
-	return t.Pin(card.URL, card.Card, time.Now())
+	if err := t.Pin(card.URL, card.Card, time.Now()); err != nil {
+		return err
+	}
+	if t.Provider != domain.A2AProviderGeneric {
+		return nil
+	}
+	authorize, ok, err := a.credentials.CallAuthorizer(ctx, t)
+	if err != nil || !ok {
+		// Without the call's own credential (one a user's token sets) the
+		// endpoint cannot be asked as the gateway will ask it.
+		return err
+	}
+	return a.fetcher.Probe(ctx, t.Endpoint(), t.ProtocolVersion, authorize)
 }

@@ -89,6 +89,13 @@ func GatewayFailure(reason string) *RPCError {
 	return newRPCError(CodeGatewayFailure, "Gateway could not complete the call", map[string]string{"reason": reason})
 }
 
+// upstreamAnswer is -32092 for an agent whose answer was not a JSON-RPC
+// response, with the HTTP status it answered so the caller can tell a missing
+// endpoint (404, 405) from a failing one (5xx).
+func upstreamAnswer(reason string, status int) *RPCError {
+	return newRPCError(CodeGatewayFailure, "Gateway could not complete the call", map[string]any{"reason": reason, "upstream_status": status})
+}
+
 // IdentityRequired is -32093.
 func IdentityRequired() *RPCError {
 	return newRPCError(CodeIdentityRequired, "An authenticated user is required", map[string]string{"reason": ReasonIdentityRequired})

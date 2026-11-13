@@ -129,3 +129,35 @@ func TestCardCredentialsAgentCoreExchangeReadsWithClientCredentials(t *testing.T
 	require.ErrorIs(t, authorize(foreign), domain.ErrAgentCardUnavailable)
 	assert.Empty(t, foreign.Header.Get("Authorization"))
 }
+
+// The endpoint check signs as the gateway will call the agent: its static
+// header or a client_credentials token, to the endpoint's host only. A user's
+// token is not there at registration, so the check is skipped.
+func TestCardCredentialsCallAuthorizer(t *testing.T) {
+	t.Parallel()
+	creds := appregistry.NewCardCredentials(grantToken("tok"), noCloud(t))
+	target := func(auth *domain.MCPAuth) *domain.A2ATarget {
+		t := &domain.A2ATarget{CardURL: "https://agent.example.com", URL: "https://agent.example.com/rpc", Auth: auth}
+		t.Normalize()
+		return t
+	}
+
+	authorize, ok, err := creds.CallAuthorizer(context.Background(), target(&domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "X-Key", Value: "k"}))
+	require.NoError(t, err)
+	require.True(t, ok)
+	req := cardRequest(t, "https://agent.example.com/rpc")
+	require.NoError(t, authorize(req))
+	assert.Equal(t, "k", req.Header.Get("X-Key"))
+	require.ErrorIs(t, authorize(cardRequest(t, "https://other.example.com/rpc")), domain.ErrAgentEndpointUnavailable)
+
+	authorize, ok, err = creds.CallAuthorizer(context.Background(), target(&domain.MCPAuth{Mode: domain.MCPAuthModeClientCredentials, ClientID: "c", ClientSecret: "s", TokenURL: "https://idp.example.com/token"}))
+	require.NoError(t, err)
+	require.True(t, ok)
+	req = cardRequest(t, "https://agent.example.com/rpc")
+	require.NoError(t, authorize(req))
+	assert.Equal(t, "Bearer tok", req.Header.Get("Authorization"))
+
+	_, ok, err = creds.CallAuthorizer(context.Background(), target(&domain.MCPAuth{Mode: domain.MCPAuthModeExchange, Pattern: domain.ExchangeTokenExchange}))
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
