@@ -62,3 +62,24 @@ func TestAuthListerReadsEveryPage(t *testing.T) {
 		t.Fatalf("last = %+v", last)
 	}
 }
+
+type enabledAuths struct{ all []*auth.Auth }
+
+func (e enabledAuths) ListEnabledByGatewayAndType(_ context.Context, _ ids.GatewayID, t auth.Type) ([]*auth.Auth, error) {
+	if t != auth.TypeOAuth2 {
+		panic("only OAuth 2.0 auths hold identity provider secrets")
+	}
+	return e.all, nil
+}
+
+func TestEnabledAuthListerReadsWhatAServingPlaneResolves(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	a := &auth.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Name: "okta", Config: auth.Config{OAuth2: &auth.OAuth2Config{
+		TokenURL: "https://idp.example/token", ClientSecret: "secret://vault/idp#secret",
+	}}}
+	got, err := EnabledAuthLister(enabledAuths{all: []*auth.Auth{a}})(context.Background(), gw)
+	if err != nil || len(got) != 1 || len(got[0].Uses) != 1 || got[0].Name != "okta" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
