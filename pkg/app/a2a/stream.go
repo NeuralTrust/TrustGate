@@ -46,12 +46,15 @@ var (
 
 // Stream is an agent's event stream for one call.
 type Stream struct {
-	x        *Exchange
-	body     io.ReadCloser
-	cancel   context.CancelFunc
-	deadline time.Time
-	task     string
-	recorded [2]string
+	x    *Exchange
+	body io.ReadCloser
+	// translate reads a provider's own stream, for an agent the gateway
+	// translates; nil reads server-sent JSON-RPC events.
+	translate streamTranslator
+	cancel    context.CancelFunc
+	deadline  time.Time
+	task      string
+	recorded  [2]string
 }
 
 type sseEvent struct {
@@ -83,7 +86,11 @@ func (x *Exchange) open(ctx context.Context) (*Stream, *RPCError) {
 		cancel()
 		return nil, upstreamFailure(err)
 	}
-	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
+	translate, translates := x.provider.(streamTranslator)
+	if translates && res.StatusCode >= 200 && res.StatusCode <= 299 {
+		return &Stream{x: x, body: res.Body, translate: translate, cancel: cancel, deadline: time.Now().Add(streamMaxDuration), task: x.content.TaskID}, nil
+	}
+	if translates || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
 		defer cancel()
 		defer func() { _ = res.Body.Close() }()
 		reading := time.AfterFunc(upstreamTimeout, cancel)
@@ -204,6 +211,10 @@ func (s *Stream) read(events chan<- sseEvent, done <-chan struct{}) {
 		case <-done:
 			return false
 		}
+	}
+	if s.translate != nil {
+		s.translate.readStream(s.x, s.body, send)
+		return
 	}
 	scanner := bufio.NewScanner(s.body)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxEventBytes)

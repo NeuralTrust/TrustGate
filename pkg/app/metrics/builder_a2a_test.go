@@ -97,6 +97,21 @@ func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 	}
 }
 
+// The tokens an agent reports are the event's usage, as an LLM call's are.
+func TestBuilder_A2ATokensAreTheUsage(t *testing.T) {
+	rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})
+	span := rt.StartSpan(trace.SpanA2A, "message/send")
+	span.SetA2A(trace.A2AAttrs{Method: "message/send", Provider: "agentcore_harness", InputTokens: 30, OutputTokens: 12})
+	span.End()
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt,
+		&infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/bot/agents/reg-1"},
+		&infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.Usage)
+	assert.Equal(t, events.Usage{PromptTokens: 30, CompletionTokens: 12, TotalTokens: 42}, *evt.Usage)
+}
+
 // LLM and MCP events carry no a2a block.
 func TestBuilder_OtherKindsCarryNoA2A(t *testing.T) {
 	for _, kind := range []string{events.KindLLM, events.KindMCP} {

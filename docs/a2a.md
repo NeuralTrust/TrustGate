@@ -459,9 +459,10 @@ credentials only to that host over HTTPS.
 
 `a2a_target.provider` is `agentcore_harness` or `databricks_agent`. These
 agents do not speak A2A: the gateway turns each `message/send` into a call to
-the provider's own API and the answer into an A2A 0.3 message. They publish no
-card, so the gateway builds one (the agent's name, a single `chat` skill,
-A2A 0.3, no streaming) and pins it like any other.
+the provider's own API and the answer into an A2A 0.3 message; `message/stream`
+answers as a task (working, the text as one artifact appended chunk by chunk,
+completed). They publish no card, so the gateway builds one (the agent's name,
+a single `chat` skill, A2A 0.3, streaming) and pins it like any other.
 
 | | `agentcore_harness` | `databricks_agent` |
 |---|---|---|
@@ -471,9 +472,17 @@ A2A 0.3, no streaming) and pins it like any other.
 | Sends | `messages: [{role: user, content: [{text}]}]` | `input: [{role: user, content}]`, `context.conversation_id` |
 | Reads | The text deltas of the event stream's assistant messages | The `output_text` of the `message` output items |
 
-- Only `message/send` is forwarded. There are no tasks, so `tasks/get` and
-  `tasks/cancel` answer `-32004`, and `message/stream` is refused since the
-  card does not stream.
+- `message/send` and `message/stream` are forwarded. The tasks a stream names
+  live only for that stream, so `tasks/get`, `tasks/cancel` and
+  `tasks/resubscribe` answer `-32004`. A harness always streams; Databricks
+  gets `stream: true` and its `response.output_text.delta` events are relayed
+  as they come (a message item that came without deltas is sent when done).
+- Databricks: `custom_inputs` and `databricks_options` (JSON objects) in the
+  message's `metadata`, else the call's `params.metadata`, go to the agent as
+  they are.
+- The tokens the agent reports (a harness's `metadata` event, the Responses
+  `usage`) are the event's usage, as an LLM call's: Activity and the Agents
+  dashboard read them.
 - The message's text parts, and its data parts as JSON, are sent as one text.
   A file part answers `-32005`.
 - The conversation is the call's `contextId`, or a new one the reply carries.

@@ -16,6 +16,7 @@ package a2a_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -213,4 +214,122 @@ func TestDatabricksAppAndErrors(t *testing.T) {
 		}
 		assert.Equal(t, []string{"POST https://flats-123.aws.databricksapps.com/responses"}, h.sent())
 	}
+}
+
+const streamingCard = `{"name":"agent","capabilities":{"streaming":true}}`
+
+type streamFrame struct {
+	Result struct {
+		Kind      string `json:"kind"`
+		ContextID string `json:"contextId"`
+		Append    bool   `json:"append"`
+		Final     bool   `json:"final"`
+		Status    struct {
+			State string `json:"state"`
+		} `json:"status"`
+		Artifact struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"artifact"`
+	} `json:"result"`
+	Error *a2a.RPCError `json:"error"`
+}
+
+func runTranslatedStream(t *testing.T, h *hostedHarness, params string) []streamFrame {
+	t.Helper()
+	var got collector
+	openStream(t, h.harness, rpcRequest("message/stream", params)).Run(context.Background(), json.RawMessage(`7`), got.emit)
+	got.mu.Lock()
+	defer got.mu.Unlock()
+	frames := make([]streamFrame, len(got.frames))
+	for i, f := range got.frames {
+		require.NoError(t, json.Unmarshal(f, &frames[i]))
+	}
+	return frames
+}
+
+// summary is each frame as kind/state/text, to read a stream at a glance.
+func summary(frames []streamFrame) []string {
+	out := make([]string, len(frames))
+	for i, f := range frames {
+		switch {
+		case f.Error != nil:
+			out[i] = "error:" + f.Error.Message
+		case f.Result.Kind == "artifact-update":
+			out[i] = "text:" + f.Result.Artifact.Parts[0].Text
+		default:
+			out[i] = f.Result.Kind + ":" + f.Result.Status.State
+		}
+	}
+	return out
+}
+
+func TestHarnessStreamsTheAnswerAsATask(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, eventStream(t,
+		harnessEvent{"event", "messageStart", `{"role":"assistant"}`},
+		harnessEvent{"event", "contentBlockDelta", `{"delta":{"text":"Let me check."}}`},
+		harnessEvent{"event", "messageStop", `{"stopReason":"tool_use"}`},
+		harnessEvent{"event", "messageStart", `{"role":"user"}`},
+		harnessEvent{"event", "contentBlockDelta", `{"delta":{"text":"tool result"}}`},
+		harnessEvent{"event", "messageStart", `{"role":"assistant"}`},
+		harnessEvent{"event", "contentBlockDelta", `{"delta":{"text":"It is "}}`},
+		harnessEvent{"event", "contentBlockDelta", `{"delta":{"text":"sunny."}}`},
+		harnessEvent{"event", "messageStop", `{"stopReason":"end_turn"}`},
+		harnessEvent{"event", "metadata", `{"usage":{"inputTokens":30,"outputTokens":12}}`},
+	))
+	h := newHostedHarness(t, ag, a2a.Version03, harnessTarget(), streamingCard)
+
+	frames := runTranslatedStream(t, h, sendHello)
+	assert.Equal(t, []string{"task:working", "text:Let me check.", "text:\n\n", "text:It is ", "text:sunny.", "status-update:completed"}, summary(frames))
+	assert.False(t, frames[1].Result.Append, "the first chunk starts the artifact")
+	assert.True(t, frames[2].Result.Append)
+	assert.True(t, frames[len(frames)-1].Result.Final)
+	_, owned := h.store.owner(h.harness, a2a.ScopeContext, frames[0].Result.ContextID)
+	assert.True(t, owned, "the conversation is bound to its caller")
+}
+
+func TestHarnessStreamEndsWithTheAgentsError(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, eventStream(t,
+		harnessEvent{"event", "messageStart", `{"role":"assistant"}`},
+		harnessEvent{"event", "contentBlockDelta", `{"delta":{"text":"Working"}}`},
+		harnessEvent{"exception", "runtimeClientError", `{"message":"tool failed"}`},
+	))
+	h := newHostedHarness(t, ag, a2a.Version03, harnessTarget(), streamingCard)
+	assert.Equal(t, []string{"task:working", "text:Working", "error:tool failed"}, summary(runTranslatedStream(t, h, sendHello)))
+}
+
+func TestDatabricksStreamsAndPassesItsInputs(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"type":"response.output_item.done","item":{"id":"fc-1","type":"function_call","name":"search"}}`,
+			`{"type":"response.output_text.delta","item_id":"m-1","delta":"Two flats "}`,
+			`{"type":"response.output_text.delta","item_id":"m-1","delta":"match."}`,
+			`{"type":"response.output_item.done","item":{"id":"m-1","type":"message","content":[{"type":"output_text","text":"Two flats match."}]}}`,
+			`{"type":"response.output_item.done","item":{"id":"m-2","type":"message","content":[{"type":"output_text","text":"Anything else?"}]}}`,
+			`{"trace_id":"tr-1"}`,
+			`{"type":"response.completed","response":{"usage":{"input_tokens":20,"output_tokens":8}}}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+e+"\n\n")
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	h := newHostedHarness(t, ag, a2a.Version03, databricksTarget(&registrydomain.DatabricksLocator{
+		WorkspaceURL: "https://acme.cloud.databricks.com", ServingEndpoint: "agents_flats",
+	}), streamingCard)
+
+	frames := runTranslatedStream(t, h, `{"message":{"kind":"message","messageId":"m-1","role":"user","parts":[{"kind":"text","text":"Flats?"}],`+
+		`"metadata":{"custom_inputs":{"city":"Madrid"}}},"metadata":{"databricks_options":{"return_trace":true},"custom_inputs":{"city":"ignored"}}}`)
+	assert.Equal(t, []string{"task:working", "text:Two flats ", "text:match.", "text:\n\n", "text:Anything else?", "status-update:completed"}, summary(frames))
+
+	_, body := ag.request(0)
+	var sent map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &sent))
+	assert.JSONEq(t, `true`, string(sent["stream"]))
+	assert.JSONEq(t, `{"city":"Madrid"}`, string(sent["custom_inputs"]), "the message's metadata wins over the call's")
+	assert.JSONEq(t, `{"return_trace":true}`, string(sent["databricks_options"]))
 }

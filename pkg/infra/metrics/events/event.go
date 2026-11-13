@@ -185,6 +185,8 @@ type A2A struct {
 	IdentityMode        string `json:"identity_mode,omitempty"`
 	IdentitySubjectKind string `json:"identity_subject_kind,omitempty"`
 	RPCErrorCode        int    `json:"rpc_error_code,omitempty"`
+	InputTokens         int    `json:"input_tokens,omitempty"`
+	OutputTokens        int    `json:"output_tokens,omitempty"`
 }
 
 // MCPPolicyScope tells which scoped policies of the consumer applied to a
