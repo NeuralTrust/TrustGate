@@ -226,31 +226,33 @@ type rateLimitParams struct {
 
 type proxyParam struct {
 	dig.In
-	Srv           server.Server `name:"proxy"`
-	Worker        appmetrics.Worker
-	UsageRecords  *usageinfra.Emitter
-	TrafficLabels modules.TrafficLabelsParams
-	Conn          *database.Connection
-	BedrockModels appcatalog.BedrockModelResolver
-	Config        *config.Config
-	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
-	RateLimit     rateLimitParams
-	OpsSDK        *o11y.SDK
-	SecretStores  *modules.SecretStores `optional:"true"`
+	Srv            server.Server `name:"proxy"`
+	Worker         appmetrics.Worker
+	UsageRecords   *usageinfra.Emitter
+	TrafficLabels  modules.TrafficLabelsParams
+	Conn           *database.Connection
+	BedrockModels  appcatalog.BedrockModelResolver
+	Config         *config.Config
+	ConfigWorker   *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient   *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit      rateLimitParams
+	OpsSDK         *o11y.SDK
+	SecretStores   *modules.SecretStores `optional:"true"`
+	SecretEntities modules.SecretEntityListers
 }
 
 // planeParam is what the mcp and agent planes run with besides their server.
 type planeParam struct {
 	dig.In
-	Worker       appmetrics.Worker
-	UsageRecords *usageinfra.Emitter
-	Conn         *database.Connection
-	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
-	RateLimit    rateLimitParams
-	OpsSDK       *o11y.SDK
-	SecretStores *modules.SecretStores `optional:"true"`
+	Worker         appmetrics.Worker
+	UsageRecords   *usageinfra.Emitter
+	Conn           *database.Connection
+	ConfigWorker   *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient   *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit      rateLimitParams
+	OpsSDK         *o11y.SDK
+	SecretStores   *modules.SecretStores `optional:"true"`
+	SecretEntities modules.SecretEntityListers
 }
 
 type mcpParam struct {
@@ -283,6 +285,7 @@ type allParam struct {
 	Usage          *modules.UsageLoops
 	OpsSDK         *o11y.SDK
 	SecretStores   *modules.SecretStores `optional:"true"`
+	SecretEntities modules.SecretEntityListers
 }
 
 // startSecretsBackfill starts the stored-secrets backfill and returns the
@@ -329,7 +332,7 @@ func runPlane(p planeParam, srv server.Server, name string, logger *slog.Logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer startRateLimit(p.RateLimit, logger)()
-	p.SecretStores.StartServing()
+	p.SecretStores.StartServing(p.SecretEntities)
 	defer p.SecretStores.Stop()
 	runServer(srv, name, logger)
 }
@@ -344,7 +347,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer stopWorker()
 	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
-	p.SecretStores.StartServing()
+	p.SecretStores.StartServing(p.SecretEntities)
 	defer p.SecretStores.Stop()
 	runServer(p.Srv, serverProxy, logger)
 }
@@ -391,7 +394,7 @@ func runAll(p allParam, logger *slog.Logger, stopBackfill func()) {
 	defer startRateLimit(p.RateLimit, logger)()
 	p.Usage.Start()
 	defer p.Usage.Stop()
-	p.SecretStores.StartServing()
+	p.SecretStores.StartServing(p.SecretEntities)
 	defer p.SecretStores.Stop()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},

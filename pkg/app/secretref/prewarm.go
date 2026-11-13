@@ -81,6 +81,12 @@ func NewPrewarmer(cfg PrewarmConfig) *Prewarmer {
 	return &Prewarmer{cfg: cfg, trigger: make(chan struct{}, 1), minBackoff: prewarmMinBackoff, maxBackoff: prewarmMaxBackoff}
 }
 
+// SetEntities sets what lists the references of a gateway's other entities.
+// It is called before Run.
+func (p *Prewarmer) SetEntities(entities []func(ctx context.Context, gatewayID ids.GatewayID) ([]Use, error)) {
+	p.cfg.Entities = entities
+}
+
 // Trigger asks for a pass; triggers that arrive during a pass coalesce into
 // one more pass.
 func (p *Prewarmer) Trigger() {
