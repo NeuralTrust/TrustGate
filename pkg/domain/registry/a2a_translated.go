@@ -142,7 +142,7 @@ func (p A2AProvider) BuildsCard() bool {
 }
 
 // BuiltCard is the card the gateway publishes for an agent that has none: its
-// name, a chat skill, A2A 0.3 over JSON-RPC at the gateway, and no streaming.
+// name, a chat skill, A2A 0.3 over JSON-RPC at the gateway, with streaming.
 func (t *A2ATarget) BuiltCard() []byte {
 	name, host := "", ""
 	switch {
@@ -158,7 +158,7 @@ func (t *A2ATarget) BuiltCard() []byte {
 		"version":            "1.0.0",
 		"protocolVersion":    "0.3.0",
 		"preferredTransport": "JSONRPC",
-		"capabilities":       map[string]any{"streaming": false},
+		"capabilities":       map[string]any{"streaming": true},
 		"defaultInputModes":  []string{"text/plain"},
 		"defaultOutputModes": []string{"text/plain"},
 		"skills": []map[string]any{{
