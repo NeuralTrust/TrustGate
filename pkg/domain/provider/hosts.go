@@ -32,6 +32,19 @@ var defaultHosts = map[string]string{
 	DigitalOcean: "inference.do-ai.run",
 }
 
+// baseURLProviders read provider_options.base_url; every other provider
+// ignores it and calls its own or its configured endpoint.
+var baseURLProviders = map[string]bool{
+	OpenAI: true, OpenAICompatible: true, Vertex: true, Cohere: true,
+	Mistral: true, Anthropic: true, Groq: true, OpenRouter: true,
+}
+
+// HonorsBaseURL reports whether name calls provider_options.base_url when it
+// is set.
+func HonorsBaseURL(name string) bool {
+	return baseURLProviders[name]
+}
+
 // DefaultHost returns the API host name calls when no base_url overrides it,
 // or "" when its host is derived from its configuration.
 func DefaultHost(name string) string {

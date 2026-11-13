@@ -39,6 +39,9 @@ func TestAllowsDestinations(t *testing.T) {
 		{"amazonaws.com"},
 		{"evilamazonaws.com"},
 		{"api.openai.com", "attacker.example"},
+		{"bedrock-runtime.x.attacker.example#.amazonaws.com"},
+		{"bedrock-runtime.x.attacker.example/.amazonaws.com"},
+		{"user@attacker.example.amazonaws.com"},
 	} {
 		if err := s.AllowsDestinations(hosts); !errors.Is(err, ErrDestinationNotAllowed) || ClassOf(err) != ClassDestinationNotAllowed {
 			t.Errorf("%v: err = %v, want destination_not_allowed", hosts, err)

@@ -568,8 +568,8 @@ func (x *SecretRefHealth) GetOutcomes() []*SecretRefOutcome {
 }
 
 // SecretRefOutcome is one reference: its gateway, entity, id and field, the
-// store and path it names, and the error class that left it empty (empty
-// when it resolved).
+// reference in its canonical form with the store and path it names, and the
+// error class that left it empty (empty when it resolved).
 type SecretRefOutcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	GatewayId     string                 `protobuf:"bytes,1,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
@@ -579,6 +579,7 @@ type SecretRefOutcome struct {
 	Store         string                 `protobuf:"bytes,5,opt,name=store,proto3" json:"store,omitempty"`
 	Path          string                 `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
 	ErrorClass    string                 `protobuf:"bytes,7,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	Reference     string                 `protobuf:"bytes,8,opt,name=reference,proto3" json:"reference,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -658,6 +659,13 @@ func (x *SecretRefOutcome) GetPath() string {
 func (x *SecretRefOutcome) GetErrorClass() string {
 	if x != nil {
 		return x.ErrorClass
+	}
+	return ""
+}
+
+func (x *SecretRefOutcome) GetReference() string {
+	if x != nil {
+		return x.Reference
 	}
 	return ""
 }
@@ -1679,7 +1687,7 @@ const file_configsync_proto_rawDesc = "" +
 	"\n" +
 	"unresolved\x18\x02 \x01(\rR\n" +
 	"unresolved\x128\n" +
-	"\boutcomes\x18\x03 \x03(\v2\x1c.snapshotpb.SecretRefOutcomeR\boutcomes\"\xba\x01\n" +
+	"\boutcomes\x18\x03 \x03(\v2\x1c.snapshotpb.SecretRefOutcomeR\boutcomes\"\xd8\x01\n" +
 	"\x10SecretRefOutcome\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x16\n" +
@@ -1689,7 +1697,8 @@ const file_configsync_proto_rawDesc = "" +
 	"\x05store\x18\x05 \x01(\tR\x05store\x12\x12\n" +
 	"\x04path\x18\x06 \x01(\tR\x04path\x12\x1f\n" +
 	"\verror_class\x18\a \x01(\tR\n" +
-	"errorClass\"\x85\x02\n" +
+	"errorClass\x12\x1c\n" +
+	"\treference\x18\b \x01(\tR\treference\"\x85\x02\n" +
 	"\x11SecretStoreStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12#\n" +

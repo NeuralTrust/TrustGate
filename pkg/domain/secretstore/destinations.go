@@ -26,6 +26,9 @@ import (
 // to match every host below it.
 var destinationPattern = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
+// hostPattern is a lowercase host name.
+var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9_-]*[a-z0-9])?)*$`)
+
 // validateDestinations checks a store's allowed destinations: nil is absent
 // and allows every host; a present list must not be empty, and every entry is
 // a lowercase host name or "*." followed by one, with no scheme, port, path or
@@ -47,7 +50,9 @@ func validateDestinations(store string, destinations []string) error {
 
 // NormalizeHost returns the comparable form of a host or URL: lowercase,
 // without scheme, port, path or trailing dot. It returns "" for a value with
-// no host.
+// no host, and for one that is not a host name or an IP address, such as a
+// host built from a field that carries a path or fragment: it must never
+// match an allowed suffix.
 func NormalizeHost(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -63,8 +68,11 @@ func NormalizeHost(raw string) string {
 	if host, _, err := net.SplitHostPort(raw); err == nil {
 		raw = host
 	}
-	raw = strings.Trim(raw, "[]")
-	return strings.TrimSuffix(strings.ToLower(raw), ".")
+	raw = strings.TrimSuffix(strings.ToLower(strings.Trim(raw, "[]")), ".")
+	if net.ParseIP(raw) == nil && !hostPattern.MatchString(raw) {
+		return ""
+	}
+	return raw
 }
 
 func destinationMatches(pattern, host string) bool {

@@ -53,7 +53,7 @@ func TestSecretRefsRoundTrip(t *testing.T) {
 	}
 	in := secretstore.RefHealth{Total: 1, Unresolved: 1, Outcomes: []secretstore.RefOutcome{{
 		GatewayID: ids.New[ids.GatewayKind](), Entity: "registry", ID: "r1", Field: "llm_target.auth.api_key.api_key",
-		Store: "vault", Path: "ai/k", Class: secretstore.ClassAccessDenied,
+		Reference: "secret://vault/ai/k", Store: "vault", Path: "ai/k", Class: secretstore.ClassAccessDenied,
 	}}}
 	raw, err := encodeSecretRefs(in)
 	if err != nil {

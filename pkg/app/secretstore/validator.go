@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
@@ -212,18 +213,19 @@ func removedUses(previous, current []appsecretref.Use) []appsecretref.Use {
 	return out
 }
 
-// changedUses drops the uses whose field already held the same value.
+// changedUses drops the uses whose field already held the same value, sent
+// to the same hosts: a value that now goes somewhere else is checked again.
 func changedUses(uses, previous []appsecretref.Use) []appsecretref.Use {
 	if len(previous) == 0 {
 		return uses
 	}
-	stored := make(map[string]string, len(previous))
+	stored := make(map[string]appsecretref.Use, len(previous))
 	for _, p := range previous {
-		stored[strings.Join(p.Path, "\x00")] = p.Raw
+		stored[strings.Join(p.Path, "\x00")] = p
 	}
 	out := uses[:0:0]
 	for _, u := range uses {
-		if raw, ok := stored[strings.Join(u.Path, "\x00")]; ok && raw == u.Raw {
+		if p, ok := stored[strings.Join(u.Path, "\x00")]; ok && p.Raw == u.Raw && slices.Equal(p.Hosts, u.Hosts) {
 			continue
 		}
 		out = append(out, u)

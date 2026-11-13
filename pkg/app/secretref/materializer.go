@@ -475,7 +475,7 @@ func (m *materializer) record(gatewayID ids.GatewayID, source string, refs []*pe
 			Class: secretstore.ClassOf(p.err),
 		}
 		if p.parsed {
-			o.Store, o.Path = p.ref.Store, p.ref.Path
+			o.Reference, o.Store, o.Path = p.ref.String(), p.ref.Store, p.ref.Path
 		}
 		outcomes = append(outcomes, o)
 	}
@@ -501,15 +501,15 @@ func (m *materializer) record(gatewayID ids.GatewayID, source string, refs []*pe
 // once, failing if either failed.
 func (m *materializer) Health() secretstore.RefHealth {
 	type key struct {
-		gw                             ids.GatewayID
-		entity, id, field, store, path string
+		gw                           ids.GatewayID
+		entity, id, field, reference string
 	}
 	m.mu.Lock()
 	merged := map[key]secretstore.RefOutcome{}
 	for _, sources := range m.outcomes {
 		for _, outcomes := range sources {
 			for _, o := range outcomes {
-				k := key{o.GatewayID, o.Entity, o.ID, o.Field, o.Store, o.Path}
+				k := key{o.GatewayID, o.Entity, o.ID, o.Field, o.Reference}
 				if prev, ok := merged[k]; ok && prev.Class != "" {
 					continue
 				}
