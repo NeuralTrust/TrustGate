@@ -71,6 +71,10 @@ message Hello {
   // planes get those tenants as healthy, since they would block every
   // registry.
   bool accepts_managed_limit = 6;
+  // accepts_secret_refs says the data plane resolves secret references and
+  // never forwards a reference-shaped value as a credential. Snapshots that
+  // hold references are served only to streams that set it.
+  bool accepts_secret_refs = 7;
 }
 
 message Ack {
@@ -91,6 +95,27 @@ message Heartbeat {
   // client secret is never reported.
   string trustguard_base_url = 4;
   string trustguard_client_id = 5;
+  // secret_stores are the secret stores this data plane loaded and their
+  // health: metadata only, never an address, a credential or a value.
+  repeated SecretStoreStatus secret_stores = 6;
+  // accepts_secret_refs repeats Hello.accepts_secret_refs so the control
+  // plane can record it with the rest of the heartbeat.
+  bool accepts_secret_refs = 7;
+}
+
+// SecretStoreStatus is one secret store a data plane loaded.
+message SecretStoreStatus {
+  string name = 1;
+  string type = 2;
+  repeated string allowed_paths = 3;
+  // state is ok, auth_failed, unavailable, config_error or not_allowed.
+  string state = 4;
+  string error_class = 5;
+  // checked_at is RFC 3339, empty before the first check.
+  string checked_at = 6;
+  // gateways is the store's gateway allowlist; empty admits every eligible
+  // gateway the data plane serves.
+  repeated string gateways = 7;
 }
 
 message ServerMessage {
@@ -164,6 +189,8 @@ message VersionNotice {
 message GetManifestRequest {
   string applied_version = 1;
   string instance_id = 2;
+  // accepts_secret_refs: see Hello.accepts_secret_refs.
+  bool accepts_secret_refs = 3;
 }
 
 message Manifest {
@@ -193,6 +220,8 @@ message FragmentChunk {
 message GetSnapshotRequest {
   string applied_version = 1;
   string instance_id = 2;
+  // accepts_secret_refs: see Hello.accepts_secret_refs.
+  bool accepts_secret_refs = 3;
 }
 
 message SnapshotChunk {

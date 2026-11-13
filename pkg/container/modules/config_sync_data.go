@@ -67,7 +67,7 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, enforcement *appusage.Enforcement, logger *slog.Logger) (*configsyncgrpc.Client, error) {
+	if err := c.Provide(func(cfg *config.Config, enforcement *appusage.Enforcement, stores *SecretStores, logger *slog.Logger) (*configsyncgrpc.Client, error) {
 		client, err := configsyncgrpc.NewClient(cfg.ConfigSync, logger)
 		if err != nil {
 			return nil, err
@@ -80,6 +80,9 @@ func ConfigSyncData(c *container.Container) error {
 			TrustGuardBaseURL:  dataplane.ReportableURL(cfg.TrustGuard.BaseURL),
 			TrustGuardClientID: cfg.TrustGuard.ClientID,
 		})
+		if stores != nil && stores.Cache != nil {
+			client.SetSecretStoreReporter(stores.Cache.Statuses)
+		}
 		return client, nil
 	}); err != nil {
 		return err

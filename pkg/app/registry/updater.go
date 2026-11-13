@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -67,6 +69,7 @@ type updater struct {
 	auths       AuthLookup
 	cards       agentCards
 	shared      sharedPlane
+	secretRefs  SecretRefValidator
 }
 
 func NewUpdater(
@@ -90,6 +93,7 @@ func NewUpdater(
 		auths:       o.auths,
 		cards:       o.cards,
 		shared:      o.shared,
+		secretRefs:  o.secretRefs,
 	}
 }
 
@@ -113,6 +117,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if in.Enabled != nil {
 		existing.Enabled = *in.Enabled
 	}
+	storedRefs, storedEmbedded := appsecretref.RegistryReferences(existing)
+	storedRefs = append(storedRefs, storedEmbedded...)
 	applyLLMTargetUpdate(existing, in)
 	prevAuth := storedMCPAuth(existing)
 	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
@@ -135,9 +141,16 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	audit := func() {}
+	if u.secretRefs != nil {
+		if audit, err = u.secretRefs.ValidateRegistry(ctx, existing, storedRefs); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
+	audit()
 	u.memoryCache.Set(existing.ID.String(), existing)
 	invalidation.Registry(ctx, u.publisher, u.logger, existing.GatewayID, existing.ID)
 	if u.signaler != nil {

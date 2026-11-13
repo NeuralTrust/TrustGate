@@ -29,7 +29,15 @@ const (
 	ResourcePolicies   AdminResource = "policies"
 	ResourceConsumers  AdminResource = "consumers"
 	ResourceAuths      AdminResource = "auths"
+	// ResourceSecretStores is read-only: listing stores, their usages and
+	// testing a secret all need secret_stores:read, and so does writing a
+	// secret reference on any entity.
+	ResourceSecretStores AdminResource = "secret_stores"
 )
+
+// ScopeSecretStoresRead is what a service credential needs to read secret
+// stores and to write or retarget a secret reference.
+const ScopeSecretStoresRead = string(ResourceSecretStores) + scopeReadSuffix
 
 const (
 	scopeReadSuffix  = ":read"

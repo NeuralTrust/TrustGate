@@ -270,3 +270,86 @@ func setSlot(c *registry.Registry, path []string, value string) {
 		c.MCPTarget.Auth.ClientSecret = value
 	}
 }
+
+// Use is a declared location of a registry and the reference-shaped value it
+// holds.
+type Use struct {
+	Path []string
+	Raw  string
+}
+
+// RegistryReferences lists the declared locations of r that hold a
+// reference, and the paths of those that embed one inside a longer value,
+// such as "Bearer secret://…", which is refused: only a whole value can be a
+// reference.
+func RegistryReferences(r *registry.Registry) (uses []Use, embedded []Use) {
+	if r == nil {
+		return nil, nil
+	}
+	for _, s := range registrySlots(r) {
+		uses = append(uses, Use{Path: s.path, Raw: s.value})
+	}
+	for _, s := range registryEmbedded(r) {
+		embedded = append(embedded, Use{Path: s.path, Raw: s.value})
+	}
+	return uses, embedded
+}
+
+// registryEmbedded lists declared locations whose value contains the scheme
+// without being a reference.
+func registryEmbedded(r *registry.Registry) []slot {
+	var out []slot
+	visit := func(value string, path ...string) {
+		if !domain.IsRef(value) && domain.ContainsRef(value) {
+			out = append(out, slot{path: path, value: value})
+		}
+	}
+	if t := r.LLMTarget; t != nil {
+		if a := t.Auth; a != nil {
+			if k := a.APIKey; k != nil {
+				visit(k.APIKey, "llm_target", "auth", "api_key", "api_key")
+				visit(k.HeaderValue, "llm_target", "auth", "api_key", "header_value")
+				visit(k.ParamValue, "llm_target", "auth", "api_key", "param_value")
+			}
+			if w := a.AWS; w != nil {
+				visit(w.AccessKeyID, "llm_target", "auth", "aws", "access_key_id")
+				visit(w.SecretAccessKey, "llm_target", "auth", "aws", "secret_access_key")
+				visit(w.SessionToken, "llm_target", "auth", "aws", "session_token")
+			}
+			if z := a.Azure; z != nil {
+				visit(z.APIKey, "llm_target", "auth", "azure", "api_key")
+				visit(z.ClientSecret, "llm_target", "auth", "azure", "client_secret")
+			}
+			if o := a.OAuth; o != nil {
+				visit(o.ClientSecret, "llm_target", "auth", "oauth", "client_secret")
+				visit(o.RefreshToken, "llm_target", "auth", "oauth", "refresh_token")
+				visit(o.Password, "llm_target", "auth", "oauth", "password")
+			}
+			if a.GCPServiceAccount != nil {
+				visit(*a.GCPServiceAccount, "llm_target", "auth", "gcp_service_account")
+			}
+		}
+		switch headers := t.ProviderOptions[headersKey].(type) {
+		case map[string]any:
+			for k, v := range headers {
+				if s, ok := v.(string); ok {
+					visit(s, "llm_target", "provider_options", headersKey, k)
+				}
+			}
+		case map[string]string:
+			for k, v := range headers {
+				visit(v, "llm_target", "provider_options", headersKey, k)
+			}
+		}
+	}
+	if t := r.MCPTarget; t != nil {
+		if a := t.Auth; a != nil {
+			visit(a.Value, "mcp_target", "auth", "value")
+			visit(a.ClientSecret, "mcp_target", "auth", "client_secret")
+		}
+		for k, v := range t.Headers {
+			visit(v, "mcp_target", headersKey, k)
+		}
+	}
+	return out
+}

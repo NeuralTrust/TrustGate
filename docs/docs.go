@@ -4040,6 +4040,134 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/secret-stores": {
+            "get": {
+                "description": "Returns the secret stores a gateway may reference, where they are configured and how healthy each is. Never returns addresses, credentials or values.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secret-stores"
+                ],
+                "summary": "List secret stores",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.ListSecretStoresResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/secret-stores/{name}/usages": {
+            "get": {
+                "description": "Returns every field of the gateway that references the store, with the reference as stored.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secret-stores"
+                ],
+                "summary": "List the usages of a secret store",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Store name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreUsageResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/access-policies": {
             "get": {
                 "description": "Returns every per-principal Store access level (open | curated | none) set on the gateway, for users and groups.",
@@ -10421,6 +10549,117 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.ListSecretStoresResponse": {
+            "type": "object",
+            "properties": {
+                "live_instances": {
+                    "description": "LiveInstances counts the live data planes of a data_plane source.",
+                    "type": "integer"
+                },
+                "source": {
+                    "description": "Source is where the stores are configured: data_plane (the Helm values\nof the gateway's data plane) or control_plane (the platform's Helm\nvalues). Empty when not supported.",
+                    "type": "string",
+                    "enum": [
+                        "data_plane",
+                        "control_plane"
+                    ]
+                },
+                "stores": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse"
+                    }
+                },
+                "supported": {
+                    "description": "Supported is false when the gateway cannot hold secret references.",
+                    "type": "boolean"
+                },
+                "too_old": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance": {
+            "type": "object",
+            "properties": {
+                "checked_at": {
+                    "type": "string"
+                },
+                "error_class": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreItemResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "consistent": {
+                    "type": "boolean"
+                },
+                "instances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreInstance"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "degraded",
+                        "down",
+                        "not_reported"
+                    ]
+                },
+                "type": {
+                    "type": "string"
+                },
+                "usages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_secretstore_response.SecretStoreUsageResponse": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reference": {
+                    "type": "string"
                 }
             }
         },

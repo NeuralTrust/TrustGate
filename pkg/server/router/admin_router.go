@@ -25,6 +25,7 @@ import (
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -85,8 +86,11 @@ type AdminRouterDeps struct {
 	AgentCard              *registryhttp.AgentCardHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
-	// for every caller. Absent on planes without the connect service.
+	// on behalf of every caller. Absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler
+	// SecretStores serves the secret stores of a gateway; nil where the
+	// plane has no connection store.
+	SecretStores *secretstorehttp.ListHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -215,6 +219,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("/:id/agent-card/approve", r.deps.AgentCard.Approve)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
+
+	if r.deps.SecretStores != nil {
+		stores := gw.Group("/:gateway_id/secret-stores", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceSecretStores))
+		stores.Get("", r.deps.SecretStores.Handle)
+		stores.Get("/:name/usages", r.deps.SecretStores.Usages)
+	}
 
 	policies := gw.Group("/:gateway_id/policies", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourcePolicies))
 	policies.Post("", r.deps.CreatePolicy.Handle)

@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -41,10 +43,23 @@ type GatewayLookup interface {
 type Option func(*options)
 
 type options struct {
-	openapi appopenapi.Compiler
-	auths   AuthLookup
-	cards   agentCards
-	shared  sharedPlane
+	openapi    appopenapi.Compiler
+	auths      AuthLookup
+	cards      agentCards
+	shared     sharedPlane
+	secretRefs SecretRefValidator
+}
+
+// SecretRefValidator checks the secret references a registry write holds,
+// against what is already stored at the same fields.
+type SecretRefValidator interface {
+	ValidateRegistry(ctx context.Context, reg *domain.Registry, previous []appsecretref.Use) (func(), error)
+}
+
+// WithSecretRefValidator checks every secret reference a create or update
+// adds or changes before it is saved.
+func WithSecretRefValidator(v SecretRefValidator) Option {
+	return func(o *options) { o.secretRefs = v }
 }
 
 // WithOpenAPICompiler compiles OpenAPI-sourced MCP targets on save.

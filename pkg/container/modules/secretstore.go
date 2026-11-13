@@ -19,6 +19,10 @@ import (
 	"log/slog"
 	"sync"
 
+	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
+	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
+	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
+
 	"go.uber.org/dig"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -163,4 +167,39 @@ func (s *SecretStores) Stop() {
 	}
 	s.cancel()
 	s.wg.Wait()
+}
+
+// provideSecretStoresAdmin wires the control plane's side of secret stores:
+// each gateway's store source, usages, the registry write validator and
+// the admin routes. Only the full module set has the connection store it
+// reads data-plane reports from.
+func provideSecretStoresAdmin(c *container.Container) error {
+	if err := c.Provide(func(cfg *config.Config, stores *SecretStores, conns *configsyncconnrepo.Repository) appsecretstore.SourceResolver {
+		var health appsecretstore.StoreHealth
+		if stores.Cache != nil {
+			health = stores.Cache
+		}
+		return appsecretstore.NewSourceResolver(appsecretstore.SourceConfig{
+			Enabled:       cfg.SecretStores.Enabled,
+			Eligibility:   cfg.SecretStores.Gateways,
+			Health:        health,
+			Instances:     conns,
+			AdminInstance: cfg.ConfigSync.InstanceID,
+		})
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo registrydomain.Repository) appsecretstore.UsagesFinder {
+		return appsecretstore.NewUsagesFinder(repo)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config, sources appsecretstore.SourceResolver, gateways gatewaydomain.Repository, logger *slog.Logger) appsecretstore.RegistryValidator {
+		return appsecretstore.NewRegistryValidator(cfg.SecretStores.Enabled, sources, gateways, logger)
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(gateways gatewaydomain.Repository, sources appsecretstore.SourceResolver, usages appsecretstore.UsagesFinder) *secretstorehttp.ListHandler {
+		return secretstorehttp.NewListHandler(gateways, sources, usages)
+	})
 }
