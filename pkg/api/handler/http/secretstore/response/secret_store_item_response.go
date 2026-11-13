@@ -16,11 +16,13 @@ package response
 
 // SecretStoreItemResponse is one store.
 type SecretStoreItemResponse struct {
-	Name         string                `json:"name"`
-	Type         string                `json:"type"`
-	AllowedPaths []string              `json:"allowed_paths"`
-	Status       string                `json:"status" enums:"ok,degraded,down,not_reported"`
-	Consistent   bool                  `json:"consistent"`
-	Usages       int                   `json:"usages"`
-	Instances    []SecretStoreInstance `json:"instances"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	AllowedPaths []string `json:"allowed_paths"`
+	// AllowedDestinations is omitted when the store allows any host.
+	AllowedDestinations []string              `json:"allowed_destinations,omitempty"`
+	Status              string                `json:"status" enums:"ok,degraded,down,not_reported"`
+	Consistent          bool                  `json:"consistent"`
+	Usages              int                   `json:"usages"`
+	Instances           []SecretStoreInstance `json:"instances"`
 }

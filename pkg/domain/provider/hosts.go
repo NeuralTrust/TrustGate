@@ -1,0 +1,51 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package provider
+
+// defaultHosts is the API host each provider with a fixed endpoint calls
+// when no base_url overrides it. Vertex, Bedrock and Azure derive theirs from
+// a location, region or endpoint; openai_compatible always names its own.
+var defaultHosts = map[string]string{
+	OpenAI:       "api.openai.com",
+	Google:       "generativelanguage.googleapis.com",
+	Anthropic:    "api.anthropic.com",
+	Mistral:      "api.mistral.ai",
+	Groq:         "api.groq.com",
+	DeepSeek:     "api.deepseek.com",
+	XAI:          "api.x.ai",
+	Cerebras:     "api.cerebras.ai",
+	OpenRouter:   "openrouter.ai",
+	Cohere:       "api.cohere.com",
+	Moonshot:     "api.moonshot.ai",
+	DigitalOcean: "inference.do-ai.run",
+}
+
+// DefaultHost returns the API host name calls when no base_url overrides it,
+// or "" when its host is derived from its configuration.
+func DefaultHost(name string) string {
+	return defaultHosts[name]
+}
+
+// VertexHost is the Vertex AI host of a location: the global endpoint is the
+// only one reached through an unprefixed host.
+func VertexHost(location string) string {
+	if location == "" {
+		return ""
+	}
+	if location == "global" {
+		return "aiplatform.googleapis.com"
+	}
+	return location + "-aiplatform.googleapis.com"
+}

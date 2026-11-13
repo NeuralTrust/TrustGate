@@ -154,12 +154,12 @@ func everyLocation() *registry.Registry {
 		MCPTarget: &registry.MCPTarget{
 			URL:     "https://mcp",
 			Headers: map[string]string{"X-M": refStr("mh#v"), "X-Literal": "plain"},
-			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "Authorization", Value: refStr("mv#v"), ClientSecret: refStr("mcs#v")},
+			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "Authorization", Value: refStr("mv#v"), ClientSecret: refStr("mcs#v"), TokenURL: "https://idp/token"},
 		},
 		A2ATarget: &registry.A2ATarget{
 			URL:     "https://agent",
 			Headers: map[string]string{"X-Agent": refStr("ah#v"), "X-Plain": "plain"},
-			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "X-Key", Value: refStr("av#v"), ClientSecret: refStr("acs#v")},
+			Auth:    &registry.MCPAuth{Mode: registry.MCPAuthModeStatic, Header: "X-Key", Value: refStr("av#v"), ClientSecret: refStr("acs#v"), TokenURL: "https://idp/token"},
 			CloudAuth: &registry.A2ACloudAuth{
 				AWS:   &registry.A2AAWSAuth{AWSAuth: registry.AWSAuth{AccessKeyID: refStr("caa#k"), SecretAccessKey: refStr("caa#s"), SessionToken: refStr("caa#t")}},
 				Azure: &registry.AzureAuth{ClientSecret: refStr("caz#s")},
@@ -591,11 +591,11 @@ func TestGatewayPoliciesResolvePluginCredentials(t *testing.T) {
 		"guardrail_id": "g-1",
 	}}
 	plain := &policy.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw, Slug: "rate_limiter", Settings: map[string]any{"limit": 10}}
-	paths := func(slug string) []string {
-		if slug == "bedrock_guardrail" {
-			return []string{"credentials.access_key_id", "credentials.secret_access_key"}
+	paths := func(p *policy.Policy) ([]string, []string) {
+		if p.Slug == "bedrock_guardrail" {
+			return []string{"credentials.access_key_id", "credentials.secret_access_key"}, []string{"bedrock-runtime.eu-west-1.amazonaws.com"}
 		}
-		return nil
+		return nil, nil
 	}
 
 	out := GatewayPolicies(context.Background(), m, gw, []*policy.Policy{guard, plain}, paths)

@@ -54,18 +54,21 @@ type cacheSpec struct {
 }
 
 type storeSpec struct {
-	Name              string                               `yaml:"name"`
-	Type              secretstore.Type                     `yaml:"type"`
-	AllowedPaths      []string                             `yaml:"allowed_paths"`
-	Gateways          []string                             `yaml:"gateways"`
-	Cache             cacheSpec                            `yaml:"cache"`
-	HashiCorpVault    *secretstore.HashiCorpVaultConfig    `yaml:"hashicorp_vault"`
-	AWSSecretsManager *secretstore.AWSSecretsManagerConfig `yaml:"aws_secrets_manager"`
-	GCPSecretManager  *secretstore.GCPSecretManagerConfig  `yaml:"gcp_secret_manager"`
-	File              *secretstore.FileConfig              `yaml:"file"`
-	Env               *secretstore.EnvConfig               `yaml:"env"`
-	AzureKeyVault     *secretstore.AzureKeyVaultConfig     `yaml:"azure_key_vault"`
-	CyberArkConjur    *secretstore.CyberArkConjurConfig    `yaml:"cyberark_conjur"`
+	Name         string           `yaml:"name"`
+	Type         secretstore.Type `yaml:"type"`
+	AllowedPaths []string         `yaml:"allowed_paths"`
+	// AllowedDestinations is a pointer so an empty list, which is refused,
+	// is told apart from an absent one.
+	AllowedDestinations *[]string                            `yaml:"allowed_destinations"`
+	Gateways            []string                             `yaml:"gateways"`
+	Cache               cacheSpec                            `yaml:"cache"`
+	HashiCorpVault      *secretstore.HashiCorpVaultConfig    `yaml:"hashicorp_vault"`
+	AWSSecretsManager   *secretstore.AWSSecretsManagerConfig `yaml:"aws_secrets_manager"`
+	GCPSecretManager    *secretstore.GCPSecretManagerConfig  `yaml:"gcp_secret_manager"`
+	File                *secretstore.FileConfig              `yaml:"file"`
+	Env                 *secretstore.EnvConfig               `yaml:"env"`
+	AzureKeyVault       *secretstore.AzureKeyVaultConfig     `yaml:"azure_key_vault"`
+	CyberArkConjur      *secretstore.CyberArkConjurConfig    `yaml:"cyberark_conjur"`
 }
 
 // Parse decodes and validates a store file. Decoding is strict: unknown keys,
@@ -136,6 +139,9 @@ func (s *storeSpec) toStore() (*secretstore.Store, error) {
 		Gateways:     gateways,
 		Cache:        cache,
 		Config:       cfg,
+	}
+	if s.AllowedDestinations != nil {
+		store.AllowedDestinations = append([]string{}, *s.AllowedDestinations...)
 	}
 	if err := store.Validate(); err != nil {
 		return nil, err

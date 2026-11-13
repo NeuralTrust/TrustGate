@@ -425,9 +425,9 @@ func (f *dataFinder) loadPolicies(ctx context.Context, gatewayID ids.GatewayID) 
 		return loadedPolicies{}, err
 	}
 	if f.materializer != nil {
-		all = appsecretref.GatewayPolicies(ctx, f.materializer, gatewayID, all, func(slug string) []string {
-			paths, _ := appplugins.PluginCredentialPaths(f.pluginRegistry, slug)
-			return paths
+		all = appsecretref.GatewayPolicies(ctx, f.materializer, gatewayID, all, func(p *policydomain.Policy) ([]string, []string) {
+			paths, _ := appplugins.PluginCredentialPaths(f.pluginRegistry, p.Slug)
+			return paths, appplugins.PluginCredentialHosts(f.pluginRegistry, p.Slug, p.Settings)
 		})
 	}
 	out := loadedPolicies{

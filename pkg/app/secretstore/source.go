@@ -69,14 +69,19 @@ type StoreView struct {
 	Name         string
 	Type         domain.Type
 	AllowedPaths []string
-	Status       string
+	// AllowedDestinations is the store's host allowlist; nil allows any
+	// host.
+	AllowedDestinations []string
+	Status              string
 	// Consistent is false when instances disagree on the store's type,
-	// allowed paths or allowlist.
+	// allowed paths, allowed destinations or allowlist.
 	Consistent bool
 	Instances  []InstanceView
 	// instancePaths holds each reporting instance's allowed paths, which
 	// differ from AllowedPaths when the store is not Consistent.
 	instancePaths [][]string
+	// instanceDestinations is instancePaths for allowed destinations.
+	instanceDestinations [][]string
 }
 
 // Source is a gateway's store source.
@@ -171,7 +176,7 @@ func (r *sourceResolver) adminStores(gwID ids.GatewayID) []StoreView {
 			continue
 		}
 		out = append(out, StoreView{
-			Name: st.Name, Type: st.Type, AllowedPaths: st.AllowedPaths, Consistent: true,
+			Name: st.Name, Type: st.Type, AllowedPaths: st.AllowedPaths, AllowedDestinations: st.AllowedDestinations, Consistent: true,
 			Status:    aggregate([]string{string(st.State)}),
 			Instances: []InstanceView{viewOf(r.cfg.AdminInstance, "", st)},
 		})
@@ -199,7 +204,7 @@ func dataPlaneSource(gwID ids.GatewayID, instances []dataplane.Instance, now tim
 			}
 			view, ok := byName[st.Name]
 			if !ok {
-				view = &StoreView{Name: st.Name, Type: st.Type, AllowedPaths: st.AllowedPaths, Consistent: true}
+				view = &StoreView{Name: st.Name, Type: st.Type, AllowedPaths: st.AllowedPaths, AllowedDestinations: st.AllowedDestinations, Consistent: true}
 				byName[st.Name] = view
 				first[st.Name] = st
 			} else if !sameStore(first[st.Name], st) {
@@ -207,6 +212,7 @@ func dataPlaneSource(gwID ids.GatewayID, instances []dataplane.Instance, now tim
 			}
 			view.Instances = append(view.Instances, viewOf(in.ID, in.Version, st))
 			view.instancePaths = append(view.instancePaths, st.AllowedPaths)
+			view.instanceDestinations = append(view.instanceDestinations, st.AllowedDestinations)
 			states[st.Name] = append(states[st.Name], string(st.State))
 		}
 	}
@@ -230,7 +236,8 @@ func admits(allowlist []ids.GatewayID, gw ids.GatewayID) bool {
 }
 
 func sameStore(a, b domain.Status) bool {
-	return a.Type == b.Type && slices.Equal(a.AllowedPaths, b.AllowedPaths) && slices.Equal(a.Gateways, b.Gateways)
+	return a.Type == b.Type && slices.Equal(a.AllowedPaths, b.AllowedPaths) && slices.Equal(a.Gateways, b.Gateways) &&
+		slices.Equal(a.AllowedDestinations, b.AllowedDestinations)
 }
 
 // aggregate is ok when every instance is ok, down when none is, and
@@ -269,4 +276,21 @@ func (s StoreView) AllowsPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// AllowsDestinations reports whether every instance that reports the store
+// would send a value to hosts: each one enforces its own list, so a value
+// one of them refuses would fail there.
+func (s StoreView) AllowsDestinations(hosts []string) error {
+	lists := s.instanceDestinations
+	if len(lists) == 0 {
+		lists = [][]string{s.AllowedDestinations}
+	}
+	for _, destinations := range lists {
+		st := domain.Store{Name: s.Name, AllowedDestinations: destinations}
+		if err := st.AllowsDestinations(hosts); err != nil {
+			return err
+		}
+	}
+	return nil
 }

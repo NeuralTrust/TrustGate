@@ -102,9 +102,12 @@ type Store struct {
 	Name         string
 	Type         Type
 	AllowedPaths []string
-	Gateways     []ids.GatewayID
-	Cache        CachePolicy
-	Config       TypedConfig
+	// AllowedDestinations, when not nil, lists the hosts a value of the
+	// store may be sent to; nil allows every host.
+	AllowedDestinations []string
+	Gateways            []ids.GatewayID
+	Cache               CachePolicy
+	Config              TypedConfig
 }
 
 // TypedConfig is the type-specific part of a store.
@@ -129,6 +132,9 @@ func (s *Store) Validate() error {
 		if strings.HasPrefix(p, "/") {
 			return fmt.Errorf("%w: store %q: allowed path %q must not start with \"/\"; reference paths never do", ErrInvalidStore, s.Name, p)
 		}
+	}
+	if err := validateDestinations(s.Name, s.AllowedDestinations); err != nil {
+		return err
 	}
 	for _, gw := range s.Gateways {
 		if gw.IsNil() {

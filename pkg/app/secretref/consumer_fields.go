@@ -19,6 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
 
@@ -42,11 +43,12 @@ func ConsumerRefs(c *consumer.Consumer) EntityRefs {
 	if e.Auth == nil {
 		return refs
 	}
+	hosts := hostList(provider.DefaultHost(e.Provider))
 	for _, f := range []struct{ key, value string }{{"api_key", e.Auth.APIKey}, {"header_value", e.Auth.HeaderValue}} {
 		path := append(append([]string(nil), consumerEmbeddingPath...), f.key)
 		switch {
 		case domain.IsRef(f.value):
-			refs.Uses = append(refs.Uses, Use{Path: path, Raw: f.value})
+			refs.Uses = append(refs.Uses, Use{Path: path, Raw: f.value, Hosts: hosts})
 		case domain.ContainsRef(f.value):
 			refs.Embedded = append(refs.Embedded, Use{Path: path, Raw: f.value})
 		}

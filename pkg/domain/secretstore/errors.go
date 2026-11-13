@@ -36,6 +36,9 @@ const (
 	ClassStoreMissing   Class = "store_missing"
 	ClassNotAllowed     Class = "not_allowed"
 	ClassPathNotAllowed Class = "path_not_allowed"
+	// ClassDestinationNotAllowed: the value would be sent to a host outside
+	// the store's allowed destinations.
+	ClassDestinationNotAllowed Class = "destination_not_allowed"
 )
 
 // Sentinel errors, one per class. Backends wrap them with context; ClassOf
@@ -50,6 +53,9 @@ var (
 	ErrStoreMissing   = errors.New("secret store not loaded")
 	ErrNotAllowed     = errors.New("secret store does not admit this gateway")
 	ErrPathNotAllowed = errors.New("secret path is outside the store's allowed paths")
+	// ErrDestinationNotAllowed is returned before any read: the value would
+	// be sent to a host the store does not allow.
+	ErrDestinationNotAllowed = errors.New("secret destination is outside the store's allowed destinations")
 )
 
 // ErrInvalidStore is returned for a store definition that cannot be loaded.
@@ -67,6 +73,7 @@ var classErrors = []struct {
 	{ErrStoreMissing, ClassStoreMissing},
 	{ErrNotAllowed, ClassNotAllowed},
 	{ErrPathNotAllowed, ClassPathNotAllowed},
+	{ErrDestinationNotAllowed, ClassDestinationNotAllowed},
 	{ErrUnavailable, ClassUnavailable},
 }
 

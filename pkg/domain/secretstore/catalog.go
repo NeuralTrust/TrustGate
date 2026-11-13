@@ -38,10 +38,12 @@ type Status struct {
 	Name         string
 	Type         Type
 	AllowedPaths []string
-	Gateways     []ids.GatewayID
-	State        State
-	ErrorClass   Class
-	CheckedAt    time.Time
+	// AllowedDestinations is the store's host allowlist; nil allows any host.
+	AllowedDestinations []string
+	Gateways            []ids.GatewayID
+	State               State
+	ErrorClass          Class
+	CheckedAt           time.Time
 }
 
 //go:generate mockery --name=Catalog --dir=. --output=./mocks --filename=secretstore_catalog_mock.go --case=underscore --with-expecter

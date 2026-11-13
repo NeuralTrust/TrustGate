@@ -295,6 +295,14 @@ func (p *Plugin) CredentialPaths() []string {
 	return []string{"api_key"}
 }
 
+// CredentialHosts is where api_key goes: the deployment's OpenAI base URL.
+func (p *Plugin) CredentialHosts(map[string]any) []string {
+	if p.baseURL == "" {
+		return nil
+	}
+	return []string{p.baseURL}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

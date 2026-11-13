@@ -507,9 +507,12 @@ type SecretStoreStatus struct {
 	CheckedAt string `protobuf:"bytes,6,opt,name=checked_at,json=checkedAt,proto3" json:"checked_at,omitempty"`
 	// gateways is the store's gateway allowlist; empty admits every eligible
 	// gateway the data plane serves.
-	Gateways      []string `protobuf:"bytes,7,rep,name=gateways,proto3" json:"gateways,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Gateways []string `protobuf:"bytes,7,rep,name=gateways,proto3" json:"gateways,omitempty"`
+	// allowed_destinations is the store's host allowlist; empty allows any
+	// host (a store file cannot declare an empty one).
+	AllowedDestinations []string `protobuf:"bytes,8,rep,name=allowed_destinations,json=allowedDestinations,proto3" json:"allowed_destinations,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *SecretStoreStatus) Reset() {
@@ -587,6 +590,13 @@ func (x *SecretStoreStatus) GetCheckedAt() string {
 func (x *SecretStoreStatus) GetGateways() []string {
 	if x != nil {
 		return x.Gateways
+	}
+	return nil
+}
+
+func (x *SecretStoreStatus) GetAllowedDestinations() []string {
+	if x != nil {
+		return x.AllowedDestinations
 	}
 	return nil
 }
@@ -1493,7 +1503,7 @@ const file_configsync_proto_rawDesc = "" +
 	"\x13trustguard_base_url\x18\x04 \x01(\tR\x11trustguardBaseUrl\x120\n" +
 	"\x14trustguard_client_id\x18\x05 \x01(\tR\x12trustguardClientId\x12B\n" +
 	"\rsecret_stores\x18\x06 \x03(\v2\x1d.snapshotpb.SecretStoreStatusR\fsecretStores\x12.\n" +
-	"\x13accepts_secret_refs\x18\a \x01(\bR\x11acceptsSecretRefs\"\xd2\x01\n" +
+	"\x13accepts_secret_refs\x18\a \x01(\bR\x11acceptsSecretRefs\"\x85\x02\n" +
 	"\x11SecretStoreStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12#\n" +
@@ -1503,7 +1513,8 @@ const file_configsync_proto_rawDesc = "" +
 	"errorClass\x12\x1d\n" +
 	"\n" +
 	"checked_at\x18\x06 \x01(\tR\tcheckedAt\x12\x1a\n" +
-	"\bgateways\x18\a \x03(\tR\bgateways\"\xbf\x01\n" +
+	"\bgateways\x18\a \x03(\tR\bgateways\x121\n" +
+	"\x14allowed_destinations\x18\b \x03(\tR\x13allowedDestinations\"\xbf\x01\n" +
 	"\rServerMessage\x123\n" +
 	"\x06notice\x18\x01 \x01(\v2\x19.snapshotpb.VersionNoticeH\x00R\x06notice\x121\n" +
 	"\x05usage\x18\x02 \x01(\v2\x19.snapshotpb.UsageSnapshotH\x00R\x05usage\x12?\n" +

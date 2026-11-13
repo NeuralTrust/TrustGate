@@ -33,6 +33,7 @@ func TestSecretReferenceErrorCodes(t *testing.T) {
 		secretref.ErrUnknownStore:           {422, "unknown_secret_store"},
 		secretref.ErrPathNotAllowed:         {422, "secret_path_not_allowed"},
 		secretref.ErrDataPlaneTooOld:        {422, "data_plane_too_old"},
+		secretref.ErrDestinationNotAllowed:  {422, "secret_destination_not_allowed"},
 		secretref.ErrStoreUnverified:        {422, "secret_store_unverified"},
 		secretref.ErrMissingScope:           {403, "missing_scope"},
 		registry.ErrSecretUnavailable:       {503, "secret_unavailable"},

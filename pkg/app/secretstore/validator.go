@@ -94,8 +94,10 @@ func NewRegistryValidator(sources SourceResolver, gateways GatewayReader, logger
 }
 
 type parsedUse struct {
-	path string
-	ref  refdomain.Ref
+	path  string
+	ref   refdomain.Ref
+	hosts []string
+	self  bool
 }
 
 func (v *registryValidator) ValidateRegistry(ctx context.Context, reg *registry.Registry, stored *appsecretref.Stored) (func(), error) {
@@ -130,7 +132,7 @@ func (v *registryValidator) ValidateEntity(ctx context.Context, current appsecre
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", strings.Join(u.Path, "."), err)
 		}
-		parsed = append(parsed, parsedUse{path: strings.Join(u.Path, "."), ref: ref})
+		parsed = append(parsed, parsedUse{path: strings.Join(u.Path, "."), ref: ref, hosts: u.Hosts, self: u.SelfAddressed})
 	}
 
 	gw := current.Gateway
@@ -251,6 +253,11 @@ func checkSource(src Source, parsed []parsedUse, caller Caller) error {
 		}
 		if p.ref.Version != "" && (store.Type == domain.TypeFile || store.Type == domain.TypeEnv) {
 			return fmt.Errorf("%w: %s stores have no versions (%s)", refdomain.ErrInvalidReference, store.Type, p.path)
+		}
+		if !p.self {
+			if err := store.AllowsDestinations(p.hosts); err != nil {
+				return fmt.Errorf("%w: %s (%v)", refdomain.ErrDestinationNotAllowed, p.path, err)
+			}
 		}
 	}
 	return nil
