@@ -87,6 +87,45 @@ func TestParseValid(t *testing.T) {
 	}
 }
 
+func TestParseAzureAndConjur(t *testing.T) {
+	t.Parallel()
+	stores, err := localfile.Parse([]byte(`version: 1
+stores:
+  - name: azure
+    type: azure_key_vault
+    allowed_paths: ["llm-"]
+    azure_key_vault: { vault_url: "https://acme-ai.vault.azure.net/", client_id: "00000000-0000-0000-0000-000000000001" }
+  - name: conjur
+    type: cyberark_conjur
+    allowed_paths: ["ai-gateway/"]
+    cyberark_conjur:
+      url: https://conjur.internal
+      account: acme
+      auth: { method: jwt, service_id: trustgate }
+  - name: conjur-key
+    type: cyberark_conjur
+    allowed_paths: ["*"]
+    cyberark_conjur:
+      url: https://conjur.internal
+      account: acme
+      auth: { method: api_key, login: host/trustgate, api_key_file: /etc/conjur/api-key }
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	az, ok := stores[0].Config.(*secretstore.AzureKeyVaultConfig)
+	if !ok {
+		t.Fatalf("azure config = %T", stores[0].Config)
+	}
+	if aud, err := az.Audience(); err != nil || aud != "https://vault.azure.net/.default" {
+		t.Fatalf("audience = %q, %v", aud, err)
+	}
+	cj, ok := stores[1].Config.(*secretstore.CyberArkConjurConfig)
+	if !ok || cj.Auth.EffectiveJWTFile() != secretstore.DefaultServiceAccountTokenFile {
+		t.Fatalf("conjur config = %+v", stores[1].Config)
+	}
+}
+
 func TestParseRefuses(t *testing.T) {
 	t.Parallel()
 	store := func(body string) string {
@@ -106,8 +145,12 @@ func TestParseRefuses(t *testing.T) {
 		{"inline jwt", store("    type: hashicorp_vault\n    hashicorp_vault: { address: https://v, auth: { method: jwt, role: r, jwt: e } }\n"), "auth.jwt"},
 		{"unknown store key", store("    type: env\n    env: { prefix: TG_ }\n    ttl: 5m\n"), "ttl"},
 		{"unknown config key", store("    type: env\n    env: { prefix: TG_, suffix: X }\n"), "suffix"},
-		{"phase 2 type", store("    type: azure_key_vault\n    azure_key_vault: { vault_url: https://a.vault.azure.net }\n"), "not supported by this build"},
-		{"phase 2 block", store("    type: env\n    env: { prefix: TG_ }\n    cyberark_conjur: { url: https://c }\n"), "not supported by this build"},
+		{"azure host", store("    type: azure_key_vault\n    azure_key_vault: { vault_url: https://a.example.com }\n"), "Key Vault host"},
+		{"azure http", store("    type: azure_key_vault\n    azure_key_vault: { vault_url: http://a.vault.azure.net }\n"), "vault_url"},
+		{"conjur without service id", store("    type: cyberark_conjur\n    cyberark_conjur: { url: https://c, account: acme }\n"), "service_id"},
+		{"conjur api key inline", store("    type: cyberark_conjur\n    cyberark_conjur: { url: https://c, account: acme, auth: { method: api_key, login: host/tg, api_key: k } }\n"), "api_key"},
+		{"conjur k8s", store("    type: cyberark_conjur\n    cyberark_conjur: { url: https://c, account: acme, auth: { method: k8s } }\n"), "auth.method"},
+		{"conjur second block", store("    type: env\n    env: { prefix: TG_ }\n    cyberark_conjur: { url: https://c }\n"), "exactly one type block"},
 		{"missing block", store("    type: env\n"), "env block is missing"},
 		{"two blocks", store("    type: env\n    env: { prefix: TG_ }\n    file: { root: /x }\n"), "exactly one type block"},
 		{"mismatched block", store("    type: env\n    file: { root: /x }\n"), "does not match"},

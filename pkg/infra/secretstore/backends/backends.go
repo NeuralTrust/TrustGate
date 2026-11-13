@@ -19,6 +19,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/azurekv"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/awssm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/envstore"
@@ -42,6 +44,8 @@ func Factory(ctx context.Context) func(*secretstore.Store) (secretstore.Backend,
 			return filestore.New(cfg), nil
 		case *secretstore.EnvConfig:
 			return envstore.New(cfg), nil
+		case *secretstore.AzureKeyVaultConfig:
+			return azurekv.New(cfg)
 		default:
 			return nil, fmt.Errorf("%w: store %q: type %q is not supported by this build", secretstore.ErrInvalidStore, store.Name, store.Type)
 		}

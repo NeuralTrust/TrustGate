@@ -42,12 +42,6 @@ const maxFileBytes = 1 << 20
 // counterpart that names a mounted Secret instead.
 var inlineCredentialKeys = []string{"token", "secret_id", "jwt", "password", "api_key", "client_secret"}
 
-// phase2Types are store types this build recognises but cannot load yet.
-var phase2Types = map[secretstore.Type]bool{
-	secretstore.TypeAzureKeyVault:  true,
-	secretstore.TypeCyberArkConjur: true,
-}
-
 type fileDoc struct {
 	Version int         `yaml:"version"`
 	Stores  []storeSpec `yaml:"stores"`
@@ -70,8 +64,8 @@ type storeSpec struct {
 	GCPSecretManager  *secretstore.GCPSecretManagerConfig  `yaml:"gcp_secret_manager"`
 	File              *secretstore.FileConfig              `yaml:"file"`
 	Env               *secretstore.EnvConfig               `yaml:"env"`
-	AzureKeyVault     yaml.Node                            `yaml:"azure_key_vault"`
-	CyberArkConjur    yaml.Node                            `yaml:"cyberark_conjur"`
+	AzureKeyVault     *secretstore.AzureKeyVaultConfig     `yaml:"azure_key_vault"`
+	CyberArkConjur    *secretstore.CyberArkConjurConfig    `yaml:"cyberark_conjur"`
 }
 
 // Parse decodes and validates a store file. Decoding is strict: unknown keys,
@@ -119,12 +113,6 @@ func Parse(raw []byte) ([]*secretstore.Store, error) {
 
 func (s *storeSpec) toStore() (*secretstore.Store, error) {
 	name := s.Name
-	if phase2Types[s.Type] {
-		return nil, fmt.Errorf("%w: store %q: type %q is not supported by this build", secretstore.ErrInvalidStore, name, s.Type)
-	}
-	if !s.AzureKeyVault.IsZero() || !s.CyberArkConjur.IsZero() {
-		return nil, fmt.Errorf("%w: store %q: azure_key_vault and cyberark_conjur are not supported by this build", secretstore.ErrInvalidStore, name)
-	}
 	cfg, err := s.typedConfig()
 	if err != nil {
 		return nil, err
@@ -171,6 +159,12 @@ func (s *storeSpec) typedConfig() (secretstore.TypedConfig, error) {
 	}
 	if s.Env != nil {
 		blocks = append(blocks, s.Env)
+	}
+	if s.AzureKeyVault != nil {
+		blocks = append(blocks, s.AzureKeyVault)
+	}
+	if s.CyberArkConjur != nil {
+		blocks = append(blocks, s.CyberArkConjur)
 	}
 	switch {
 	case len(blocks) == 0:
