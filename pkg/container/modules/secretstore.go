@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+
 	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
@@ -288,6 +290,13 @@ func (p secretRefsParams) entity() appsecretref.EntityValidator {
 func (p secretRefsParams) consumerOptions() []appconsumer.SaveOption {
 	if v := p.entity(); v != nil {
 		return []appconsumer.SaveOption{appconsumer.WithSecretRefValidator(v)}
+	}
+	return nil
+}
+
+func (p secretRefsParams) policyOptions() []apppolicy.SaveOption {
+	if v := p.entity(); v != nil {
+		return []apppolicy.SaveOption{apppolicy.WithSecretRefValidator(v)}
 	}
 	return nil
 }

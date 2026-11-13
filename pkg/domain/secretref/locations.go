@@ -23,6 +23,10 @@ type Entity string
 const (
 	EntityRegistry Entity = "registry"
 	EntityConsumer Entity = "consumer"
+	// EntityPolicy locations are not listed in Locations: each plugin
+	// declares its own as settings paths (CredentialPaths), so they are
+	// "settings." followed by one of those paths.
+	EntityPolicy Entity = "policy"
 )
 
 // Wildcard matches any single key of a JSON object, such as a header name.

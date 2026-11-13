@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -74,6 +76,7 @@ type updater struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	secretRefs   appsecretref.EntityValidator
 }
 
 func NewUpdater(
@@ -86,8 +89,10 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	opts ...SaveOption,
 ) Updater {
 	return &updater{
+		secretRefs:   applySaveOptions(opts).secretRefs,
 		repo:         repo,
 		consumers:    consumers,
 		levels:       levels,
@@ -115,6 +120,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// rejection on every future save.
 	previousSettings := existing.Settings
 	wasEnabled := existing.Enabled
+	stored := policyRefs(u.registry, existing).Stored()
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -204,11 +210,18 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// Only an update that carried mcp_scope writes the column: echoing back the
 	// value read at the top of Update would resurrect a registry that a prune
 	// removed in between.
+	audit := func() {}
+	if u.secretRefs != nil {
+		if audit, err = u.secretRefs.ValidateEntity(ctx, policyRefs(u.registry, existing), stored); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.levels.Check(ctx, existing, func(ctx context.Context) error {
 		return u.repo.Update(ctx, existing, in.MCPScope.Set)
 	}); err != nil {
 		return nil, err
 	}
+	audit()
 	u.memoryCache.Set(existing.ID.String(), existing)
 	invalidation.GatewayData(ctx, u.publisher, u.logger, existing.GatewayID)
 	if u.signaler != nil {
