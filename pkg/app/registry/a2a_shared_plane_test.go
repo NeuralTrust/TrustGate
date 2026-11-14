@@ -112,7 +112,7 @@ func TestSharedDataPlaneRefusesAmbientCloudCredentialsOnEveryAgentOperation(t *t
 
 			t.Run("refresh", func(t *testing.T) {
 				reg := storedCloudAgent(gw, build())
-				_, err := appregistry.NewRefreshAgentCard(storedAgent(t, reg), cards, shared).
+				_, err := appregistry.NewRefreshAgentCard(storedAgent(t, reg), nil, newCacheManager(), nil, newTestLogger(), cards, shared).
 					Refresh(ctx, gw.ID, reg.ID)
 				require.ErrorIs(t, err, domain.ErrInvalidRegistry)
 			})

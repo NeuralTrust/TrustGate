@@ -40,7 +40,7 @@ func TestAgentCardRefreshScansTheNewCardsSkills(t *testing.T) {
 	t.Parallel()
 	reg := pinnedA2ARegistry(t)
 	scanner := scanning(t, []string{"Refund"}, []appregistry.SkillScan{{Flagged: true, Score: 0.97}}, nil)
-	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg),
+	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg), nil, newCacheManager(), nil, newTestLogger(),
 		appregistry.WithAgentCards(liveCard(t, cardNewSkill), anonymousCards(t)), appregistry.WithSkillScanner(scanner))
 
 	got, err := refresh.Refresh(context.Background(), reg.GatewayID, reg.ID)
@@ -52,7 +52,7 @@ func TestAgentCardRefreshOfAFailedScanHasNoVerdicts(t *testing.T) {
 	t.Parallel()
 	reg := pinnedA2ARegistry(t)
 	scanner := scanning(t, []string{"Refund"}, nil, errors.New("trustguard scan: status 503"))
-	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg),
+	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg), nil, newCacheManager(), nil, newTestLogger(),
 		appregistry.WithAgentCards(liveCard(t, cardNewSkill), anonymousCards(t)), appregistry.WithSkillScanner(scanner))
 
 	got, err := refresh.Refresh(context.Background(), reg.GatewayID, reg.ID)
@@ -79,4 +79,42 @@ func TestAgentCardApprovePinsTheSkillsVerdicts(t *testing.T) {
 
 	_, err := approve.Approve(context.Background(), reg.GatewayID, reg.ID, digestOf(t, cardNewSkill))
 	require.NoError(t, err)
+}
+
+func TestAgentCardRefreshScansThePinnedCardAgainAndSavesIt(t *testing.T) {
+	t.Parallel()
+	reg := pinnedA2ARegistry(t)
+	require.NoError(t, reg.A2ATarget.Pin(pinnedCardURL, []byte(cardNewSkill), reg.A2ATarget.CardPinnedAt))
+	pinnedAt := reg.A2ATarget.CardPinnedAt
+	want := []domain.SkillVerdict{{SkillID: "refund_invoice", Score: 0.03}}
+	pinner := appmocks.NewA2ACardPinner(t)
+	pinner.EXPECT().PinA2ACard(mock.Anything, reg.GatewayID, reg.ID, reg.A2ATarget.CardDigest, mock.MatchedBy(func(next *domain.A2ATarget) bool {
+		return assert.ObjectsAreEqual(want, next.SkillScan) && next.CardPinnedAt.Equal(pinnedAt)
+	}), mock.Anything).Return(true, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+	scanner := scanning(t, []string{"Refund"}, []appregistry.SkillScan{{Score: 0.03}}, nil)
+	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg), pinner, newCacheManager(), publisher, newTestLogger(),
+		appregistry.WithAgentCards(liveCard(t, cardNewSkill), anonymousCards(t)), appregistry.WithSkillScanner(scanner))
+
+	got, err := refresh.Refresh(context.Background(), reg.GatewayID, reg.ID)
+	require.NoError(t, err)
+	assert.False(t, got.Changed)
+	assert.Equal(t, want, got.SkillScan)
+	assert.Nil(t, got.FetchedSkillScan)
+}
+
+func TestAgentCardRefreshAnswersWhenTheScanCannotBeSaved(t *testing.T) {
+	t.Parallel()
+	reg := pinnedA2ARegistry(t)
+	require.NoError(t, reg.A2ATarget.Pin(pinnedCardURL, []byte(cardNewSkill), reg.A2ATarget.CardPinnedAt))
+	pinner := appmocks.NewA2ACardPinner(t)
+	pinner.EXPECT().PinA2ACard(mock.Anything, reg.GatewayID, reg.ID, mock.Anything, mock.Anything, mock.Anything).Return(false, nil).Once()
+	scanner := scanning(t, []string{"Refund"}, []appregistry.SkillScan{{Score: 0.03}}, nil)
+	refresh := appregistry.NewRefreshAgentCard(storedAgent(t, reg), pinner, newCacheManager(), nil, newTestLogger(),
+		appregistry.WithAgentCards(liveCard(t, cardNewSkill), anonymousCards(t)), appregistry.WithSkillScanner(scanner))
+
+	got, err := refresh.Refresh(context.Background(), reg.GatewayID, reg.ID)
+	require.NoError(t, err)
+	assert.Len(t, got.SkillScan, 1)
 }
