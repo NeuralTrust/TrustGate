@@ -19,8 +19,11 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 const (
@@ -32,6 +35,10 @@ const (
 	AzureAPIAnthropic    = "anthropic"
 
 	vertexDefaultAPIVersion = "v1"
+
+	// WatsonxDefaultAPIVersion is the watsonx.ai API version date sent when a
+	// registry does not pin one. IBM keys response behaviour to this date.
+	WatsonxDefaultAPIVersion = "2025-10-01"
 )
 
 type AzureOptions struct {
@@ -166,6 +173,73 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 		}
 	}
 
+	return opts, nil
+}
+
+var (
+	watsonxProjectIDPattern  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	watsonxAPIVersionPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+)
+
+// WatsonxOptions are the provider_options of an IBM watsonx.ai registry.
+// BaseURL replaces the regional endpoint, for private or dedicated endpoints.
+type WatsonxOptions struct {
+	Region     string `mapstructure:"region"`
+	ProjectID  string `mapstructure:"project_id"`
+	APIVersion string `mapstructure:"api_version"`
+	BaseURL    string `mapstructure:"base_url"`
+}
+
+// Endpoint returns the base URL inference and model listing calls go to.
+func (o WatsonxOptions) Endpoint() string {
+	if o.BaseURL != "" {
+		return o.BaseURL
+	}
+	return "https://" + provider.WatsonxHost(o.Region)
+}
+
+func DecodeWatsonxOptions(options map[string]any) (WatsonxOptions, error) {
+	var opts WatsonxOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return WatsonxOptions{}, fmt.Errorf("watsonx: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.Region = strings.ToLower(strings.TrimSpace(opts.Region))
+	opts.ProjectID = strings.ToLower(strings.TrimSpace(opts.ProjectID))
+	opts.APIVersion = strings.TrimSpace(opts.APIVersion)
+	opts.BaseURL = strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
+
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return WatsonxOptions{}, fmt.Errorf("watsonx: %w", err)
+		}
+	}
+	if opts.Region == "" && opts.BaseURL == "" {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.region is required")
+	}
+	if opts.Region != "" && provider.WatsonxHost(opts.Region) == "" {
+		return WatsonxOptions{}, fmt.Errorf(
+			"watsonx: provider_options.region must be one of %s, got %q",
+			strings.Join(provider.WatsonxRegions(), ", "), opts.Region,
+		)
+	}
+	if opts.ProjectID == "" {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.project_id is required")
+	}
+	if !watsonxProjectIDPattern.MatchString(opts.ProjectID) {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.project_id must be a watsonx.ai project ID (a UUID)")
+	}
+	if opts.APIVersion == "" {
+		opts.APIVersion = WatsonxDefaultAPIVersion
+	}
+	if !watsonxAPIVersionPattern.MatchString(opts.APIVersion) {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.api_version must be a date in YYYY-MM-DD form")
+	}
+	if _, err := time.Parse(time.DateOnly, opts.APIVersion); err != nil {
+		return WatsonxOptions{}, fmt.Errorf("watsonx: provider_options.api_version must be a valid date in YYYY-MM-DD form")
+	}
 	return opts, nil
 }
 

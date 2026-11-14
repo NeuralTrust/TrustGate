@@ -83,6 +83,7 @@ func TestModelListing_Lists(t *testing.T) {
 		},
 		providers.ProviderAzure:            {enabledModel("gpt-4.1")},
 		providers.ProviderOpenAICompatible: {},
+		providers.ProviderWatsonx:          {enabledModel("ibm/granite-4-h-small")},
 	}
 
 	for _, tc := range []struct {
@@ -100,6 +101,7 @@ func TestModelListing_Lists(t *testing.T) {
 		{"provider with no listing", providers.ProviderCohere, "command-r", VerdictUnknown},
 		{"azure deployment names are account specific", providers.ProviderAzure, "my-deployment", VerdictUnknown},
 		{"openai compatible endpoints are opaque", providers.ProviderOpenAICompatible, "gpt-4.1", VerdictUnknown},
+		{"watsonx models models.dev does not price", providers.ProviderWatsonx, "mistralai/mistral-medium-2505", VerdictUnknown},
 		{"bedrock arn is an opaque reference", providers.ProviderBedrock, "arn:aws:bedrock:eu-west-1::foundation-model/x", VerdictUnknown},
 		{"empty provider", "", "gpt-4.1", VerdictUnknown},
 		{"empty model", providers.ProviderOpenAI, "", VerdictUnknown},
