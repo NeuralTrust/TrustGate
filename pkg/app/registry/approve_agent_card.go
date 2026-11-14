@@ -109,7 +109,7 @@ func (a *approveAgentCard) Approve(ctx context.Context, gatewayID ids.GatewayID,
 	if err := next.Pin(fetched.URL, fetched.Card, time.Now()); err != nil {
 		return nil, err
 	}
-	next.SkillScan = a.cards.scanSkills(ctx, &next, next.Card)
+	next.SkillScan = a.cards.scanSkills(ctx, gatewayID, &next, next.Card)
 	if a.pinner == nil {
 		return nil, ErrCardPinUnavailable
 	}
