@@ -190,9 +190,26 @@ func (s *scanner) post(ctx context.Context, path, token string, body, out any) e
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", res.StatusCode)
+		return answerError(res)
 	}
 	return json.NewDecoder(io.LimitReader(res.Body, maxResponseBytes)).Decode(out)
+}
+
+// answerError is a refused call's status with the OAuth error TrustGuard
+// gave, when it gave one: invalid_scope and invalid_request are both 400.
+func answerError(res *http.Response) error {
+	var refusal struct {
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
+	}
+	_ = json.NewDecoder(io.LimitReader(res.Body, 4<<10)).Decode(&refusal)
+	switch {
+	case refusal.Description != "":
+		return fmt.Errorf("status %d: %s: %s", res.StatusCode, refusal.Error, refusal.Description)
+	case refusal.Error != "":
+		return fmt.Errorf("status %d: %s", res.StatusCode, refusal.Error)
+	}
+	return fmt.Errorf("status %d", res.StatusCode)
 }
 
 // truncate cuts text to at most n bytes without splitting a rune.

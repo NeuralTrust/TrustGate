@@ -43,7 +43,8 @@ func (f *fakeTrustGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case tokenPath:
 		var req tokenRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ClientID != "id" || req.ClientSecret != "secret" || req.Scope != scopeScan || req.GrantType != "client_credentials" {
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_scope","error_description":"client is not allowed to request this scope"}`))
 			return
 		}
 		f.tokens.Add(1)
@@ -116,7 +117,7 @@ func TestScanReusesEachGatewaysToken(t *testing.T) {
 func TestScanFailsOnARefusedTokenAnErrorOrAMisalignedAnswer(t *testing.T) {
 	refused := httptest.NewServer(&fakeTrustGuard{})
 	_, err := New(refused.URL, "id", "wrong", 0).ScanIndirectPromptInjection(context.Background(), ids.New[ids.GatewayKind](), []string{"skill"})
-	assert.ErrorContains(t, err, "token")
+	assert.ErrorContains(t, err, "trustguard scan token: status 400: invalid_scope: client is not allowed to request this scope")
 	refused.Close()
 
 	answers := []func(http.ResponseWriter){
