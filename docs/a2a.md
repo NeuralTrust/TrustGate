@@ -267,9 +267,11 @@ POST /v1/gateways/{gateway_id}/registries/{id}/agent-card/approve
 Each skill of a card the agent publishes (its name, description and
 examples, as one text) is scored by TrustGuard's indirect prompt injection
 model when the card is previewed, pinned, approved, or refreshed with a
-change. The gateway calls `POST {TRUSTGUARD_V2_BASE_URL}/v1/scan/indirect-prompt-injection`
-with `TRUSTGUARD_V2_CLIENT_ID` and `TRUSTGUARD_V2_CLIENT_SECRET`; no policy is
-involved, and nothing is blocked.
+change. The gateway gets a token of scope `scan` for the agent's gateway from
+`POST {TRUSTGUARD_V2_BASE_URL}/v1/token` with `TRUSTGUARD_V2_CLIENT_ID` and
+`TRUSTGUARD_V2_CLIENT_SECRET`, reuses it until shortly before it expires, and
+calls `POST {TRUSTGUARD_V2_BASE_URL}/v1/scan/indirect-prompt-injection` with
+it. No policy is involved, and nothing is blocked.
 
 ```json
 "skill_scan": [{"skill_id": "refund_invoice", "flagged": false, "score": 0.02}]
