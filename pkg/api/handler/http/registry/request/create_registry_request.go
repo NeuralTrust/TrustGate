@@ -53,13 +53,31 @@ type PriceOverrideRequest struct {
 }
 
 type MCPTargetRequest struct {
-	Code      string                `json:"code,omitempty"`
-	Source    string                `json:"source,omitempty"`
-	URL       string                `json:"url,omitempty"`
-	Transport string                `json:"transport,omitempty"`
-	Headers   map[string]string     `json:"headers,omitempty"`
-	Auth      *MCPAuthRequest       `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetRequest `json:"openapi,omitempty"`
+	Code      string            `json:"code,omitempty"`
+	Source    string            `json:"source,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	// UserHeaders declares the upstream headers each caller fills with their
+	// own value. Omitted on update, the stored declarations are kept; an empty
+	// list removes them all.
+	UserHeaders *[]MCPUserHeaderRequest `json:"user_headers,omitempty"`
+	Auth        *MCPAuthRequest         `json:"auth,omitempty"`
+	OpenAPI     *OpenAPITargetRequest   `json:"openapi,omitempty"`
+}
+
+// MCPUserHeaderRequest declares one per-user upstream header.
+type MCPUserHeaderRequest struct {
+	// Name is the HTTP header sent upstream, e.g. X-API-Key.
+	Name string `json:"name"`
+	// Description is the help shown to a person entering their value.
+	Description string `json:"description,omitempty"`
+	// Required refuses a call with a connect link until the caller has a value.
+	Required bool `json:"required,omitempty"`
+	// Secret keeps the value masked once entered.
+	Secret bool `json:"secret,omitempty"`
+	// Scheme is written before the value, e.g. Bearer. Empty sends it raw.
+	Scheme string `json:"scheme,omitempty"`
 }
 
 type OpenAPITargetRequest struct {
@@ -268,6 +286,14 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		URL:       t.URL,
 		Transport: domain.MCPTransport(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.UserHeaders != nil {
+		out.UserHeaders = make([]domain.MCPUserHeader, 0, len(*t.UserHeaders))
+		for _, h := range *t.UserHeaders {
+			out.UserHeaders = append(out.UserHeaders, domain.MCPUserHeader{
+				Name: h.Name, Description: h.Description, Required: h.Required, Secret: h.Secret, Scheme: h.Scheme,
+			})
+		}
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}

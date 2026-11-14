@@ -68,3 +68,20 @@ func TestCreateRegistryRequest_NoAccountIsTheCallersOwn(t *testing.T) {
 	require.Empty(t, string(target.Auth.Account))
 	require.False(t, target.Auth.Shared())
 }
+
+// A per-user header that does not survive the wire would be dropped silently
+// and every caller would dial without it.
+func TestMCPTargetRequest_UserHeaders(t *testing.T) {
+	var omitted, cleared, set MCPTargetRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"url":"https://x.example.com/mcp"}`), &omitted))
+	require.NoError(t, json.Unmarshal([]byte(`{"url":"https://x.example.com/mcp","user_headers":[]}`), &cleared))
+	require.NoError(t, json.Unmarshal([]byte(`{"url":"https://x.example.com/mcp","user_headers":[
+		{"name":"X-API-Key","description":"Your key","required":true,"secret":true,"scheme":"Token"}]}`), &set))
+
+	require.Nil(t, omitted.ToDomain().UserHeaders)
+	require.NotNil(t, cleared.ToDomain().UserHeaders)
+	require.Empty(t, cleared.ToDomain().UserHeaders)
+	require.Equal(t, []domain.MCPUserHeader{{
+		Name: "X-API-Key", Description: "Your key", Required: true, Secret: true, Scheme: "Token",
+	}}, set.ToDomain().UserHeaders)
+}

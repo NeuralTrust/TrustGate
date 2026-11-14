@@ -370,6 +370,30 @@ const alertGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
 
 const badgeCheck = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
 
+// userHeadersSection lists the servers whose upstream needs the person's own
+// header values, with a form to enter, replace or remove them. A secret value
+// is never written back into the page: its field stays empty, and leaving it
+// empty keeps what is stored.
+const userHeadersSection = `{{if .UserHeaders}}<section class="user-headers">
+<h2>Your keys</h2>
+<p class="sub">These servers authenticate each person with their own key. Enter yours once: it is stored encrypted in the gateway vault, sent only on your calls, and never shown to the agent.</p>
+{{range .UserHeaders}}<article class="tile">
+  <div class="tile-body"><div>
+    <p class="name">{{.Registry}}</p>
+    {{if .Missing}}<span class="badge red">Needs your key</span>{{else}}<span class="badge green">` + badgeCheck + `Saved</span>{{end}}
+  </div></div>
+  <form method="post" action="/oauth/user-headers/{{.Instance}}?ticket={{$.Ticket}}">
+  {{range .Fields}}<div class="input">
+    <input id="uh-{{.Name}}" name="{{.Name}}" type="{{if .Secret}}password{{else}}text{{end}}" autocomplete="off" spellcheck="false" placeholder=" "{{if not .Secret}} value="{{.Value}}"{{end}}{{if and .Required (not .Set)}} required{{end}}>
+    <label for="uh-{{.Name}}">{{.Name}}{{if not .Required}} (optional){{end}}{{if and .Secret .Set (not .Rejected)}} — saved, leave empty to keep{{end}}{{if .Rejected}} — refused by the server, enter it again{{end}}</label>
+    {{if .Description}}<p class="reg">{{.Description}}</p>{{end}}
+  </div>{{end}}
+  <div class="tile-foot"><span></span><button class="btn secondary" type="submit">Save</button></div>
+  </form>
+  <form method="post" action="/oauth/user-headers-remove/{{.Instance}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Remove my keys</button></form>
+</article>{{end}}
+</section>{{end}}`
+
 var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
@@ -386,7 +410,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
   </div>
   <div class="count"><span id="shown">{{len .Providers}}</span> of {{len .Providers}}</div>
 </div>{{end}}
-{{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
+{{if and (not .Providers) (not .UserHeaders)}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 <p class="empty" id="no-match" hidden>No matching MCP servers.</p>
 <div class="grid">{{range .Providers}}<article class="tile" data-filter="{{.DisplayName}} {{.InstanceName}} {{.Subtitle}} {{.Provider}}">
   <div class="tile-body">
@@ -409,6 +433,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
     <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}&amp;instance={{.Instance}}"><button class="btn secondary" type="submit">Connect</button></form>
   {{end}}</div>
 </article>{{end}}</div>
+` + userHeadersSection + `
 {{if .ResumeURL}}<div class="resume">
   <div><div class="name">Done connecting?</div><div class="reg">Return to your application to finish signing in.</div></div>
   <a class="btn primary" href="{{.ResumeURL}}">Continue</a>
@@ -509,6 +534,7 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   {{if and .Owner.Name (not .AwaitingAdmin)}}<div class="owner"><span class="eyebrow">Linked to</span><span class="owner-name">{{.Owner.Name}}</span>{{if .Owner.Detail}}<span class="owner-detail">{{.Owner.Detail}}</span>{{end}}</div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
+` + userHeadersSection + `
 </div>
 <div class="card-foot">
 {{if .Found}}
