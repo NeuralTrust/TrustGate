@@ -30,6 +30,9 @@ type AgentCardRefreshResponse struct {
 	SkillsAdded   []string        `json:"skills_added"`
 	SkillsRemoved []string        `json:"skills_removed"`
 	FetchedCard   json.RawMessage `json:"fetched_card" swaggertype:"object"`
+	// SkillScan is TrustGuard's verdict, now, on each skill of the pinned card,
+	// saved with it; absent when the skills could not be scanned.
+	SkillScan []domain.SkillVerdict `json:"skill_scan,omitempty"`
 	// FetchedSkillScan is TrustGuard's verdict on each skill of the fetched
 	// card; absent when the card did not change or was not scanned.
 	FetchedSkillScan []domain.SkillVerdict `json:"fetched_skill_scan,omitempty"`
@@ -44,6 +47,7 @@ func FromAgentCardRefresh(r *appregistry.AgentCardRefresh) AgentCardRefreshRespo
 		SkillsAdded:      nonNil(r.SkillsAdded),
 		SkillsRemoved:    nonNil(r.SkillsRemoved),
 		FetchedCard:      r.FetchedCard,
+		SkillScan:        r.SkillScan,
 		FetchedSkillScan: r.FetchedSkillScan,
 	}
 }

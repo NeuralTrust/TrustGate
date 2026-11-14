@@ -65,7 +65,7 @@ func newAgentCardPinningWith(repo domain.Repository, pinner appregistry.A2ACardP
 	opt := appregistry.WithAgentCards(fetcher, creds)
 	return agentCardUseCases{
 		PreviewAgentCard: appregistry.NewPreviewAgentCard(opt),
-		RefreshAgentCard: appregistry.NewRefreshAgentCard(repo, opt),
+		RefreshAgentCard: appregistry.NewRefreshAgentCard(repo, pinner, newCacheManager(), publisher, newTestLogger(), opt),
 		ApproveAgentCard: appregistry.NewApproveAgentCard(repo, pinner, newCacheManager(), publisher, newTestLogger(), nil, opt),
 	}
 }

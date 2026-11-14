@@ -256,8 +256,8 @@ func provideRegistryServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, save registrySaveParams) appregistry.RefreshAgentCard {
-		return appregistry.NewRefreshAgentCard(repo, save.options(nil)...)
+	if err := c.Provide(func(repo domain.Repository, pinner cardPinnerParam, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, save registrySaveParams) appregistry.RefreshAgentCard {
+		return appregistry.NewRefreshAgentCard(repo, pinner.Pinner, manager, publisher, logger, save.options(nil)...)
 	}); err != nil {
 		return err
 	}
