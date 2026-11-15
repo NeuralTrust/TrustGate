@@ -117,3 +117,13 @@ func TestLiveModelSource_List_ClassifiesListingFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestLiveModelSource_AuthoritativeProviders(t *testing.T) {
+	t.Parallel()
+
+	source := newLiveModelSource(stubListerLocator{})
+	require.True(t, source.Authoritative(providers.ProviderAzure))
+	require.True(t, source.Authoritative(providers.ProviderWatsonx))
+	require.False(t, source.Authoritative(providers.ProviderOpenAI))
+	require.False(t, source.Authoritative(providers.ProviderVertex))
+}

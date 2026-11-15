@@ -36,6 +36,7 @@ func TestHonorsBaseURLMatchesTheOptions(t *testing.T) {
 		provider.OpenRouter:       OpenRouterOptions{},
 		provider.Azure:            AzureOptions{},
 		provider.Bedrock:          BedrockOptions{},
+		provider.Watsonx:          WatsonxOptions{},
 	}
 	for _, name := range provider.Supported() {
 		reads := false

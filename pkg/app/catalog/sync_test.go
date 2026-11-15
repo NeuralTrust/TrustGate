@@ -105,6 +105,13 @@ func TestSyncer_Sync(t *testing.T) {
 				"anthropic-claude-5.5-haiku": {"id":"anthropic-claude-5.5-haiku","name":"Anthropic Claude 5.5 Haiku","cost":{"input":0.1,"output":0.5}}
 			}
 		},
+		"watsonx": {
+			"id": "watsonx",
+			"name": "watsonx.ai",
+			"models": {
+				"ibm/granite-4-h-small": {"id":"ibm/granite-4-h-small","name":"IBM Granite 4.0 H Small","limit":{"context":131072,"output":131072},"cost":{"input":0.0636,"output":0.265}}
+			}
+		},
 		"unknownvendor": {
 			"id": "unknownvendor",
 			"name": "Ignored",
@@ -130,7 +137,7 @@ func TestSyncer_Sync(t *testing.T) {
 	if len(repo.providers) != len(seedProviders) {
 		t.Fatalf("expected %d providers seeded, got %d", len(seedProviders), len(repo.providers))
 	}
-	wantUpserts := 3 + len(cohereSeedModels) + len(digitalOceanSeedModels)
+	wantUpserts := 4 + len(cohereSeedModels) + len(digitalOceanSeedModels)
 	if len(repo.upsertedModels) != wantUpserts {
 		t.Fatalf("expected %d mapped models upserted (unknown vendor skipped), got %d", wantUpserts, len(repo.upsertedModels))
 	}
@@ -149,6 +156,19 @@ func TestSyncer_Sync(t *testing.T) {
 	digitalOceanID := repo.providers["digitalocean"].ID
 	if keep := repo.disabledCalls[digitalOceanID]; len(keep) != 1 || keep[0] != "anthropic-claude-5.5-haiku" {
 		t.Fatalf("digitalocean keep slugs = %v, want [anthropic-claude-5.5-haiku]", keep)
+	}
+	watsonxID := repo.providers["watsonx"].ID
+	if keep := repo.disabledCalls[watsonxID]; len(keep) != 1 || keep[0] != "ibm/granite-4-h-small" {
+		t.Fatalf("watsonx keep slugs = %v, want [ibm/granite-4-h-small]", keep)
+	}
+	var granitePriced bool
+	for _, m := range repo.upsertedModels {
+		if m.ProviderID == watsonxID && m.Slug == "ibm/granite-4-h-small" && m.InputPrice == "0.0000000636" && m.OutputPrice == "0.000000265" {
+			granitePriced = true
+		}
+	}
+	if !granitePriced {
+		t.Fatal("ibm/granite-4-h-small should be upserted under watsonx with its models.dev pricing")
 	}
 	var routerSeeded bool
 	for _, m := range repo.upsertedModels {
