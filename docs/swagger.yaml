@@ -2040,6 +2040,13 @@ definitions:
         type: string
       resolved_card_url:
         type: string
+      skill_scan:
+        description: |-
+          SkillScan is TrustGuard's indirect prompt injection verdict on each skill
+          of the pinned card; absent when the card was not scanned.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict'
+        type: array
       url:
         type: string
       vertex_agent_engine:
@@ -2090,8 +2097,22 @@ definitions:
         type: object
       fetched_digest:
         type: string
+      fetched_skill_scan:
+        description: |-
+          FetchedSkillScan is TrustGuard's verdict on each skill of the fetched
+          card; absent when the card did not change or was not scanned.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict'
+        type: array
       pinned_digest:
         type: string
+      skill_scan:
+        description: |-
+          SkillScan is TrustGuard's verdict, now, on each skill of the pinned card,
+          saved with it; absent when the skills could not be scanned.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict'
+        type: array
       skills_added:
         items:
           type: string
@@ -2248,6 +2269,12 @@ definitions:
         type: string
       resolved_card_url:
         type: string
+      skill_scan:
+        description: SkillScan is TrustGuard's verdict on each skill; absent when
+          not scanned.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict'
+        type: array
       versions:
         items:
           type: string
@@ -3500,6 +3527,15 @@ definitions:
       harness_arn:
         type: string
       qualifier:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict:
+    properties:
+      flagged:
+        type: boolean
+      score:
+        type: number
+      skill_id:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_registry.VertexLocator:

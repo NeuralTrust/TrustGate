@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	specsPath      = "/ml/v1/foundation_model_specs"
-	chatFunction   = "text_chat"
-	specsPageLimit = "200"
+	specsPath         = "/ml/v1/foundation_model_specs"
+	chatFunction      = "text_chat"
+	embeddingFunction = "embedding"
+	specsPageLimit    = "200"
 
 	lifecycleWithdrawn  = "withdrawn"
 	lifecycleDeprecated = "deprecated"
@@ -54,13 +55,13 @@ type modelSpec struct {
 
 func specsURL(opts providers.WatsonxOptions) string {
 	return endpointURL(opts, specsPath, url.Values{
-		"filters": {"function_" + chatFunction},
-		"limit":   {specsPageLimit},
+		"limit": {specsPageLimit},
 	})
 }
 
-// ListLiveModels lists the chat models the registry's region serves. Regions
-// differ: Frankfurt serves fewer models than Dallas.
+// ListLiveModels lists the chat and embedding models the registry's region
+// serves, flagged with what each does. Regions differ: Frankfurt serves fewer
+// models than Dallas.
 func (c *client) ListLiveModels(ctx context.Context, config *providers.Config) ([]providers.LiveModel, error) {
 	opts, err := providers.DecodeWatsonxOptions(config.Options)
 	if err != nil {
@@ -90,7 +91,8 @@ func parseModelSpecs(body []byte, now time.Time) ([]providers.LiveModel, error) 
 	models := make([]providers.LiveModel, 0, len(specs.Resources))
 	for _, spec := range specs.Resources {
 		id := strings.TrimSpace(spec.ModelID)
-		if id == "" || !spec.servesChat() || spec.reached(lifecycleWithdrawn, today) {
+		capabilities := spec.capabilities()
+		if id == "" || capabilities == nil || spec.reached(lifecycleWithdrawn, today) {
 			continue
 		}
 		display := strings.TrimSpace(spec.Label)
@@ -100,18 +102,31 @@ func parseModelSpecs(body []byte, now time.Time) ([]providers.LiveModel, error) 
 		if spec.reached(lifecycleDeprecated, today) {
 			display += " (deprecated)"
 		}
-		models = append(models, providers.LiveModel{ID: id, DisplayName: display, ProviderModel: id})
+		models = append(models, providers.LiveModel{ID: id, DisplayName: display, ProviderModel: id, Capabilities: capabilities})
 	}
 	return models, nil
 }
 
-func (s modelSpec) servesChat() bool {
+// capabilities maps the functions IBM lists for a model onto catalog flags,
+// or nil when the model serves neither chat nor embeddings.
+func (s modelSpec) capabilities() map[string]any {
+	var flags map[string]any
 	for _, fn := range s.Functions {
-		if fn.ID == chatFunction {
-			return true
+		var flag string
+		switch fn.ID {
+		case chatFunction:
+			flag = "chat"
+		case embeddingFunction:
+			flag = "embed"
+		default:
+			continue
 		}
+		if flags == nil {
+			flags = map[string]any{}
+		}
+		flags[flag] = true
 	}
-	return false
+	return flags
 }
 
 // reached reports whether the model entered lifecycle stage id on or before

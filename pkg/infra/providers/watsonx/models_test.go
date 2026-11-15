@@ -32,23 +32,29 @@ func TestParseModelSpecs_LifecycleAndFunctions(t *testing.T) {
 		 "lifecycle":[{"id":"available","start_date":"2025-05-07"},{"id":"deprecated","start_date":"2026-05-05"},{"id":"withdrawn","start_date":"2027-01-12"}]},
 		{"model_id":"old/withdrawn-model","label":"gone","functions":[{"id":"text_chat"}],
 		 "lifecycle":[{"id":"available","start_date":"2024-01-01"},{"id":"withdrawn","start_date":"2026-01-01"}]},
-		{"model_id":"ibm/slate-125m-english-rtrvr","label":"slate","functions":[{"id":"embedding"}]},
+		{"model_id":"ibm/slate-125m-english-rtrvr","label":"slate","functions":[{"id":"embedding"},{"id":"rerank"}]},
+		{"model_id":"ibm/granite-ttm-512-96-r2","label":"ttm","functions":[{"id":"time_series_forecast"}]},
 		{"model_id":"","label":"blank","functions":[{"id":"text_chat"}]}
 	]}`
 
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	models, err := parseModelSpecs([]byte(body), now)
 	require.NoError(t, err)
+	chat := map[string]any{"chat": true}
 	assert.Equal(t, []providers.LiveModel{
-		{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small"},
-		{ID: "mistralai/mistral-medium-2505", DisplayName: "mistral-medium-2505 (deprecated)", ProviderModel: "mistralai/mistral-medium-2505"},
-	}, models)
+		{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small", Capabilities: chat},
+		{ID: "mistralai/mistral-medium-2505", DisplayName: "mistral-medium-2505 (deprecated)", ProviderModel: "mistralai/mistral-medium-2505", Capabilities: chat},
+		{ID: "ibm/slate-125m-english-rtrvr", DisplayName: "slate", ProviderModel: "ibm/slate-125m-english-rtrvr", Capabilities: map[string]any{"embed": true}},
+	}, models, "chat and embedding models are listed with what they do; other functions are not")
 
 	afterWithdrawal := time.Date(2027, 1, 12, 0, 0, 0, 0, time.UTC)
 	models, err = parseModelSpecs([]byte(body), afterWithdrawal)
 	require.NoError(t, err)
-	require.Len(t, models, 1)
-	assert.Equal(t, "ibm/granite-4-h-small", models[0].ID)
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	assert.Equal(t, []string{"ibm/granite-4-h-small", "ibm/slate-125m-english-rtrvr"}, ids)
 }
 
 func TestParseModelSpecs_BadBody(t *testing.T) {
@@ -60,6 +66,6 @@ func TestSpecsURL(t *testing.T) {
 	opts, err := providers.DecodeWatsonxOptions(map[string]any{"region": "us-south", "project_id": testProject, "api_version": "2025-02-11"})
 	require.NoError(t, err)
 	assert.Equal(t,
-		"https://us-south.ml.cloud.ibm.com/ml/v1/foundation_model_specs?filters=function_text_chat&limit=200&version=2025-02-11",
+		"https://us-south.ml.cloud.ibm.com/ml/v1/foundation_model_specs?limit=200&version=2025-02-11",
 		specsURL(opts))
 }

@@ -34,6 +34,9 @@ type LiveModel struct {
 	// Pending marks a model the provider lists but does not serve yet, such as
 	// an Azure deployment that is still being created.
 	Pending bool
+	// Capabilities are catalog capability flags ("chat", "embed") the
+	// provider's own listing states for the model. Nil when it says nothing.
+	Capabilities map[string]any
 }
 
 // ModelLister lists the models a provider's API reports as available to the
