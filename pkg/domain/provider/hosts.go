@@ -14,9 +14,16 @@
 
 package provider
 
+import "sort"
+
+// WatsonxIAMHost is the IBM Cloud IAM host a watsonx registry sends its API
+// key to, in exchange for the bearer token its inference calls carry.
+const WatsonxIAMHost = "iam.cloud.ibm.com"
+
 // defaultHosts is the API host each provider with a fixed endpoint calls
-// when no base_url overrides it. Vertex, Bedrock and Azure derive theirs from
-// a location, region or endpoint; openai_compatible always names its own.
+// when no base_url overrides it. Vertex, Bedrock, Azure and watsonx derive
+// theirs from a location, region or endpoint; openai_compatible always names
+// its own.
 var defaultHosts = map[string]string{
 	OpenAI:       "api.openai.com",
 	Google:       "generativelanguage.googleapis.com",
@@ -37,6 +44,37 @@ var defaultHosts = map[string]string{
 var baseURLProviders = map[string]bool{
 	OpenAI: true, OpenAICompatible: true, Vertex: true, Cohere: true,
 	Mistral: true, Anthropic: true, Groq: true, OpenRouter: true,
+	Watsonx: true,
+}
+
+// watsonxRegions are the IBM Cloud regions that serve watsonx.ai. The region
+// picks the host an IAM token is sent to, so no other value is accepted.
+var watsonxRegions = map[string]bool{
+	"us-south": true,
+	"eu-de":    true,
+	"eu-gb":    true,
+	"jp-tok":   true,
+	"au-syd":   true,
+	"ca-tor":   true,
+}
+
+// WatsonxRegions returns the IBM Cloud regions that serve watsonx.ai, sorted.
+func WatsonxRegions() []string {
+	regions := make([]string, 0, len(watsonxRegions))
+	for region := range watsonxRegions {
+		regions = append(regions, region)
+	}
+	sort.Strings(regions)
+	return regions
+}
+
+// WatsonxHost is the watsonx.ai inference host of an IBM Cloud region, or ""
+// for a region that does not serve watsonx.ai.
+func WatsonxHost(region string) string {
+	if !watsonxRegions[region] {
+		return ""
+	}
+	return region + ".ml.cloud.ibm.com"
 }
 
 // HonorsBaseURL reports whether name calls provider_options.base_url when it
