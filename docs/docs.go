@@ -10168,6 +10168,13 @@ const docTemplate = `{
                 "resolved_card_url": {
                     "type": "string"
                 },
+                "skill_scan": {
+                    "description": "SkillScan is TrustGuard's indirect prompt injection verdict on each skill\nof the pinned card; absent when the card was not scanned.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict"
+                    }
+                },
                 "url": {
                     "type": "string"
                 },
@@ -10243,8 +10250,22 @@ const docTemplate = `{
                 "fetched_digest": {
                     "type": "string"
                 },
+                "fetched_skill_scan": {
+                    "description": "FetchedSkillScan is TrustGuard's verdict on each skill of the fetched\ncard; absent when the card did not change or was not scanned.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict"
+                    }
+                },
                 "pinned_digest": {
                     "type": "string"
+                },
+                "skill_scan": {
+                    "description": "SkillScan is TrustGuard's verdict, now, on each skill of the pinned card,\nsaved with it; absent when the skills could not be scanned.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict"
+                    }
                 },
                 "skills_added": {
                     "type": "array",
@@ -10470,6 +10491,13 @@ const docTemplate = `{
                 },
                 "resolved_card_url": {
                     "type": "string"
+                },
+                "skill_scan": {
+                    "description": "SkillScan is TrustGuard's verdict on each skill; absent when not scanned.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict"
+                    }
                 },
                 "versions": {
                     "type": "array",
@@ -12188,6 +12216,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "qualifier": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_registry.SkillVerdict": {
+            "type": "object",
+            "properties": {
+                "flagged": {
+                    "type": "boolean"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "skill_id": {
                     "type": "string"
                 }
             }
