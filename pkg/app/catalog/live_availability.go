@@ -83,6 +83,9 @@ type LiveModel struct {
 	ProviderModel string
 	// Pending marks a model the provider lists but does not serve yet.
 	Pending bool
+	// Capabilities are the catalog flags the provider's listing states for
+	// the model, used when the catalog has no row of its own for it.
+	Capabilities map[string]any
 }
 
 // ErrLiveListingMisconfigured marks a listing that failed because of the
@@ -243,11 +246,12 @@ func (f *liveAvailabilityFilter) List(ctx context.Context, in ServerlessFilterIn
 		// Priced and dated by nobody: the gateway has no catalog row for these,
 		// and inventing one would put a number on screen that no source backs.
 		out = append(out, domain.Model{
-			Slug:        model.ID,
-			ExternalID:  model.ID,
-			DisplayName: displayName,
-			Enabled:     true,
-			Source:      liveCatalogSource,
+			Slug:         model.ID,
+			ExternalID:   model.ID,
+			DisplayName:  displayName,
+			Capabilities: model.Capabilities,
+			Enabled:      true,
+			Source:       liveCatalogSource,
 		})
 	}
 
@@ -364,6 +368,9 @@ func deploymentModels(catalogModels []domain.Model, live []LiveModel) []domain.M
 		entry, matched := byProviderModel[strings.ToLower(strings.TrimSpace(model.ProviderModel))]
 		if !matched {
 			entry = domain.Model{Enabled: true, Source: liveCatalogSource}
+		}
+		if len(entry.Capabilities) == 0 && len(model.Capabilities) > 0 {
+			entry.Capabilities = model.Capabilities
 		}
 		entry.Slug = deployment
 		entry.ExternalID = deployment
