@@ -225,8 +225,9 @@ func TestLiveAvailabilityFilter_WatsonxListsTheRegionWithCatalogPrices(t *testin
 	gatewayID := ids.New[ids.GatewayKind]()
 	registryID := ids.New[ids.RegistryKind]()
 	source := &stubLiveModelSource{models: []appcatalog.LiveModel{
-		{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small"},
-		{ID: "mistralai/mistral-medium-2505", DisplayName: "mistral-medium-2505", ProviderModel: "mistralai/mistral-medium-2505"},
+		{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small", Capabilities: map[string]any{"chat": true}},
+		{ID: "mistralai/mistral-medium-2505", DisplayName: "mistral-medium-2505", ProviderModel: "mistralai/mistral-medium-2505", Capabilities: map[string]any{"chat": true}},
+		{ID: "intfloat/multilingual-e5-large", DisplayName: "multilingual-e5-large", ProviderModel: "intfloat/multilingual-e5-large", Capabilities: map[string]any{"embed": true}},
 	}}
 	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
 		Return(&registrydomain.Registry{
@@ -244,17 +245,20 @@ func TestLiveAvailabilityFilter_WatsonxListsTheRegionWithCatalogPrices(t *testin
 		GatewayID:    gatewayID,
 		RegistryID:   registryID,
 		Models: []catalogdomain.Model{
-			{Slug: "ibm/granite-4-h-small", ExternalID: "watsonx/ibm/granite-4-h-small", InputPrice: "0.0000000636", Enabled: true},
+			{Slug: "ibm/granite-4-h-small", ExternalID: "watsonx/ibm/granite-4-h-small", InputPrice: "0.0000000636", Capabilities: map[string]any{"chat": true, "tool_call": true}, Enabled: true},
 			{Slug: "openai/gpt-oss-120b", ExternalID: "watsonx/openai/gpt-oss-120b", InputPrice: "0.000000159", Enabled: true},
 		},
 	})
 	require.NoError(t, err)
 
-	require.Len(t, got, 2, "the region's listing is the list, not the models.dev catalog")
+	require.Len(t, got, 3, "the region's listing is the list, not the models.dev catalog")
 	assert.Equal(t, "ibm/granite-4-h-small", got[0].Slug)
 	assert.Equal(t, "0.0000000636", got[0].InputPrice, "a priced model keeps its models.dev price")
+	assert.Equal(t, map[string]any{"chat": true, "tool_call": true}, got[0].Capabilities, "a catalog row keeps its own flags")
 	assert.Equal(t, "mistralai/mistral-medium-2505", got[1].Slug)
 	assert.Empty(t, got[1].InputPrice, "a model models.dev does not price is listed without a price")
+	assert.Equal(t, "intfloat/multilingual-e5-large", got[2].Slug)
+	assert.Equal(t, map[string]any{"embed": true}, got[2].Capabilities, "a model the catalog lacks takes the flags the provider listed")
 }
 
 func TestLiveAvailabilityFilter_AzureFailsInsteadOfListingTheCatalog(t *testing.T) {

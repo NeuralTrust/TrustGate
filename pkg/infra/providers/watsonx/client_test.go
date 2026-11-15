@@ -268,7 +268,7 @@ func TestClient_ListLiveModelsAndProbe(t *testing.T) {
 	models, err := c.ListLiveModels(context.Background(), testConfig(wx.srv.URL))
 	require.NoError(t, err)
 	require.Len(t, models, 1)
-	assert.Equal(t, providers.LiveModel{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small"}, models[0])
+	assert.Equal(t, providers.LiveModel{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small", Capabilities: map[string]any{"chat": true}}, models[0])
 	call := wx.next(t)
 	assert.Equal(t, specsPath, call.path)
 	assert.Equal(t, "Bearer token-1", call.auth)
