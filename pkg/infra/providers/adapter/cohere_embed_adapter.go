@@ -108,6 +108,7 @@ func (a *OpenAIEmbeddingsAdapter) DecodeResponse(body []byte) (*CanonicalRespons
 	}
 	return &CanonicalResponse{
 		Model: resp.Model,
+		Usage: emb.Usage,
 		ProviderExtensions: map[string]json.RawMessage{
 			"embedding": raw,
 		},
