@@ -34,7 +34,7 @@ func SupportsCapability(provider, capability string) bool {
 	case CapabilityEmbeddings:
 		switch provider {
 		case ProviderOpenAI, ProviderOpenAICompatible, ProviderAzure, ProviderCohere, ProviderMistral,
-			ProviderVertex, ProviderBedrock:
+			ProviderVertex, ProviderBedrock, ProviderWatsonx:
 			return true
 		default:
 			return false

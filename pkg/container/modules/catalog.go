@@ -208,6 +208,7 @@ func (s *liveModelSource) List(
 			DisplayName:   model.DisplayName,
 			ProviderModel: model.ProviderModel,
 			Pending:       model.Pending,
+			Capabilities:  model.Capabilities,
 		})
 	}
 	return out, nil

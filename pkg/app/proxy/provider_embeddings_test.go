@@ -204,6 +204,8 @@ func TestProviderInvoke_VertexPredictCrossFormatToOpenAI(t *testing.T) {
 			assert.Equal(t, "openai_embeddings", req.TargetFormat)
 			assert.JSONEq(t, tc.wantSent, string(sentBody))
 			assert.JSONEq(t, `{"predictions":[{"embeddings":{"values":[0.1]}},{"embeddings":{"values":[0.2]}}]}`, string(resp.Body))
+			require.NotNil(t, resp.Usage, "an OpenAI embeddings response reports its tokens, which price the call")
+			assert.Equal(t, 2, resp.Usage.InputTokens)
 		})
 	}
 }
