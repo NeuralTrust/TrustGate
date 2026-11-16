@@ -29,6 +29,14 @@ const (
 )
 
 const (
+	failureModeOpen   = "open"
+	failureModeClosed = "closed"
+	// defaultFailureMode keeps the behaviour policies had before the setting
+	// existed: a guardrail that cannot evaluate lets the request through.
+	defaultFailureMode = failureModeOpen
+)
+
+const (
 	filterSDP            = "sdp"
 	filterRAI            = "rai"
 	filterPIAndJailbreak = "pi_and_jailbreak"
@@ -110,6 +118,13 @@ type Settings struct {
 	SDPAction   string      `mapstructure:"sdp_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
+	// FailureMode is what a request costs when Model Armor cannot evaluate it
+	// (unreachable, too slow, credentials refused, a block_on filter that
+	// returned no verdict): "open" lets it through, "closed" blocks it in a mode
+	// that blocks and records it in observe. Content Model Armor cannot inspect
+	// (an input failure) is refused in a blocking mode either way. Same contract
+	// as trustguard's failure_mode.
+	FailureMode string `mapstructure:"failure_mode"`
 	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
@@ -132,6 +147,9 @@ func (s *Settings) applyDefaults() {
 	}
 	if s.SDPAction == "" {
 		s.SDPAction = sdpActionBlock
+	}
+	if s.FailureMode == "" {
+		s.FailureMode = defaultFailureMode
 	}
 	s.Streaming.ApplyDefaults(streamingDefaults)
 }
@@ -182,6 +200,11 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("google_model_armor: sdp_action must be one of block, anonymize")
 	}
+	switch s.FailureMode {
+	case failureModeOpen, failureModeClosed:
+	default:
+		return fmt.Errorf("google_model_armor: failure_mode must be one of open, closed")
+	}
 	if strings.TrimSpace(s.Credentials.ImpersonateServiceAccount) != "" &&
 		strings.TrimSpace(s.Credentials.ServiceAccountJSON) != "" {
 		return fmt.Errorf(
@@ -218,4 +241,35 @@ func (p *Plugin) RetiredSettings() []string {
 		pluginutil.SettingOnError, pluginutil.SettingOnMaskFailure,
 		pluginutil.SettingStreamingOnError, pluginutil.SettingStreamingGuardTimeout,
 	}
+}
+
+// failClosed reports whether this policy refuses what Model Armor cannot evaluate.
+func (s Settings) failClosed() bool { return s.FailureMode == failureModeClosed }
+
+// failureModeFromRaw reads failure_mode straight from a settings map that may
+// not parse: it is closed only when the key (any case, as mapstructure matches
+// it) is a string equal-fold to "closed", and open for everything else. It is
+// used only to decide what a failure costs, so a policy that asked for closed
+// does not silently fail open because some other key made its settings
+// invalid. It never validates: parseConfig is still the one that rejects a bad
+// value.
+func failureModeFromRaw(settings map[string]any) string {
+	for key, v := range settings {
+		if !strings.EqualFold(key, "failure_mode") {
+			continue
+		}
+		if mode, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(mode), failureModeClosed) {
+			return failureModeClosed
+		}
+	}
+	return failureModeOpen
+}
+
+// failClosedOf reports whether a policy with these settings fails closed,
+// reading failure_mode leniently when the settings do not parse.
+func failClosedOf(settings map[string]any) bool {
+	if cfg, err := parseConfig(settings); err == nil {
+		return cfg.failClosed()
+	}
+	return failureModeFromRaw(settings) == failureModeClosed
 }

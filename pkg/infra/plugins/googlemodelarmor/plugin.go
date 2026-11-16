@@ -452,7 +452,7 @@ func (p *Plugin) evaluateChunk(in appplugins.ExecInput, cfg Settings, result *Sa
 		return ev
 	}
 	if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-		if keepsMaskDespiteGap(ev.res, in.Mode, reason) {
+		if keepsMaskDespiteGap(ev.res, in.Mode, reason, cfg.failClosed()) {
 			ev.keptGap = reason
 			return ev
 		}
@@ -550,7 +550,10 @@ func (p *Plugin) runGuardrail(
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
 	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
-		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+		// A masked chunk beside a chunk Model Armor could not reach keeps the
+		// mask and records the gap, unless the policy fails closed: then the
+		// unevaluated chunk is refused like any other availability failure.
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) && !cfg.failClosed() {
 			gap = &decision
 			break
 		}
@@ -773,16 +776,20 @@ func (p *Plugin) externalFailure(
 	fi failureInfo,
 ) (*appplugins.Result, error) {
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:     ctx,
-		Plugin:  PluginName,
-		Stage:   in.Stage,
-		Mode:    in.Mode,
-		Reason:  fi.reason,
-		Detail:  fi.armorReason,
-		Message: cfg.Message,
-		Err:     fi.err,
-		Logger:  p.logger,
-		Event:   in.Event,
+		// Read from the raw settings, not cfg: a config failure hands over a
+		// zero cfg, and a policy that asked for closed must not fail open
+		// because some other key made its settings invalid.
+		FailClosed: failClosedOf(in.Config.Settings),
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		Reason:     fi.reason,
+		Detail:     fi.armorReason,
+		Message:    cfg.Message,
+		Err:        fi.err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	if outcome.Abandoned {
 		return outcome.Returns()
@@ -792,6 +799,9 @@ func (p *Plugin) externalFailure(
 	data.FailureReason = string(fi.reason)
 	data.FailureDetail = fi.armorReason
 	data.FailureClass = string(outcome.Class)
+	if failClosedOf(in.Config.Settings) {
+		data.FailureMode = failureModeClosed
+	}
 	data.Filter = fi.filter
 	data.FilterVersion = fi.filterVersion
 	if fi.chunks > 1 {
@@ -852,7 +862,9 @@ func passThrough() *appplugins.Result {
 // unspecified): the de-identified text is already in hand and releasing the
 // original would send the raw data. A gap that is the content's (a skipped
 // filter) refuses instead, since the other filters did not judge this content.
-func keepsMaskDespiteGap(res assessmentResult, mode policy.Mode, reason string) bool {
-	return res.anonymize != nil && appplugins.Blocks(mode) &&
+// A policy that fails closed never keeps the mask: the filter it asked for did
+// not judge the content, and closed means refusing what was not evaluated.
+func keepsMaskDespiteGap(res assessmentResult, mode policy.Mode, reason string, failClosed bool) bool {
+	return !failClosed && res.anonymize != nil && appplugins.Blocks(mode) &&
 		appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability
 }
