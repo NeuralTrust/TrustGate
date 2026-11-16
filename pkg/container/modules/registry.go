@@ -163,7 +163,7 @@ func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.
 	if p.Materializer != nil && p.SecretRefs != nil {
 		opts = append(opts, appregistry.WithCardSecrets(p.Materializer, p.SecretRefs))
 	}
-	tg := p.Config.TrustGuard.V2
+	tg := p.Config.TrustGuard
 	if scanner := trustguardscan.New(tg.BaseURL, tg.ClientID, tg.ClientSecret, tg.Timeout); scanner != nil {
 		opts = append(opts, appregistry.WithSkillScanner(scanner))
 	}
