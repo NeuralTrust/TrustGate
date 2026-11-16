@@ -437,7 +437,7 @@ func isContextError(err error) bool {
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
 	perPrincipal := perPrincipalAuth(reg) ||
-		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
+		(reg.MCPTarget != nil && (reg.MCPTarget.HasURLVariables() || reg.MCPTarget.HasUserHeaders()))
 	if !perPrincipal {
 		return key, true
 	}

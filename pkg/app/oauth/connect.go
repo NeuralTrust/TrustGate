@@ -318,7 +318,12 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
+	userHeaders, err := s.userHeaderServers(ctx, gatewayID, ticket, data, rc)
+	if err != nil {
+		return nil, err
+	}
 	page := &ConnectPage{
+		UserHeaders:  userHeaders,
 		ConsumerPath: ticket.ConsumerPath,
 		ResumeURL:    ticket.ResumeURL,
 		Providers:    providers,
