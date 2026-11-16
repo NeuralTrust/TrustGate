@@ -564,9 +564,10 @@ var resourceRejectionMessage = regexp.MustCompile(`(?i)^(invalid|unsupported|unk
 
 // rejectsResource reports whether a 400 says the resource named by the policy
 // (the template path made of project, location and template) is the problem: a
-// BadRequest field violation on the resource name, or a message that opens by
-// calling the resource name, location or template invalid. Anything else is
-// read as the content's.
+// BadRequest field violation on the resource name, an ErrorInfo reason of
+// TEMPLATE_NOT_FOUND (how Model Armor answers a template that does not exist),
+// or a message that opens by calling the resource name, location or template
+// invalid. Anything else is read as the content's.
 func rejectsResource(status int, body []byte) bool {
 	if status != http.StatusBadRequest {
 		return false
@@ -576,6 +577,9 @@ func rejectsResource(status int, body []byte) bool {
 		return false
 	}
 	for _, detail := range parsed.Error.Details {
+		if detail.Type == errorInfoType && detail.Reason == reasonTemplateMissing {
+			return true
+		}
 		for _, violation := range detail.FieldViolations {
 			if violation.Field == "name" || violation.Field == "parent" {
 				return true
@@ -585,7 +589,10 @@ func rejectsResource(status int, body []byte) bool {
 	return resourceRejectionMessage.MatchString(strings.TrimSpace(parsed.Error.Message))
 }
 
-const errorInfoType = "type.googleapis.com/google.rpc.ErrorInfo"
+const (
+	errorInfoType         = "type.googleapis.com/google.rpc.ErrorInfo"
+	reasonTemplateMissing = "TEMPLATE_NOT_FOUND"
+)
 
 func errorInfoReason(body []byte) string {
 	var parsed rpcStatus
