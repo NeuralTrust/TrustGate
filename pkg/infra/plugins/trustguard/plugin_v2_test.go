@@ -565,7 +565,7 @@ func TestV2PluginConfig(t *testing.T) {
 		noCreds := NewV2(adapter.NewRegistry(), "http://unused", testTimeout, "", "", nil)
 		err := noCreds.ValidateConfig(map[string]any{})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "TRUSTGUARD_V2_CLIENT_ID")
+		assert.Contains(t, err.Error(), "TRUSTGUARD_CLIENT_ID")
 	})
 }
 

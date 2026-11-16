@@ -1020,62 +1020,43 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_TrustGuardV2(t *testing.T) {
-	t.Run("off by default", func(t *testing.T) {
-		minimumEnv(t)
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		if cfg.TrustGuard.V2.Timeout != defaultTrustGuardTimeout {
-			t.Errorf("TrustGuard.V2.Timeout = %v, want %v", cfg.TrustGuard.V2.Timeout, defaultTrustGuardTimeout)
-		}
-	})
-	t.Run("same host and timeout as TrustGuard by default", func(t *testing.T) {
-		minimumEnv(t)
-		t.Setenv("TRUSTGUARD_BASE_URL", "https://guard.example")
-		t.Setenv("TRUSTGUARD_TIMEOUT", "7s")
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		if cfg.TrustGuard.V2.BaseURL != "https://guard.example" || cfg.TrustGuard.V2.Timeout != 7*time.Second {
-			t.Errorf("TrustGuard.V2 = %+v, want the TrustGuard host and timeout", cfg.TrustGuard.V2)
-		}
-	})
-	t.Run("env overrides", func(t *testing.T) {
-		minimumEnv(t)
-		t.Setenv("TRUSTGUARD_V2_BASE_URL", "https://v2.example")
-		t.Setenv("TRUSTGUARD_V2_TIMEOUT", "2s")
-		t.Setenv("TRUSTGUARD_V2_CLIENT_ID", "tgc_platform")
-		t.Setenv("TRUSTGUARD_V2_CLIENT_SECRET", "platform-secret")
+func TestLoadConfig_TrustGuardIgnoresV2Settings(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		v2cfg := cfg.TrustGuard.V2
-		if v2cfg.BaseURL != "https://v2.example" || v2cfg.Timeout != 2*time.Second ||
-			v2cfg.ClientID != "tgc_platform" || v2cfg.ClientSecret != "platform-secret" {
-			t.Errorf("TrustGuard.V2 = %+v", v2cfg)
-		}
-	})
-}
-
-func TestLoadConfig_TrustGuardV2IgnoresOldNames(t *testing.T) {
 	minimumEnv(t)
-	t.Setenv("TRUSTGUARD_V3_BASE_URL", "https://old.example")
-	t.Setenv("TRUSTGUARD_V3_TIMEOUT", "3s")
-	t.Setenv("TRUSTGUARD_V3_CLIENT_ID", "old-id")
-	t.Setenv("TRUSTGUARD_V3_CLIENT_SECRET", "old-secret")
+	t.Setenv("TRUSTGUARD_BASE_URL", "https://guard.example")
+	t.Setenv("TRUSTGUARD_TIMEOUT", "7s")
+	t.Setenv("TRUSTGUARD_CLIENT_ID", "tgc_platform")
+	t.Setenv("TRUSTGUARD_CLIENT_SECRET", "platform-secret")
+	t.Setenv("TRUSTGUARD_V2_BASE_URL", "https://v2.example")
+	t.Setenv("TRUSTGUARD_V2_TIMEOUT", "2s")
+	t.Setenv("TRUSTGUARD_V2_CLIENT_ID", "other-id")
+	t.Setenv("TRUSTGUARD_V2_CLIENT_SECRET", "other-secret")
+
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	v2 := cfg.TrustGuard.V2
-	if v2.BaseURL != "" || v2.ClientID != "" || v2.ClientSecret != "" ||
-		v2.Timeout != defaultTrustGuardTimeout {
-		t.Errorf("TrustGuard.V2 = %+v, want zero values", v2)
+	want := TrustGuardConfig{
+		BaseURL:      "https://guard.example",
+		Timeout:      7 * time.Second,
+		ClientID:     "tgc_platform",
+		ClientSecret: "platform-secret",
+	}
+	if cfg.TrustGuard != want {
+		t.Errorf("TrustGuard = %+v, want %+v", cfg.TrustGuard, want)
+	}
+	out := buf.String()
+	for _, name := range []string{"TRUSTGUARD_V2_BASE_URL", "TRUSTGUARD_V2_TIMEOUT", "TRUSTGUARD_V2_CLIENT_ID", "TRUSTGUARD_V2_CLIENT_SECRET"} {
+		if !strings.Contains(out, "env="+name) {
+			t.Errorf("log = %q, want a warning for %s", out, name)
+		}
+	}
+	if strings.Contains(out, "other-secret") {
+		t.Errorf("log = %q, must not print the secret", out)
 	}
 }
 

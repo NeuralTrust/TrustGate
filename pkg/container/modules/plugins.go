@@ -106,7 +106,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		toolallowlist.New(p.Adapters),
 		toolinjection.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger),
-		trustguard.NewV2(p.Adapters, p.Cfg.TrustGuard.V2.BaseURL, p.Cfg.TrustGuard.V2.Timeout, p.Cfg.TrustGuard.V2.ClientID, p.Cfg.TrustGuard.V2.ClientSecret, p.Logger),
+		trustguard.NewV2(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger),
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),
