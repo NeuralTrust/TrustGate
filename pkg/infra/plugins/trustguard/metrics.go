@@ -130,21 +130,30 @@ func recordEvaluateFailure(ctx context.Context, reason string) {
 	evaluateFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 }
 
+// engineLabel is the engine label of an answer: the X-TrustGuard-Engine header, v1 or v2.
+// An answer without the header comes from a TrustGuard without engine routing, which answers
+// with v1. Any other value is "unknown".
+func engineLabel(header string) string {
+	switch engine := strings.ToLower(strings.TrimSpace(header)); engine {
+	case "", engineV1:
+		return engineV1
+	case engineV2:
+		return engineV2
+	default:
+		return "unknown"
+	}
+}
+
 // recordEvaluation counts one answer of TrustGuard by the engine its X-TrustGuard-Engine header
-// names: the organisation of the policy's collector is served by v1 until it is cut over to v2.
-// An answer without the header is "unknown" (a TrustGuard that does not route by organisation).
+// names (see engineLabel).
 func recordEvaluation(ctx context.Context, plugin, engine string, status int) {
 	initInstruments()
 	if evaluations == nil {
 		return
 	}
-	engine = strings.ToLower(strings.TrimSpace(engine))
-	if engine != engineV1 && engine != engineV2 {
-		engine = "unknown"
-	}
 	evaluations.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("plugin", plugin),
-		attribute.String("engine", engine),
+		attribute.String("engine", engineLabel(engine)),
 		attribute.String("status_class", strconv.Itoa(status/100)+"xx"),
 	))
 }
