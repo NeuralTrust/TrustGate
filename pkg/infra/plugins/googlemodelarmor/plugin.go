@@ -442,17 +442,19 @@ func (p *Plugin) evaluateChunk(in appplugins.ExecInput, cfg Settings, result *Sa
 	// padding a request is what skips one, so a mode that blocks refuses it,
 	// usable mask or not: the other filters did not judge this content. An
 	// invocation that came back PARTIAL while every block_on filter ran says
-	// nothing about what was asked, so it is recorded and fails open. A filter
-	// the template never enabled is the customer's configuration, not anything
-	// the request did, and keeps its usable mask: Model Armor already handed us
-	// the de-identified text, and failing open would forward the ORIGINAL prompt
-	// with the raw PII. The mask is applied and the incomplete verdict recorded
-	// on the same Data instead.
+	// nothing about what was asked: it is availability, recorded and let
+	// through under failure_mode open and refused in a mode that blocks under
+	// closed. A filter the template never enabled is the customer's
+	// configuration, not anything the request did, and under open keeps its
+	// usable mask: Model Armor already handed us the de-identified text, and
+	// failing open would forward the ORIGINAL prompt with the raw PII. The mask
+	// is applied and the incomplete verdict recorded on the same Data instead.
+	// Under closed it is refused like any other availability failure.
 	if ev.res.block != nil {
 		return ev
 	}
 	if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-		if keepsMaskDespiteGap(ev.res, in.Mode, reason) {
+		if keepsMaskDespiteGap(ev.res, cfg, in.Mode, reason) {
 			ev.keptGap = reason
 			return ev
 		}
@@ -550,7 +552,9 @@ func (p *Plugin) runGuardrail(
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
 	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
-		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && appplugins.Blocks(in.Mode) {
+		// A masked chunk beside a chunk Model Armor could not reach keeps the
+		// mask and records the gap (keepsMaskOnGap).
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && cfg.keepsMaskOnGap(in.Mode) {
 			gap = &decision
 			break
 		}
@@ -720,6 +724,7 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 		data.EarlierFailureDetail = data.FailureDetail
 	}
 	data.FailureDetail = reason
+	data.FailureMode = pluginutil.FailureModeStamp(failClosedOf(in.Config.Settings))
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
 		Plugin:  PluginName,
@@ -772,17 +777,22 @@ func (p *Plugin) externalFailure(
 	latencyMS int64,
 	fi failureInfo,
 ) (*appplugins.Result, error) {
+	// Read from the raw settings, not cfg: a config failure hands over a zero
+	// cfg, and a policy that asked for closed must not fail open because some
+	// other key made its settings invalid.
+	failClosed := failClosedOf(in.Config.Settings)
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
-		Ctx:     ctx,
-		Plugin:  PluginName,
-		Stage:   in.Stage,
-		Mode:    in.Mode,
-		Reason:  fi.reason,
-		Detail:  fi.armorReason,
-		Message: cfg.Message,
-		Err:     fi.err,
-		Logger:  p.logger,
-		Event:   in.Event,
+		FailClosed: failClosed,
+		Ctx:        ctx,
+		Plugin:     PluginName,
+		Stage:      in.Stage,
+		Mode:       in.Mode,
+		Reason:     fi.reason,
+		Detail:     fi.armorReason,
+		Message:    cfg.Message,
+		Err:        fi.err,
+		Logger:     p.logger,
+		Event:      in.Event,
 	})
 	if outcome.Abandoned {
 		return outcome.Returns()
@@ -792,6 +802,7 @@ func (p *Plugin) externalFailure(
 	data.FailureReason = string(fi.reason)
 	data.FailureDetail = fi.armorReason
 	data.FailureClass = string(outcome.Class)
+	data.FailureMode = pluginutil.FailureModeStamp(failClosed)
 	data.Filter = fi.filter
 	data.FilterVersion = fi.filterVersion
 	if fi.chunks > 1 {
@@ -852,7 +863,8 @@ func passThrough() *appplugins.Result {
 // unspecified): the de-identified text is already in hand and releasing the
 // original would send the raw data. A gap that is the content's (a skipped
 // filter) refuses instead, since the other filters did not judge this content.
-func keepsMaskDespiteGap(res assessmentResult, mode policy.Mode, reason string) bool {
-	return res.anonymize != nil && appplugins.Blocks(mode) &&
+// Whether a gap may keep a mask at all is the policy's (keepsMaskOnGap).
+func keepsMaskDespiteGap(res assessmentResult, cfg Settings, mode policy.Mode, reason string) bool {
+	return res.anonymize != nil && cfg.keepsMaskOnGap(mode) &&
 		appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability
 }
