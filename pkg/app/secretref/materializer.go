@@ -25,7 +25,6 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"log/slog"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -394,14 +393,8 @@ func (m *materializer) reportUnresolved(ctx context.Context, gatewayID ids.Gatew
 	class := secretstore.ClassOf(p.err)
 	attrs := []any{
 		slog.String("gateway_id", gatewayID.String()),
-		slog.String("location", strings.Join(p.path, ".")),
 		slog.String("error_class", string(class)),
-	}
-	if p.registryID != (ids.RegistryID{}) {
-		attrs = append(attrs, slog.String("registry_id", p.registryID.String()))
-	}
-	if p.parsed {
-		attrs = append(attrs, slog.String("store", p.ref.Store), slog.String("path", p.ref.Path))
+		slog.Bool("has_registry_id", p.registryID != (ids.RegistryID{})),
 	}
 	m.cfg.Logger.Warn("secret reference unresolved; its credential is left empty", attrs...)
 	if m.unresolved != nil {
