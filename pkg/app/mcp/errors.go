@@ -66,6 +66,10 @@ type ApplicationNotConnectedError struct {
 	// calling can connect that one — telling them to link their own would send
 	// them somewhere that changes nothing.
 	Shared bool
+	// UserKeys marks a server whose upstream takes each person's own key in a
+	// header: only a person can hold one, so the only remedy is naming who the
+	// request acts for. A group key is refused the same way.
+	UserKeys bool
 }
 
 // UnknownToolError is a tools/call name that no bound registry owns. It wraps
@@ -103,6 +107,14 @@ func (e *ApplicationNotConnectedError) Error() string {
 			"mcp: %q uses one shared account for every caller and nobody has connected it; "+
 				"an administrator connects it in the console, on the server's instance in Registry",
 			server,
+		)
+	}
+	if e.UserKeys {
+		return fmt.Sprintf(
+			"mcp: %q takes each person's own key, and this request does not come from one person "+
+				"(it carries only the application's key, or a key held for a group). Sign in as the person, "+
+				"or send the %s header with the id of the end user it acts for",
+			server, consumerdomain.EndUserHeader,
 		)
 	}
 	// Every MCP client reads this, not only the SDK, so the remedy is the header

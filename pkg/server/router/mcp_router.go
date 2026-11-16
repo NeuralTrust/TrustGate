@@ -155,6 +155,8 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Confirm)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
+	app.Post(oauthhttp.UserHeadersSavePath, r.connectHandler.SaveUserHeaders)
+	app.Post(oauthhttp.UserHeadersRemovePath, r.connectHandler.RemoveUserHeaders)
 	if r.endUserConnectionsHandler != nil {
 		app.Post("/:slug/connections/links", r.endUserConnectionsHandler.Link)
 		app.Get("/:slug/connections", r.endUserConnectionsHandler.List)

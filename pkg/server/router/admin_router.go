@@ -88,6 +88,9 @@ type AdminRouterDeps struct {
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
 	// on behalf of every caller. Absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler
+	// RegistryUserHeaders serves the per-user header values of an MCP
+	// instance: roster, reset, bulk import and per-person links.
+	RegistryUserHeaders *registryhttp.UserHeadersHandler
 	// SecretStores serves the secret stores of a gateway; nil where the
 	// plane has no connection store.
 	SecretStores *secretstorehttp.ListHandler
@@ -217,6 +220,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		registries.Get("/:id/shared-account", r.deps.RegistrySharedAccount.Get)
 		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
 		registries.Delete("/:id/shared-account", r.deps.RegistrySharedAccount.Disconnect)
+	}
+	if r.deps.RegistryUserHeaders != nil {
+		registries.Get("/:id/user-headers", r.deps.RegistryUserHeaders.List)
+		registries.Put("/:id/user-headers/values", r.deps.RegistryUserHeaders.Import)
+		registries.Delete("/:id/user-headers/values", r.deps.RegistryUserHeaders.Reset)
+		registries.Post("/:id/user-headers/links", r.deps.RegistryUserHeaders.Link)
 	}
 	registries.Post("/:id/agent-card/refresh", r.deps.AgentCard.Refresh)
 	registries.Post("/:id/agent-card/approve", r.deps.AgentCard.Approve)

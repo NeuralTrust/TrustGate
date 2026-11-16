@@ -802,8 +802,8 @@ at most a 64 KiB tail window, so a timeout is not driven by the length of the re
 `collector_id`) and `/v1/evaluate`. TrustGuard answers each collector with the engine its
 organisation is on, v1 until the organisation is cut over to v2, and names it in the
 `X-TrustGuard-Engine` response header. `trustguard_evaluations_total{plugin, engine, status_class}`
-counts every answer: `plugin` is `trustguard` or `trustguard_v2`, `engine` is `v1`, `v2` or
-`unknown` (an answer without the header), and `status_class` is the HTTP class (`2xx`, `4xx`,
+counts every answer: `plugin` is `trustguard` or `trustguard_v2`, `engine` is `v1` (also an answer
+without the header), `v2` or `unknown` (any other value), and `status_class` is the HTTP class (`2xx`, `4xx`,
 `5xx`). A failure before any answer (timeout, transport) is only in
 `trustguard_evaluate_failures_total`.
 
