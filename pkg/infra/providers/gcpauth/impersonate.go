@@ -61,13 +61,37 @@ type ImpersonationCache struct {
 
 // NewImpersonationCache builds an empty ImpersonationCache that authenticates
 // its generateAccessToken calls with base's Application Default Credentials.
-func NewImpersonationCache(base *ApplicationDefaultCache) *ImpersonationCache {
-	return &ImpersonationCache{
+func NewImpersonationCache(base *ApplicationDefaultCache, opts ...ImpersonationOption) *ImpersonationCache {
+	c := &ImpersonationCache{
 		base:       base,
 		httpClient: &http.Client{Timeout: tokenRequestTimeout},
 		endpoint:   iamCredentialsEndpoint,
 		sources:    make(map[string]oauth2.TokenSource),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// ImpersonationOption customises an ImpersonationCache.
+type ImpersonationOption func(*ImpersonationCache)
+
+// WithImpersonationHTTPClient replaces the client used for generateAccessToken
+// calls.
+func WithImpersonationHTTPClient(client *http.Client) ImpersonationOption {
+	return func(c *ImpersonationCache) { c.httpClient = client }
+}
+
+// ImpersonationRefused reports a non-2xx answer from the IAM Credentials API.
+// It keeps only the status: the response body can quote the request.
+type ImpersonationRefused struct {
+	Email  string
+	Status int
+}
+
+func (e *ImpersonationRefused) Error() string {
+	return fmt.Sprintf("generateAccessToken for %q: unexpected status %d", e.Email, e.Status)
 }
 
 // Token mints (or reuses a still-valid) OAuth2 access token for the service
@@ -192,8 +216,7 @@ func (s *impersonateTokenSource) Token() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("read generateAccessToken response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("generateAccessToken for %q: unexpected status %d: %s",
-			s.email, res.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, &ImpersonationRefused{Email: s.email, Status: res.StatusCode}
 	}
 
 	var out generateAccessTokenResponse

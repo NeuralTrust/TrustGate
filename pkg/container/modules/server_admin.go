@@ -105,6 +105,7 @@ type adminRouterParams struct {
 	GlobalPolicy    *policyhttp.GlobalPolicyHandler
 	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
+	TestPolicy      *policyhttp.TestConnectionHandler
 
 	CreateConsumer          *consumerhttp.CreateConsumerHandler
 	GetConsumer             *consumerhttp.GetConsumerHandler
@@ -211,6 +212,7 @@ func ServerAdmin(c *container.Container) error {
 				GlobalPolicy:              p.GlobalPolicy,
 				MCPWidePolicy:             p.MCPWidePolicy,
 				DuplicatePolicy:           p.DuplicatePolicy,
+				TestPolicyConnection:      p.TestPolicy,
 				CreateConsumer:            p.CreateConsumer,
 				GetConsumer:               p.GetConsumer,
 				ListConsumer:              p.ListConsumer,

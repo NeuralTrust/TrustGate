@@ -67,6 +67,7 @@ type proxyRouterParams struct {
 	Diagnostics    *diagnosticshttp.TestConnectionHandler
 	RegistryModels *diagnosticshttp.ListRegistryModelsHandler
 	SecretTest     *diagnosticshttp.TestSecretHandler
+	PolicyTest     *diagnosticshttp.TestPolicyConnectionHandler
 	OpsMetrics     *o11y.Provider
 }
 
@@ -85,7 +86,7 @@ func ServerProxy(c *container.Container) error {
 		func(p proxyRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneProxy)
 			return router.NewProxyRouter(
-				p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics, p.RegistryModels, p.SecretTest)
+				p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics, p.RegistryModels, p.SecretTest, p.PolicyTest)
 		},
 		dig.Name("proxy"),
 	); err != nil {
