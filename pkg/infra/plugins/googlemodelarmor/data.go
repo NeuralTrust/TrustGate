@@ -60,6 +60,11 @@ type Data struct {
 	// FailureClass is availability or input (appplugins.ClassOf): whether the
 	// failure was the provider's or the request's own content.
 	FailureClass string `json:"failure_class,omitempty"`
+	// FailureMode is "closed" on a failure of a policy that asked for it, beside
+	// the real failure_class: the class says whose failure it was, the mode says
+	// why a mode that blocks refused it anyway. Absent under open, so open
+	// events are unchanged. Same field as trustguard's.
+	FailureMode string `json:"failure_mode,omitempty"`
 	// FilterVersion is the Model Armor filter version that produced the
 	// verdict. A template pointed at an alias rather than a pinned version
 	// changes behaviour when Google promotes a new one, with no deploy on our

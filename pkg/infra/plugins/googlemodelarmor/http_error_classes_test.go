@@ -32,6 +32,8 @@ import (
 const (
 	rpcInvalidResourceName = `{"error":{"code":400,"message":"Invalid resource name: projects/p/locations/us-central1/templates/","status":"INVALID_ARGUMENT",` +
 		`"details":[{"@type":"type.googleapis.com/google.rpc.BadRequest","fieldViolations":[{"field":"name","description":"Invalid resource name"}]}]}}`
+	rpcTemplateNotFound = `{"error":{"code":400,"message":"The template named 'projects/p/locations/us/templates/t' was not found. Please check if the correct template name is provided.","status":"INVALID_ARGUMENT",` +
+		`"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"TEMPLATE_NOT_FOUND","domain":"modelarmor.googleapis.com"}]}}`
 	rpcInvalidPayload = `{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT",` +
 		`"details":[{"@type":"type.googleapis.com/google.rpc.BadRequest","fieldViolations":[{"field":"user_prompt_data.text","description":"Invalid JSON payload received."}]}]}}`
 	rpcInvalidNoDetails  = `{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}`
@@ -52,6 +54,7 @@ func TestHTTPErrorsAreClassifiedByTheirGoogleRPCBody(t *testing.T) {
 		input  bool
 	}{
 		{"invalid resource name is the template's configuration", http.StatusBadRequest, rpcInvalidResourceName, "config_invalid", false},
+		{"a missing template is the template's configuration", http.StatusBadRequest, rpcTemplateNotFound, "config_invalid", false},
 		{"invalid payload is the content's", http.StatusBadRequest, rpcInvalidPayload, "input_too_large", true},
 		{"a 400 without details is the content's", http.StatusBadRequest, rpcInvalidNoDetails, "input_too_large", true},
 		{"payload too large", http.StatusRequestEntityTooLarge, `{"error":{"code":413,"message":"Request payload size exceeds the limit.","status":"INVALID_ARGUMENT"}}`, "input_too_large", true},
@@ -106,6 +109,7 @@ func TestStreamHTTPErrorsAreClassifiedByTheirGoogleRPCBody(t *testing.T) {
 	}{
 		{"content rejected", http.StatusBadRequest, rpcInvalidPayload, true},
 		{"template misconfigured", http.StatusBadRequest, rpcInvalidResourceName, false},
+		{"template missing", http.StatusBadRequest, rpcTemplateNotFound, false},
 		{"unavailable", http.StatusServiceUnavailable, rpcUnavailable, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

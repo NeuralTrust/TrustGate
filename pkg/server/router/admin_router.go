@@ -88,6 +88,9 @@ type AdminRouterDeps struct {
 	// RegistrySharedAccount serves the upstream account an MCP instance holds
 	// on behalf of every caller. Absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler
+	// RegistryUserHeaders serves the per-user header values of an MCP
+	// instance: roster, reset, bulk import and per-person links.
+	RegistryUserHeaders *registryhttp.UserHeadersHandler
 	// SecretStores serves the secret stores of a gateway; nil where the
 	// plane has no connection store.
 	SecretStores *secretstorehttp.ListHandler
@@ -95,14 +98,15 @@ type AdminRouterDeps struct {
 	// where SecretStores is.
 	SecretStoreTest *secretstorehttp.TestHandler
 
-	CreatePolicy    *policyhttp.CreatePolicyHandler
-	GetPolicy       *policyhttp.GetPolicyHandler
-	ListPolicy      *policyhttp.ListPolicyHandler
-	UpdatePolicy    *policyhttp.UpdatePolicyHandler
-	DeletePolicy    *policyhttp.DeletePolicyHandler
-	GlobalPolicy    *policyhttp.GlobalPolicyHandler
-	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
-	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
+	CreatePolicy         *policyhttp.CreatePolicyHandler
+	GetPolicy            *policyhttp.GetPolicyHandler
+	ListPolicy           *policyhttp.ListPolicyHandler
+	UpdatePolicy         *policyhttp.UpdatePolicyHandler
+	DeletePolicy         *policyhttp.DeletePolicyHandler
+	GlobalPolicy         *policyhttp.GlobalPolicyHandler
+	MCPWidePolicy        *policyhttp.MCPWidePolicyHandler
+	DuplicatePolicy      *policyhttp.DuplicatePolicyHandler
+	TestPolicyConnection *policyhttp.TestConnectionHandler
 
 	CreateConsumer          *consumerhttp.CreateConsumerHandler
 	GetConsumer             *consumerhttp.GetConsumerHandler
@@ -218,6 +222,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		registries.Post("/:id/shared-account/connect-link", r.deps.RegistrySharedAccount.ConnectLink)
 		registries.Delete("/:id/shared-account", r.deps.RegistrySharedAccount.Disconnect)
 	}
+	if r.deps.RegistryUserHeaders != nil {
+		registries.Get("/:id/user-headers", r.deps.RegistryUserHeaders.List)
+		registries.Put("/:id/user-headers/values", r.deps.RegistryUserHeaders.Import)
+		registries.Delete("/:id/user-headers/values", r.deps.RegistryUserHeaders.Reset)
+		registries.Post("/:id/user-headers/links", r.deps.RegistryUserHeaders.Link)
+	}
 	registries.Post("/:id/agent-card/refresh", r.deps.AgentCard.Refresh)
 	registries.Post("/:id/agent-card/approve", r.deps.AgentCard.Approve)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
@@ -234,6 +244,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	policies := gw.Group("/:gateway_id/policies", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourcePolicies))
 	policies.Post("", r.deps.CreatePolicy.Handle)
+	policies.Post("/test-connection", r.deps.TestPolicyConnection.Handle)
 	policies.Get("", r.deps.ListPolicy.Handle)
 	policies.Get("/:id", r.deps.GetPolicy.Handle)
 	policies.Put("/:id", r.deps.UpdatePolicy.Handle)

@@ -132,13 +132,25 @@ type MCPTargetResponse struct {
 	Code string `json:"code,omitempty"`
 	// Origin is "store" when the gateway materialised this registry from the
 	// catalog itself (self-service install, approval, consumer binding).
-	Origin    string                 `json:"origin,omitempty"`
-	Source    string                 `json:"source,omitempty"`
-	URL       string                 `json:"url,omitempty"`
-	Transport string                 `json:"transport,omitempty"`
-	Headers   map[string]string      `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
+	Origin    string            `json:"origin,omitempty"`
+	Source    string            `json:"source,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	// UserHeaders are the upstream headers each caller fills with their own
+	// value. Only the declarations: values live per person in the vault.
+	UserHeaders []MCPUserHeaderResponse `json:"user_headers,omitempty"`
+	Auth        *MCPAuthResponse        `json:"auth,omitempty"`
+	OpenAPI     *OpenAPITargetResponse  `json:"openapi,omitempty"`
+}
+
+// MCPUserHeaderResponse is one declared per-user upstream header.
+type MCPUserHeaderResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	Scheme      string `json:"scheme,omitempty"`
 }
 
 type OpenAPITargetResponse struct {
@@ -309,6 +321,11 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 		URL:       maskSecretURLVariables(t),
 		Transport: string(t.Transport),
 		Headers:   maskHeaders(t.Headers),
+	}
+	for _, h := range t.UserHeaders {
+		out.UserHeaders = append(out.UserHeaders, MCPUserHeaderResponse{
+			Name: h.Name, Description: h.Description, Required: h.Required, Secret: h.Secret, Scheme: h.Scheme,
+		})
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}

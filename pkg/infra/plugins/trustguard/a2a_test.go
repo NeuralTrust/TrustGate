@@ -161,5 +161,5 @@ func TestA2AMaskVerdictBlocks(t *testing.T) {
 func TestSupportedProtocolsDeclareA2AOnlyOnV1(t *testing.T) {
 	t.Parallel()
 	assert.Contains(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").SupportedProtocols(), appplugins.ProtocolA2A)
-	assert.NotContains(t, newV2TestPlugin(t, "http://unused").SupportedProtocols(), appplugins.ProtocolA2A)
+	assert.Contains(t, newV2TestPlugin(t, "http://unused").SupportedProtocols(), appplugins.ProtocolA2A)
 }

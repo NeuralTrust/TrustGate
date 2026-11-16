@@ -24,3 +24,7 @@ c2db9eae55225cbd50eeae07e73e11c2d1926e8b:postman/TrustGate-TrustGuard-E2E.postma
 d2210babd81542e4d28229fcbc37f7bd52fdc1dc:pkg/infra/providers/credentials_test.go:generic-api-key:194
 # mcp_user_headers_test.go fake header value sk-live_abc.123 on a feature branch; every ref is scanned (generic-api-key).
 bb4c66398bdc2315629232d10de4ea81f6dd1e34:pkg/domain/registry/mcp_user_headers_test.go:generic-api-key:108
+# Policy connection test fixtures: dummy service-account key markers, never real keys (generic-api-key).
+13952d0a1beecc05f3684ce827918584fed4c5e4:pkg/app/policy/connection_tester_test.go:generic-api-key:40
+13952d0a1beecc05f3684ce827918584fed4c5e4:pkg/app/policy/connection_tester_test.go:generic-api-key:300
+edd668b58be4ab65554e906807cd6ec56127d7d5:pkg/api/handler/http/diagnostics/test_policy_connection_handler_test.go:generic-api-key:36

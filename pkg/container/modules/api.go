@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
@@ -290,6 +291,15 @@ func API(c *container.Container) error {
 			return nil, err
 		}
 		return diagnosticshttp.NewTestConnectionHandler(verifier, tester), nil
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(p playgroundVerifierParams, tester apppolicy.ConnectionTester) (*diagnosticshttp.TestPolicyConnectionHandler, error) {
+		verifier, err := diagnosticsVerifier(p)
+		if err != nil {
+			return nil, err
+		}
+		return diagnosticshttp.NewTestPolicyConnectionHandler(verifier, tester), nil
 	}); err != nil {
 		return err
 	}
