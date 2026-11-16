@@ -51,6 +51,11 @@ var (
 	// promotion whose policy was updated in between. It wraps ErrConflict: the
 	// caller should reload the policy and retry.
 	ErrPlacementChanged = fmt.Errorf("policy: placement changed while the policy was being updated: %w", commonerrors.ErrConflict)
+
+	// ErrTestRunsOnDataPlane is a connection test sent to the control plane for
+	// a gateway whose traffic a customer-run data plane serves: only that data
+	// plane's network says whether the policy's upstream is reachable.
+	ErrTestRunsOnDataPlane = fmt.Errorf("policy: this gateway's policies run on its data planes; test them there: %w", commonerrors.ErrConflict)
 )
 
 // LevelConflict names the policy that already holds the level and wraps

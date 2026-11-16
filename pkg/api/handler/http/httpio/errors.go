@@ -28,6 +28,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/gofiber/fiber/v2"
@@ -124,7 +125,7 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "secret_destination_not_allowed", Message: publicMessage(err, "")}
 	case errors.Is(err, secretref.ErrDataPlaneTooOld):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "data_plane_too_old", Message: publicMessage(err, "")}
-	case errors.Is(err, secretref.ErrTestRunsOnDataPlane):
+	case errors.Is(err, secretref.ErrTestRunsOnDataPlane), errors.Is(err, policydomain.ErrTestRunsOnDataPlane):
 		return fiber.StatusConflict, ErrorBody{Error: "test_runs_on_data_plane", Message: publicMessage(err, "")}
 	case errors.Is(err, registrydomain.ErrSecretUnavailable):
 		return fiber.StatusServiceUnavailable, ErrorBody{Error: "secret_unavailable", Message: publicMessage(err, "")}
