@@ -71,6 +71,10 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 	}
 	body := bytes.Clone(c.Body())
 	req, rpcErr := appa2a.Decode(body)
+	if req != nil && req.Notification {
+		// A notification is not answered; A2A has none, so nothing is forwarded.
+		return c.SendStatus(fiber.StatusNoContent)
+	}
 	if rpcErr != nil {
 		var id json.RawMessage
 		if req != nil {

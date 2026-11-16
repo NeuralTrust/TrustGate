@@ -130,7 +130,16 @@ func TestDecode(t *testing.T) {
 		assert.Equal(t, tc.wantID, string(req.ID), tc.name)
 	}
 
-	_, err := a2a.Decode([]byte(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"parts":[{"data":{"Name":1,"name":2}}],"metadata":{"k":1,"K":2}}}}`))
+	notification, err := a2a.Decode([]byte(`{"jsonrpc":"2.0","method":"message/send","params":{}}`))
+	assert.Equal(t, a2a.CodeInvalidRequest, rpcCode(t, err))
+	require.NotNil(t, notification)
+	assert.True(t, notification.Notification, "a request with no id member is a notification")
+	for _, body := range []string{`{"jsonrpc":"2.0","id":null,"method":"message/send"}`, `{"jsonrpc":"2.0","id":{},"method":"message/send"}`, `{"jsonrpc":"1.0","method":"message/send"}`} {
+		req, _ := a2a.Decode([]byte(body))
+		assert.False(t, req != nil && req.Notification, body)
+	}
+
+	_, err = a2a.Decode([]byte(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"parts":[{"data":{"Name":1,"name":2}}],"metadata":{"k":1,"K":2}}}}`))
 	require.Nil(t, err, "the caller's own data and metadata may repeat keys by case")
 
 	req, err := a2a.Decode([]byte(`{"jsonrpc":"2.0","id":"r1","method":"GetTask","params":{"id":"t-1"}}`))

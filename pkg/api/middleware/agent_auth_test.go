@@ -36,6 +36,7 @@ import (
 	infrajwt "github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -139,6 +140,7 @@ func newAgentFixture(t *testing.T) *agentFixture {
 	m := middleware.NewAgentAuthMiddleware(resolver, stubDataFinder{data: data}, stubGatewayFinder{gw: gw}, playground)
 
 	f.app = fiber.New()
+	f.app.Post("/:consumer/agents/:agent/v1/chat/completions", m.Middleware(), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 	f.app.Post("/:consumer/agents/:agent", m.Middleware(), func(c *fiber.Ctx) error {
 		f.got = identity.PrincipalFromContext(c.UserContext())
 		f.consumer, _ = appconsumer.ConsumerFromContext(c.UserContext())
@@ -244,6 +246,36 @@ func TestAgentAuth_Refusals(t *testing.T) {
 	require.Equal(t, fiber.StatusNotFound, f.call(t, "/tools/agents/research", map[string]string{apiresolver.HeaderAPIKey: f.appKey.RawKey}),
 		"an MCP consumer is not served on the agent plane")
 	require.Equal(t, fiber.StatusNotFound, f.call(t, "/nobody/agents/research", map[string]string{apiresolver.HeaderAPIKey: f.appKey.RawKey}))
+}
+
+func TestAgentAuth_RefusalsAreJSONRPCOrOpenAIErrors(t *testing.T) {
+	f := newAgentFixture(t)
+	refusal := func(path string, headers map[string]string) (int, string, string) {
+		req := httptest.NewRequest(fiber.MethodPost, path, nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := f.app.Test(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		return resp.StatusCode, resp.Header.Get(fiber.HeaderContentType), string(body)
+	}
+
+	status, contentType, body := refusal("/bot/agents/research", map[string]string{apiresolver.HeaderAPIKey: "ag_invalid"})
+	assert.Equal(t, fiber.StatusUnauthorized, status)
+	assert.Contains(t, contentType, fiber.MIMEApplicationJSON)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":null,"error":{"code":-32094,"message":"Unauthenticated","data":{"reason":"unauthenticated"}}}`, body)
+
+	status, _, body = refusal("/bot/agents/research", map[string]string{apiresolver.HeaderAPIKey: f.otherKey.RawKey})
+	assert.Equal(t, fiber.StatusForbidden, status)
+	assert.JSONEq(t, `{"jsonrpc":"2.0","id":null,"error":{"code":-32094,"message":"Credential not allowed for this application","data":{"reason":"credential_not_allowed"}}}`, body)
+
+	status, contentType, body = refusal("/bot/agents/research/v1/chat/completions", map[string]string{apiresolver.HeaderAPIKey: "ag_invalid"})
+	assert.Equal(t, fiber.StatusUnauthorized, status)
+	assert.Contains(t, contentType, fiber.MIMEApplicationJSON)
+	assert.JSONEq(t, `{"error":{"message":"Unauthenticated","type":"authentication_error","code":"unauthenticated"}}`, body)
 }
 
 func TestAgentAuth_RefusesMCPSessionTokens(t *testing.T) {
