@@ -390,8 +390,16 @@ not.
 ## Policies
 
 Only plugins that declare A2A attach to an A2A consumer: `rate_limiter`,
-`request_size_limiter` and `trustguard` (not `trustguard_v2`). Global
-policies of other plugins are left out of A2A plans.
+`request_size_limiter`, `trustguard` and `trustguard_v2`. Global policies of
+other plugins are left out of A2A plans.
+
+TrustGuard evaluates an A2A call with `protocol: "a2a"`, as an LLM chat: the
+text and data parts as a `user` message on input and an `assistant` message on
+output, file parts as `attachments`, the application as `application_id`, and
+the caller's `contextId` as `session_id`, so conversation detectors score the
+turns of one A2A conversation. An A2A call sends no `attributes.model`. A
+masking verdict cannot be applied to A2A parts, so it blocks the call
+(`-32090`, `mask_unsupported`) in a mode that blocks.
 
 Plugins see a normalised body, the same for both versions:
 
