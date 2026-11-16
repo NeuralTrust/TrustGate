@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -750,7 +751,7 @@ func TestModelArmorClientCacheDoesNotCacheFailedBuild(t *testing.T) {
 
 func TestNewModelArmorClientCacheWiresBuildSeam(t *testing.T) {
 	t.Parallel()
-	cache := newModelArmorClientCache("", time.Second, newCredentialSources())
+	cache := newModelArmorClientCache("", time.Second, newCredentialSources(gcpauth.NewApplicationDefaultCache()))
 	require.NotNil(t, cache)
 	require.NotNil(t, cache.build)
 }

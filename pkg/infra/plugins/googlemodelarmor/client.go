@@ -462,8 +462,7 @@ type credentialSources struct {
 	impersonate func(ctx context.Context, email, scope string) (string, error)
 }
 
-func newCredentialSources() *credentialSources {
-	adc := gcpauth.NewApplicationDefaultCache()
+func newCredentialSources(adc *gcpauth.ApplicationDefaultCache) *credentialSources {
 	return &credentialSources{
 		adc:         adc.Token,
 		serviceAcct: gcpauth.NewServiceAccountCache().Token,
