@@ -222,8 +222,8 @@ type ExternalFailure struct {
 	Err     error
 	Logger  *slog.Logger
 	Event   *metrics.EventContext
-	// FailClosed is a plugin's own opt-in (today only trustguard's
-	// failure_mode: closed): an availability failure is enforced like an input
+	// FailClosed is a plugin's own opt-in (the failure_mode: closed setting of
+	// trustguard and google_model_armor): an availability failure is enforced like an input
 	// one, so a blocking mode refuses it and observe records it. Only the
 	// decision changes: the class stays the real one (availability), so the
 	// record still says the provider failed, not the request. It never changes

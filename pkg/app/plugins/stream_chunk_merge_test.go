@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,10 @@ func mergeEntry(mode policy.Mode) chainEntry {
 // errs means the call succeeded; started is true for every chunk, and the chunks
 // from streamChunkParallel on waited behind the first round.
 func mergeOf(mode policy.Mode, verdicts []*SegmentVerdict, errs []error) (*SegmentVerdict, error) {
+	return mergeOfEntry(mergeEntry(mode), verdicts, errs)
+}
+
+func mergeOfEntry(entry chainEntry, verdicts []*SegmentVerdict, errs []error) (*SegmentVerdict, error) {
 	n := len(verdicts)
 	chunks := make([]textchunk.Chunk, n)
 	outs := make([]textchunk.Outcome[struct{}], n)
@@ -48,7 +53,7 @@ func mergeOf(mode policy.Mode, verdicts []*SegmentVerdict, errs []error) (*Segme
 			outs[i].Err = errs[i]
 		}
 	}
-	return mergeChunkVerdicts(mergeEntry(mode), text.String(), chunks, verdicts, outs)
+	return mergeChunkVerdicts(entry, text.String(), chunks, verdicts, outs)
 }
 
 func inputFailure() *ExternalStreamFailure {
@@ -313,4 +318,115 @@ func TestMergeChunkVerdicts_KeepsTheToolCallRewrite(t *testing.T) {
 	assert.True(t, got.HasTransform)
 	assert.Equal(t, "01234567890123456789", got.Transformed)
 	assert.Equal(t, calls, got.TransformedToolCalls)
+}
+
+func availabilityFailure() *ExternalStreamFailure {
+	return newExternalStreamFailure("guard", FailureTransport, "", errors.New("context deadline exceeded"))
+}
+
+// A chunk the inspector refused for availability (its policy fails closed) cuts
+// the block: the refusal is not dropped for the chunk's absent error and
+// absorbed as failed_open.
+func TestMergeChunkVerdicts_AClosedRefusalOnOneChunkCutsTheBlock(t *testing.T) {
+	t.Parallel()
+	failure := availabilityFailure()
+	verdicts := []*SegmentVerdict{
+		{},
+		{Block: true, Type: TypeGuardrailInputUninspectable, Message: "policy says no", Failure: failure},
+	}
+
+	got, err := mergeOf(policy.ModeEnforce, verdicts, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.Equal(t, "policy says no", got.Message)
+	assert.Same(t, failure, got.Failure)
+	assert.Equal(t, FailureClassAvailability, got.Failure.Class, "the class stays the real one")
+}
+
+// A mask on one chunk beside a chunk refused for availability under a closed
+// policy is not released: the merge would put the refused chunk's raw text
+// next to the mask.
+func TestMergeChunkVerdicts_AMaskBesideAClosedRefusalIsNotReleased(t *testing.T) {
+	t.Parallel()
+	verdicts := []*SegmentVerdict{
+		{HasTransform: true, Transformed: "01234{X}789"},
+		{Block: true, Type: TypeGuardrailInputUninspectable, Failure: availabilityFailure()},
+	}
+
+	got, err := mergeOf(policy.ModeEnforce, verdicts, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.False(t, got.HasTransform)
+}
+
+// failClosedGuard is an inspector whose stream options say fail_closed.
+type failClosedGuard struct{ chunkGuard }
+
+func (*failClosedGuard) StreamSettings(map[string]any) (bool, StreamOptions) {
+	return true, StreamOptions{OnError: "fail_closed"}
+}
+
+// neverStartedMerge merges a block of two chunks where chunk 0 answered with
+// first after a slow call and the block's deadline ended before chunk 1
+// started, so chunk 1 was never screened.
+func neverStartedMerge(entry chainEntry, first *SegmentVerdict) (*SegmentVerdict, error) {
+	chunks := []textchunk.Chunk{
+		{Start: 0, End: 10, Text: "0123456789"},
+		{Start: 10, End: 20, Text: "secret-raw"},
+	}
+	outs := []textchunk.Outcome[struct{}]{{Started: true, Took: 2 * time.Second}, {}}
+	return mergeChunkVerdicts(entry, "0123456789secret-raw", chunks, []*SegmentVerdict{first, nil}, outs, SlowCall(time.Second))
+}
+
+func failClosedEntry(mode policy.Mode) chainEntry {
+	return chainEntry{plugin: &failClosedGuard{chunkGuard{fakePlugin: fakePlugin{name: "guard"}}}, mode: mode}
+}
+
+// A chunk that never reached the inspector has no refusal of its own to find.
+// An entry that says fail_closed is cut in a mode that blocks, with or without
+// a mask beside it, rather than releasing text no call judged.
+func TestMergeChunkVerdicts_ANeverStartedChunkUnderFailClosedCutsTheBlock(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		first *SegmentVerdict
+	}{
+		{"beside a mask", &SegmentVerdict{HasTransform: true, Transformed: "01234{X}789"}},
+		{"beside a clean chunk", &SegmentVerdict{}},
+	} {
+		got, err := neverStartedMerge(failClosedEntry(policy.ModeEnforce), tc.first)
+
+		require.NoError(t, err, tc.name)
+		require.NotNil(t, got, tc.name)
+		assert.True(t, got.Block, tc.name)
+		assert.False(t, got.HasTransform, tc.name)
+		assert.Equal(t, TypeGuardrailInputUninspectable, got.Type, tc.name)
+		require.NotNil(t, got.Failure, tc.name)
+		assert.Equal(t, FailureClassAvailability, got.Failure.Class, "the class stays the real one: "+tc.name)
+	}
+}
+
+// An entry that fails open keeps the mask and records the gap, and observe
+// never cuts, whatever the entry's on_error.
+func TestMergeChunkVerdicts_ANeverStartedChunkIsReleasedUnlessFailClosedAndBlocking(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		entry chainEntry
+	}{
+		{"fail_open enforce", mergeEntry(policy.ModeEnforce)},
+		{"fail_closed observe", failClosedEntry(policy.ModeObserve)},
+	} {
+		got, err := neverStartedMerge(tc.entry, &SegmentVerdict{HasTransform: true, Transformed: "01234{X}789"})
+
+		require.NoError(t, err, tc.name)
+		require.NotNil(t, got, tc.name)
+		assert.False(t, got.Block, tc.name)
+		assert.True(t, got.HasTransform, tc.name)
+		assert.NotNil(t, got.Incomplete, tc.name)
+	}
 }

@@ -112,6 +112,17 @@ func pieceTimeoutOf(inspector StreamInspector) time.Duration {
 	return defaultStreamPieceTimeout
 }
 
+// entryFailsClosed reports whether the entry's own stream options say
+// fail_closed: an explicit opt-in, so an empty or unparseable answer is not one.
+func entryFailsClosed(entry chainEntry) bool {
+	inspector, ok := entry.plugin.(StreamInspector)
+	if !ok {
+		return false
+	}
+	_, opts := inspector.StreamSettings(entry.config.Settings)
+	return opts.OnError == streamOnErrorFailClosed
+}
+
 func throttleIsOtherTraffic(plugin Plugin) bool {
 	a, ok := plugin.(StreamThrottleAttribution)
 	return ok && a.StreamThrottleIsOtherTraffic()
@@ -265,7 +276,10 @@ func pieceThrottled(v *SegmentVerdict, err error) bool {
 //   - the masks of every chunk are mapped back onto the block, and a mask that
 //     cannot be applied cuts, as a mask over a finding;
 //   - a failure that is availability is the entry's failed call unless a mask or
-//     a finding can still be used.
+//     a finding can still be used, except when the inspector refused that
+//     chunk itself (a policy that fails closed), which cuts with its refusal,
+//     or when the entry's stream options say fail_closed in a mode that
+//     blocks, which cuts with the uninspectable refusal.
 //
 // A mode that does not block and has findings to keep reports them with the
 // failure: a typed error returned as it came would drop the fingerprints of the
@@ -342,6 +356,28 @@ func mergeChunkVerdicts(
 			block = &SegmentVerdict{Fingerprints: fingerprints}
 		}
 		return ExternalStreamOutcome(entry.plugin.Name(), entry.mode, d.Reason, d.Detail, block, chunkFailureError(d, outs, len(chunks)))
+	}
+
+	// A chunk the inspector refused for availability (a policy that fails
+	// closed) is a cut: neither absorbed as failed_open nor merged with a mask.
+	if d.Kind == ChunkAvailabilityFailure {
+		if v := verdicts[d.Index]; outs[d.Index].Started && outs[d.Index].Err == nil && v != nil && v.Block && v.Failure != nil {
+			return carry(*v), nil
+		}
+	}
+	// A chunk the inspector never answered for (not started before the
+	// block's deadline, or a bare error) under an entry whose stream options
+	// say fail_closed is cut the same way in a mode that blocks: releasing it
+	// would send text no call judged, raw beside the masks of the chunks that
+	// answered. The stream-wide on_error cannot do this, since a guardrail that
+	// owns the stream options sets it to fail_open.
+	if d.Kind == ChunkAvailabilityFailure && Blocks(entry.mode) && entryFailsClosed(entry) {
+		v, err := ExternalStreamOutcomeUnder(entry.plugin.Name(), entry.mode, d.Reason, d.Detail, nil, true,
+			chunkFailureError(d, outs, len(chunks)))
+		if v != nil {
+			v = carry(*v)
+		}
+		return v, err
 	}
 
 	var availability error
