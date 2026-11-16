@@ -98,14 +98,15 @@ type AdminRouterDeps struct {
 	// where SecretStores is.
 	SecretStoreTest *secretstorehttp.TestHandler
 
-	CreatePolicy    *policyhttp.CreatePolicyHandler
-	GetPolicy       *policyhttp.GetPolicyHandler
-	ListPolicy      *policyhttp.ListPolicyHandler
-	UpdatePolicy    *policyhttp.UpdatePolicyHandler
-	DeletePolicy    *policyhttp.DeletePolicyHandler
-	GlobalPolicy    *policyhttp.GlobalPolicyHandler
-	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
-	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
+	CreatePolicy         *policyhttp.CreatePolicyHandler
+	GetPolicy            *policyhttp.GetPolicyHandler
+	ListPolicy           *policyhttp.ListPolicyHandler
+	UpdatePolicy         *policyhttp.UpdatePolicyHandler
+	DeletePolicy         *policyhttp.DeletePolicyHandler
+	GlobalPolicy         *policyhttp.GlobalPolicyHandler
+	MCPWidePolicy        *policyhttp.MCPWidePolicyHandler
+	DuplicatePolicy      *policyhttp.DuplicatePolicyHandler
+	TestPolicyConnection *policyhttp.TestConnectionHandler
 
 	CreateConsumer          *consumerhttp.CreateConsumerHandler
 	GetConsumer             *consumerhttp.GetConsumerHandler
@@ -243,6 +244,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	policies := gw.Group("/:gateway_id/policies", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourcePolicies))
 	policies.Post("", r.deps.CreatePolicy.Handle)
+	policies.Post("/test-connection", r.deps.TestPolicyConnection.Handle)
 	policies.Get("", r.deps.ListPolicy.Handle)
 	policies.Get("/:id", r.deps.GetPolicy.Handle)
 	policies.Put("/:id", r.deps.UpdatePolicy.Handle)
