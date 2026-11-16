@@ -32,6 +32,73 @@
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/policies/test-connection": {
+            "post": {
+                "description": "Runs the policy connection test from this data plane's own network, so the result reflects what serving traffic will reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Same body and outcomes as the admin policy test-connection endpoint, plus code \"not_synced\" when this plane's config snapshot does not carry the policy (or its latest key) yet: retry shortly.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "Test a policy's connection from the data plane",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Policy settings to test",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/__diagnostics/gateways/{gateway_id}/registries/test-connection": {
             "post": {
                 "description": "Runs the registry connection probe from this data plane's own network, so the result reflects what serving traffic will actually reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Accepts the same body as the admin test-connection endpoint: a stored registry (registry_id, which must have synced to this plane — stage \"not_synced\" means retry) or an inline candidate (provider + auth).",
@@ -2519,6 +2586,83 @@
                     },
                     "409": {
                         "description": "A policy of this name already exists in the gateway",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/test-connection": {
+            "post": {
+                "description": "Checks, with the settings as the form holds them, that the gateway can use the service the policy calls (today google_model_armor). In edit mode pass policy_id: a masked credential then stands for the stored one, as long as the fields it is bound to (location, project) are unchanged. Every probe outcome answers 200; read \"ok\" and \"code\" (ok, invalid_credentials, permission_denied, api_disabled, template_not_found, throttled, timeout, unreachable, invalid_config, reenter_credentials). A gateway served by a hybrid data plane answers 409: run the test on its data plane.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Test a policy's connection to its upstream service",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Policy settings to test",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -9486,6 +9630,23 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest": {
+            "type": "object",
+            "properties": {
+                "policy_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "slug": {
+                    "type": "string",
+                    "example": "google_model_armor"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -9672,6 +9833,24 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "permission_denied"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
                 }
             }
         },
