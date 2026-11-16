@@ -284,3 +284,43 @@ func TestStreamSettingsOnErrorFollowsFailureMode(t *testing.T) {
 	require.True(t, on)
 	assert.Equal(t, pluginutil.StreamOnErrorFailOpen, opts.OnError)
 }
+
+func TestExecuteMissingTemplateFollowsFailureMode(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		failureMode string
+		mode        policy.Mode
+		refused     bool
+		decision    string
+	}{
+		{"open enforce lets it through", "open", policy.ModeEnforce, false, "failed_open"},
+		{"open observe lets it through", "open", policy.ModeObserve, false, "failed_open"},
+		{"closed enforce refuses it", "closed", policy.ModeEnforce, true, "failed_closed"},
+		{"closed observe only records it", "closed", policy.ModeObserve, false, "failed_open"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pluginWithStub(newModelArmorStub(t, http.StatusBadRequest, rpcTemplateNotFound))
+			event, span := newStreamEvent()
+
+			in := execInput(policy.StagePreRequest, tc.mode,
+				withFailureMode(modelArmorSettings(), tc.failureMode), reqCtx(openAIRequest()), nil)
+			in.Event = event
+			res, err := p.Execute(context.Background(), in)
+
+			if tc.refused {
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "want a plugin error, got res=%+v err=%v", res, err)
+				assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+			} else {
+				assertPassThrough(t, res, err)
+			}
+			data, ok := span.PluginAttrsCopy().Extras.(*Data)
+			require.True(t, ok)
+			assert.Equal(t, tc.decision, data.Decision)
+			assert.Equal(t, "availability", data.FailureClass)
+			assert.Equal(t, "config_invalid", data.FailureReason)
+		})
+	}
+}

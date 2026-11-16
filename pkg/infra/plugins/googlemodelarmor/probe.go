@@ -29,7 +29,6 @@ import (
 const (
 	probeText             = "Connection test from the gateway."
 	reasonServiceDisabled = "SERVICE_DISABLED"
-	reasonTemplateMissing = "TEMPLATE_NOT_FOUND"
 	fallbackProbeTimeout  = 10 * time.Second
 	// tokenClientMargin lets the probe's deadline expire before the token
 	// client's own timeout, so a stalled token endpoint reads as a timeout:
