@@ -1194,7 +1194,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable, slow or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable, slow or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. Under closed, every filter in block_on must be enabled in the template, or every request is blocked. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1222,7 +1222,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "block_on",
 					Label:       "Block On",
 					Type:        FieldTypeArray,
-					Description: "Filters that reject the call when they return MATCH_FOUND. Defaults to all five when left empty.",
+					Description: "Filters that reject the call when they return MATCH_FOUND. Defaults to all five when left empty. A filter listed here that the template does not enable gives no verdict: with failure_mode closed, every request is then blocked.",
 					Item: &Field{
 						Key:   "filter",
 						Label: "Filter",
@@ -1248,7 +1248,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "failure_mode",
 					Label:       "Failure mode",
 					Type:        FieldTypeEnum,
-					Description: "What happens when Model Armor cannot evaluate a request (unreachable, too slow, credentials refused): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key blocks every request.",
+					Description: "What happens when Model Armor cannot evaluate a request (unreachable, too slow, credentials refused): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key, or a block_on filter the template does not enable, blocks every request.",
 					Enum:        enumOptions("open", "closed"),
 					Default:     "open",
 				},

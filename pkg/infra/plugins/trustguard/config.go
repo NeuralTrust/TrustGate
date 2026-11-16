@@ -33,13 +33,6 @@ const (
 )
 
 const (
-	failureModeOpen   = "open"
-	failureModeClosed = "closed"
-	// defaultFailureMode is today's behaviour: a failed call lets the request through.
-	defaultFailureMode = failureModeOpen
-)
-
-const (
 	defaultStreamingHeadChars            = 400
 	defaultStreamingMinCharsBetweenEvals = 2048
 	defaultStreamingMaxHoldMS            = 800
@@ -107,31 +100,13 @@ func (s *Settings) applyDefaults() {
 		s.Direction = defaultLegs
 	}
 	if s.FailureMode == "" {
-		s.FailureMode = defaultFailureMode
+		s.FailureMode = pluginutil.DefaultFailureMode
 	}
 	s.Streaming.ApplyDefaults(streamingDefaults)
 }
 
-// failureModeFromRaw reads failure_mode straight from a settings map that may
-// not parse: it is closed only when the key (any case, as mapstructure matches
-// it) is a string equal-fold to "closed", and open for everything else. It is
-// used only to decide what a failure costs, so a policy that asked for closed
-// does not silently fail open because some other key made its settings invalid.
-// It never validates: parseConfig is still the one that rejects a bad value.
-func failureModeFromRaw(settings map[string]any) string {
-	for key, v := range settings {
-		if !strings.EqualFold(key, "failure_mode") {
-			continue
-		}
-		if mode, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(mode), failureModeClosed) {
-			return failureModeClosed
-		}
-	}
-	return failureModeOpen
-}
-
 // failClosed reports whether this policy refuses what TrustGuard cannot evaluate.
-func (s Settings) failClosed() bool { return s.FailureMode == failureModeClosed }
+func (s Settings) failClosed() bool { return s.FailureMode == pluginutil.FailureModeClosed }
 
 func (s *Settings) validate(v2 bool) error {
 	switch s.Direction {
@@ -139,10 +114,8 @@ func (s *Settings) validate(v2 bool) error {
 	default:
 		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
-	switch s.FailureMode {
-	case failureModeOpen, failureModeClosed:
-	default:
-		return fmt.Errorf("trustguard: failure_mode must be one of open, closed")
+	if err := pluginutil.ValidateFailureMode("trustguard", s.FailureMode); err != nil {
+		return err
 	}
 	name := PluginName
 	if v2 {
