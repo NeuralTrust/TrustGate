@@ -30,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 )
 
 const PluginName = "google_model_armor"
@@ -84,6 +85,10 @@ type Plugin struct {
 	// (the zero value, so a Plugin built without New is safe) refuses every
 	// credential path that acts as the gateway pod's shared identity.
 	allowAmbientIdentity bool
+	timeout              time.Duration
+	adc                  *gcpauth.ApplicationDefaultCache
+	probeSourcesOverride func(timeout time.Duration) *credentialSources
+	probeTransport       http.RoundTripper
 }
 
 // New builds the plugin. baseURL and timeout come from cfg.ModelArmor
@@ -97,12 +102,15 @@ type Plugin struct {
 // false, policies that would act as the pod identity (no credentials, or
 // impersonate_service_account) are rejected on write and refused at run time.
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allowAmbientIdentity bool, logger *slog.Logger) *Plugin {
+	adc := gcpauth.NewApplicationDefaultCache()
 	return &Plugin{
 		registry:             registry,
-		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources()),
+		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources(adc)),
 		baseURL:              baseURL,
 		logger:               logger,
 		allowAmbientIdentity: allowAmbientIdentity,
+		timeout:              timeout,
+		adc:                  adc,
 	}
 }
 

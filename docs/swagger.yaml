@@ -1393,6 +1393,18 @@ definitions:
       tool:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest:
+    properties:
+      policy_id:
+        format: uuid
+        type: string
+      settings:
+        additionalProperties: {}
+        type: object
+      slug:
+        example: google_model_armor
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest:
     properties:
       description:
@@ -1532,6 +1544,18 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse:
+    properties:
+      code:
+        example: permission_denied
+        type: string
+      latency_ms:
+        type: integer
+      message:
+        type: string
+      ok:
+        type: boolean
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.A2AAWSAuthRequest:
     properties:
@@ -4517,6 +4541,55 @@ paths:
       summary: Build version
       tags:
       - system
+  /__diagnostics/gateways/{gateway_id}/policies/test-connection:
+    post:
+      consumes:
+      - application/json
+      description: 'Runs the policy connection test from this data plane''s own network,
+        so the result reflects what serving traffic will reach. Authorized by a control-plane-minted
+        diagnostics token bound to the gateway. Same body and outcomes as the admin
+        policy test-connection endpoint, plus code "not_synced" when this plane''s
+        config snapshot does not carry the policy (or its latest key) yet: retry shortly.'
+      parameters:
+      - description: Control-plane-minted diagnostics JWT
+        in: header
+        name: X-AG-Diagnostics-Token
+        required: true
+        type: string
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy settings to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Test a policy's connection from the data plane
+      tags:
+      - diagnostics
   /__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models:
     get:
       description: 'Returns the model catalog narrowed to what this registry''s credentials
@@ -7328,6 +7401,67 @@ paths:
       security:
       - BearerAuth: []
       summary: Mark a policy as MCP-wide
+      tags:
+      - policies
+  /v1/gateways/{gateway_id}/policies/test-connection:
+    post:
+      consumes:
+      - application/json
+      description: 'Checks, with the settings as the form holds them, that the gateway
+        can use the service the policy calls (today google_model_armor). In edit mode
+        pass policy_id: a masked credential then stands for the stored one, as long
+        as the fields it is bound to (location, project) are unchanged. Every probe
+        outcome answers 200; read "ok" and "code" (ok, invalid_credentials, permission_denied,
+        api_disabled, template_not_found, throttled, timeout, unreachable, invalid_config,
+        reenter_credentials). A gateway served by a hybrid data plane answers 409:
+        run the test on its data plane.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy settings to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Test a policy's connection to its upstream service
       tags:
       - policies
   /v1/gateways/{gateway_id}/registries:

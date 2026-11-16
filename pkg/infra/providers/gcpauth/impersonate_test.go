@@ -202,6 +202,11 @@ func TestImpersonationCacheErrors(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unexpected status 403")
+		assert.NotContains(t, err.Error(), "caller does not have permission")
+		var refused *ImpersonationRefused
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, http.StatusForbidden, refused.Status)
+		assert.Equal(t, "target@customer.iam.gserviceaccount.com", refused.Email)
 	})
 
 	t.Run("cancelled context", func(t *testing.T) {
@@ -226,3 +231,27 @@ func TestImpersonationCacheDefaultsToCloudPlatformScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "impersonated.token", token)
 }
+
+func TestImpersonationCacheUsesInjectedHTTPClient(t *testing.T) {
+	server, stub := newIAMCredentialsStub(t, "impersonated.token")
+	var calls atomic.Int64
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	cache := NewImpersonationCache(newStubADCCache(new(atomic.Int64), "adc.caller.token", nil), WithImpersonationHTTPClient(client))
+	cache.endpoint = server.URL
+
+	token, err := cache.Token(context.Background(), "target@customer.iam.gserviceaccount.com", CloudPlatformScope)
+
+	require.NoError(t, err)
+	assert.Equal(t, "impersonated.token", token)
+	assert.Equal(t, int64(1), calls.Load())
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	assert.Equal(t, int64(1), stub.calls)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

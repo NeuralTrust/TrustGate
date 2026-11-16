@@ -35,6 +35,10 @@ const DiagnosticsRegistryModelsPath = "/__diagnostics/gateways/:gateway_id/regis
 // stores, authorized by a control-plane diagnostics token.
 const DiagnosticsSecretStoreTestPath = "/__diagnostics/gateways/:gateway_id/secret-stores/:name/test"
 
+// DiagnosticsPolicyTestConnectionPath runs a policy connection test from this
+// data plane's own network, authorized by a control-plane diagnostics token.
+const DiagnosticsPolicyTestConnectionPath = "/__diagnostics/gateways/:gateway_id/policies/test-connection"
+
 type proxyRouter struct {
 	middlewareTransport *middleware.Transport
 	opsMetrics          *middleware.OpsMetricsMiddleware
@@ -43,6 +47,7 @@ type proxyRouter struct {
 	diagnostics         *diagnosticshttp.TestConnectionHandler
 	registryModels      *diagnosticshttp.ListRegistryModelsHandler
 	secretTest          *diagnosticshttp.TestSecretHandler
+	policyTest          *diagnosticshttp.TestPolicyConnectionHandler
 }
 
 func NewProxyRouter(
@@ -53,6 +58,7 @@ func NewProxyRouter(
 	diagnostics *diagnosticshttp.TestConnectionHandler,
 	registryModels *diagnosticshttp.ListRegistryModelsHandler,
 	secretTest *diagnosticshttp.TestSecretHandler,
+	policyTest *diagnosticshttp.TestPolicyConnectionHandler,
 ) ServerRouter {
 	return &proxyRouter{
 		middlewareTransport: middlewareTransport,
@@ -62,6 +68,7 @@ func NewProxyRouter(
 		diagnostics:         diagnostics,
 		registryModels:      registryModels,
 		secretTest:          secretTest,
+		policyTest:          policyTest,
 	}
 }
 
@@ -79,6 +86,9 @@ func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(DiagnosticsRegistryModelsPath, r.registryModels.Handle)
 	if r.secretTest != nil {
 		app.Post(DiagnosticsSecretStoreTestPath, r.secretTest.Handle)
+	}
+	if r.policyTest != nil {
+		app.Post(DiagnosticsPolicyTestConnectionPath, r.policyTest.Handle)
 	}
 
 	installMiddlewares(app, r.middlewareTransport)

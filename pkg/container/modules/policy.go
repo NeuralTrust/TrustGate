@@ -80,6 +80,9 @@ func providePolicyServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(apppolicy.NewConnectionTester); err != nil {
+		return err
+	}
 	if err := c.Provide(apppolicy.NewDuplicator); err != nil {
 		return err
 	}
@@ -111,6 +114,9 @@ func providePolicyServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(policyhttp.NewDuplicatePolicyHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(policyhttp.NewTestConnectionHandler); err != nil {
 		return err
 	}
 	return nil
