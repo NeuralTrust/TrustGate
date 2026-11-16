@@ -191,9 +191,6 @@ func (v *registryValidator) audit(ctx context.Context, current appsecretref.Enti
 			slog.String("action", action),
 			slog.String("actor", actor),
 		}
-		if ref, ok, err := refdomain.Parse(u.Raw); ok && err == nil {
-			attrs = append(attrs, slog.String("store", ref.Store), slog.String("path", ref.Path))
-		}
 		v.logger.Info("secret_reference_set", attrs...)
 	}
 	for _, u := range set {
