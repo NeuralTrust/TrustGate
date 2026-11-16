@@ -33,6 +33,7 @@ type fakeAgent struct {
 	mu     sync.Mutex
 	skills []string
 	calls  []agentCall
+	probes []agentCall
 	tasks  int
 	// hold, when set before the agent is called, keeps a stream open after
 	// its first event until it is closed.
@@ -107,16 +108,16 @@ func (a *fakeAgent) count() int {
 	return len(a.calls)
 }
 
-// forgetRegistrationCheck asserts that registering the agent called it once,
-// to ask for a task that does not exist (the endpoint check), then drops that
-// call so a test counts only what the gateway forwards afterwards.
+// forgetRegistrationCheck asserts that registering the agent probed it once,
+// asking for a task that does not exist (the endpoint check), then drops that
+// probe.
 func (a *fakeAgent) forgetRegistrationCheck(t *testing.T) {
 	t.Helper()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	require.Len(t, a.calls, 1, "registering a generic agent checks its endpoint once")
-	require.Equal(t, a2aMethods[a.version]["get"], a.calls[0].Method, "the endpoint check asks for a task")
-	a.calls = nil
+	require.Len(t, a.probes, 1, "registering a generic agent checks its endpoint once")
+	require.Equal(t, a2aMethods[a.version]["get"], a.probes[0].Method, "the endpoint check asks for a task")
+	a.probes = nil
 }
 
 func (a *fakeAgent) last() agentCall {
@@ -137,8 +138,11 @@ func (a *fakeAgent) rpc(w http.ResponseWriter, r *http.Request) {
 	}
 	// The gateway probes the endpoint when the agent is registered, asking for
 	// a task that cannot exist. That is not a call a caller made, so it is
-	// answered as an agent would and not recorded.
+	// answered as an agent would and kept apart from the calls.
 	if id, _ := req.Params["id"].(string); strings.HasPrefix(id, "trustgate-probe-") {
+		a.mu.Lock()
+		a.probes = append(a.probes, agentCall{Method: req.Method, Header: r.Header.Clone(), Params: req.Params})
+		a.mu.Unlock()
 		writeRPCError(w, req.ID, -32001, "Task not found")
 		return
 	}
