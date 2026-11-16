@@ -15,10 +15,26 @@
 package secret
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 )
+
+// ErrReenterCredentials reports a stored credential that cannot stand in for a
+// masked value because a destination it is bound to changed.
+var ErrReenterCredentials = errors.New("re-enter the credential")
+
+type reenterError struct {
+	path        string
+	destination string
+}
+
+func (e *reenterError) Error() string {
+	return fmt.Sprintf("settings.%s: re-enter the credential when changing %s", e.path, e.destination)
+}
+
+func (e *reenterError) Is(target error) bool { return target == ErrReenterCredentials }
 
 // Settings helpers for credentials that live in an untyped map[string]any (policy
 // plugin settings) rather than a typed struct. A credential location is a
@@ -180,7 +196,7 @@ func ResolveSettings(incoming, existing map[string]any, paths, destinations []st
 		}
 		if s, isStr := stored.(string); isStr && s != "" && sent == Mask(s) {
 			if moved := changedDestination(incoming, existing, destinations); moved != "" {
-				return fmt.Errorf("settings.%s: re-enter the credential when changing %s", path, moved)
+				return &reenterError{path: path, destination: moved}
 			}
 			pathSetCreate(incoming, parts, s)
 		}

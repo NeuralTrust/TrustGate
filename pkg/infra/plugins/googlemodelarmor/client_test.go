@@ -884,3 +884,49 @@ func TestClientCacheSeparatesCredentialFingerprints(t *testing.T) {
 	assert.NotEqual(t, gotAuths[0], gotAuths[1],
 		"the fingerprint must actually separate two credential sets: each cached client keeps authorizing with its own token")
 }
+
+func TestErrorInfoReason(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		body string
+		want string
+	}{
+		"service disabled": {
+			body: `{"error":{"code":403,"message":"Model Armor API has not been used","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED","domain":"googleapis.com"}]}}`,
+			want: "SERVICE_DISABLED",
+		},
+		"other detail type": {
+			body: `{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.Help","reason":"SERVICE_DISABLED"}]}}`,
+		},
+		"no details":     {body: `{"error":{"message":"denied"}}`},
+		"malformed body": {body: `not json`},
+		"empty body":     {body: ``},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, errorInfoReason([]byte(tc.body)))
+		})
+	}
+}
+
+func TestSanitizeErrorCarriesReasonButNotMessage(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":{"code":403,"message":"API disabled for project secret-project","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED"}]}}`)
+	}))
+	defer srv.Close()
+
+	c := newClientWithTokenSource(srv.URL, time.Second, staticTokenSource("minted-token", nil))
+	_, err := c.SanitizeUserPrompt(context.Background(), "proj", "us", "tmpl", "hi")
+
+	var maErr *errModelArmor
+	require.ErrorAs(t, err, &maErr)
+	assert.Equal(t, http.StatusForbidden, maErr.status)
+	assert.Equal(t, "SERVICE_DISABLED", maErr.reason)
+	assert.NotContains(t, err.Error(), "secret-project")
+	assert.NotContains(t, err.Error(), "SERVICE_DISABLED")
+}

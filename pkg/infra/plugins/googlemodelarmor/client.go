@@ -70,6 +70,9 @@ type errModelArmor struct {
 	// configShaped is set from the google.rpc error body when a 400 is about the
 	// resource the policy names and not about what was sent.
 	configShaped bool
+	// reason is the google.rpc.ErrorInfo reason, such as SERVICE_DISABLED. The
+	// error message itself is never kept.
+	reason string
 }
 
 var _ pluginutil.Rejection = (*errModelArmor)(nil)
@@ -388,6 +391,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, &errModelArmor{
 			action: action, status: res.StatusCode, configShaped: rejectsResource(res.StatusCode, raw),
+			reason:     errorInfoReason(raw),
 			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
 		}
 	}
@@ -545,6 +549,8 @@ type rpcStatus struct {
 	Error struct {
 		Message string `json:"message"`
 		Details []struct {
+			Type            string `json:"@type"`
+			Reason          string `json:"reason"`
 			FieldViolations []struct {
 				Field string `json:"field"`
 			} `json:"fieldViolations"`
@@ -578,4 +584,19 @@ func rejectsResource(status int, body []byte) bool {
 		}
 	}
 	return resourceRejectionMessage.MatchString(strings.TrimSpace(parsed.Error.Message))
+}
+
+const errorInfoType = "type.googleapis.com/google.rpc.ErrorInfo"
+
+func errorInfoReason(body []byte) string {
+	var parsed rpcStatus
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	for _, detail := range parsed.Error.Details {
+		if detail.Type == errorInfoType && detail.Reason != "" {
+			return detail.Reason
+		}
+	}
+	return ""
 }
