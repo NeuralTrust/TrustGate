@@ -248,8 +248,8 @@ POST /v1/gateways/{gateway_id}/registries/{id}/agent-card/refresh
 }
 ```
 
-Refresh writes nothing. Approve pins the card only if the live card still
-has the digest you reviewed:
+Refresh writes only the [skill scan](#skill-scan). Approve pins the card only
+if the live card still has the digest you reviewed:
 
 ```http
 POST /v1/gateways/{gateway_id}/registries/{id}/agent-card/approve
@@ -261,6 +261,29 @@ POST /v1/gateways/{gateway_id}/registries/{id}/agent-card/approve
 | 200 | Pinned, or the digest is already pinned |
 | 409 | The live card has another digest |
 | 422 | The registry is not A2A, or the new card no longer offers the pinned version |
+
+### Skill scan
+
+Each skill of a card the agent publishes (its name, description and
+examples, as one text) is scored by TrustGuard's indirect prompt injection
+model when the card is previewed, pinned or approved, and again on every
+refresh, so the skills of a pinned card can be checked over time. The gateway gets a token of scope `scan` for the agent's gateway from
+`POST {TRUSTGUARD_V2_BASE_URL}/v1/token` with `TRUSTGUARD_V2_CLIENT_ID` and
+`TRUSTGUARD_V2_CLIENT_SECRET`, reuses it until shortly before it expires, and
+calls `POST {TRUSTGUARD_V2_BASE_URL}/v1/scan/indirect-prompt-injection` with
+it. No policy is involved, and nothing is blocked.
+
+```json
+"skill_scan": [{"skill_id": "refund_invoice", "flagged": false, "score": 0.02}]
+```
+
+It is `skill_scan` on the registry's `a2a_target` and on a preview. A refresh
+scans the pinned card's skills again, saves the verdicts with the pinned card
+(unless it was pinned again meanwhile) and answers them as `skill_scan`; when
+the live card changed, it also answers `fetched_skill_scan` for the live
+card's skills. Refresh writes nothing else. Absent means not scanned: no TrustGuard
+credentials, a card without skills, a card the gateway builds, or TrustGuard
+did not answer. A card that could not be scanned is still pinned.
 
 ## Identity
 

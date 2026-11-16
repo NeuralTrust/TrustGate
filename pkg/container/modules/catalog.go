@@ -99,7 +99,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(newBedrockModelResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
+	if err := c.Provide(func(f appregistry.RuntimeFinder, client controlplane.Client, logger *slog.Logger) appcatalog.ServerlessFilter {
+		return appcatalog.NewServerlessFilter(f, client, logger)
+	}); err != nil {
 		return err
 	}
 	// Test-connection reports missing catalog permissions through the same
@@ -112,7 +114,9 @@ func provideCatalogServices(c *container.Container) error {
 	}
 	// One instance serves both roles, so the live listing shares the filter's
 	// cache, its singleflight and its timeout budget.
-	if err := c.Provide(appcatalog.NewLiveCatalog); err != nil {
+	if err := c.Provide(func(f appregistry.RuntimeFinder, source appcatalog.LiveModelSource, logger *slog.Logger) (appcatalog.LiveAvailabilityFilter, appcatalog.LiveCatalogLister) {
+		return appcatalog.NewLiveCatalog(f, source, logger)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewRegistryAvailability); err != nil {
@@ -169,9 +173,12 @@ func (s *liveModelSource) Supports(providerCode string) bool {
 }
 
 // Authoritative is true for Azure: a request names a deployment on the
-// resource, so only the resource's own listing can answer.
+// resource, so only the resource's own listing can answer. It is true for
+// watsonx too: each region serves its own set of models, and models.dev
+// prices only some of them, so the region's listing is the list and the
+// catalog lends it prices where a model matches.
 func (s *liveModelSource) Authoritative(providerCode string) bool {
-	return providerCode == providers.ProviderAzure
+	return providerCode == providers.ProviderAzure || providerCode == providers.ProviderWatsonx
 }
 
 func (s *liveModelSource) List(
@@ -201,6 +208,7 @@ func (s *liveModelSource) List(
 			DisplayName:   model.DisplayName,
 			ProviderModel: model.ProviderModel,
 			Pending:       model.Pending,
+			Capabilities:  model.Capabilities,
 		})
 	}
 	return out, nil

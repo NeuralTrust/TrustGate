@@ -77,6 +77,9 @@ type Plugin struct {
 	registry *adapter.Registry
 	clients  *clientCache
 	logger   *slog.Logger
+	// baseURL is cfg.ModelArmor's override of the regional host; empty in
+	// production.
+	baseURL string
 	// allowAmbientIdentity mirrors MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY. False
 	// (the zero value, so a Plugin built without New is safe) refuses every
 	// credential path that acts as the gateway pod's shared identity.
@@ -97,6 +100,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 	return &Plugin{
 		registry:             registry,
 		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources()),
+		baseURL:              baseURL,
 		logger:               logger,
 		allowAmbientIdentity: allowAmbientIdentity,
 	}
@@ -210,6 +214,20 @@ func (p *Plugin) CredentialPaths() []string {
 // settings field can redirect the secret.
 func (p *Plugin) CredentialDestinations() []string {
 	return []string{"location", "project"}
+}
+
+// CredentialHosts is where the service account key goes: Google's token
+// endpoint, and the token to the regional Model Armor host.
+func (p *Plugin) CredentialHosts(settings map[string]any) []string {
+	upstream := p.baseURL
+	if upstream == "" {
+		cfg, err := pluginutil.Parse[Settings](settings)
+		if err != nil || cfg.Location == "" {
+			return nil
+		}
+		upstream = fmt.Sprintf(hostTemplate, cfg.Location)
+	}
+	return []string{upstream, "oauth2.googleapis.com"}
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {

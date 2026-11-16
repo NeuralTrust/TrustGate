@@ -70,6 +70,19 @@ func TestValidateProviderOptions(t *testing.T) {
 		{name: "vertex project wrong type", provider: ProviderVertex, options: map[string]any{"project": 123, "location": "l"}, errContains: "vertex"},
 		{name: "vertex embeddings base_url", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "us-central1", "base_url": "https://host/v1"}},
 		{name: "vertex invalid base_url", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "us-central1", "base_url": "host/v1"}, errContains: "base_url"},
+
+		{name: "watsonx valid", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13"}},
+		{name: "watsonx region is case-insensitive", provider: ProviderWatsonx, options: map[string]any{"region": " EU-DE ", "project_id": "0F8C3A52-7F4E-4D2B-9A61-2B7C0E5D9F13"}},
+		{name: "watsonx pinned api version", provider: ProviderWatsonx, options: map[string]any{"region": "us-south", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13", "api_version": "2024-05-01"}},
+		{name: "watsonx base_url instead of region", provider: ProviderWatsonx, options: map[string]any{"base_url": "https://private.eu-de.ml.cloud.ibm.com", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13"}},
+		{name: "watsonx nil options", provider: ProviderWatsonx, options: nil, errContains: "region"},
+		{name: "watsonx unknown region", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de.evil.example", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13"}, errContains: "region"},
+		{name: "watsonx missing project", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de"}, errContains: "project_id"},
+		{name: "watsonx project not a uuid", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de", "project_id": "my-project"}, errContains: "project_id"},
+		{name: "watsonx malformed api version", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13", "api_version": "v1"}, errContains: "api_version"},
+		{name: "watsonx impossible api version date", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13", "api_version": "2025-13-40"}, errContains: "api_version"},
+		{name: "watsonx invalid base_url", provider: ProviderWatsonx, options: map[string]any{"region": "eu-de", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13", "base_url": "eu-de.ml.cloud.ibm.com"}, errContains: "base_url"},
+		{name: "watsonx region wrong type", provider: ProviderWatsonx, options: map[string]any{"region": 1, "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13"}, errContains: "watsonx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

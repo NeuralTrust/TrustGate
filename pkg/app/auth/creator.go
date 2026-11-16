@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -45,13 +47,14 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo   domain.Repository
-	events *KeyEvents
+	repo       domain.Repository
+	events     *KeyEvents
+	secretRefs appsecretref.EntityValidator
 }
 
 // NewCreator returns the Creator of admin-managed auths.
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
-	return &creator{repo: repo, events: NewKeyEvents(manager, publisher, logger, signaler)}
+func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler, opts ...SaveOption) Creator {
+	return &creator{repo: repo, events: NewKeyEvents(manager, publisher, logger, signaler), secretRefs: applySaveOptions(opts).secretRefs}
 }
 
 // KeyEvents tells the rest of the gateway that a new auth was stored: it warms
@@ -96,9 +99,16 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if err := ensureNoOAuth2Conflict(ctx, c.repo, a); err != nil {
 		return nil, err
 	}
+	audit := func() {}
+	if c.secretRefs != nil {
+		if audit, err = c.secretRefs.ValidateEntity(ctx, appsecretref.AuthRefs(a), nil); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.repo.Save(ctx, a); err != nil {
 		return nil, err
 	}
+	audit()
 	c.events.Saved(ctx, a)
 	return a, nil
 }

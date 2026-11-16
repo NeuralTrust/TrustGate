@@ -15,6 +15,9 @@
 package middleware
 
 import (
+	"cmp"
+
+	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
@@ -81,6 +84,19 @@ func StoreAdminIdentity(c *fiber.Ctx, identity AdminIdentity) {
 	}
 	if identity.Email != "" {
 		c.Locals(string(infracontext.UserEmailContextKey), identity.Email)
+	}
+	c.SetUserContext(appsecretstore.WithCaller(c.UserContext(), SecretRefCaller(c, identity)))
+}
+
+// SecretRefCaller is what the secret reference validator knows about the
+// caller of a write: whether it may reference a store (service credentials
+// need secret_stores:read), the allow_unverified_secret_refs opt-in, and who
+// it is for the audit. Every entity write reads it from the request context.
+func SecretRefCaller(c *fiber.Ctx, identity AdminIdentity) appsecretstore.Caller {
+	return appsecretstore.Caller{
+		MayReference:    identity.HasScope(ScopeSecretStoresRead),
+		AllowUnverified: c.QueryBool("allow_unverified_secret_refs"),
+		Actor:           cmp.Or(identity.Email, identity.Subject),
 	}
 }
 

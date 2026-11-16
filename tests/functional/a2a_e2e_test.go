@@ -121,6 +121,7 @@ func TestA2A_RefusesMethodsItDoesNotForward(t *testing.T) {
 			methods := a2aMethods[version]
 			gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("a2a-gw")})
 			registryID := CreateRegistry(t, gatewayID, a2aRegistryPayload(uniqueName("echo"), agent.srv.URL, version, nil))
+			agent.forgetRegistrationCheck(t)
 			consumerID, key := createA2AConsumer(t, gatewayID, registryID)
 			path := agentPath(t, consumerID, registryID)
 
@@ -216,6 +217,7 @@ func TestA2A_PolicyBlocksTheMessage(t *testing.T) {
 	methods := a2aMethods[version]
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("a2a-gw")})
 	registryID := CreateRegistry(t, gatewayID, a2aRegistryPayload(uniqueName("echo"), agent.srv.URL, version, nil))
+	agent.forgetRegistrationCheck(t)
 	consumerID, key := createA2AConsumer(t, gatewayID, registryID)
 	payload := policyPlugin("request_size_limiter", map[string]any{"allowed_payload_size": 1, "size_unit": "megabytes", "max_chars_per_request": 300})
 	payload["name"] = uniqueName("pol")
@@ -250,6 +252,7 @@ func TestA2A_AuthenticatesAndRoutes(t *testing.T) {
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("a2a-gw")})
 	name := uniqueName("echo")
 	registryID := CreateRegistry(t, gatewayID, a2aRegistryPayload(name, agent.srv.URL, version, nil))
+	agent.forgetRegistrationCheck(t)
 	consumerA, keyA := createA2AConsumer(t, gatewayID, registryID)
 	_, keyB := createA2AConsumer(t, gatewayID, registryID)
 	upstream := startMCPUpstream(t, nil)
