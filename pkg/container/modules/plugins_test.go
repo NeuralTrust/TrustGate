@@ -49,7 +49,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"request_size_limiter":  {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
 		"rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
 		"trustguard":            {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
-		"trustguard_v2":         {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"trustguard_v2":         {appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A},
 		"per_tool_rate_limiter": {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"token_rate_limiter":    {appplugins.ProtocolLLM},
 		"model_allowlist":       {appplugins.ProtocolLLM},
