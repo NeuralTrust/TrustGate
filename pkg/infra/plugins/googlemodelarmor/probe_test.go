@@ -42,6 +42,10 @@ import (
 
 const probeKeyMarker = "PROBE-KEY-MARKER"
 
+// liveTemplateNotFound is Model Armor's answer to sanitizeUserPrompt on a
+// template that does not exist, captured on 2026-11-16.
+const liveTemplateNotFound = `{"error":{"code":400,"message":"The template named 'projects/acme-prod/locations/europe-west4/templates/tmpl-1' was not found. Please check if the correct template name is provided.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"TEMPLATE_NOT_FOUND","domain":"modelarmor.googleapis.com","metadata":{"template_name":"projects/acme-prod/locations/europe-west4/templates/tmpl-1"}},{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"The template named 'projects/acme-prod/locations/europe-west4/templates/tmpl-1' was not found."}]}}`
+
 var probeCfg = Settings{Project: "acme-prod", Location: "europe-west4", Template: "tmpl-1"}
 
 type timeoutNetErr struct{}
@@ -83,6 +87,7 @@ func TestClassifyProbe(t *testing.T) {
 		"model armor 404":                  {&errModelArmor{status: http.StatusNotFound}, appplugins.ProbeTemplateNotFound},
 		"model armor 400 on resource":      {&errModelArmor{status: http.StatusBadRequest, configShaped: true}, appplugins.ProbeTemplateNotFound},
 		"model armor 400 on content":       {&errModelArmor{status: http.StatusBadRequest}, appplugins.ProbeInvalidConfig},
+		"model armor template not found":   {&errModelArmor{status: http.StatusBadRequest, reason: reasonTemplateMissing}, appplugins.ProbeTemplateNotFound},
 		"model armor 429":                  {&errModelArmor{status: http.StatusTooManyRequests}, appplugins.ProbeThrottled},
 		"model armor 503":                  {&errModelArmor{status: http.StatusServiceUnavailable}, appplugins.ProbeUnreachable},
 		"model armor redirect":             {&errModelArmor{status: http.StatusFound}, appplugins.ProbeUnreachable},
@@ -204,13 +209,14 @@ func TestProbeConnectionOutcomes(t *testing.T) {
 		body   string
 		want   string
 	}{
-		"ok":               {http.StatusOK, allowResponse, appplugins.ProbeOK},
-		"permission":       {http.StatusForbidden, `{"error":{"code":403,"message":"Permission denied on ` + probeKeyMarker + `"}}`, appplugins.ProbePermissionDenied},
-		"api disabled":     {http.StatusForbidden, `{"error":{"code":403,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED"}]}}`, appplugins.ProbeAPIDisabled},
-		"template missing": {http.StatusNotFound, `{"error":{"code":404,"message":"Template not found"}}`, appplugins.ProbeTemplateNotFound},
-		"bad credentials":  {http.StatusUnauthorized, `{"error":{"code":401}}`, appplugins.ProbeInvalidCredentials},
-		"server error":     {http.StatusInternalServerError, `{}`, appplugins.ProbeUnreachable},
-		"garbage 2xx":      {http.StatusOK, `{not json`, appplugins.ProbeUnreachable},
+		"ok":                                     {http.StatusOK, allowResponse, appplugins.ProbeOK},
+		"permission":                             {http.StatusForbidden, `{"error":{"code":403,"message":"Permission denied on ` + probeKeyMarker + `"}}`, appplugins.ProbePermissionDenied},
+		"api disabled":                           {http.StatusForbidden, `{"error":{"code":403,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED"}]}}`, appplugins.ProbeAPIDisabled},
+		"template missing":                       {http.StatusNotFound, `{"error":{"code":404,"message":"Template not found"}}`, appplugins.ProbeTemplateNotFound},
+		"template missing, as Google answers it": {http.StatusBadRequest, liveTemplateNotFound, appplugins.ProbeTemplateNotFound},
+		"bad credentials":                        {http.StatusUnauthorized, `{"error":{"code":401}}`, appplugins.ProbeInvalidCredentials},
+		"server error":                           {http.StatusInternalServerError, `{}`, appplugins.ProbeUnreachable},
+		"garbage 2xx":                            {http.StatusOK, `{not json`, appplugins.ProbeUnreachable},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

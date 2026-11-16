@@ -29,6 +29,7 @@ import (
 const (
 	probeText             = "Connection test from the gateway."
 	reasonServiceDisabled = "SERVICE_DISABLED"
+	reasonTemplateMissing = "TEMPLATE_NOT_FOUND"
 	fallbackProbeTimeout  = 10 * time.Second
 	// tokenClientMargin lets the probe's deadline expire before the token
 	// client's own timeout, so a stalled token endpoint reads as a timeout:
@@ -178,7 +179,8 @@ func classifyModelArmorStatus(e *errModelArmor, cfg Settings) (code, message str
 		return appplugins.ProbePermissionDenied, fmt.Sprintf(
 			"The service account cannot use Model Armor in project %s. Grant it roles/modelarmor.user, "+
 				"and check that template %s exists in %s.", cfg.Project, cfg.Template, cfg.Location)
-	case e.status == http.StatusNotFound, e.status == http.StatusBadRequest && e.configShaped:
+	case e.status == http.StatusNotFound, e.reason == reasonTemplateMissing,
+		e.status == http.StatusBadRequest && e.configShaped:
 		return appplugins.ProbeTemplateNotFound, fmt.Sprintf(
 			"Template %s was not found in project %s, location %s.", cfg.Template, cfg.Project, cfg.Location)
 	case e.status == http.StatusTooManyRequests:
