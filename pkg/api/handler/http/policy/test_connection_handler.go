@@ -45,6 +45,7 @@ func NewTestConnectionHandler(tester apppolicy.ConnectionTester) *TestConnection
 // @Success      200         {object}  response.TestConnectionResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
 // @Failure      422         {object}  httpio.ErrorBody

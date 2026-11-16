@@ -265,7 +265,32 @@ func TestConnectionTesterStoredPolicyLookup(t *testing.T) {
 		r.repo.EXPECT().FindByID(mock.Anything, p.ID).Return(p, nil).Once()
 		return p.ID
 	}
-	for name, find := range map[string]lookup{"missing": missing, "other gateway": foreign, "other plugin": otherPlugin} {
+	t.Run("other gateway on a data plane is not found", func(t *testing.T) {
+		t.Parallel()
+		r := newTesterRig(t)
+		id := foreign(r, t)
+
+		_, err := r.tester.Test(context.Background(), apppolicy.TestConnectionInput{
+			GatewayID: r.gateway, PolicyID: &id, Slug: armorSlug, Settings: armorSettings(secret.Mask(testerKey)), OnDataPlane: true,
+		})
+
+		require.ErrorIs(t, err, commonerrors.ErrNotFound)
+		assert.Zero(t, r.plugin.calls)
+	})
+	t.Run("other gateway on the control plane is not found", func(t *testing.T) {
+		t.Parallel()
+		r := newTesterRig(t)
+		r.saasGateway()
+		id := foreign(r, t)
+
+		_, err := r.tester.Test(context.Background(), apppolicy.TestConnectionInput{
+			GatewayID: r.gateway, PolicyID: &id, Slug: armorSlug, Settings: armorSettings(secret.Mask(testerKey)),
+		})
+
+		require.ErrorIs(t, err, commonerrors.ErrNotFound)
+		assert.Zero(t, r.plugin.calls)
+	})
+	for name, find := range map[string]lookup{"missing": missing, "other plugin": otherPlugin} {
 		t.Run(name+" on the control plane is not found", func(t *testing.T) {
 			t.Parallel()
 			r := newTesterRig(t)

@@ -115,7 +115,7 @@ func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (Te
 	var previous map[string]any
 	if in.PolicyID != nil {
 		stored, err := t.storedPolicy(ctx, in)
-		if errors.Is(err, commonerrors.ErrNotFound) && in.OnDataPlane {
+		if errors.Is(err, errSnapshotBehind) {
 			return t.report(in, notSynced()), nil
 		}
 		if err != nil {
@@ -155,12 +155,20 @@ func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (Te
 	}), nil
 }
 
+var errSnapshotBehind = errors.New("policy: data plane snapshot is behind")
+
 func (t *connectionTester) storedPolicy(ctx context.Context, in TestConnectionInput) (*domain.Policy, error) {
 	stored, err := t.repo.FindByID(ctx, *in.PolicyID)
-	if err != nil {
+	switch {
+	case errors.Is(err, commonerrors.ErrNotFound) && in.OnDataPlane:
+		return nil, errSnapshotBehind
+	case err != nil:
 		return nil, err
-	}
-	if stored.GatewayID != in.GatewayID || stored.Slug != in.Slug {
+	case stored.GatewayID != in.GatewayID:
+		return nil, domain.ErrNotFound
+	case stored.Slug != in.Slug && in.OnDataPlane:
+		return nil, errSnapshotBehind
+	case stored.Slug != in.Slug:
 		return nil, domain.ErrNotFound
 	}
 	return stored, nil
