@@ -218,7 +218,7 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	}
 	mode := body.FailureMode
 	if mode == "" {
-		mode = defaultFailureMode
+		mode = pluginutil.DefaultFailureMode
 	}
 	req.Header.Set(failureModeHeader, mode)
 	if playground {
