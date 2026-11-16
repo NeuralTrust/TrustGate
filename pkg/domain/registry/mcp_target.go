@@ -183,6 +183,10 @@ type MCPTarget struct {
 	// without re-reading the catalog. Empty for servers whose URL is fully
 	// determined (the common case). See ResolveURL.
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+	// UserHeaders declares the upstream headers whose value is each caller's
+	// own, read from the vault per request (see MCPUserHeader). Headers stays
+	// the shared map: one admin-set value for every caller.
+	UserHeaders []MCPUserHeader `json:"user_headers,omitempty"`
 	// InstanceConfig carries one instance's resolved plain URL-variable values when
 	// the Store scoper exposes several instances of the same catalog code for a
 	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
@@ -392,6 +396,9 @@ func (t *MCPTarget) Validate() error {
 	if name, masked := maskedHeader(t.Headers); masked {
 		return fmt.Errorf("%w: header %q looks masked; send the full value or the masked value unchanged",
 			ErrInvalidMCPTarget, name)
+	}
+	if err := t.validateUserHeaders(); err != nil {
+		return err
 	}
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {

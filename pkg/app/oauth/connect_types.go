@@ -219,6 +219,9 @@ type ConnectPage struct {
 	Principal ConnectPrincipal
 	// ClientName is the app the link came from, empty when unknown.
 	ClientName string
+	// UserHeaders are the servers whose upstream needs this person's own
+	// header values (an API key), each with what is stored.
+	UserHeaders []UserHeaderServer
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
