@@ -230,6 +230,22 @@ var (
 		},
 	}
 
+	watsonxAuthOption = AuthTypeOption{
+		Type:        "api_key",
+		Label:       "IBM Cloud API key",
+		Description: "The gateway exchanges the key for IBM Cloud IAM tokens and refreshes them before they expire.",
+		Fields: []AuthField{
+			{
+				Key:         "api_key",
+				Label:       "IBM Cloud API key",
+				Type:        AuthFieldTypeString,
+				Description: "API key of a user or service ID with access to the watsonx.ai project.",
+				Required:    true,
+				Secret:      true,
+			},
+		},
+	}
+
 	gcpServiceAccountAuthOption = AuthTypeOption{
 		Type:  "gcp_service_account",
 		Label: "GCP Service Account",
@@ -270,6 +286,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providerdomain.Cohere:           {apiKeyAuthOption},
 	providerdomain.Moonshot:         {apiKeyAuthOption},
 	providerdomain.DigitalOcean:     {apiKeyAuthOption},
+	providerdomain.Watsonx:          {watsonxAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

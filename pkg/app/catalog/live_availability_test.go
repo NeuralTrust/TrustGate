@@ -42,7 +42,7 @@ type stubLiveModelSource struct {
 func (s *stubLiveModelSource) Supports(string) bool { return !s.unsupported }
 
 func (s *stubLiveModelSource) Authoritative(providerCode string) bool {
-	return providerCode == providers.ProviderAzure
+	return providerCode == providers.ProviderAzure || providerCode == providers.ProviderWatsonx
 }
 
 func (s *stubLiveModelSource) List(context.Context, string, *registrydomain.TargetAuth, map[string]any) ([]appcatalog.LiveModel, error) {
@@ -216,6 +216,49 @@ func TestLiveAvailabilityFilter_AzureReturnsDeploymentNames(t *testing.T) {
 	assert.Equal(t, "3", got[0].InputPrice)
 	assert.Equal(t, "codex-prod", got[1].Slug)
 	assert.Equal(t, "2", got[1].InputPrice)
+}
+
+func TestLiveAvailabilityFilter_WatsonxListsTheRegionWithCatalogPrices(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: []appcatalog.LiveModel{
+		{ID: "ibm/granite-4-h-small", DisplayName: "granite-4-h-small", ProviderModel: "ibm/granite-4-h-small", Capabilities: map[string]any{"chat": true}},
+		{ID: "mistralai/mistral-medium-2505", DisplayName: "mistral-medium-2505", ProviderModel: "mistralai/mistral-medium-2505", Capabilities: map[string]any{"chat": true}},
+		{ID: "intfloat/multilingual-e5-large", DisplayName: "multilingual-e5-large", ProviderModel: "intfloat/multilingual-e5-large", Capabilities: map[string]any{"embed": true}},
+	}}
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(&registrydomain.Registry{
+			ID: registryID,
+			LLMTarget: &registrydomain.LLMTarget{
+				Provider:        providers.ProviderWatsonx,
+				Auth:            apiKeyAuth("ibm-cloud-key"),
+				ProviderOptions: map[string]any{"region": "eu-de", "project_id": "0f8c3a52-7f4e-4d2b-9a61-2b7c0e5d9f13"},
+			},
+		}, nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	got, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderWatsonx,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models: []catalogdomain.Model{
+			{Slug: "ibm/granite-4-h-small", ExternalID: "watsonx/ibm/granite-4-h-small", InputPrice: "0.0000000636", Capabilities: map[string]any{"chat": true, "tool_call": true}, Enabled: true},
+			{Slug: "openai/gpt-oss-120b", ExternalID: "watsonx/openai/gpt-oss-120b", InputPrice: "0.000000159", Enabled: true},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got, 3, "the region's listing is the list, not the models.dev catalog")
+	assert.Equal(t, "ibm/granite-4-h-small", got[0].Slug)
+	assert.Equal(t, "0.0000000636", got[0].InputPrice, "a priced model keeps its models.dev price")
+	assert.Equal(t, map[string]any{"chat": true, "tool_call": true}, got[0].Capabilities, "a catalog row keeps its own flags")
+	assert.Equal(t, "mistralai/mistral-medium-2505", got[1].Slug)
+	assert.Empty(t, got[1].InputPrice, "a model models.dev does not price is listed without a price")
+	assert.Equal(t, "intfloat/multilingual-e5-large", got[2].Slug)
+	assert.Equal(t, map[string]any{"embed": true}, got[2].Capabilities, "a model the catalog lacks takes the flags the provider listed")
 }
 
 func TestLiveAvailabilityFilter_AzureFailsInsteadOfListingTheCatalog(t *testing.T) {
@@ -539,4 +582,27 @@ func TestLiveCatalog_ReportsNothingWhenTheProviderCannotBeAsked(t *testing.T) {
 	})
 
 	assert.Nil(t, got, "an unreachable endpoint leaves the empty catalog as it was")
+}
+
+func TestLiveAvailabilityFilter_UnresolvedSecretNeverReachesTheProvider(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{models: liveIDs("never-asked")}
+	reg := azureRegistry(apiKeyAuth(""))
+	reg.MarkCredentialUnavailable()
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).Return(reg, nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, source, discardLogger())
+	_, err := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("gpt-4o"),
+	})
+
+	require.ErrorIs(t, err, registrydomain.ErrSecretUnavailable)
+	assert.Zero(t, source.calls, "a blank credential must never be sent to the provider")
 }

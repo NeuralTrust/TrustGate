@@ -33,6 +33,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/watsonx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
 )
 
@@ -55,6 +56,7 @@ const (
 	ProviderCohere           = providers.ProviderCohere
 	ProviderMoonshot         = providers.ProviderMoonshot
 	ProviderDigitalOcean     = providers.ProviderDigitalOcean
+	ProviderWatsonx          = providers.ProviderWatsonx
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -96,6 +98,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderCohere:           cohere.NewCohereClient(),
 			ProviderMoonshot:         moonshot.NewMoonshotClient(),
 			ProviderDigitalOcean:     digitalocean.NewDigitalOceanClient(),
+			ProviderWatsonx:          watsonx.NewWatsonxClient(),
 		},
 	}
 }

@@ -74,7 +74,7 @@ func newLabelPipeline(factory *labelFactory, defaults ...telemetrydomain.Exporte
 
 func targetsByName(p *Pipeline, explicit []telemetrydomain.ExporterConfig) map[string]Exporter {
 	out := map[string]Exporter{}
-	for _, tgt := range p.resolveTargets(explicit) {
+	for _, tgt := range p.resolveTargets("", explicit) {
 		out[tgt.Name()] = tgt
 	}
 	return out

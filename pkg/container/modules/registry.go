@@ -19,6 +19,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
+
+	appsecretstore "github.com/NeuralTrust/TrustGate/pkg/app/secretstore"
+
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -43,6 +47,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trustguardscan"
 	"go.uber.org/dig"
 )
 
@@ -132,7 +137,8 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 // registrySaveParams carries what a save needs beyond the repository: the
 // auth repository that checks an exchange's identity_id (optional, so a
 // container without auths still boots and refuses targets that set it), the
-// agent card reader, and the gateways a SaaS deployment checks A2A cloud
+// agent card reader, TrustGuard's scan of agent skills when the gateway has
+// TrustGuard credentials, and the gateways a SaaS deployment checks A2A cloud
 // credentials against.
 type registrySaveParams struct {
 	dig.In
@@ -141,6 +147,12 @@ type registrySaveParams struct {
 	CardCredentials appregistry.CardCredentials
 	Gateways        gatewaydomain.Repository
 	Config          *config.Config
+	// SecretRefs validates secret references on writes; absent on planes
+	// without the control plane's connection store.
+	SecretRefs appsecretstore.RegistryValidator `optional:"true"`
+	// Materializer resolves the secret references of the auth an A2A card
+	// is read with.
+	Materializer appsecretref.Materializer `optional:"true"`
 }
 
 func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.Option {
@@ -148,11 +160,21 @@ func (p registrySaveParams) options(compiler appopenapi.Compiler) []appregistry.
 		appregistry.WithOpenAPICompiler(compiler),
 		appregistry.WithAgentCards(p.CardFetcher, p.CardCredentials),
 	}
+	if p.Materializer != nil && p.SecretRefs != nil {
+		opts = append(opts, appregistry.WithCardSecrets(p.Materializer, p.SecretRefs))
+	}
+	tg := p.Config.TrustGuard.V2
+	if scanner := trustguardscan.New(tg.BaseURL, tg.ClientID, tg.ClientSecret, tg.Timeout); scanner != nil {
+		opts = append(opts, appregistry.WithSkillScanner(scanner))
+	}
 	if p.Auths != nil {
 		opts = append(opts, appregistry.WithAuthLookup(p.Auths))
 	}
 	if p.Config.ConfigSync.SharedDataPlane() {
 		opts = append(opts, appregistry.WithSharedDataPlane(p.Gateways))
+	}
+	if p.SecretRefs != nil {
+		opts = append(opts, appregistry.WithSecretRefValidator(p.SecretRefs))
 	}
 	return opts
 }
@@ -234,8 +256,8 @@ func provideRegistryServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, save registrySaveParams) appregistry.RefreshAgentCard {
-		return appregistry.NewRefreshAgentCard(repo, save.options(nil)...)
+	if err := c.Provide(func(repo domain.Repository, pinner cardPinnerParam, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, save registrySaveParams) appregistry.RefreshAgentCard {
+		return appregistry.NewRefreshAgentCard(repo, pinner.Pinner, manager, publisher, logger, save.options(nil)...)
 	}); err != nil {
 		return err
 	}
@@ -255,7 +277,7 @@ func provideRegistryServices(c *container.Container) error {
 
 type connectionTesterParams struct {
 	dig.In
-	Finder  appregistry.Finder
+	Finder  appregistry.RuntimeFinder
 	Locator factory.ProviderLocator
 	Logger  *slog.Logger
 	// Catalog is optional so a plane without the catalog module still tests

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/hkdf"
 	"crypto/sha256"
+	appsecretref "github.com/NeuralTrust/TrustGate/pkg/app/secretref"
 	"log/slog"
 	"time"
 
@@ -87,11 +88,12 @@ func newTrafficLabelsMetrics(cfg *config.Config, sdk *o11y.SDK, stream *labelstr
 
 func newLabelClassifier(
 	registries registrydomain.Repository,
+	secretRefs appsecretref.Materializer,
 	locator factory.ProviderLocator,
 	codec *adapter.Registry,
 	cfg *config.Config,
 ) trafficlabels.Classifier {
-	return labelllm.New(registries, locator, codec, labelllm.Config{
+	return labelllm.New(runtimeRegistries{repo: registries, m: secretRefs}, locator, codec, labelllm.Config{
 		Timeout:   cfg.TrafficLabels.ClassifierTimeout,
 		MaxTokens: cfg.TrafficLabels.MaxTokens,
 	})

@@ -1,0 +1,57 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package backends builds the backend of a secret store from its type.
+package backends
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/conjur"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/azurekv"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/awssm"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/envstore"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/filestore"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/gcpsm"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/secretstore/hashicorp"
+)
+
+// Factory returns a function that builds the backend of a store. ctx bounds
+// loading the cloud SDK configuration, which makes no network call.
+func Factory(ctx context.Context) func(*secretstore.Store) (secretstore.Backend, error) {
+	return func(store *secretstore.Store) (secretstore.Backend, error) {
+		switch cfg := store.Config.(type) {
+		case *secretstore.HashiCorpVaultConfig:
+			return hashicorp.New(cfg)
+		case *secretstore.AWSSecretsManagerConfig:
+			return awssm.New(ctx, cfg)
+		case *secretstore.GCPSecretManagerConfig:
+			return gcpsm.New(cfg)
+		case *secretstore.FileConfig:
+			return filestore.New(cfg), nil
+		case *secretstore.EnvConfig:
+			return envstore.New(cfg), nil
+		case *secretstore.AzureKeyVaultConfig:
+			return azurekv.New(cfg)
+		case *secretstore.CyberArkConjurConfig:
+			return conjur.New(cfg)
+		default:
+			return nil, fmt.Errorf("%w: store %q: type %q is not supported by this build", secretstore.ErrInvalidStore, store.Name, store.Type)
+		}
+	}
+}

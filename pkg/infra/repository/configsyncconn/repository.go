@@ -25,6 +25,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/dataplane"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/secretstore"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
@@ -47,6 +48,9 @@ type Connection struct {
 	DeploymentType     string
 	TrustGuardBaseURL  string
 	TrustGuardClientID string
+	AcceptsSecretRefs  bool
+	SecretStores       []secretstore.Status
+	SecretRefs         secretstore.RefHealth
 }
 
 // poolQuerier is the subset of pgxpool.Pool this repository uses, kept small to
@@ -78,7 +82,8 @@ func (r *Repository) MarkConnected(ctx context.Context, scope, instanceID string
 		ON CONFLICT (scope, instance_id)
 		DO UPDATE SET state = 'connected', last_seen = NOW(), last_heartbeat = NULL,
 			version = '', region = '', deployment_type = '',
-			trustguard_base_url = '', trustguard_client_id = ''`
+			trustguard_base_url = '', trustguard_client_id = '',
+			accepts_secret_refs = FALSE, secret_stores = NULL, secret_refs = NULL`
 	if _, err := r.pool.Exec(ctx, stmt, scope, instanceID); err != nil {
 		return fmt.Errorf("configsyncconn: mark connected: %w", err)
 	}
@@ -115,16 +120,28 @@ func (r *Repository) MarkDisconnected(ctx context.Context, scope, instanceID str
 func (r *Repository) MarkHeartbeat(ctx context.Context, scope, instanceID string, hb dataplane.Heartbeat) error {
 	const stmt = `
 		INSERT INTO config_sync_connections (scope, instance_id, state, last_heartbeat,
-			version, region, deployment_type, trustguard_base_url, trustguard_client_id)
-		VALUES ($1, $2, 'connected', NOW(), $3, $4, $5, $6, $7)
+			version, region, deployment_type, trustguard_base_url, trustguard_client_id,
+			accepts_secret_refs, secret_stores, secret_refs)
+		VALUES ($1, $2, 'connected', NOW(), $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (scope, instance_id)
 		DO UPDATE SET last_seen = NOW(), last_heartbeat = NOW(), state = 'connected',
 			version = EXCLUDED.version, region = EXCLUDED.region,
 			deployment_type = EXCLUDED.deployment_type,
 			trustguard_base_url = EXCLUDED.trustguard_base_url,
-			trustguard_client_id = EXCLUDED.trustguard_client_id`
+			trustguard_client_id = EXCLUDED.trustguard_client_id,
+			accepts_secret_refs = EXCLUDED.accepts_secret_refs,
+			secret_stores = EXCLUDED.secret_stores,
+			secret_refs = EXCLUDED.secret_refs`
+	stores, err := encodeSecretStores(hb.SecretStores)
+	if err != nil {
+		return err
+	}
+	refs, err := encodeSecretRefs(hb.SecretRefs)
+	if err != nil {
+		return err
+	}
 	if _, err := r.pool.Exec(ctx, stmt, scope, instanceID, hb.Version, hb.Region, hb.DeploymentType,
-		hb.TrustGuardBaseURL, hb.TrustGuardClientID); err != nil {
+		hb.TrustGuardBaseURL, hb.TrustGuardClientID, hb.AcceptsSecretRefs, stores, refs); err != nil {
 		return fmt.Errorf("configsyncconn: mark heartbeat: %w", err)
 	}
 	return nil
@@ -166,7 +183,8 @@ func (r *Repository) List(ctx context.Context, scope string, page *listing.Page)
 	}
 	const stmt = `
 		SELECT scope, instance_id, state, applied_version, first_seen, last_seen,
-			last_heartbeat, version, region, deployment_type, trustguard_base_url, trustguard_client_id
+			last_heartbeat, version, region, deployment_type, trustguard_base_url, trustguard_client_id,
+			accepts_secret_refs, secret_stores, secret_refs
 		FROM config_sync_connections
 		WHERE ($1 = '' OR scope = $1)
 		ORDER BY scope, instance_id
@@ -180,10 +198,14 @@ func (r *Repository) List(ctx context.Context, scope string, page *listing.Page)
 	var conns []Connection
 	for rows.Next() {
 		var c Connection
+		var stores, refs []byte
 		if err := rows.Scan(&c.Scope, &c.InstanceID, &c.State, &c.AppliedVersion, &c.FirstSeen, &c.LastSeen,
-			&c.LastHeartbeat, &c.Version, &c.Region, &c.DeploymentType, &c.TrustGuardBaseURL, &c.TrustGuardClientID); err != nil {
+			&c.LastHeartbeat, &c.Version, &c.Region, &c.DeploymentType, &c.TrustGuardBaseURL, &c.TrustGuardClientID,
+			&c.AcceptsSecretRefs, &stores, &refs); err != nil {
 			return nil, fmt.Errorf("configsyncconn: scan connection: %w", err)
 		}
+		c.SecretStores = decodeSecretStores(stores)
+		c.SecretRefs = decodeSecretRefs(refs)
 		conns = append(conns, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -205,7 +227,10 @@ func (r *Repository) ListInstances(ctx context.Context, scope string) ([]datapla
 	}
 	out := make([]dataplane.Instance, 0, len(conns))
 	for _, c := range conns {
-		out = append(out, dataplane.Instance{State: c.State, LastSeen: c.LastSeen, Version: c.Version})
+		out = append(out, dataplane.Instance{
+			ID: c.InstanceID, State: c.State, LastSeen: c.LastSeen, Version: c.Version,
+			AcceptsSecretRefs: c.AcceptsSecretRefs, SecretStores: c.SecretStores, SecretRefs: c.SecretRefs,
+		})
 	}
 	return out, nil
 }

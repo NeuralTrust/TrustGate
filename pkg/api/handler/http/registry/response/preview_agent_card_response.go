@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 // PreviewAgentCardResponse is an agent card read without registering it.
@@ -27,6 +28,8 @@ type PreviewAgentCardResponse struct {
 	CardDigest      string          `json:"card_digest"`
 	Versions        []string        `json:"versions"`
 	DefaultVersion  string          `json:"default_version,omitempty"`
+	// SkillScan is TrustGuard's verdict on each skill; absent when not scanned.
+	SkillScan []domain.SkillVerdict `json:"skill_scan,omitempty"`
 }
 
 func FromAgentCardPreview(p *appregistry.AgentCardPreview) PreviewAgentCardResponse {
@@ -40,5 +43,6 @@ func FromAgentCardPreview(p *appregistry.AgentCardPreview) PreviewAgentCardRespo
 		CardDigest:      p.CardDigest,
 		Versions:        versions,
 		DefaultVersion:  string(p.DefaultVersion),
+		SkillScan:       p.SkillScan,
 	}
 }

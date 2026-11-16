@@ -17,6 +17,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,8 +52,9 @@ func TestService_SyncRecordsHeartbeatSentAfterHello(t *testing.T) {
 		DeploymentType:     "self-hosted",
 		TrustGuardBaseURL:  "https://trustguard.eu.example.com",
 		TrustGuardClientID: "tgc_eu",
+		AcceptsSecretRefs:  true,
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("MarkHeartbeat = %+v, want %+v", got, want)
 	}
 

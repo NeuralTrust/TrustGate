@@ -18,6 +18,7 @@ import (
 	"context"
 	"iter"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
@@ -39,6 +40,7 @@ const (
 	ProviderCohere           = provider.Cohere
 	ProviderMoonshot         = provider.Moonshot
 	ProviderDigitalOcean     = provider.DigitalOcean
+	ProviderWatsonx          = provider.Watsonx
 )
 
 type Config struct {
@@ -70,6 +72,20 @@ type Credentials struct {
 	AwsBedrock *AwsBedrock       `json:"aws,omitempty"`
 	Azure      *Azure            `json:"azure,omitempty"`
 	GCP        *GCP              `json:"gcp,omitempty"`
+	// PoolKey keys pooled clients built from credentials that came from
+	// secret references: "ref:<registry>:<fingerprint>". It changes when a
+	// referenced value rotates, even when the key's id does not. Empty for
+	// stored credentials, which keep their usual pool keys.
+	PoolKey string `json:"-"`
+}
+
+// RefPoolKeyPrefix returns the part of a PoolKey shared by every version of
+// one registry's referenced credentials.
+func RefPoolKeyPrefix(poolKey string) string {
+	if i := strings.LastIndex(poolKey, ":"); i > 0 {
+		return poolKey[:i+1]
+	}
+	return poolKey
 }
 
 type GCP struct {

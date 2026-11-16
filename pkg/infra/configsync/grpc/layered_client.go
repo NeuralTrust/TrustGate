@@ -117,7 +117,7 @@ func (c *Client) fetchLayeredOrSnapshot(ctx context.Context, etag string, starte
 // version, and returns the fragments concatenated in manifest order. Nothing
 // is returned unless every fragment arrived and verified.
 func (c *Client) fetchLayered(ctx context.Context, etag string, stats *pullStats) ([]byte, string, bool, error) {
-	manifest, err := c.cli.GetManifest(ctx, &snapshotpb.GetManifestRequest{AppliedVersion: etag, InstanceId: c.instanceID})
+	manifest, err := c.cli.GetManifest(ctx, &snapshotpb.GetManifestRequest{AppliedVersion: etag, InstanceId: c.instanceID, AcceptsSecretRefs: true})
 	if err != nil {
 		if status.Code(err) == codes.Unimplemented {
 			return nil, "", false, fmt.Errorf("%w: %w", errLayeredUnavailable, err)

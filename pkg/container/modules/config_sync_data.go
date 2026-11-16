@@ -67,7 +67,7 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, enforcement *appusage.Enforcement, logger *slog.Logger) (*configsyncgrpc.Client, error) {
+	if err := c.Provide(func(cfg *config.Config, enforcement *appusage.Enforcement, stores *SecretStores, logger *slog.Logger) (*configsyncgrpc.Client, error) {
 		client, err := configsyncgrpc.NewClient(cfg.ConfigSync, logger)
 		if err != nil {
 			return nil, err
@@ -80,6 +80,10 @@ func ConfigSyncData(c *container.Container) error {
 			TrustGuardBaseURL:  dataplane.ReportableURL(cfg.TrustGuard.BaseURL),
 			TrustGuardClientID: cfg.TrustGuard.ClientID,
 		})
+		if stores != nil && stores.Cache != nil {
+			client.SetSecretStoreReporter(stores.Cache.Statuses)
+			client.SetSecretRefReporter(stores.Materializer.Health)
+		}
 		return client, nil
 	}); err != nil {
 		return err
@@ -135,6 +139,7 @@ func ConfigSyncData(c *container.Container) error {
 		logger *slog.Logger,
 		cfg *config.Config,
 		status *configsync.SnapshotStatus,
+		stores *SecretStores,
 	) *configsync.Worker[*readmodel.Snapshot] {
 		return configsync.NewWorker(fetcher, store, transport, lkg, codec, logger, configsync.WorkerConfig{
 			PollInterval: cfg.ConfigSync.PollInterval,
@@ -142,6 +147,7 @@ func ConfigSyncData(c *container.Container) error {
 			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
 		}, configsync.WithStatus[*readmodel.Snapshot](status), configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
 			cacheManager.ClearAllTTLMaps()
+			stores.Prewarm()
 			logger.Debug("config-sync applied new snapshot; cleared derived caches",
 				slog.String("component", "configsync"))
 		}))
