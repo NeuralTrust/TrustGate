@@ -279,7 +279,7 @@ func (p *Plugin) BedrockNative() appplugins.BedrockNativeBehavior {
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if !p.tokens.configured() {
 		if p.v2 {
-			return fmt.Errorf("trustguard_v2: client credentials are not configured (set TRUSTGUARD_V2_CLIENT_ID and TRUSTGUARD_V2_CLIENT_SECRET)")
+			return fmt.Errorf("trustguard_v2: client credentials are not configured (set TRUSTGUARD_CLIENT_ID and TRUSTGUARD_CLIENT_SECRET)")
 		}
 		return fmt.Errorf("trustguard: client credentials are not configured (set TRUSTGUARD_CLIENT_ID and TRUSTGUARD_CLIENT_SECRET)")
 	}
