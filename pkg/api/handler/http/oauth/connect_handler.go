@@ -363,7 +363,7 @@ func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 // before. A page the ticket does not scope to one server, or whose server is
 // already here, is returned as it is.
 func (h *ConnectHandler) awaitServer(ctx context.Context, ticket string, page *appoauth.ConnectPage) *appoauth.ConnectPage {
-	if strings.TrimSpace(page.Code) == "" || len(providerRowsForPage(page)) > 0 || h.holdFor <= 0 {
+	if strings.TrimSpace(page.Code) == "" || serverOnPage(page) || h.holdFor <= 0 {
 		return page
 	}
 	deadline := time.NewTimer(h.holdFor)
@@ -382,11 +382,17 @@ func (h *ConnectHandler) awaitServer(ctx context.Context, ticket string, page *a
 				return page
 			}
 			page = next
-			if len(providerRowsForPage(page)) > 0 {
+			if serverOnPage(page) {
 				return page
 			}
 		}
 	}
+}
+
+// serverOnPage reports whether the server a focused page is for has reached
+// this plane: as an account to connect, or as keys to enter.
+func serverOnPage(page *appoauth.ConnectPage) bool {
+	return len(providerRowsForPage(page)) > 0 || len(page.UserHeaders) > 0
 }
 
 func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {

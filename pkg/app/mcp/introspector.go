@@ -66,5 +66,5 @@ func (i *introspector) ListRegistryTools(ctx context.Context, gatewayID ids.Gate
 
 // notIntrospectable reports whether dialing this registry needs a principal.
 func notIntrospectable(reg *registrydomain.Registry) bool {
-	return perPrincipalAuth(reg) || reg.MCPTarget.HasURLVariables()
+	return perPrincipalAuth(reg) || reg.MCPTarget.HasURLVariables() || reg.MCPTarget.HasUserHeaders()
 }

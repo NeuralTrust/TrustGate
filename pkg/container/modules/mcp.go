@@ -168,6 +168,12 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(registryhttp.NewSharedAccountHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideRegistryUserHeaders); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewUserHeadersHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
 		return err
 	}
@@ -659,6 +665,17 @@ func MCPVaultRedis(c *container.Container) error {
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
+}
+
+// provideRegistryUserHeaders serves an admin's view of the per-user header
+// values people hold for an instance.
+func provideRegistryUserHeaders(
+	registries appregistry.Finder,
+	vault vaultdomain.Repository,
+	connect appoauth.ConnectService,
+	logger *slog.Logger,
+) appregistry.UserHeaderAdmin {
+	return appregistry.NewUserHeaderAdmin(registries, vault, connect, logger)
 }
 
 // provideRegistrySharedAccounts serves the account an MCP instance holds for
