@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -95,9 +96,6 @@ func (p *Plugin) inspectSegment(
 	}
 	if !p.tokens.configured() {
 		return p.segmentGuardFailure(ctx, in, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
-	}
-	if p.v2 && protocolFor(in.Request.ConsumerType) == protocolA2A {
-		return segmentAllow(), nil
 	}
 	traceID := gatewayTraceID(ctx)
 	// Counted here, after every check that can skip the call, so the position is
@@ -208,7 +206,7 @@ func (p *Plugin) recordStreamOutcome(
 	}
 	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
 	if p.failClosed(in) && (data.FailedClosed || failure != nil) {
-		data.FailureMode = failureModeClosed
+		data.FailureMode = pluginutil.FailureModeClosed
 	}
 	// A stream that was cut reports blocked even if earlier blocks failed
 	// open; those still count in trustguard_evaluate_failures_total.

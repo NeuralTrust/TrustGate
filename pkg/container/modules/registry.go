@@ -118,6 +118,8 @@ type registryDeleterCleaners struct {
 	Grants   storeaccessdomain.Repository         `optional:"true"`
 	Everyone storeaccessdomain.EveryoneRepository `optional:"true"`
 	Installs installationdomain.Repository        `optional:"true"`
+	// Vault holds per-user header values, removed with their registry.
+	Vault vaultdomain.Repository `optional:"true"`
 }
 
 func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.DeleterOption {
@@ -127,6 +129,11 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 	}
 	if p.Everyone != nil {
 		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
+	}
+	if p.Vault != nil {
+		if cleaner := appregistry.NewUserHeaderValuesCleaner(p.Vault, logger); cleaner != nil {
+			opts = append(opts, appregistry.WithAfterDeleteCleaner(cleaner))
+		}
 	}
 	if denier, ok := p.Installs.(installationdomain.PendingDenier); ok {
 		opts = append(opts, appregistry.WithDependentCleaner(appstore.NewDeletedServerRequests(denier, logger)))

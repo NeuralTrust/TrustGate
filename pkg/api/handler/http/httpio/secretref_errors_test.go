@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/secretref"
 )
@@ -37,6 +38,8 @@ func TestSecretReferenceErrorCodes(t *testing.T) {
 		secretref.ErrStoreUnverified:        {422, "secret_store_unverified"},
 		secretref.ErrMissingScope:           {403, "missing_scope"},
 		registry.ErrSecretUnavailable:       {503, "secret_unavailable"},
+		secretref.ErrTestRunsOnDataPlane:    {409, "test_runs_on_data_plane"},
+		policy.ErrTestRunsOnDataPlane:       {409, "test_runs_on_data_plane"},
 	}
 	for sentinel, want := range tests {
 		status, body := MapDomainError(fmt.Errorf("llm_target.auth.api_key.api_key: %w", sentinel))

@@ -256,6 +256,29 @@ func TestForwarderRefusesWithoutCallingTheAgent(t *testing.T) {
 	}
 }
 
+func TestForwarderSaysWhyAMethodIsNotFound(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		v       a2a.Version
+		method  string
+		allowed []string
+		data    string
+	}{
+		{name: "not of the pinned version", v: a2a.Version03, method: "SendMessage", data: `{"reason":"method_not_in_version","version":"0.3"}`},
+		{name: "outside allowed methods", v: a2a.Version10, method: "GetTask", allowed: []string{"SendMessage"}, data: `{"reason":"method_not_allowed","version":"1.0"}`},
+	}
+	for _, tc := range cases {
+		ag := newAgent(t, answer(nil))
+		h := newHarness(t, tc.v, ag.URL, allow)
+		h.agent.A2ATarget.AllowedMethods = tc.allowed
+		_, rpcErr := h.forwarder.Prepare(context.Background(), h.call(t, rpcRequest(tc.method, `{"id":"t"}`), nil))
+		require.NotNil(t, rpcErr, tc.name)
+		assert.Equal(t, a2a.CodeMethodNotFound, rpcErr.Code, tc.name)
+		assert.JSONEq(t, tc.data, string(rpcErr.Data), tc.name)
+	}
+}
+
 func TestForwarderUpstreamFailures(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

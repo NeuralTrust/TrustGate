@@ -390,8 +390,16 @@ not.
 ## Policies
 
 Only plugins that declare A2A attach to an A2A consumer: `rate_limiter`,
-`request_size_limiter` and `trustguard` (not `trustguard_v2`). Global
-policies of other plugins are left out of A2A plans.
+`request_size_limiter`, `trustguard` and `trustguard_v2`. Global policies of
+other plugins are left out of A2A plans.
+
+TrustGuard evaluates an A2A call with `protocol: "a2a"`, as an LLM chat: the
+text and data parts as a `user` message on input and an `assistant` message on
+output, file parts as `attachments`, the application as `application_id`, and
+the caller's `contextId` as `session_id`, so conversation detectors score the
+turns of one A2A conversation. An A2A call sends no `attributes.model`. A
+masking verdict cannot be applied to A2A parts, so it blocks the call
+(`-32090`, `mask_unsupported`) in a mode that blocks.
 
 Plugins see a normalised body, the same for both versions:
 
@@ -449,11 +457,22 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 413, and 402 when the gateway's usage plan is exhausted (`-32092`,
 `plan_unavailable`).
 
+The 401, 403 and 404 refusals keep their status and carry `-32094`, with
+`id` null since the request was not read, and `error.data.reason`:
+`unauthenticated`, `credential_not_allowed`, `caller_not_allowed`,
+`no_application`, `invalid_end_user`, or `gateway_data_unavailable` (500).
+On `/v1/chat/completions` they are OpenAI errors instead:
+`{"error": {"message", "type", "code"}}` with the reason as `code`.
+
+A request without an `id` member is a notification: it is answered `204`
+with no body, and nothing reaches the agent (A2A has no notification
+method).
+
 | Code | Meaning | `error.data` |
 |---|---|---|
 | `-32700` | Body is not JSON | |
-| `-32600` | Not a single JSON-RPC 2.0 request with an `id`, `Content-Type` is not `application/json`, or the request, its `params`, `message` or `configuration` or one of its parts names a key twice (ignoring case and underscores) | |
-| `-32601` | Method not of the pinned version, unknown, or outside `allowed_methods` | |
+| `-32600` | Not a single JSON-RPC 2.0 request with an `id` (a null or non-scalar `id`; no `id` at all is a notification), `Content-Type` is not `application/json`, or the request, its `params`, `message` or `configuration` or one of its parts names a key twice (ignoring case and underscores) | |
+| `-32601` | Method not of the pinned version, unknown, or outside `allowed_methods` | `{"reason": "method_not_in_version" \| "method_not_allowed", "version": "<pinned version>"}` |
 | `-32602` | Params lack the message or the task `id`, `referenceTaskIds` is not a list of up to 32 strings, or a part cannot be read | |
 | `-32001` | Task or context not found or not the caller's | 1.0: `ErrorInfo` with `TASK_NOT_FOUND` |
 | `-32003` | Push notifications refused | |
@@ -463,6 +482,7 @@ JSON-RPC errors are answered with HTTP 200, except 401, 403 and 404 above,
 | `-32091` | Rate limited | `{"retry_after": <seconds>}` |
 | `-32092` | The gateway could not complete the call | `{"reason": "<reason>"}`; with `upstream_error` and `invalid_upstream_response`, also `upstream_status`, the HTTP status the agent answered with something that was not a JSON-RPC response |
 | `-32093` | The identity mode needs an IdP user | `{"reason": "identity_required"}` |
+| `-32094` | Refused before reading the call: no valid credential, a credential or caller the application does not take, no application at the path (HTTP 401, 403, 404) | `{"reason": "<reason>"}` |
 
 `-32092` reasons: `upstream_unreachable`, `upstream_timeout`,
 `upstream_error`, `invalid_upstream_response`, `response_too_large`,

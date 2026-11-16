@@ -64,8 +64,6 @@ const (
 	skipReasonEmptyResponseBody   = "empty_response_body"
 	skipReasonStreamingMismatch   = "streaming_stage_mismatch"
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
-	// skipReasonUnsupportedProtocol is a protocol the /v2 engine does not evaluate (a2a).
-	skipReasonUnsupportedProtocol = "unsupported_protocol"
 	skipReasonObserveMode         = "observe_mode"
 	// skipReasonProviderNotStreaming marks a response leg handed to per-block
 	// inspection that never got a block to inspect: the provider
@@ -246,9 +244,6 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	if p.v2 {
-		return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
-	}
 	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP, appplugins.ProtocolA2A}
 }
 
@@ -348,11 +343,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// failure of the guard, not a finding, so it fails open like any
 	// other. Checked only once there is something to inspect, so the failure
 	// count is the traffic that actually went through uninspected.
-	if p.v2 && !mcpMode && protocolFor(in.Request.ConsumerType) == protocolA2A {
-		_, _, halt := p.skipInspection(ctx, in, transformTarget{isResponse: direction == directionOutput}, direction, skipReasonUnsupportedProtocol)
-		return halt.result, halt.err
-	}
-
 	baseURL := p.baseURL
 	if baseURL == "" {
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonBaseURLMissing, nil)
@@ -1195,7 +1185,7 @@ func (p *Plugin) guardFailureOmitting(
 		AttachmentsNotInspected: attachmentsOmitted,
 	}
 	if failClosed {
-		failure.FailureMode = failureModeClosed
+		failure.FailureMode = pluginutil.FailureModeClosed
 	}
 	if reason == failureReasonVerdictIncomplete {
 		failure.FailureDetail = detail
@@ -1220,7 +1210,7 @@ func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
 
 // failClosed reports whether the policy asks to refuse what TrustGuard cannot
 // evaluate (failure_mode: closed). Settings that do not parse are read
-// leniently (failureModeFromRaw), so a closed policy whose settings are invalid
+// leniently (pluginutil.FailClosedFromRaw), so a closed policy whose settings are invalid
 // is refused as config_invalid instead of silently failing open.
 func (p *Plugin) failClosed(in appplugins.ExecInput) bool {
 	return p.failClosedOf(in.Config.Settings)
@@ -1230,7 +1220,7 @@ func (p *Plugin) failClosedOf(settings map[string]any) bool {
 	if cfg, err := p.config(settings); err == nil {
 		return cfg.failClosed()
 	}
-	return failureModeFromRaw(settings) == failureModeClosed
+	return pluginutil.FailClosedFromRaw(settings)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {

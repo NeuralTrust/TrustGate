@@ -92,8 +92,10 @@ type adminRouterParams struct {
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 	// RegistrySharedAccount is absent on planes without the connect service.
 	RegistrySharedAccount *registryhttp.SharedAccountHandler `optional:"true"`
-	SecretStores          *secretstorehttp.ListHandler       `optional:"true"`
-	SecretStoreTest       *secretstorehttp.TestHandler       `optional:"true"`
+	// RegistryUserHeaders is absent on planes without the connect service.
+	RegistryUserHeaders *registryhttp.UserHeadersHandler `optional:"true"`
+	SecretStores        *secretstorehttp.ListHandler     `optional:"true"`
+	SecretStoreTest     *secretstorehttp.TestHandler     `optional:"true"`
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -103,6 +105,7 @@ type adminRouterParams struct {
 	GlobalPolicy    *policyhttp.GlobalPolicyHandler
 	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
+	TestPolicy      *policyhttp.TestConnectionHandler
 
 	CreateConsumer          *consumerhttp.CreateConsumerHandler
 	GetConsumer             *consumerhttp.GetConsumerHandler
@@ -198,6 +201,7 @@ func ServerAdmin(c *container.Container) error {
 				AgentCard:                 p.AgentCard,
 				ListRegistryTools:         p.ListRegistryTools,
 				RegistrySharedAccount:     p.RegistrySharedAccount,
+				RegistryUserHeaders:       p.RegistryUserHeaders,
 				SecretStores:              p.SecretStores,
 				SecretStoreTest:           p.SecretStoreTest,
 				CreatePolicy:              p.CreatePolicy,
@@ -208,6 +212,7 @@ func ServerAdmin(c *container.Container) error {
 				GlobalPolicy:              p.GlobalPolicy,
 				MCPWidePolicy:             p.MCPWidePolicy,
 				DuplicatePolicy:           p.DuplicatePolicy,
+				TestPolicyConnection:      p.TestPolicy,
 				CreateConsumer:            p.CreateConsumer,
 				GetConsumer:               p.GetConsumer,
 				ListConsumer:              p.ListConsumer,

@@ -109,14 +109,14 @@ func (x *Exchange) prepare(ctx context.Context) *RPCError {
 	target := x.call.Agent.A2ATarget
 	kind, ok := MethodKind(x.version, x.call.Request.Method)
 	if !ok {
-		return MethodNotFound()
+		return MethodNotFound(ReasonMethodNotInVersion, x.version)
 	}
 	x.kind = kind
 	if refusal := kind.Refusal(x.version); refusal != nil {
 		return refusal
 	}
 	if len(target.AllowedMethods) > 0 && !slices.Contains(target.AllowedMethods, x.call.Request.Method) {
-		return MethodNotFound()
+		return MethodNotFound(ReasonMethodNotAllowed, x.version)
 	}
 	if kind.Streams() && (!Streaming(target.Card) || !x.provider.capabilities().streams) {
 		return UnsupportedOperation(x.version)

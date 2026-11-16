@@ -32,6 +32,81 @@
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/policies/test-connection": {
+            "post": {
+                "description": "Runs the policy connection test from this data plane's own network, so the result reflects what serving traffic will reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Same body and outcomes as the admin policy test-connection endpoint, plus code \"not_synced\" when this plane's config snapshot does not carry the policy (or its latest key) yet: retry shortly.",
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "Test a policy's connection from the data plane",
+                "parameters": [
+                    {
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest"
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/__diagnostics/gateways/{gateway_id}/registries/test-connection": {
             "post": {
                 "description": "Runs the registry connection probe from this data plane's own network, so the result reflects what serving traffic will actually reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Accepts the same body as the admin test-connection endpoint: a stored registry (registry_id, which must have synced to this plane — stage \"not_synced\" means retry) or an inline candidate (provider + auth).",
@@ -3195,6 +3270,107 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/policies/test-connection": {
+            "post": {
+                "description": "Checks, with the settings as the form holds them, that the gateway can use the service the policy calls (today google_model_armor). In edit mode pass policy_id: a masked credential then stands for the stored one, as long as the fields it is bound to (location, project) are unchanged. Every probe outcome answers 200; read \"ok\" and \"code\" (ok, invalid_credentials, permission_denied, api_disabled, template_not_found, throttled, timeout, unreachable, invalid_config, reenter_credentials). A gateway served by a hybrid data plane answers 409: run the test on its data plane.",
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Test a policy's connection to its upstream service",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest"
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/policies/{id}": {
             "get": {
                 "description": "Returns a single policy by id.",
@@ -5182,6 +5358,316 @@
                     },
                     "502": {
                         "description": "Bad Gateway",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/user-headers": {
+            "get": {
+                "description": "Lists every person holding a value for this MCP instance's per-user headers, when each was written and whether the upstream refused it. Values are never returned.",
+                "tags": [
+                    "registries"
+                ],
+                "summary": "List who holds per-user header values",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHoldersResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/user-headers/links": {
+            "post": {
+                "description": "Mints the connect page one person walks to enter their own values for this instance. Hand it to that person: it acts as them. consumer_path names the virtual MCP that binds the server and is required for a custom server.",
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Issue one person's link to enter their header values",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderLinkRequest"
+                            }
+                        }
+                    },
+                    "description": "Whose link",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderLinkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/user-headers/values": {
+            "put": {
+                "description": "Stores values for many people at once (up to 1000 rows). Every row is validated before any is written; values are encrypted and never returned.",
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Load per-user header values in bulk",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportRequest"
+                            }
+                        }
+                    },
+                    "description": "Values to load",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Removes the values one person holds for this instance (principal_sub), or every person's when principal_sub is omitted. The next call of each affected person answers with a connect link.",
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Reset per-user header values",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "One person; omitted resets everyone",
+                        "name": "principal_sub",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -9238,6 +9724,17 @@
                 "description": "An embedContent or batchEmbedContents request body",
                 "required": true
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest"
+                        }
+                    }
+                },
+                "description": "Policy settings to test",
+                "required": true
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.RotateLLMKeyRequest": {
                 "content": {
                     "application/json": {
@@ -11215,6 +11712,23 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.TestConnectionRequest": {
+                "type": "object",
+                "properties": {
+                    "policy_id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "settings": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "slug": {
+                        "type": "string",
+                        "example": "google_model_armor"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
                 "type": "object",
                 "properties": {
@@ -11401,6 +11915,24 @@
                         "items": {
                             "type": "string"
                         }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.TestConnectionResponse": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "example": "permission_denied"
+                    },
+                    "latency_ms": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "ok": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -11773,6 +12305,38 @@
                     },
                     "url": {
                         "type": "string"
+                    },
+                    "user_headers": {
+                        "description": "UserHeaders declares the upstream headers each caller fills with their\nown value. Omitted on update, the stored declarations are kept; an empty\nlist removes them all.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPUserHeaderRequest"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPUserHeaderRequest": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "description": "Description is the help shown to a person entering their value.",
+                        "type": "string"
+                    },
+                    "name": {
+                        "description": "Name is the HTTP header sent upstream, e.g. X-API-Key.",
+                        "type": "string"
+                    },
+                    "required": {
+                        "description": "Required refuses a call with a connect link until the caller has a value.",
+                        "type": "boolean"
+                    },
+                    "scheme": {
+                        "description": "Scheme is written before the value, e.g. Bearer. Empty sends it raw.",
+                        "type": "string"
+                    },
+                    "secret": {
+                        "description": "Secret keeps the value masked once entered.",
+                        "type": "boolean"
                     }
                 }
             },
@@ -12027,6 +12591,49 @@
                     "provider_options": {
                         "type": "object",
                         "additionalProperties": {}
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportRequest": {
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportValue"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderImportValue": {
+                "type": "object",
+                "properties": {
+                    "header": {
+                        "type": "string"
+                    },
+                    "principal_sub": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "description": "Value is the person's own value, stored encrypted and never returned.",
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UserHeaderLinkRequest": {
+                "type": "object",
+                "properties": {
+                    "consumer_path": {
+                        "description": "ConsumerPath is the virtual MCP the person reaches the server through,\ne.g. /dev/mcp. Required for a custom server; empty uses the MCP Store,\nwhich serves only the servers it materialised.",
+                        "type": "string"
+                    },
+                    "principal_sub": {
+                        "description": "PrincipalSub is the person: the subject their token carries, or\napp:<consumer_id>:<end_user> for an end user an application names.",
+                        "type": "string"
+                    },
+                    "resume_url": {
+                        "description": "ResumeURL is where the page sends the person once they are done.",
+                        "type": "string"
                     }
                 }
             },
@@ -12442,6 +13049,33 @@
                     },
                     "url": {
                         "type": "string"
+                    },
+                    "user_headers": {
+                        "description": "UserHeaders are the upstream headers each caller fills with their own\nvalue. Only the declarations: values live per person in the vault.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPUserHeaderResponse"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPUserHeaderResponse": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "boolean"
+                    },
+                    "scheme": {
+                        "type": "string"
+                    },
+                    "secret": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -12737,6 +13371,72 @@
                         "items": {
                             "type": "string"
                         }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderCountResponse": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHolderResponse": {
+                "type": "object",
+                "properties": {
+                    "missing": {
+                        "description": "Missing lists the required headers this person has no usable value for.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "principal_sub": {
+                        "type": "string"
+                    },
+                    "values": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderValueResponse"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHoldersResponse": {
+                "type": "object",
+                "properties": {
+                    "holders": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderHolderResponse"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderLinkResponse": {
+                "type": "object",
+                "properties": {
+                    "consumer_path": {
+                        "type": "string"
+                    },
+                    "ticket": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.UserHeaderValueResponse": {
+                "type": "object",
+                "properties": {
+                    "header": {
+                        "type": "string"
+                    },
+                    "rejected_at": {
+                        "description": "RejectedAt is set when the upstream refused the value with a 401.",
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
                     }
                 }
             },

@@ -70,6 +70,9 @@ type errModelArmor struct {
 	// configShaped is set from the google.rpc error body when a 400 is about the
 	// resource the policy names and not about what was sent.
 	configShaped bool
+	// reason is the google.rpc.ErrorInfo reason, such as SERVICE_DISABLED. The
+	// error message itself is never kept.
+	reason string
 }
 
 var _ pluginutil.Rejection = (*errModelArmor)(nil)
@@ -388,6 +391,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, &errModelArmor{
 			action: action, status: res.StatusCode, configShaped: rejectsResource(res.StatusCode, raw),
+			reason:     errorInfoReason(raw),
 			retryAfter: pluginutil.ParseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
 		}
 	}
@@ -458,8 +462,7 @@ type credentialSources struct {
 	impersonate func(ctx context.Context, email, scope string) (string, error)
 }
 
-func newCredentialSources() *credentialSources {
-	adc := gcpauth.NewApplicationDefaultCache()
+func newCredentialSources(adc *gcpauth.ApplicationDefaultCache) *credentialSources {
 	return &credentialSources{
 		adc:         adc.Token,
 		serviceAcct: gcpauth.NewServiceAccountCache().Token,
@@ -545,6 +548,8 @@ type rpcStatus struct {
 	Error struct {
 		Message string `json:"message"`
 		Details []struct {
+			Type            string `json:"@type"`
+			Reason          string `json:"reason"`
 			FieldViolations []struct {
 				Field string `json:"field"`
 			} `json:"fieldViolations"`
@@ -559,9 +564,10 @@ var resourceRejectionMessage = regexp.MustCompile(`(?i)^(invalid|unsupported|unk
 
 // rejectsResource reports whether a 400 says the resource named by the policy
 // (the template path made of project, location and template) is the problem: a
-// BadRequest field violation on the resource name, or a message that opens by
-// calling the resource name, location or template invalid. Anything else is
-// read as the content's.
+// BadRequest field violation on the resource name, an ErrorInfo reason of
+// TEMPLATE_NOT_FOUND (how Model Armor answers a template that does not exist),
+// or a message that opens by calling the resource name, location or template
+// invalid. Anything else is read as the content's.
 func rejectsResource(status int, body []byte) bool {
 	if status != http.StatusBadRequest {
 		return false
@@ -571,6 +577,9 @@ func rejectsResource(status int, body []byte) bool {
 		return false
 	}
 	for _, detail := range parsed.Error.Details {
+		if detail.Type == errorInfoType && detail.Reason == reasonTemplateMissing {
+			return true
+		}
 		for _, violation := range detail.FieldViolations {
 			if violation.Field == "name" || violation.Field == "parent" {
 				return true
@@ -578,4 +587,22 @@ func rejectsResource(status int, body []byte) bool {
 		}
 	}
 	return resourceRejectionMessage.MatchString(strings.TrimSpace(parsed.Error.Message))
+}
+
+const (
+	errorInfoType         = "type.googleapis.com/google.rpc.ErrorInfo"
+	reasonTemplateMissing = "TEMPLATE_NOT_FOUND"
+)
+
+func errorInfoReason(body []byte) string {
+	var parsed rpcStatus
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	for _, detail := range parsed.Error.Details {
+		if detail.Type == errorInfoType && detail.Reason != "" {
+			return detail.Reason
+		}
+	}
+	return ""
 }
