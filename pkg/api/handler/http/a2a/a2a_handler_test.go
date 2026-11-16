@@ -149,9 +149,9 @@ func TestRPCRefusals(t *testing.T) {
 		{name: "not JSON content", contentType: "text/plain", body: `{}`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
 		{name: "not JSON", contentType: "application/json", body: `{`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON payload"}}`},
 		{name: "batch", contentType: "application/json", body: `[]`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
-		{name: "JSON media type in another case", contentType: "Application/JSON; charset=utf-8", body: `{"jsonrpc":"2.0","id":4,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"Method not found"}}`},
+		{name: "JSON media type in another case", contentType: "Application/JSON; charset=utf-8", body: `{"jsonrpc":"2.0","id":4,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"Method not found","data":{"reason":"method_not_in_version","version":"1.0"}}}`},
 		{name: "JSON suffix is not JSON", contentType: "application/jsonl", body: `{}`, want: `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
-		{name: "0.3 method", contentType: "application/json", body: `{"jsonrpc":"2.0","id":3,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"Method not found"}}`},
+		{name: "0.3 method", contentType: "application/json", body: `{"jsonrpc":"2.0","id":3,"method":"message/send","params":{}}`, want: `{"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"Method not found","data":{"reason":"method_not_in_version","version":"1.0"}}}`},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(tc.body))
@@ -161,7 +161,13 @@ func TestRPCRefusals(t *testing.T) {
 		assert.JSONEq(t, tc.want, string(body), tc.name)
 	}
 
-	status, _ := do(t, app, httptest.NewRequest(http.MethodPost, "/research-bot/agents/unknown", strings.NewReader(`{}`)))
+	notification := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"jsonrpc":"2.0","method":"SendMessage","params":{}}`))
+	notification.Header.Set("Content-Type", "application/json")
+	status, body := do(t, app, notification)
+	assert.Equal(t, http.StatusNoContent, status, "a notification is not answered")
+	assert.Empty(t, body)
+
+	status, _ = do(t, app, httptest.NewRequest(http.MethodPost, "/research-bot/agents/unknown", strings.NewReader(`{}`)))
 	assert.Equal(t, http.StatusNotFound, status)
 }
 

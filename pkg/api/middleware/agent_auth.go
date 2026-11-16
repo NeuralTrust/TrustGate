@@ -62,7 +62,7 @@ func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 		}
 		id, err := m.resolver.Resolve(c)
 		if err != nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			return refuseAgentCall(c, fiber.StatusUnauthorized, agentRefusalUnauthenticated, "Unauthenticated")
 		}
 		gw, err := m.gateways.FindByID(c.UserContext(), id.GatewayID)
 		if err != nil {
@@ -70,25 +70,25 @@ func (m *AgentAuthMiddleware) Middleware() fiber.Handler {
 				slog.String("gateway_id", id.GatewayID.String()),
 				slog.String("auth_id", id.AuthID.String()),
 				slog.String("error", err.Error()))
-			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			return refuseAgentCall(c, fiber.StatusUnauthorized, agentRefusalUnauthenticated, "Unauthenticated")
 		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), id.GatewayID)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
+			return refuseAgentCall(c, fiber.StatusInternalServerError, agentRefusalUnavailable, "Failed to load gateway data")
 		}
 		rc, ok := data.MatchAgentPath(c.Path())
 		if !ok || rc.Consumer.Type != consumerdomain.TypeA2A {
-			return fiber.NewError(fiber.StatusNotFound, "no agent application for this path")
+			return refuseAgentCall(c, fiber.StatusNotFound, agentRefusalNoApplication, "No agent application for this path")
 		}
 		if !slices.Contains(rc.Consumer.AuthIDs, id.AuthID) {
-			return fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
+			return refuseAgentCall(c, fiber.StatusForbidden, agentRefusalCredentialNotAllowed, "Credential not allowed for this application")
 		}
 		if !consumerdomain.AdmitsPrincipal(rc.Consumer, id.Principal) {
-			return fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
+			return refuseAgentCall(c, fiber.StatusForbidden, agentRefusalCallerNotAllowed, "Caller not allowed for this application")
 		}
 		principal, err := agentPrincipal(rc.Consumer, id.Principal, strings.TrimSpace(c.Get(consumerdomain.EndUserHeader)))
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return refuseAgentCall(c, fiber.StatusBadRequest, agentRefusalInvalidEndUser, err.Error())
 		}
 		id.Principal = principal
 		attachIdentity(c, id, gw, data)
@@ -106,22 +106,22 @@ func (m *AgentAuthMiddleware) playgroundCall(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	gw, err := m.gateways.FindBySlug(ctx, strings.TrimSpace(c.Get(resolver.HeaderGatewaySlug)))
 	if err != nil || gw == nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+		return refuseAgentCall(c, fiber.StatusUnauthorized, agentRefusalUnauthenticated, "Unauthenticated")
 	}
 	data, err := m.dataFinder.FindByGateway(ctx, gw.ID)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
+		return refuseAgentCall(c, fiber.StatusInternalServerError, agentRefusalUnavailable, "Failed to load gateway data")
 	}
 	rc, ok := data.MatchAgentPath(c.Path())
 	if !ok || rc.Consumer.Type != consumerdomain.TypeA2A {
-		return fiber.NewError(fiber.StatusNotFound, "no agent application for this path")
+		return refuseAgentCall(c, fiber.StatusNotFound, agentRefusalNoApplication, "No agent application for this path")
 	}
 	authCtx, err := m.playground.Resolve(c, gw, rc)
 	if err != nil {
 		if errors.Is(err, resolver.ErrForbidden) {
-			return fiber.NewError(fiber.StatusForbidden, "playground token not allowed for this consumer")
+			return refuseAgentCall(c, fiber.StatusForbidden, agentRefusalCredentialNotAllowed, "Playground token not allowed for this application")
 		}
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+		return refuseAgentCall(c, fiber.StatusUnauthorized, agentRefusalUnauthenticated, "Unauthenticated")
 	}
 	principal := consumerdomain.AppPrincipal(rc.Consumer, nil)
 	if consumerdomain.ValidateEndUser(authCtx.Subject) == nil {

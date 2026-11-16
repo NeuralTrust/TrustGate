@@ -77,12 +77,17 @@ type Request struct {
 	ID     json.RawMessage
 	Method string
 	Params json.RawMessage
+	// Notification marks a request that is valid but has no id member: a
+	// JSON-RPC notification, which is not answered. A2A has no notification
+	// method, so the gateway forwards none.
+	Notification bool
 }
 
 // Decode reads a JSON-RPC 2.0 request made of a single object. The error is
 // -32700 for a body that is not JSON, -32600 for any other body that is not
 // one request. The request comes back with the error when its id
-// could be read, so the error can answer that id.
+// could be read, so the error can answer that id, and with Notification set
+// when the only thing missing is the id member.
 func Decode(body []byte) (*Request, *RPCError) {
 	if !json.Valid(body) {
 		return nil, parseError()
@@ -95,7 +100,12 @@ func Decode(body []byte) (*Request, *RPCError) {
 	if id := bytes.TrimSpace(o["id"]); len(id) > 0 && (id[0] == '"' || id[0] == '-' || (id[0] >= '0' && id[0] <= '9')) {
 		req.ID = id
 	}
-	if o.str("jsonrpc") != "2.0" || req.Method == "" || req.ID == nil || !protocolKeysUnique(body) {
+	if o.str("jsonrpc") != "2.0" || req.Method == "" || !protocolKeysUnique(body) {
+		return req, InvalidRequest()
+	}
+	if req.ID == nil {
+		_, hasID := o["id"]
+		req.Notification = !hasID
 		return req, InvalidRequest()
 	}
 	return req, nil
