@@ -97,9 +97,6 @@ func (p *Plugin) inspectSegment(
 	if !p.tokens.configured() {
 		return p.segmentGuardFailure(ctx, in, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
 	}
-	if p.v2 && protocolFor(in.Request.ConsumerType) == protocolA2A {
-		return segmentAllow(), nil
-	}
 	traceID := gatewayTraceID(ctx)
 	// Counted here, after every check that can skip the call, so the position is
 	// that of an evaluate that is really sent. A block that fails on the wire was

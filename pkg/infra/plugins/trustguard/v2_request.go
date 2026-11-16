@@ -90,7 +90,8 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 		},
 	}
 	if request != nil {
-		if !request.MCP {
+		// An A2A call names an agent, not a model: the agent is application_id.
+		if !request.MCP && !request.A2A {
 			req.Attributes.Model = v2ModelOf(request, body.Direction)
 		} else if server := req.Attributes.MCPServer; server != nil {
 			server.Name = strings.TrimSpace(request.MCPServerName)
