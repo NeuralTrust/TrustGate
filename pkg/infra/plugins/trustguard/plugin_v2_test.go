@@ -31,6 +31,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -205,7 +206,7 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 	assert.Equal(t, "sess-123", got.SessionID)
 	assert.Equal(t, map[string]any{"name": "gpt-4o", "provider": "openai", "requested_name": "gpt-4o-mini"}, got.Attributes["model"])
 	assert.Equal(t, "Bearer v2-token-1", f.headers[0].Get("Authorization"))
-	assert.Equal(t, failureModeOpen, f.headers[0].Get(failureModeHeader))
+	assert.Equal(t, pluginutil.FailureModeOpen, f.headers[0].Get(failureModeHeader))
 	assert.NotEmpty(t, f.headers[0].Get(evaluateTimeoutHeader))
 	assertLLMRequestMessages(t, got.Payload, []string{"system", "user"}, []string{"be safe", "hello world"})
 }
@@ -383,12 +384,12 @@ func TestV2PluginFailureModes(t *testing.T) {
 			assert.Equal(t, decisionFailedOpen, attrs.Decision)
 
 			closed := v2Settings("")
-			closed["failure_mode"] = failureModeClosed
+			closed["failure_mode"] = pluginutil.FailureModeClosed
 			_, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, closed, requestContext(), nil))
 			pe, ok := appplugins.AsPluginError(err)
 			require.True(t, ok, "closed refuses what it could not evaluate, got %v", err)
 			assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-			assert.Equal(t, failureModeClosed, f.lastFailureMode())
+			assert.Equal(t, pluginutil.FailureModeClosed, f.lastFailureMode())
 
 			res, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeObserve, closed, requestContext(), nil))
 			require.NoError(t, err, "observe records the failure and forwards")
@@ -496,7 +497,7 @@ func TestV2PluginStreamedAllowAndFailOpen(t *testing.T) {
 	assert.False(t, verdict.Block, "failure_mode open lets a block TrustGuard could not evaluate through")
 
 	closed := v2Settings(legResponse)
-	closed["failure_mode"] = failureModeClosed
+	closed["failure_mode"] = pluginutil.FailureModeClosed
 	verdict, err = p.InspectSegment(segmentTraceContext(), segmentInput(t, closed),
 		appplugins.StreamSegment{StreamID: "s-4", Seq: 1, Accumulated: "Hello"})
 	require.NoError(t, err)
@@ -545,7 +546,7 @@ func TestV2PluginConfig(t *testing.T) {
 		err := p.ValidateConfig(map[string]any{})
 		require.Error(t, err)
 		assert.True(t, strings.HasPrefix(err.Error(), "trustguard_v2:"), err.Error())
-		require.NoError(t, p.ValidateConfig(map[string]any{"collector_id": testCollectorID, "direction": legRequest, "failure_mode": failureModeClosed}))
+		require.NoError(t, p.ValidateConfig(map[string]any{"collector_id": testCollectorID, "direction": legRequest, "failure_mode": pluginutil.FailureModeClosed}))
 	})
 	t.Run("collector_id is required by v1", func(t *testing.T) {
 		v1 := newTestPlugin(t, adapter.NewRegistry(), "http://unused")

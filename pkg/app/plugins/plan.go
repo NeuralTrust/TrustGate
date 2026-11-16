@@ -189,7 +189,10 @@ func refusalBlocks(inspector StreamInspector, entry chainEntry) bool {
 	return boundsOwnPayload(inspector) && Blocks(entry.mode)
 }
 
-const streamOnErrorFailOpen = "fail_open"
+const (
+	streamOnErrorFailOpen   = "fail_open"
+	streamOnErrorFailClosed = "fail_closed"
+)
 
 // StreamPlan reports whether any entry of the stage takes part in per-segment
 // inspection, and yields the options that entry runs under. The stream guard

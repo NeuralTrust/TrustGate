@@ -1195,7 +1195,7 @@ func (p *Plugin) guardFailureOmitting(
 		AttachmentsNotInspected: attachmentsOmitted,
 	}
 	if failClosed {
-		failure.FailureMode = failureModeClosed
+		failure.FailureMode = pluginutil.FailureModeClosed
 	}
 	if reason == failureReasonVerdictIncomplete {
 		failure.FailureDetail = detail
@@ -1220,7 +1220,7 @@ func retryHasBudget(now, deadline time.Time, budget time.Duration) bool {
 
 // failClosed reports whether the policy asks to refuse what TrustGuard cannot
 // evaluate (failure_mode: closed). Settings that do not parse are read
-// leniently (failureModeFromRaw), so a closed policy whose settings are invalid
+// leniently (pluginutil.FailClosedFromRaw), so a closed policy whose settings are invalid
 // is refused as config_invalid instead of silently failing open.
 func (p *Plugin) failClosed(in appplugins.ExecInput) bool {
 	return p.failClosedOf(in.Config.Settings)
@@ -1230,7 +1230,7 @@ func (p *Plugin) failClosedOf(settings map[string]any) bool {
 	if cfg, err := p.config(settings); err == nil {
 		return cfg.failClosed()
 	}
-	return failureModeFromRaw(settings) == failureModeClosed
+	return pluginutil.FailClosedFromRaw(settings)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
