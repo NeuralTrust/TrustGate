@@ -809,19 +809,6 @@ type TrustGuardConfig struct {
 	Timeout      time.Duration
 	ClientID     string
 	ClientSecret string
-	V2           TrustGuardV2Config
-}
-
-// TrustGuardV2Config is TrustGuard's /v2 engine, which the trustguard_v2 plugin
-// evaluates against.
-// It is the same service as TrustGuard, so BaseURL is TRUSTGUARD_BASE_URL unless
-// TRUSTGUARD_V2_BASE_URL overrides it, and Timeout is TRUSTGUARD_TIMEOUT unless
-// TRUSTGUARD_V2_TIMEOUT does.
-type TrustGuardV2Config struct {
-	BaseURL      string
-	Timeout      time.Duration
-	ClientID     string
-	ClientSecret string
 }
 
 // FirewallComplexityConfig configures the scorer and its expected artifact revision.
@@ -1362,19 +1349,16 @@ func getTrustGuardConfig() TrustGuardConfig {
 			slog.Warn("ignoring removed TrustGuard setting; TrustGuard shadows v1 to v2 itself", slog.String("env", name))
 		}
 	}
-	baseURL := getEnv("TRUSTGUARD_BASE_URL", "")
-	timeout := getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout)
+	for _, name := range []string{"TRUSTGUARD_V2_BASE_URL", "TRUSTGUARD_V2_TIMEOUT", "TRUSTGUARD_V2_CLIENT_ID", "TRUSTGUARD_V2_CLIENT_SECRET"} {
+		if getEnv(name, "") != "" {
+			slog.Warn("ignoring removed TrustGuard setting; every TrustGuard caller uses the TRUSTGUARD_* settings", slog.String("env", name))
+		}
+	}
 	return TrustGuardConfig{
-		BaseURL:      baseURL,
-		Timeout:      timeout,
+		BaseURL:      getEnv("TRUSTGUARD_BASE_URL", ""),
+		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
-		V2: TrustGuardV2Config{
-			BaseURL:      getEnv("TRUSTGUARD_V2_BASE_URL", baseURL),
-			Timeout:      getEnvDuration("TRUSTGUARD_V2_TIMEOUT", timeout),
-			ClientID:     getEnv("TRUSTGUARD_V2_CLIENT_ID", ""),
-			ClientSecret: getEnv("TRUSTGUARD_V2_CLIENT_SECRET", ""),
-		},
 	}
 }
 
