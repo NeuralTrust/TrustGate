@@ -28,6 +28,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -47,10 +48,10 @@ func TestParseConfigFailureMode(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "absent defaults to open", want: failureModeOpen},
-		{name: "empty defaults to open", value: "", set: true, want: failureModeOpen},
-		{name: "open accepted", value: "open", set: true, want: failureModeOpen},
-		{name: "closed accepted", value: "closed", set: true, want: failureModeClosed},
+		{name: "absent defaults to open", want: pluginutil.FailureModeOpen},
+		{name: "empty defaults to open", value: "", set: true, want: pluginutil.FailureModeOpen},
+		{name: "open accepted", value: "open", set: true, want: pluginutil.FailureModeOpen},
+		{name: "closed accepted", value: "closed", set: true, want: pluginutil.FailureModeClosed},
 		{name: "other value rejected", value: "fail_closed", set: true, wantErr: true},
 		{name: "case matters", value: "Closed", set: true, wantErr: true},
 		{name: "non string rejected", value: true, set: true, wantErr: true},
@@ -68,7 +69,7 @@ func TestParseConfigFailureMode(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, cfg.FailureMode)
-			assert.Equal(t, tc.want == failureModeClosed, cfg.failClosed())
+			assert.Equal(t, tc.want == pluginutil.FailureModeClosed, cfg.failClosed())
 		})
 	}
 }
@@ -429,25 +430,6 @@ func TestExecuteClosedAppliesToPreCallFailures(t *testing.T) {
 				assert.Equal(t, closed, extras.FailureMode == "closed")
 			})
 		}
-	}
-}
-
-func TestFailureModeFromRaw(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		in   map[string]any
-		want string
-	}{
-		{"nil", nil, "open"},
-		{"absent", map[string]any{"x": 1}, "open"},
-		{"closed", map[string]any{"failure_mode": "closed"}, "closed"},
-		{"any case and spaces", map[string]any{"Failure_Mode": " Closed "}, "closed"},
-		{"open", map[string]any{"failure_mode": "open"}, "open"},
-		{"garbage", map[string]any{"failure_mode": "fail_closed"}, "open"},
-		{"not a string", map[string]any{"failure_mode": true}, "open"},
-	} {
-		assert.Equal(t, tc.want, failureModeFromRaw(tc.in), tc.name)
 	}
 }
 

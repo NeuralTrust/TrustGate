@@ -20,20 +20,14 @@ import (
 	"strings"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 const (
 	sdpActionBlock     = "block"
 	sdpActionAnonymize = "anonymize"
-)
-
-const (
-	failureModeOpen   = "open"
-	failureModeClosed = "closed"
-	// defaultFailureMode keeps the behaviour policies had before the setting
-	// existed: a guardrail that cannot evaluate lets the request through.
-	defaultFailureMode = failureModeOpen
 )
 
 const (
@@ -120,10 +114,11 @@ type Settings struct {
 	Credentials Credentials `mapstructure:"credentials"`
 	// FailureMode is what a request costs when Model Armor cannot evaluate it
 	// (unreachable, too slow, credentials refused, a block_on filter that
-	// returned no verdict): "open" lets it through, "closed" blocks it in a mode
-	// that blocks and records it in observe. Content Model Armor cannot inspect
-	// (an input failure) is refused in a blocking mode either way. Same contract
-	// as trustguard's failure_mode.
+	// returned no verdict): "open" (the default) lets it through, "closed"
+	// blocks it in a mode that blocks and records it in observe. Content Model
+	// Armor cannot inspect (an input failure) is refused in a blocking mode
+	// either way. Under closed, a block_on filter the template does not enable
+	// refuses every request (filter_not_in_template).
 	FailureMode string `mapstructure:"failure_mode"`
 	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
@@ -149,7 +144,7 @@ func (s *Settings) applyDefaults() {
 		s.SDPAction = sdpActionBlock
 	}
 	if s.FailureMode == "" {
-		s.FailureMode = defaultFailureMode
+		s.FailureMode = pluginutil.DefaultFailureMode
 	}
 	s.Streaming.ApplyDefaults(streamingDefaults)
 }
@@ -200,10 +195,8 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("google_model_armor: sdp_action must be one of block, anonymize")
 	}
-	switch s.FailureMode {
-	case failureModeOpen, failureModeClosed:
-	default:
-		return fmt.Errorf("google_model_armor: failure_mode must be one of open, closed")
+	if err := pluginutil.ValidateFailureMode(PluginName, s.FailureMode); err != nil {
+		return err
 	}
 	if strings.TrimSpace(s.Credentials.ImpersonateServiceAccount) != "" &&
 		strings.TrimSpace(s.Credentials.ServiceAccountJSON) != "" {
@@ -244,25 +237,17 @@ func (p *Plugin) RetiredSettings() []string {
 }
 
 // failClosed reports whether this policy refuses what Model Armor cannot evaluate.
-func (s Settings) failClosed() bool { return s.FailureMode == failureModeClosed }
+func (s Settings) failClosed() bool { return s.FailureMode == pluginutil.FailureModeClosed }
 
-// failureModeFromRaw reads failure_mode straight from a settings map that may
-// not parse: it is closed only when the key (any case, as mapstructure matches
-// it) is a string equal-fold to "closed", and open for everything else. It is
-// used only to decide what a failure costs, so a policy that asked for closed
-// does not silently fail open because some other key made its settings
-// invalid. It never validates: parseConfig is still the one that rejects a bad
-// value.
-func failureModeFromRaw(settings map[string]any) string {
-	for key, v := range settings {
-		if !strings.EqualFold(key, "failure_mode") {
-			continue
-		}
-		if mode, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(mode), failureModeClosed) {
-			return failureModeClosed
-		}
-	}
-	return failureModeOpen
+// keepsMaskOnGap reports whether a usable mask is applied in this mode although
+// some content went without a verdict for an availability reason (a block_on
+// filter the template never enabled, a chunk Model Armor did not answer). It is
+// the one place that rule lives: a mode that blocks keeps the mask, since the
+// de-identified text is already in hand and releasing the original would send
+// the raw data, unless the policy fails closed, which refuses what was not
+// evaluated instead.
+func (s Settings) keepsMaskOnGap(mode policy.Mode) bool {
+	return appplugins.Blocks(mode) && !s.failClosed()
 }
 
 // failClosedOf reports whether a policy with these settings fails closed,
@@ -271,5 +256,5 @@ func failClosedOf(settings map[string]any) bool {
 	if cfg, err := parseConfig(settings); err == nil {
 		return cfg.failClosed()
 	}
-	return failureModeFromRaw(settings) == failureModeClosed
+	return pluginutil.FailClosedFromRaw(settings)
 }

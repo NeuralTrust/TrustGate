@@ -25,12 +25,13 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-// ENG-1718: failure_mode lets a Model Armor policy refuse what Model Armor
-// cannot evaluate, the same contract trustguard's failure_mode has. Open (the
-// default) keeps the behaviour every policy had before the setting existed.
+// failure_mode decides what an availability failure costs a Model Armor
+// policy: open (the default) lets the request through, closed refuses it in a
+// mode that blocks and records it in observe.
 
 func withFailureMode(set map[string]any, mode string) map[string]any {
 	set["failure_mode"] = mode
@@ -42,7 +43,7 @@ func TestParseConfigFailureMode(t *testing.T) {
 
 	cfg, err := parseConfig(validSettings())
 	require.NoError(t, err)
-	assert.Equal(t, failureModeOpen, cfg.FailureMode, "an absent failure_mode keeps today's fail-open behaviour")
+	assert.Equal(t, pluginutil.FailureModeOpen, cfg.FailureMode, "an absent failure_mode fails open")
 	assert.False(t, cfg.failClosed())
 
 	cfg, err = parseConfig(withFailureMode(validSettings(), "closed"))
@@ -179,8 +180,8 @@ func TestInspectSegmentAvailabilityFailureFollowsFailureMode(t *testing.T) {
 	})
 }
 
-// On the stream an invocation that failed outright used to be returned as a
-// bare error; a closed policy cuts on it like any other availability failure.
+// An invocation that failed outright is availability on the stream: an open
+// policy releases the block, and a closed one cuts on it.
 func TestInspectSegmentInvocationFailureClosedEnforceCuts(t *testing.T) {
 	t.Parallel()
 	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, invocationFailureResponse))
@@ -223,7 +224,63 @@ func TestStreamSettingsKeepAClosedUnparseablePolicyOnTheStream(t *testing.T) {
 	on, opts := p.StreamSettings(map[string]any{"failure_mode": "closed"})
 	assert.True(t, on)
 	assert.Positive(t, opts.MaxAccumulatedBytes)
+	assert.Equal(t, pluginutil.StreamOnErrorFailClosed, opts.OnError)
 
 	on, _ = p.StreamSettings(map[string]any{"failure_mode": "open"})
 	assert.False(t, on)
+}
+
+// A streamed refusal carries the policy's message, as the buffered leg's does.
+func TestInspectSegmentClosedRefusalCarriesThePolicyMessage(t *testing.T) {
+	t.Parallel()
+	p := pluginWithClientError(errors.New("model armor is down"))
+	set := withFailureMode(streamSettings(nil), "closed")
+	set["message"] = "Blocked by policy"
+
+	got, err := p.InspectSegment(context.Background(), streamInput(policy.ModeEnforce, set, nil), segment(4, "some text"))
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Block)
+	assert.Equal(t, "Blocked by policy", got.Message)
+}
+
+// A closed policy whose settings do not parse still writes the stream's record
+// on the closing segment, with failure_mode on it.
+func TestClosingSegmentOfAClosedUnparseablePolicyIsRecorded(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, allowResponse))
+	event, span := newStreamEvent()
+	set := withFailureMode(streamSettings(nil), "closed")
+	delete(set, "project")
+
+	got, err := p.InspectSegment(context.Background(), streamInput(policy.ModeEnforce, set, event),
+		appplugins.StreamSegment{StreamID: "s-1", Closing: true, Report: appplugins.StreamReport{
+			Evals: 1, CutAtEval: 1, CutOnFailure: true,
+			FailureReason: appplugins.FailureConfigInvalid, FailureClass: appplugins.FailureClassAvailability,
+		}})
+
+	require.NoError(t, err)
+	assert.False(t, got.Block)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	require.True(t, ok, "extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	assert.Equal(t, string(appplugins.FailureConfigInvalid), data.FailureReason)
+	assert.Equal(t, "availability", data.FailureClass)
+	assert.Equal(t, "closed", data.FailureMode)
+}
+
+// A closed policy reports on_error fail_closed, so the executor cuts a block it
+// screens in chunks when a chunk never reached Model Armor. An open one keeps
+// fail_open.
+func TestStreamSettingsOnErrorFollowsFailureMode(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
+
+	on, opts := p.StreamSettings(withFailureMode(streamSettings(nil), "closed"))
+	require.True(t, on)
+	assert.Equal(t, pluginutil.StreamOnErrorFailClosed, opts.OnError)
+
+	on, opts = p.StreamSettings(withFailureMode(streamSettings(nil), "open"))
+	require.True(t, on)
+	assert.Equal(t, pluginutil.StreamOnErrorFailOpen, opts.OnError)
 }

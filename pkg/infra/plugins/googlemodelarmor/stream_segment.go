@@ -49,49 +49,73 @@ func (p *Plugin) StreamGuardTimeout() time.Duration { return streamingDefaults.G
 // streamed response block by block, and the options the block loop must run
 // under. Every policy that parses does: the template applies to the response
 // leg whatever the policy says about streaming (RUN-1661).
+//
+// A policy that fails closed reports on_error fail_closed: a block the
+// executor screens in chunks is then cut, in a mode that blocks, when a chunk
+// never reached Model Armor, as InspectSegment cuts a block it could not
+// evaluate.
 func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, opts appplugins.StreamOptions) {
 	cfg, err := parseConfig(settings)
 	if err != nil {
-		if failureModeFromRaw(settings) == failureModeClosed {
+		if pluginutil.FailClosedFromRaw(settings) {
 			// A closed policy whose settings do not parse stays on the stream
 			// chain with the default cadence, so InspectSegment can refuse (or,
 			// in observe, record) the parse failure instead of the response
 			// streaming out uninspected with nothing on the record.
 			var defaults pluginutil.StreamingSettings
 			defaults.ApplyDefaults(streamingDefaults)
-			return true, defaults.OptionsWithin(maxSanitizeBytes)
+			opts = defaults.OptionsWithin(maxSanitizeBytes)
+			opts.OnError = pluginutil.StreamOnErrorFailClosed
+			return true, opts
 		}
 		return false, appplugins.StreamOptions{}
 	}
-	return true, cfg.Streaming.OptionsWithin(maxSanitizeBytes)
+	opts = cfg.Streaming.OptionsWithin(maxSanitizeBytes)
+	if cfg.failClosed() {
+		opts.OnError = pluginutil.StreamOnErrorFailClosed
+	}
+	return true, opts
 }
 
-// streamFailure is what a streamed block answers when Model Armor could not
-// evaluate it. An open policy keeps the rule every external guardrail follows
-// (availability fails open, input is cut in a blocking mode); a closed one
-// also cuts on availability, and records it in observe.
-func streamFailure(
-	in appplugins.ExecInput,
+// streamFailures answers the failures of one streamed block. An open policy
+// keeps the rule every external guardrail follows (availability is released,
+// input is cut in a mode that blocks); a closed one also cuts on availability,
+// and records it in observe. A cut the plugin has no verdict of its own for
+// carries the policy's message, as the buffered leg's refusal does.
+type streamFailures struct {
+	mode       policy.Mode
+	failClosed bool
+	message    string
+}
+
+// streamFailuresOf reads the policy's failure_mode and message once per block.
+// Settings that do not parse (cfgErr) have their failure_mode read leniently
+// and no message.
+func streamFailuresOf(mode policy.Mode, cfg Settings, cfgErr error, settings map[string]any) streamFailures {
+	if cfgErr != nil {
+		return streamFailures{mode: mode, failClosed: pluginutil.FailClosedFromRaw(settings)}
+	}
+	return streamFailures{mode: mode, failClosed: cfg.failClosed(), message: cfg.Message}
+}
+
+func (f streamFailures) outcome(
 	reason appplugins.FailureReason,
 	detail string,
 	block *appplugins.SegmentVerdict,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
-	return appplugins.ExternalStreamOutcomeUnder(PluginName, in.Mode, reason, detail, block, failClosedOf(in.Config.Settings), err)
+	verdict, out := appplugins.ExternalStreamOutcomeUnder(PluginName, f.mode, reason, detail, block, f.failClosed, err)
+	if block == nil && verdict != nil && verdict.Block {
+		verdict.Message = f.refusalMessage()
+	}
+	return verdict, out
 }
 
-// streamFailureWrapped is streamFailure for the failures this plugin used to
-// return as a bare wrapped error. An open policy keeps that exact behaviour.
-func streamFailureWrapped(
-	in appplugins.ExecInput,
-	reason appplugins.FailureReason,
-	detail string,
-	err error,
-) (*appplugins.SegmentVerdict, error) {
-	if !failClosedOf(in.Config.Settings) {
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, reason, detail, err)
+func (f streamFailures) refusalMessage() string {
+	if msg := strings.TrimSpace(f.message); msg != "" {
+		return msg
 	}
-	return appplugins.ExternalStreamOutcomeUnder(PluginName, in.Mode, reason, detail, nil, true, err)
+	return appplugins.DefaultUninspectableMessage
 }
 
 // InspectSegment sanitizes one closed block of a streamed response.
@@ -111,15 +135,19 @@ func (p *Plugin) InspectSegment(
 	in appplugins.ExecInput,
 	seg appplugins.StreamSegment,
 ) (*appplugins.SegmentVerdict, error) {
-	cfg, err := parseConfig(in.Config.Settings)
-	if err != nil {
-		return streamFailureWrapped(in, appplugins.FailureConfigInvalid, "", err)
+	cfg, cfgErr := parseConfig(in.Config.Settings)
+	fail := streamFailuresOf(in.Mode, cfg, cfgErr, in.Config.Settings)
+	if cfgErr == nil {
+		cfgErr = p.checkIdentity(cfg)
 	}
-	if err := p.checkIdentity(cfg); err != nil {
-		return streamFailureWrapped(in, appplugins.FailureConfigInvalid, "", err)
+	// A closed policy is on the stream even when its settings are unusable
+	// (StreamSettings), so its closing segment still writes the record of the
+	// blocks it refused.
+	if cfgErr != nil && (!seg.Closing || !fail.failClosed) {
+		return fail.outcome(appplugins.FailureConfigInvalid, "", nil, cfgErr)
 	}
 	if seg.Closing {
-		p.recordStreamOutcome(ctx, in, cfg, seg)
+		p.recordStreamOutcome(ctx, in, cfg, fail.failClosed, seg)
 		return segmentAllow(), nil
 	}
 	if strings.TrimSpace(seg.Accumulated) == "" {
@@ -127,8 +155,8 @@ func (p *Plugin) InspectSegment(
 	}
 	cl, err := p.clientFor(cfg)
 	if err != nil {
-		return streamFailureWrapped(in, appplugins.FailureConfigInvalid, "",
-			fmt.Errorf("resolving client for stream block %d: %w", seg.Seq, err))
+		return fail.outcome(appplugins.FailureConfigInvalid, "",
+			nil, fmt.Errorf("resolving client for stream block %d: %w", seg.Seq, err))
 	}
 
 	// The deadline is enforced here because the caller is holding a client's
@@ -146,13 +174,13 @@ func (p *Plugin) InspectSegment(
 		// still uncommitted, which decides whether the held text is
 		// released; a guardrail that fails is always released.
 		reason, detail := pluginutil.FailureOfError(err)
-		return streamFailure(in, reason, detail, nil,
+		return fail.outcome(reason, detail, nil,
 			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
 
 	if result.InvocationResult == invocationResultFailure {
-		return streamFailureWrapped(in, appplugins.FailureTransport, "",
-			fmt.Errorf("stream block %d: invocationResult FAILURE", seg.Seq))
+		return fail.outcome(appplugins.FailureTransport, "",
+			nil, fmt.Errorf("stream block %d: invocationResult FAILURE", seg.Seq))
 	}
 
 	res := inspect(result, cfg)
@@ -160,24 +188,24 @@ func (p *Plugin) InspectSegment(
 	// verdict is not a clean one, and a real match on another filter still
 	// wins because it is a verdict. A filter that was skipped is the content's, so
 	// a mode that blocks cuts; an invocation that came back PARTIAL with every
-	// block_on filter run is recorded and released. A
-	// filter the template never enabled is the customer's configuration: it is
-	// released as a failed inspection, except for a usable mask in a blocking
-	// mode, where the de-identified text is already in hand and releasing the
-	// original would send the raw PII, so the mask is applied and the incomplete
-	// verdict rides along on it.
+	// block_on filter run is availability: released under failure_mode open,
+	// cut in a mode that blocks under closed. A filter the template never
+	// enabled is the customer's configuration and availability too, except for
+	// a usable mask that the policy keeps (keepsMaskOnGap): the de-identified
+	// text is already in hand and releasing the original would send the raw
+	// PII, so the mask is applied and the incomplete verdict rides along on it.
 	var incomplete error
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
 			cause := fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason)
 			_, usable := maskedText(result)
-			if usable && keepsMaskDespiteGap(res, in.Mode, reason, cfg.failClosed()) {
+			if usable && keepsMaskDespiteGap(res, cfg, in.Mode, reason) {
 				incomplete = appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, reason, cause)
 			} else {
-				return streamFailure(in, appplugins.FailureVerdictIncomplete, reason, nil, cause)
+				return fail.outcome(appplugins.FailureVerdictIncomplete, reason, nil, cause)
 			}
 		} else if result.InvocationResult == invocationResultPartial {
-			return streamFailure(in, appplugins.FailureVerdictIncomplete, appplugins.DetailInvocationPartial, nil,
+			return fail.outcome(appplugins.FailureVerdictIncomplete, appplugins.DetailInvocationPartial, nil,
 				fmt.Errorf("stream block %d: invocationResult PARTIAL", seg.Seq))
 		}
 	}
@@ -196,7 +224,7 @@ func (p *Plugin) InspectSegment(
 			// anonymise once de-identified text came back. If that
 			// classification ever loosens, releasing the unmasked prefix is the
 			// one outcome the policy ruled out, so a mode that blocks cuts.
-			return streamFailure(in, appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
+			return fail.outcome(appplugins.FailureVerdictIncomplete, reasonAnonymizeNoOutput,
 				&appplugins.SegmentVerdict{
 					Type:         typeModelArmorBlocked,
 					Message:      anonymizeDegradedMessage,
@@ -237,6 +265,7 @@ func (p *Plugin) recordStreamOutcome(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	cfg Settings,
+	failClosed bool,
 	seg appplugins.StreamSegment,
 ) {
 	if in.Event == nil {
@@ -274,8 +303,8 @@ func (p *Plugin) recordStreamOutcome(
 	// only place it can land.
 	data.FailureReason, data.FailureDetail = pluginutil.StreamFailure(seg.Report)
 	data.FailureClass = pluginutil.StreamFailureClass(seg.Report)
-	if data.FailureReason != "" && failClosedOf(in.Config.Settings) {
-		data.FailureMode = failureModeClosed
+	if data.FailureReason != "" {
+		data.FailureMode = pluginutil.FailureModeStamp(failClosed)
 	}
 	if appplugins.IsMaskOverFinding(data.FailureDetail) {
 		data.Degraded = true
