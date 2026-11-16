@@ -39,6 +39,10 @@ const (
 	CodeGatewayFailure int64 = -32092
 	// CodeIdentityRequired is a call without the IdP user the registry's identity mode needs.
 	CodeIdentityRequired int64 = -32093
+	// CodeAccessRefused is a call the agent plane refused before reading it:
+	// no valid credential, a credential or caller the application does not
+	// take, or no application at the path. It keeps its HTTP status.
+	CodeAccessRefused int64 = -32094
 )
 
 // Reasons carried in error.data of the gateway codes.
@@ -53,6 +57,10 @@ const (
 	ReasonUpstreamUnreachable     = "upstream_unreachable"
 	ReasonUpstreamError           = "upstream_error"
 	ReasonResponseTooLarge        = "response_too_large"
+	// ReasonMethodNotInVersion is a method the agent's pinned version does not
+	// have; ReasonMethodNotAllowed one outside its allowed methods.
+	ReasonMethodNotInVersion = "method_not_in_version"
+	ReasonMethodNotAllowed   = "method_not_allowed"
 )
 
 // RPCError is a JSON-RPC error object.
@@ -148,7 +156,8 @@ func invalidParams() *RPCError {
 	return &RPCError{Code: CodeInvalidParams, Message: "Invalid params"}
 }
 
-// MethodNotFound is -32601.
-func MethodNotFound() *RPCError {
-	return &RPCError{Code: CodeMethodNotFound, Message: "Method not found"}
+// MethodNotFound is -32601, with why: the method is not of version v, the
+// agent's pinned version, or it is outside the agent's allowed methods.
+func MethodNotFound(reason string, v Version) *RPCError {
+	return newRPCError(CodeMethodNotFound, "Method not found", map[string]string{"reason": reason, "version": string(v)})
 }
