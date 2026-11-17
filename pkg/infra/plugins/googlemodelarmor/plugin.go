@@ -367,8 +367,8 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // fills exactly that. The overlap is 4,096 bytes, enough for a long secret (a PEM
 // key, a service-account JSON of about 3.5 KB) to lie whole in one chunk; a
 // pattern longer than it, or a context that a cut separates by more than it,
-// can still be cut in two. The ceiling is what half of the client's timeout for the
-// whole evaluation admits at chunkParallel calls at once and callReserve a round
+// can still be cut in two. The ceiling is what half of the evaluation's budget
+// (budget: the gateway default, or a longer timeout_seconds) admits at chunkParallel calls at once and callReserve a round
 // (chunk 0, sent alone, is a round of its own), at most maxBufferedChunks (16 at
 // the default 15 s, 856,064 bytes): a text above it is refused
 // before any call as chunk_limit. The project's quota is 1,200 requests a minute,
