@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/redis/go-redis/v9"
@@ -99,11 +100,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if !counted {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+	counter := cfg.counterFor(in.Scope, in.Request, in.Config.ID, in.Stage)
+	if !counter.Applies {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
 	cfg = cfg.forKey(in.Scope.KeyBudget)
 	if !cfg.limits() {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
-	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
+	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader)) + counter.Suffix
+	if counter.Dimension != "" {
+		dimension = counter.Dimension
+	}
 
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -112,6 +120,40 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Mode, in.Event)
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+}
+
+// counterFor narrows the counter to one application or model. api_key is the
+// key partition, which counterSubject already resolves. A model counter is fixed
+// at pre-request and carried to post-response in the request metadata: a
+// downgrade rewrites the body in between, and the spend belongs to the counter
+// that admitted the request.
+func (c *config) counterFor(scope appplugins.RuntimeScope, req *infracontext.RequestContext, policyID string, stage policy.Stage) limitper.Counter {
+	switch c.Mode() {
+	case limitper.Application:
+		return c.Resolve(scope, nil)
+	case limitper.Model:
+		metaKey := "token_rate_limiter.model." + policyID
+		return c.Resolve(scope, func() string {
+			if req == nil {
+				return ""
+			}
+			if stage == policy.StagePostResponse {
+				if m, ok := req.Metadata[metaKey].(string); ok {
+					return m
+				}
+			}
+			m := limitper.RequestModel(req)
+			if stage == policy.StagePreRequest && m != "" {
+				if req.Metadata == nil {
+					req.Metadata = map[string]any{}
+				}
+				req.Metadata[metaKey] = m
+			}
+			return m
+		})
+	default:
+		return limitper.Counter{Applies: true}
 	}
 }
 

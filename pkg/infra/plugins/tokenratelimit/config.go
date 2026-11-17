@@ -22,6 +22,7 @@ import (
 	"time"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -82,7 +83,12 @@ type config struct {
 	// place of the aggregate. Only a policy that opts in reads key budgets, so
 	// a tenant's own partition key policy keeps its limit and its unit.
 	KeyBudgets bool `mapstructure:"key_budgets"`
+	// Spec is limit_per: api_key is the key partition, application and model add
+	// a segment to the counter key, and absent keeps the policy's own scope.
+	limitper.Spec `mapstructure:",squash"`
 }
+
+var limitModes = []string{limitper.Shared, limitper.Application, limitper.APIKey, limitper.Model, limitper.Header}
 
 var validUnits = map[string]int{
 	"second": 1,
@@ -104,6 +110,9 @@ func parseConfig(settings map[string]any) (*config, error) {
 }
 
 func (c *config) normalize() {
+	if c.LimitPer == limitper.APIKey && c.Partition == "" {
+		c.Partition = partitionKey
+	}
 	if c.Unit == "" {
 		c.Unit = unitTokens
 	}
@@ -135,6 +144,12 @@ func canonicalCalendarWindow(window string) string {
 }
 
 func (c *config) validate() error {
+	if err := c.Spec.Validate("token_rate_limiter", limitModes, c.GroupByHeader); err != nil {
+		return err
+	}
+	if c.Partition != "" && c.Mode() != limitper.Shared && c.LimitPer != limitper.APIKey {
+		return fmt.Errorf("token_rate_limiter: partition %s cannot be combined with limit_per %s", partitionKey, c.LimitPer)
+	}
 	if err := c.validatePartition(); err != nil {
 		return err
 	}

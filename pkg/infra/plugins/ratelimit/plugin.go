@@ -25,6 +25,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -101,13 +102,21 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("rate_limiter: %w", err)
 	}
 
+	counter := cfg.Resolve(in.Scope, func() string { return limitper.RequestModel(in.Request) })
+	if !counter.Applies {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+
 	window, err := time.ParseDuration(cfg.Window)
 	if err != nil {
 		return nil, fmt.Errorf("rate_limiter: invalid window: %w", err)
 	}
 
 	now := p.now()
-	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject)
+	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject) + counter.Suffix
+	if counter.Dimension != "" {
+		dimension = counter.Dimension
+	}
 	if group := in.Request.HeaderValue(cfg.GroupByHeader); group != "" {
 		redisKey += ":hdr:" + group
 	}
