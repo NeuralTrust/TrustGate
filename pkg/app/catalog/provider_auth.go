@@ -51,12 +51,11 @@ var (
 		Label: "API Key",
 		Fields: []AuthField{
 			{
-				Key:         "api_key",
-				Label:       "API Key",
-				Type:        AuthFieldTypeString,
-				Description: "Secret API key used to authenticate requests with the provider.",
-				Required:    true,
-				Secret:      true,
+				Key:      "api_key",
+				Label:    "API Key",
+				Type:     AuthFieldTypeString,
+				Required: true,
+				Secret:   true,
 			},
 		},
 	}

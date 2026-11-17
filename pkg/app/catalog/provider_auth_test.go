@@ -136,7 +136,7 @@ func TestProviderAuthOptions_SimpleProvidersOmitVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal auth option: %v", err)
 	}
-	if string(raw) != `{"type":"api_key","label":"API Key","fields":[{"key":"api_key","label":"API Key","type":"string","description":"Secret API key used to authenticate requests with the provider.","required":true,"secret":true}]}` {
+	if string(raw) != `{"type":"api_key","label":"API Key","fields":[{"key":"api_key","label":"API Key","type":"string","required":true,"secret":true}]}` {
 		t.Fatalf("unexpected json: %s", raw)
 	}
 }
