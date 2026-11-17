@@ -121,7 +121,12 @@ const (
 	defaultUpstreamErrorPassthrough = true
 
 	defaultProviderRequestTimeout = 60 * time.Second
-	defaultProviderMaxRetries     = 2
+	// defaultProviderMaxRetries is how many more times a failed provider call
+	// is sent to the same backend. Zero: every retry is a request the provider
+	// may bill, and the SDKs callers use already retry on their own (two times
+	// by default for OpenAI's and Anthropic's), so a gateway retry multiplies
+	// theirs. Failover to another backend is the consumer's fallback, opt-in.
+	defaultProviderMaxRetries = 0
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -743,7 +748,11 @@ type UpstreamConfig struct {
 type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
-	MaxRetries            int
+	// MaxRetries (PROVIDER_MAX_RETRIES, default 0) is how many more times a
+	// call that failed with a transport error, a 5xx, a 429 or a 408 is sent to
+	// the same backend. A timeout is never retried there whatever this says:
+	// the provider may still finish the first call and charge for it.
+	MaxRetries int
 }
 
 // BedrockNativeConfig tunes the relay of native Bedrock Runtime calls. Every limit
