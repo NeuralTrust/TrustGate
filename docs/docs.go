@@ -13093,6 +13093,10 @@ const docTemplate = `{
                     "description": "AuthKind is \"personal\" for a key a user owns, their personal key or a\ngroup key, and \"application\" for any other api key; absent for any\nother credential.",
                     "type": "string"
                 },
+                "client_trace_id": {
+                    "description": "ClientTraceID is the trace-id field of the client's W3C traceparent and\nMCPSessionID the Mcp-Session-Id of an MCP request. Both are raw-only:\nMetadataView strips them, so they reach only the raw sinks.",
+                    "type": "string"
+                },
                 "consumer": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"
                 },
@@ -13122,6 +13126,9 @@ const docTemplate = `{
                 },
                 "mcp": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP"
+                },
+                "mcp_session_id": {
+                    "type": "string"
                 },
                 "occurred_on": {
                     "type": "integer"
