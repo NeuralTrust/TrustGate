@@ -61,7 +61,7 @@ func (p *Plugin) ProbeConnection(ctx context.Context, settings map[string]any) a
 		return probeResult(start, appplugins.ProbeInvalidConfig,
 			"The policy settings are not valid for Google Model Armor.")
 	}
-	timeout := p.probeTimeout()
+	timeout := cfg.callTimeout(p.probeTimeout())
 	newSources := p.newProbeSources
 	if p.probeSourcesOverride != nil {
 		newSources = p.probeSourcesOverride

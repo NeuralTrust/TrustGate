@@ -105,7 +105,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 	adc := gcpauth.NewApplicationDefaultCache()
 	return &Plugin{
 		registry:             registry,
-		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources(adc)),
+		clients:              newModelArmorClientCache(baseURL, newCredentialSources(adc)),
 		baseURL:              baseURL,
 		logger:               logger,
 		allowAmbientIdentity: allowAmbientIdentity,
@@ -114,13 +114,13 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 	}
 }
 
-// clientFor resolves the *client for cfg's credentials, reusing the cached
-// client for that credential fingerprint when one already exists.
+// clientFor resolves the *client for cfg's credentials and per-call time limit,
+// reusing the cached client for that pair when one already exists.
 func (p *Plugin) clientFor(cfg Settings) (*client, error) {
 	if p.clients == nil {
 		return nil, fmt.Errorf("google_model_armor: plugin has no client cache configured")
 	}
-	return p.clients.get(credentialsFromConfig(cfg.Credentials))
+	return p.clients.get(credentialsFromConfig(cfg.Credentials), cfg.callTimeout(p.timeout))
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -297,7 +297,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
 		return cl.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, chunk)
 	}
-	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, p.budget(cl), sanitize, span)
 }
 
 // executePreResponse sanitizes the completion in its own call, separate from
@@ -344,7 +344,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
 		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, chunk, userPrompt)
 	}
-	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, p.budget(cl), sanitize, span)
 }
 
 // A buffered text is split into chunks of chunkBytes. Model Armor screens at
@@ -498,6 +498,13 @@ func (e chunkEval) state() appplugins.ChunkState {
 	return appplugins.ChunkState{}
 }
 
+// budget is the time a buffered evaluation may take: the gateway default, or
+// the policy's per-call limit when it is longer. A shorter per-call limit does
+// not shrink it, so the chunk ceiling stays what the gateway default admits.
+func (p *Plugin) budget(cl *client) time.Duration {
+	return max(cl.timeout, p.timeout)
+}
+
 func (p *Plugin) runGuardrail(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -550,12 +557,12 @@ func (p *Plugin) runGuardrail(
 	latency := time.Since(start).Milliseconds()
 	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
 		if err != nil {
-			reason, detail := pluginutil.FailureOfError(err)
+			reason, detail := failureOfError(err)
 			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow))
+	decision := timeoutOf(appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow)), outs)
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
@@ -631,6 +638,23 @@ func (p *Plugin) runGuardrail(
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionAllowed)
 	return passThrough(), nil
+}
+
+// timeoutOf names a chunked evaluation's transport failure a timeout when the
+// chunk that decided it ran out of time: never started because earlier calls
+// were slow and the budget ran out (ClassifyChunks reports it as a bare
+// transport failure), or cut by the budget mid-call.
+func timeoutOf(d appplugins.ChunkDecision, outs []textchunk.Outcome[struct{}]) appplugins.ChunkDecision {
+	if d.Kind != appplugins.ChunkAvailabilityFailure || d.Reason != appplugins.FailureTransport || d.Detail != "" {
+		return d
+	}
+	if d.Index < 0 || d.Index >= len(outs) {
+		return d
+	}
+	if out := outs[d.Index]; !out.Started || out.TimedOut || out.BudgetCut {
+		d.Detail = appplugins.DetailTimeout
+	}
+	return d
 }
 
 // filterVersionOf is the filter version behind a chunked evaluation's verdict:
