@@ -477,6 +477,10 @@ func writeStream(
 		// a client already told, can still panic while its iterator unwinds;
 		// a second error event after that would corrupt what the client got.
 		terminated := false
+		// open is whether the last line the client got left an event that no
+		// blank line has ended yet. A passthrough relays the upstream's lines
+		// as they were read, so a stream can fail between an event's lines.
+		open := false
 		format := adapter.FormatOpenAI
 		if req != nil {
 			format = adapter.Format(req.SourceFormat)
@@ -488,19 +492,20 @@ func writeStream(
 					slog.Any("panic", value),
 					slog.String("stack", string(stack)))
 				if !terminated {
-					writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
+					writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames, open)
 				}
 			}
 		}()
 		for line, err := range result.Stream {
 			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
 				terminated = true
+				endOpenEvent(w, &captured, finalizer != nil, open)
 				_ = w.Flush()
 				return
 			}
 			if err != nil {
 				terminated = true
-				writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
+				writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames, open)
 				return
 			}
 			if result.RawFrames {
@@ -524,6 +529,7 @@ func writeStream(
 				terminated = true
 				return
 			}
+			open = len(line) > 0
 		}
 	})
 	return nil
@@ -569,7 +575,10 @@ func writeStreamLine(w *bufio.Writer, line []byte) bool {
 // A native Bedrock stream ends with the exception frame Bedrock itself uses for
 // a failure after the 200, which SDKs raise as a typed error, not with an SSE
 // event no eventstream parser can read.
-func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format, raw bool) {
+//
+// open says the client's last event has not been ended by a blank line; see
+// endOpenEvent, which ends it before the error event is written.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format, raw, open bool) {
 	if raw {
 		_, _ = w.Write(adapter.BedrockExceptionFrame("internalServerException", adapter.StreamErrorMessageUpstreamTerminated))
 		_ = w.Flush()
@@ -581,6 +590,7 @@ func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, for
 		adapter.StreamErrorTypeUpstream,
 		adapter.StreamErrorMessageUpstreamTerminated,
 	)
+	endOpenEvent(w, captured, capture, open)
 	if capture {
 		captured.Write(event)
 		captured.Write(newline)
@@ -589,6 +599,25 @@ func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, for
 	_, _ = w.Write(newline)
 	_, _ = w.Write(newline)
 	_ = w.Flush()
+}
+
+// endOpenEvent writes the blank line that ends the event the client has open,
+// when open says it has one. A same-format stream relays the upstream's lines
+// as they were read, so an upstream that fails between an event's lines leaves
+// the client inside that event. Written straight after it, the error event's
+// lines would join it, and the client would parse one event whose data is both
+// payloads run together, which it cannot read as the stream error it is. A
+// stream that ends with the client already told, after its upstream's own
+// terminal event, gets that event ended too, or a strict SSE parser drops it
+// at the end of the body.
+func endOpenEvent(w *bufio.Writer, captured *bytes.Buffer, capture, open bool) {
+	if !open {
+		return
+	}
+	if capture {
+		captured.Write(newline)
+	}
+	_, _ = w.Write(newline)
 }
 
 func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {

@@ -17,12 +17,16 @@ package providers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -116,6 +120,103 @@ func TestStreamSSE_ConsumerStoppingOnDoneGetsNothingMore(t *testing.T) {
 	}
 	assert.Equal(t, []string{`data: [DONE]`}, lines)
 	assert.True(t, body.closed.Load())
+}
+
+// A reset is the upstream abandoning the response. It used to count as a
+// normal end of the body, so a truncated answer reached the client as a
+// finished one.
+func TestStreamSSE_ConnectionResetMidStreamIsAnError(t *testing.T) {
+	body := &trackingReadCloser{r: &errAfterReader{data: []byte("data: a\n\n"), err: syscall.ECONNRESET}}
+
+	lines, err := collect(t, providers.StreamSSE(context.Background(), body))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, syscall.ECONNRESET)
+	assert.Equal(t, []string{"data: a", ""}, lines)
+	assert.True(t, body.closed.Load())
+}
+
+// The error a reset arrives as through net/http is an *net.OpError whose text
+// ends in "connection reset by peer"; the text used to be matched and dropped.
+func TestStreamSSE_ResetByPeerMessageIsAnError(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}
+	require.Contains(t, reset.Error(), "connection reset by peer")
+	body := &trackingReadCloser{r: &errAfterReader{data: []byte("data: a\n"), err: reset}}
+
+	lines, err := collect(t, providers.StreamSSE(context.Background(), body))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, syscall.ECONNRESET)
+	assert.Equal(t, []string{"data: a"}, lines)
+}
+
+// A closed connection is ours only when ctx has ended, and that case ends with
+// the context's error. One that closes under a live ctx did not come from us.
+func TestStreamSSE_ClosedConnectionUnderALiveContextIsAnError(t *testing.T) {
+	body := &trackingReadCloser{r: &errAfterReader{data: []byte("data: a\n"), err: net.ErrClosed}}
+
+	lines, err := collect(t, providers.StreamSSE(context.Background(), body))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, net.ErrClosed)
+	assert.Equal(t, []string{"data: a"}, lines)
+}
+
+// A body whose reader wraps io.EOF still ends cleanly.
+func TestStreamSSE_WrappedEOFEndsCleanly(t *testing.T) {
+	body := &trackingReadCloser{r: &errAfterReader{data: []byte("data: a\n\n"), err: fmt.Errorf("body: %w", io.EOF)}}
+
+	lines, err := collect(t, providers.StreamSSE(context.Background(), body))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"data: a", ""}, lines)
+}
+
+// Closing the body when ctx ends makes the blocked read fail with "use of
+// closed network connection"; the stream still ends with the context's error,
+// never with that one.
+func TestStreamSSE_ContextCancelMidReadEndsWithTheContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	body := &closeUnblocksReader{first: []byte("data: a\n\n"), closed: make(chan struct{})}
+
+	var lines []string
+	var gotErr error
+	for line, err := range providers.StreamSSE(ctx, body) {
+		if err != nil {
+			gotErr = err
+			break
+		}
+		lines = append(lines, string(line))
+		if len(lines) == 2 {
+			// Cancelled while the next read is blocked, not between reads.
+			time.AfterFunc(20*time.Millisecond, cancel)
+		}
+	}
+	require.ErrorIs(t, gotErr, context.Canceled)
+	assert.NotContains(t, gotErr.Error(), "closed network connection")
+	assert.Equal(t, []string{"data: a", ""}, lines)
+}
+
+// closeUnblocksReader returns first, then blocks until Close, after which the
+// read fails as a read on a closed net.Conn does.
+type closeUnblocksReader struct {
+	first  []byte
+	sent   bool
+	closed chan struct{}
+	once   atomic.Bool
+}
+
+func (r *closeUnblocksReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, r.first), nil
+	}
+	<-r.closed
+	return 0, &net.OpError{Op: "read", Net: "tcp", Err: net.ErrClosed}
+}
+
+func (r *closeUnblocksReader) Close() error {
+	if r.once.CompareAndSwap(false, true) {
+		close(r.closed)
+	}
+	return nil
 }
 
 func TestStreamSSE_BenignEOFEndsCleanly(t *testing.T) {

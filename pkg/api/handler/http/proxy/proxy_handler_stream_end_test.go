@@ -20,8 +20,11 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
+	"testing/iotest"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -42,8 +45,9 @@ import (
 // whole point, so it is compared byte for byte.
 
 const (
-	streamEndChunk  = `data: {"id":"c","object":"chat.completion.chunk","model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"hal"}}]}`
-	streamEndFinish = `data: {"id":"c","object":"chat.completion.chunk","model":"gpt","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	streamEndChunk       = `data: {"id":"c","object":"chat.completion.chunk","model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"hal"}}]}`
+	streamEndFinish      = `data: {"id":"c","object":"chat.completion.chunk","model":"gpt","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	streamEndOpenAIError = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
 )
 
 // upstreamStream returns the client stream InvokeStream builds for provider
@@ -122,4 +126,67 @@ func TestHandle_Streaming_PassthroughDoneSeparatorIsWrittenOnce(t *testing.T) {
 		openAIUpstreamStream(t, strings.NewReader(streamEndChunk+"\n\ndata: [DONE]"))))
 	assert.Equal(t, want, relayToClient(t, newProxyRequest(),
 		openAIUpstreamStream(t, strings.NewReader(streamEndChunk+"\n\ndata: [DONE]\n\n\n\n"))))
+}
+
+// A reset partway through used to end the client stream as if it had finished
+// (customer finding T02). The client now gets the stream error event.
+func TestHandle_Streaming_PassthroughResetEndsWithTheErrorEvent(t *testing.T) {
+	body := io.MultiReader(strings.NewReader(streamEndChunk+"\n\n"), iotest.ErrReader(syscall.ECONNRESET))
+
+	got := relayToClient(t, newProxyRequest(), openAIUpstreamStream(t, body))
+
+	assert.Equal(t, streamEndChunk+"\n\n"+streamEndOpenAIError+"\n\n", got)
+}
+
+// An upstream that closes its body cleanly before [DONE] has not finished
+// either, whatever the transport says.
+func TestHandle_Streaming_PassthroughCleanCloseBeforeDoneEndsWithTheErrorEvent(t *testing.T) {
+	upstream := streamEndChunk + "\n\n" + streamEndFinish + "\n\n"
+
+	got := relayToClient(t, newProxyRequest(), openAIUpstreamStream(t, strings.NewReader(upstream)))
+
+	assert.Equal(t, upstream+streamEndOpenAIError+"\n\n", got)
+}
+
+// A reset between an event's lines leaves the client inside that event. The
+// error event has to start an event of its own, or the Anthropic SDK reads one
+// "error" event whose data is two payloads run together.
+func TestHandle_Streaming_AnthropicPassthroughResetMidEventEndsWithItsOwnErrorEvent(t *testing.T) {
+	const head = "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hal"}}` + "\n"
+	body := io.MultiReader(strings.NewReader(head), iotest.ErrReader(syscall.ECONNRESET))
+	stream := upstreamStream(t, "anthropic", adapter.FormatAnthropic,
+		`{"model":"claude","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, body)
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	got := relayToClient(t, req, stream)
+
+	assert.Equal(t, head+"\n"+
+		"event: error\n"+
+		`data: {"type":"error","error":{"type":"api_error","message":"upstream stream terminated unexpectedly"}}`+"\n\n\n", got)
+}
+
+// After message_stop the client has its whole message, so a reset on the way
+// to the end of the body adds nothing to what it reads.
+func TestHandle_Streaming_AnthropicPassthroughResetAfterMessageStopAddsNoErrorEvent(t *testing.T) {
+	const upstream = "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	body := io.MultiReader(strings.NewReader(upstream), iotest.ErrReader(syscall.ECONNRESET))
+	stream := upstreamStream(t, "anthropic", adapter.FormatAnthropic,
+		`{"model":"claude","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, body)
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	got := relayToClient(t, req, stream)
+
+	assert.Equal(t, upstream, got)
 }
