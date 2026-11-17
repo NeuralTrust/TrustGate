@@ -28,11 +28,8 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil/textchunk"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
-
-type textchunkOutcome = textchunk.Outcome[struct{}]
 
 // slowStub answers after delay, or as soon as the caller gives up.
 func slowStub(t *testing.T, delay time.Duration, status int, body string) *httptest.Server {
@@ -244,30 +241,56 @@ func TestExecuteTimeoutSecondsReplacesTheGatewayDefault(t *testing.T) {
 	}
 }
 
-func TestTimeoutOfNamesAChunkCutByTime(t *testing.T) {
+// A streamed block keeps its fixed per-block limit, and a block that runs past
+// it follows timeout_failure_mode, whatever timeout_seconds says.
+func TestInspectSegmentTimeoutFollowsTheTimeoutMode(t *testing.T) {
 	t.Parallel()
-	failed := func(i int) appplugins.ChunkDecision {
-		return appplugins.ChunkDecision{Kind: appplugins.ChunkAvailabilityFailure, Index: i, Reason: appplugins.FailureTransport}
-	}
+	srv := slowStub(t, 3*time.Second, http.StatusOK, allowResponse)
 	for _, tc := range []struct {
-		name   string
-		d      appplugins.ChunkDecision
-		outs   []bool
-		detail string
+		name     string
+		settings map[string]any
+		mode     policy.Mode
+		cut      bool
 	}{
-		{"chunk never started", failed(1), []bool{true, false}, appplugins.DetailTimeout},
-		{"started chunk with a bare transport error", failed(0), []bool{true}, ""},
+		{"block outages, allow slow: released", map[string]any{"failure_mode": "closed", "timeout_failure_mode": "open", "timeout_seconds": 30}, policy.ModeEnforce, false},
+		{"allow outages, block slow: cut", map[string]any{"timeout_failure_mode": "closed"}, policy.ModeEnforce, true},
+		{"legacy closed: cut", map[string]any{"failure_mode": "closed"}, policy.ModeEnforce, true},
+		{"legacy open: released", nil, policy.ModeEnforce, false},
+		{"observe never cuts", map[string]any{"timeout_failure_mode": "closed"}, policy.ModeObserve, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			outs := make([]textchunkOutcome, len(tc.outs))
-			for i, started := range tc.outs {
-				outs[i].Started = started
+			p := pluginAt(srv.URL, 15*time.Second)
+			start := time.Now()
+			got, err := p.InspectSegment(context.Background(),
+				streamInput(tc.mode, settingsOf(tc.settings), nil), segment(1, "a slow paragraph"))
+			assert.Less(t, time.Since(start), 2900*time.Millisecond, "the per-block limit applies, not timeout_seconds")
+			if tc.cut {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.True(t, got.Block)
+				require.NotNil(t, got.Failure)
+				assert.Equal(t, appplugins.DetailTimeout, got.Failure.Detail)
+				return
 			}
-			assert.Equal(t, tc.detail, timeoutOf(tc.d, outs).Detail)
+			assert.Nil(t, got)
+			var typed *appplugins.ExternalStreamFailure
+			require.ErrorAs(t, err, &typed)
+			assert.Equal(t, appplugins.FailureTransport, typed.Reason)
+			assert.Equal(t, appplugins.DetailTimeout, typed.Detail)
 		})
 	}
-	throttled := failed(0)
-	throttled.Detail = appplugins.DetailThrottled
-	assert.Equal(t, appplugins.DetailThrottled, timeoutOf(throttled, make([]textchunkOutcome, 1)).Detail, "a named detail is kept")
+}
+
+func TestStreamFailsClosedOn(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	set := settingsOf(map[string]any{"failure_mode": "closed", "timeout_failure_mode": "open"})
+	assert.True(t, p.StreamFailsClosedOn(set, appplugins.FailureTransport, ""))
+	assert.False(t, p.StreamFailsClosedOn(set, appplugins.FailureTransport, appplugins.DetailTimeout))
+
+	_, opts := p.StreamSettings(settingsOf(map[string]any{"timeout_failure_mode": "closed"}))
+	assert.Equal(t, "fail_closed", opts.OnError, "a policy that can cut some failure is on the stream as fail_closed")
+	_, opts = p.StreamSettings(settingsOf(nil))
+	assert.NotEqual(t, "fail_closed", opts.OnError)
 }

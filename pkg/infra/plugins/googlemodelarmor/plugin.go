@@ -562,7 +562,7 @@ func (p *Plugin) runGuardrail(
 		}
 		return evals[i].state()
 	}
-	decision := timeoutOf(appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow)), outs)
+	decision := appplugins.ChunkTimeout(appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow)), outs)
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
@@ -638,23 +638,6 @@ func (p *Plugin) runGuardrail(
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionAllowed)
 	return passThrough(), nil
-}
-
-// timeoutOf names a chunked evaluation's transport failure a timeout when the
-// chunk that decided it ran out of time: never started because earlier calls
-// were slow and the budget ran out (ClassifyChunks reports it as a bare
-// transport failure), or cut by the budget mid-call.
-func timeoutOf(d appplugins.ChunkDecision, outs []textchunk.Outcome[struct{}]) appplugins.ChunkDecision {
-	if d.Kind != appplugins.ChunkAvailabilityFailure || d.Reason != appplugins.FailureTransport || d.Detail != "" {
-		return d
-	}
-	if d.Index < 0 || d.Index >= len(outs) {
-		return d
-	}
-	if out := outs[d.Index]; !out.Started || out.TimedOut || out.BudgetCut {
-		d.Detail = appplugins.DetailTimeout
-	}
-	return d
 }
 
 // filterVersionOf is the filter version behind a chunked evaluation's verdict:
