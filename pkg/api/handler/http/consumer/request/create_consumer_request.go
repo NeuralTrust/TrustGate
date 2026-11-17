@@ -57,6 +57,14 @@ type AuthBindingRequest struct {
 	// AllowedCertificateSubjects are the client-certificate common names or SAN
 	// DNS names accepted over mTLS.
 	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects,omitempty"`
+	// RequiredClaims are claims a bearer token must carry, each mapped to the
+	// values it may hold (any one of them; an empty list accepts any value).
+	// At most 32 claims of 32 values each.
+	RequiredClaims map[string][]string `json:"required_claims,omitempty"`
+	// ForbiddenClaims are claims a bearer token must not carry, e.g. email,
+	// upn, name and preferred_username to keep people's tokens off an agent
+	// route. At most 32.
+	ForbiddenClaims []string `json:"forbidden_claims,omitempty"`
 }
 
 // ToDomain maps the request onto the domain binding; nil when omitted.
@@ -64,9 +72,18 @@ func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
 	if r == nil {
 		return nil
 	}
+	var required map[string][]string
+	if len(r.RequiredClaims) > 0 {
+		required = make(map[string][]string, len(r.RequiredClaims))
+		for name, values := range r.RequiredClaims {
+			required[name] = append([]string(nil), values...)
+		}
+	}
 	return &domain.AuthBinding{
 		AllowedClientIDs:           append([]string(nil), r.AllowedClientIDs...),
 		AllowedCertificateSubjects: append([]string(nil), r.AllowedCertificateSubjects...),
+		RequiredClaims:             required,
+		ForbiddenClaims:            append([]string(nil), r.ForbiddenClaims...),
 	}
 }
 
