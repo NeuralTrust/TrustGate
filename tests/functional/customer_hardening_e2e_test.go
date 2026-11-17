@@ -445,6 +445,33 @@ func TestCustomerE2E_S08_RateLimitPerCaller(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "another oid has its own budget: %s", body)
 	})
 
+	t.Run("application keys: per key, or per end user they name", func(t *testing.T) {
+		up := newJSONUpstream(t, "ok")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("hard-keys")})
+		registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+		consumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("keys"), registryID)
+		keyA := createAndAttachAPIKey(t, gatewayID, consumerID)
+		keyB := createAndAttachAPIKey(t, gatewayID, consumerID)
+		policyID := CreatePolicy(t, gatewayID, rateLimitPolicy(map[string]any{"limit": 1, "window": "1m", "group_by": "subject"}))
+		AttachPolicy(t, gatewayID, consumerID, policyID)
+		path := chatCompletionsPath(t, consumerID)
+		call := func(key, endUser string) int {
+			headers := map[string]string{proxyAPIKeyHeader: key}
+			if endUser != "" {
+				headers["X-NeuralTrust-End-User"] = endUser
+			}
+			status, _, _ := gatewayPost(t, ProxyURL, gatewayID, path, headers, chatRequest(false))
+			return status
+		}
+
+		assert.Equal(t, http.StatusOK, call(keyA, ""), "key A's first request")
+		assert.Equal(t, http.StatusTooManyRequests, call(keyA, ""), "key A has used its limit")
+		assert.Equal(t, http.StatusOK, call(keyB, ""), "key B is not throttled by key A")
+		assert.Equal(t, http.StatusOK, call(keyA, "user-1"), "an end user the application names has their own limit")
+		assert.Equal(t, http.StatusTooManyRequests, call(keyB, "user-1"), "the same end user through another key of the application shares it")
+		assert.Equal(t, http.StatusOK, call(keyA, "user-2"), "another end user is not throttled by user-1")
+	})
+
 	t.Run("an invalid partition is refused at save", func(t *testing.T) {
 		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("hard-gw")})
 		url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gatewayID)
