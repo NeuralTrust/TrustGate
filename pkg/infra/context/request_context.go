@@ -23,7 +23,6 @@ import (
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -216,13 +215,16 @@ type RequestContext struct {
 	// them and never modify them.
 	KeyGroupID     string
 	KeyGroupBudget *keygroupdomain.Budget
-	// PrincipalSubject and PrincipalClaims are who the request runs as, from
-	// the verified caller: a token's subject and claims, a personal key's
-	// owner, or the end user an application names. The gateway sets them with
-	// SetPrincipal from the resolved identity, never from a header, so a
-	// limiter may partition on them. Read them, never modify them.
-	PrincipalSubject string
-	PrincipalClaims  map[string]any
+	// CallerSubject is who the request counts as for a limit split per caller
+	// (group_by subject) and CallerClaims the verified token claims a limit
+	// split per claim reads. The gateway sets them with SetCaller from the
+	// resolved identity, never from a header the client could choose freely:
+	// a token's subject, a personal key's owner, app:<consumer>:<end user>
+	// for an end user an application's credential named, or key:<auth id>
+	// for an application's key naming no one (consumer.CallerSubject). Read
+	// them, never modify them.
+	CallerSubject string
+	CallerClaims  map[string]any
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel
@@ -277,14 +279,14 @@ func (r *RequestContext) HeaderValue(name string) string {
 	return ""
 }
 
-// SetPrincipal records who the request runs as. A nil principal leaves the
-// request anonymous.
-func (r *RequestContext) SetPrincipal(p *identity.Principal) {
-	if r == nil || p == nil {
+// SetCaller records who the request counts as for a per-caller limit and the
+// verified claims a per-claim limit reads.
+func (r *RequestContext) SetCaller(subject string, claims map[string]any) {
+	if r == nil {
 		return
 	}
-	r.PrincipalSubject = p.Subject
-	r.PrincipalClaims = p.Claims
+	r.CallerSubject = subject
+	r.CallerClaims = claims
 }
 
 // IsBedrockNative reports whether the client called a Bedrock Runtime operation

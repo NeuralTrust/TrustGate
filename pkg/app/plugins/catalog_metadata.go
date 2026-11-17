@@ -115,7 +115,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:   "group_by",
 					Label: "Group By",
 					Type:  FieldTypeEnum,
-					Description: "Optional split of the limit within the policy scope, so each caller gets its own budget: subject (the verified identity the request runs as: a token's subject, a personal key's owner or the end user the application names), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). " +
+					Description: "Optional split of the limit within the policy scope, so each caller gets its own budget: subject (the verified caller: a token's subject, a personal key's owner, the end user an application's key or certificate names in the end-user header, or else the application key itself), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). " +
 						"When empty the limit is counted per gateway (global) or per consumer. A request with no value for the partition counts against that shared counter.",
 					Enum: enumOptions(GroupBySubject, GroupByClaim, GroupByHeader),
 				},
@@ -301,7 +301,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "group_by",
 					Label:       "Group By",
 					Type:        FieldTypeEnum,
-					Description: "Optional split of the budget within the policy scope, so each caller gets its own: subject (the verified identity the request runs as), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). When empty the budget is counted per gateway (global) or per consumer, and so is a request with no value for the partition. Not allowed with partition key.",
+					Description: "Optional split of the budget within the policy scope, so each caller gets its own: subject (the verified caller: a token's subject, a personal key's owner, the end user an application's key or certificate names, or else the application key itself), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). When empty the budget is counted per gateway (global) or per consumer, and so is a request with no value for the partition. Not allowed with partition key.",
 					Enum:        enumOptions(GroupBySubject, GroupByClaim, GroupByHeader),
 				},
 				{

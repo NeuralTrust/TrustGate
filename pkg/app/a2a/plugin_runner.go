@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"strconv"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
@@ -83,7 +83,7 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 			A2ABody:   x.call.Body,
 		},
 	}
-	in.Request.SetPrincipal(identity.PrincipalFromContext(ctx))
+	in.Request.SetCaller(appconsumer.CallerFromContext(ctx))
 	if stage == policy.StagePreResponse {
 		out, err := json.Marshal(appplugins.A2ABody{Parts: nonNil(parts)})
 		if err != nil {

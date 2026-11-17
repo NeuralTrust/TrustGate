@@ -712,7 +712,7 @@ func TestPlugin_Execute_RecordRefusedByRedisReportsTheCause(t *testing.T) {
 
 func execInputAs(settings map[string]any, scope appplugins.RuntimeScope, subject string, claims map[string]any) appplugins.ExecInput {
 	in := execInput(settings, scope)
-	in.Request = &infracontext.RequestContext{PrincipalSubject: subject, PrincipalClaims: claims}
+	in.Request = &infracontext.RequestContext{CallerSubject: subject, CallerClaims: claims}
 	return in
 }
 
