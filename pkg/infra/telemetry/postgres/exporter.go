@@ -90,6 +90,8 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 		rec.SchemaVersion,
 		rec.RequestBody,
 		rec.ResponseBody,
+		rec.ClientTraceID,
+		rec.MCPSessionID,
 	); err != nil {
 		return fmt.Errorf("postgres: insert sensible record: %w", err)
 	}
@@ -117,6 +119,12 @@ func toRecord(view events.Event) metrics.SensibleRecord {
 	}
 	if team := strings.TrimSpace(view.TenantID); team != "" {
 		rec.TenantID = &team
+	}
+	if view.ClientTraceID != "" {
+		rec.ClientTraceID = &view.ClientTraceID
+	}
+	if view.MCPSessionID != "" {
+		rec.MCPSessionID = &view.MCPSessionID
 	}
 	return rec
 }

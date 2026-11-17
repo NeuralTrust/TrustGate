@@ -37,6 +37,8 @@ func fullEvent() events.Event {
 		SessionID:     "sess-1",
 		TurnID:        "turn-1",
 		IP:            "203.0.113.7",
+		ClientTraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
+		MCPSessionID:  "mcp-sess-1",
 		Status:        events.Status{Code: 200, Outcome: "ok"},
 		Security:      []string{"rule-a"},
 		Request: events.Request{
@@ -71,6 +73,8 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	assert.Empty(t, meta.Request.Body)
 	assert.Empty(t, meta.Request.Preview)
 	assert.Nil(t, meta.Response.Body)
+	assert.Empty(t, meta.ClientTraceID)
+	assert.Empty(t, meta.MCPSessionID)
 
 	assert.Equal(t, evt.SchemaVersion, meta.SchemaVersion)
 	assert.Equal(t, evt.Kind, meta.Kind)
@@ -106,6 +110,8 @@ func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	assert.Equal(t, evt.GatewayID, sensible.GatewayID)
 	assert.Equal(t, evt.TenantID, sensible.TenantID)
 	assert.Equal(t, evt.OccurredOn, sensible.OccurredOn)
+	assert.Equal(t, evt.ClientTraceID, sensible.ClientTraceID)
+	assert.Equal(t, evt.MCPSessionID, sensible.MCPSessionID)
 
 	assert.Empty(t, sensible.Kind)
 	assert.Empty(t, sensible.IP)
