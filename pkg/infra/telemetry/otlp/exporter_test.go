@@ -147,6 +147,45 @@ func TestExporter_RawClassEmitsBodies(t *testing.T) {
 	assert.False(t, hasMethod, "raw record must not carry sanitized metadata attributes")
 }
 
+// A raw record of a request that came with a traceparent carries the client's
+// trace id in its trace context, so a backend links it to the agent's trace.
+// Metadata records never carry it: the client trace id is raw-only.
+func TestExporter_RawRecordJoinsTheClientTrace(t *testing.T) {
+	t.Parallel()
+	const clientTrace = "4bf92f3577b34da6a3ce929d0e0e4736"
+	for _, tc := range []struct {
+		name  string
+		class metrics.DataClass
+		id    string
+		want  string
+	}{
+		{name: "raw with a client trace", class: metrics.Raw, id: clientTrace, want: clientTrace},
+		{name: "raw without one", class: metrics.Raw, id: "", want: ""},
+		{name: "raw with an invalid one", class: metrics.Raw, id: "not-hex", want: ""},
+		{name: "metadata", class: metrics.Metadata, id: clientTrace, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &memExporter{}
+			provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
+			exp := newExporterWithProvider(provider, testLogger(), time.Second)
+			defer exp.Close()
+			exp.SetDataClass(tc.class)
+
+			evt := fullEvent()
+			evt.ClientTraceID = tc.id
+			require.NoError(t, exp.Publish(context.Background(), evt))
+
+			records := mem.all()
+			require.Len(t, records, 1)
+			got := ""
+			if id := records[0].TraceID(); id.IsValid() {
+				got = id.String()
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestExporter_NilEventIsNoOp(t *testing.T) {
 	t.Parallel()
 	mem := &memExporter{}

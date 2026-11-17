@@ -500,7 +500,7 @@ func (p *providerInvoker) prepare(
 		crossFormat:  crossFormat,
 		capability:   capability,
 	}
-	if !crossFormat && bk.Provider() == providers.ProviderAnthropic && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
+	if !crossFormat && carriesAnthropicBetas(bk.Provider()) && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
 		prep.cfg.AnthropicBeta = anthropicBetas(req)
 	}
 	if converse.betas != "" {
