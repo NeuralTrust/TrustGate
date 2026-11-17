@@ -17,7 +17,6 @@ package providers
 import (
 	"bytes"
 	"io"
-	"net/http"
 	"testing"
 	"time"
 
@@ -90,13 +89,13 @@ func TestHTTPClientPool_TransportUsesConfiguredResponseHeaderTimeout(t *testing.
 
 	pool := NewHTTPClientPool()
 
-	transport, ok := pool.Get("anthropic", DefaultHTTPTimeout).Transport.(*http.Transport)
-	require.True(t, ok, "non-streaming client must use *http.Transport")
-	assert.Equal(t, 300*time.Second, transport.ResponseHeaderTimeout)
+	transport, ok := pool.Get("anthropic", DefaultHTTPTimeout).Transport.(*forwardingTransport)
+	require.True(t, ok, "non-streaming client must use the forwarding transport")
+	assert.Equal(t, 300*time.Second, transport.base.ResponseHeaderTimeout)
 
-	streamTransport, ok := pool.GetStream("anthropic").Transport.(*http.Transport)
-	require.True(t, ok, "streaming client must use *http.Transport")
-	assert.Equal(t, 300*time.Second, streamTransport.ResponseHeaderTimeout)
+	streamTransport, ok := pool.GetStream("anthropic").Transport.(*forwardingTransport)
+	require.True(t, ok, "streaming client must use the forwarding transport")
+	assert.Equal(t, 300*time.Second, streamTransport.base.ResponseHeaderTimeout)
 }
 
 func TestDrainBody(t *testing.T) {

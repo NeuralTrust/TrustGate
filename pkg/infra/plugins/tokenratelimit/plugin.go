@@ -102,7 +102,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if !cfg.limits() {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
-	base := aggregateKey(in.Config.ID, dimension, subject, in.Request.HeaderValue(cfg.GroupByHeader))
+	base := aggregateKey(in.Config.ID, dimension, subject, cfg.groupBy.KeySuffix(in.Request))
 
 	switch in.Stage {
 	case policy.StagePreRequest:

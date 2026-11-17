@@ -852,6 +852,42 @@ func TestAuthMiddleware_AuthBindingRestrictsClients(t *testing.T) {
 	}
 }
 
+// TestAuthMiddleware_AuthBindingClaimRules: a consumer that takes only
+// workload tokens refuses a token carrying a person's claims, even one issued
+// to its own allowed client, and one missing a required claim.
+func TestAuthMiddleware_AuthBindingClaimRules(t *testing.T) {
+	t.Parallel()
+	gw, rc := inlineConsumerWithOAuth(t)
+	rc.Consumer.AuthBinding = consumerdomain.AuthBinding{
+		AllowedClientIDs: []string{"agent-app"},
+		RequiredClaims:   map[string][]string{"idtyp": {"app"}},
+		ForbiddenClaims:  []string{"email", "upn", "name", "preferred_username"},
+	}
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc})
+
+	cases := map[string]struct {
+		claims map[string]any
+		want   int
+	}{
+		"workload token":                     {map[string]any{"sub": "agent-1", "azp": "agent-app", "idtyp": "app"}, fiber.StatusOK},
+		"delegated token of the same client": {map[string]any{"sub": "user-1", "azp": "agent-app", "idtyp": "app", "upn": "user@corp"}, fiber.StatusForbidden},
+		"token without the required claim":   {map[string]any{"sub": "agent-1", "azp": "agent-app"}, fiber.StatusForbidden},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			verifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{Subject: "user-1", Claims: tc.claims}}
+			app := newAuthTestApp(t, gw, data, verifier, fakeOIDCVerifier{})
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}
+
 // Before the two identity-provider types were unified, a consumer carrying
 // both shapes had its aliased provider silently ignored: bearer resolution
 // branched on the auth type, took the oauth2 branch whenever an oauth2 auth

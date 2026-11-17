@@ -427,6 +427,7 @@ func TestHandle_Streaming_RelaysSSE(t *testing.T) {
 		[]byte("data: {\"delta\":\"hi\"}"),
 		{},
 		[]byte("data: [DONE]"),
+		{},
 	}
 	stream := func(yield func([]byte, error) bool) {
 		for _, l := range lines {
@@ -458,7 +459,7 @@ func TestHandle_Streaming_RelaysSSE(t *testing.T) {
 		t.Fatalf("X-Selected-Provider = %q, want openai", got)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want := "data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n"
+	want := "data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n\n"
 	if string(body) != want {
 		t.Fatalf("body = %q, want %q", string(body), want)
 	}
@@ -548,9 +549,9 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
-		{name: "deadline after headers stays in the stream", err: context.DeadlineExceeded, want: clientFrame + genericFrame + "\n\n"},
-		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
+		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + "\n" + genericFrame + "\n\n"},
+		{name: "deadline after headers stays in the stream", err: context.DeadlineExceeded, want: clientFrame + "\n" + genericFrame + "\n\n"},
+		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -626,7 +627,7 @@ func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
 					t.Fatalf("app.Test: %v", err)
 				}
 				body, _ := io.ReadAll(resp.Body)
-				if want := chunk + "\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
+				if want := chunk + "\n\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
 					t.Fatalf("body = %q, want %q", string(body), want)
 				}
 			})
@@ -660,7 +661,7 @@ func TestHandle_Streaming_PanicEndsWithErrorEventAndCancels(t *testing.T) {
 		t.Fatalf("app.Test: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want := `data: {"id":"1"}` + "\n" +
+	want := `data: {"id":"1"}` + "\n\n" +
 		`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n\n"
 	if string(body) != want {
 		t.Fatalf("body = %q, want %q", string(body), want)
@@ -744,7 +745,7 @@ func TestHandle_Streaming_PanicRunsFinalizerOnceWithErrorEvent(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("finalizer calls = %d, want 1", calls)
 	}
-	want := "data: a\ndata: b\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
+	want := "data: a\ndata: b\n\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
 	if string(gotOutput) != want {
 		t.Fatalf("captured output = %q, want %q", string(gotOutput), want)
 	}
@@ -758,8 +759,8 @@ func TestHandle_Streaming_PanicAfterTheStreamEndedWritesNoSecondErrorEvent(t *te
 		err  error
 		want string
 	}{
-		{name: "after the error event", err: upstreamErr, want: "data: a\n" + errorFrame + "\n\n"},
-		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n"},
+		{name: "after the error event", err: upstreamErr, want: "data: a\n\n" + errorFrame + "\n\n"},
+		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1014,7 +1015,7 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		want := "data: a\n" +
+		want := "data: a\n\n" +
 			"event: error\n" +
 			`data: {"type":"error","error":{"type":"api_error","message":"upstream stream terminated unexpectedly"}}` +
 			"\n\n\n"
@@ -1038,7 +1039,7 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		want := "data: a\n" +
+		want := "data: a\n\n" +
 			`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` +
 			"\n\n"
 		if string(body) != want {
@@ -1814,6 +1815,39 @@ func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 	}
 }
 
+// The verified principal reaches the request a limiter partitions on; a
+// header that names someone else does not.
+func TestHandle_StampsPrincipalFromContext(t *testing.T) {
+	authID := ids.New[ids.AuthKind]()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authCtx := appauth.AuthContext{Method: appauth.MethodOIDC, AuthID: authID, GatewayID: gatewayID}
+	principal := &identity.Principal{Subject: "agent-7", Method: identity.MethodJWT, Claims: map[string]any{"oid": "o-7"}}
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: consumerSlug, Active: true, AuthIDs: []ids.AuthID{authID}}},
+	})
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := identity.WithPrincipal(appauth.WithAuthContext(c.UserContext(), &authCtx), principal)
+		c.SetUserContext(appconsumer.WithData(appconsumer.WithGatewayID(ctx, gatewayID), data))
+		return c.Next()
+	})
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+	var got *infracontext.RequestContext
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appproxy.ForwardInput) { got = in.Request }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+
+	req := newProxyRequest()
+	req.Header.Set("X-User-Id", "mallory")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.NotNil(t, got)
+	assert.Equal(t, "agent-7", got.PrincipalSubject)
+	assert.Equal(t, "o-7", got.PrincipalClaims["oid"])
+}
+
 type personalSpec struct {
 	provider, extra string
 	allowed         []string
@@ -2182,7 +2216,9 @@ func TestHandleStore_StreamsThroughTheSharedTail(t *testing.T) {
 		StatusCode: 200,
 		Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
 		Stream: func(yield func([]byte, error) bool) {
-			_ = yield([]byte("data: [DONE]"), nil)
+			if yield([]byte("data: [DONE]"), nil) {
+				_ = yield([]byte{}, nil)
+			}
 		},
 	}, nil).Once()
 
@@ -2192,7 +2228,7 @@ func TestHandleStore_StreamsThroughTheSharedTail(t *testing.T) {
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	assert.Equal(t, "data: [DONE]\n", string(body))
+	assert.Equal(t, "data: [DONE]\n\n", string(body))
 }
 
 func TestHandleStore_TrafficLabelingDoesNotSeeStoreRequests(t *testing.T) {

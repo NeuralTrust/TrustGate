@@ -16,12 +16,10 @@ package tokenratelimit
 
 const counterKeyPrefix = "trl"
 
-func aggregateKey(cfgID, dimension, subject, headerValue string) string {
-	key := counterKeyPrefix + ":" + cfgID + ":" + dimension + ":" + subject
-	if headerValue != "" {
-		key += ":hdr:" + headerValue
-	}
-	return key
+// aggregateKey is the counter of one scope subject, followed by the group_by
+// partition suffix (appplugins.GroupBy.KeySuffix), "" for the shared counter.
+func aggregateKey(cfgID, dimension, subject, partition string) string {
+	return counterKeyPrefix + ":" + cfgID + ":" + dimension + ":" + subject + partition
 }
 
 func periodKey(base, period string) string {

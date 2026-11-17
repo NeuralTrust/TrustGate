@@ -318,18 +318,34 @@ func fromIdentity(i domain.Identity) IdentityResponse {
 type AuthBindingResponse struct {
 	AllowedClientIDs           []string `json:"allowed_client_ids"`
 	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects"`
+	// RequiredClaims maps each claim a bearer token must carry to the values
+	// it may hold; an empty list accepts any value.
+	RequiredClaims map[string][]string `json:"required_claims"`
+	// ForbiddenClaims are claims a bearer token must not carry.
+	ForbiddenClaims []string `json:"forbidden_claims"`
 }
 
 func fromAuthBinding(b domain.AuthBinding) AuthBindingResponse {
 	out := AuthBindingResponse{
 		AllowedClientIDs:           b.AllowedClientIDs,
 		AllowedCertificateSubjects: b.AllowedCertificateSubjects,
+		RequiredClaims:             make(map[string][]string, len(b.RequiredClaims)),
+		ForbiddenClaims:            b.ForbiddenClaims,
 	}
 	if out.AllowedClientIDs == nil {
 		out.AllowedClientIDs = []string{}
 	}
 	if out.AllowedCertificateSubjects == nil {
 		out.AllowedCertificateSubjects = []string{}
+	}
+	for name, values := range b.RequiredClaims {
+		if values == nil {
+			values = []string{}
+		}
+		out.RequiredClaims[name] = values
+	}
+	if out.ForbiddenClaims == nil {
+		out.ForbiddenClaims = []string{}
 	}
 	return out
 }

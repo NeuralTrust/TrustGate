@@ -106,10 +106,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	now := p.now()
-	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject)
-	if group := in.Request.HeaderValue(cfg.GroupByHeader); group != "" {
-		redisKey += ":hdr:" + group
-	}
+	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject) + cfg.partition.KeySuffix(in.Request)
 	count, err := p.currentCount(ctx, redisKey, now, window)
 	if err != nil {
 		return p.counterUnavailable(ctx, in, RateLimiterData{ExceededType: dimension}, nil, "read", err)

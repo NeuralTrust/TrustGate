@@ -137,6 +137,34 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "group_by subject",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "subject"},
+		},
+		{
+			name:     "group_by claim with its claim",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "claim", "group_by_claim": "oid"},
+		},
+		{
+			name:     "group_by claim without a claim",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "claim"},
+			wantErr:  true,
+		},
+		{
+			name:     "group_by header without a header",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "header"},
+			wantErr:  true,
+		},
+		{
+			name:     "group_by subject with a stray header",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "subject", "group_by_header": "X-User"},
+			wantErr:  true,
+		},
+		{
+			name:     "unknown group_by",
+			settings: map[string]any{"limit": 5, "window": "1m", "group_by": "ip"},
+			wantErr:  true,
+		},
+		{
 			name:     "ignores unknown fields",
 			settings: map[string]any{"limit": 5, "window": "1m", "actions": map[string]any{"type": "explode"}},
 			wantErr:  false,
@@ -680,4 +708,57 @@ func TestPlugin_Execute_RecordRefusedByRedisReportsTheCause(t *testing.T) {
 			assert.NotContains(t, err.Error(), "EXECABORT")
 		})
 	}
+}
+
+func execInputAs(settings map[string]any, scope appplugins.RuntimeScope, subject string, claims map[string]any) appplugins.ExecInput {
+	in := execInput(settings, scope)
+	in.Request = &infracontext.RequestContext{PrincipalSubject: subject, PrincipalClaims: claims}
+	return in
+}
+
+// With group_by subject each verified caller of a consumer has its own budget:
+// one noisy identity no longer throttles the others. A request without a
+// subject counts against the consumer's shared counter.
+func TestPlugin_Execute_GroupBySubjectIsolatesCallers(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := map[string]any{"limit": 1, "window": "1m", "group_by": "subject"}
+
+	_, err := p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "agent-a", nil))
+	require.NoError(t, err)
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "agent-a", nil))
+	require.Error(t, err, "the same subject shares its budget")
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "agent-b", nil))
+	require.NoError(t, err, "another subject must not be throttled by the first one's burst")
+
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "", nil))
+	require.NoError(t, err)
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "", nil))
+	require.Error(t, err, "anonymous requests share the consumer counter")
+}
+
+// A header cannot stand in for the subject: a client that sends a fresh
+// header value does not get a fresh budget under group_by subject.
+func TestPlugin_Execute_GroupBySubjectIgnoresHeaders(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := map[string]any{"limit": 1, "window": "1m", "group_by": "subject"}
+	in := execInputAs(settings, consumerScope("c-1"), "agent-a", nil)
+	in.Request.Headers = map[string][]string{"X-User-Id": {"one"}}
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	in = execInputAs(settings, consumerScope("c-1"), "agent-a", nil)
+	in.Request.Headers = map[string][]string{"X-User-Id": {"two"}}
+	_, err = p.Execute(context.Background(), in)
+	require.Error(t, err)
+}
+
+func TestPlugin_Execute_GroupByClaimIsolatesByClaimValue(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := map[string]any{"limit": 1, "window": "1m", "group_by": "claim", "group_by_claim": "oid"}
+
+	_, err := p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "s", map[string]any{"oid": "o-1"}))
+	require.NoError(t, err)
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "other-sub", map[string]any{"oid": "o-1"}))
+	require.Error(t, err, "the same claim value shares a budget whatever the subject")
+	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "s", map[string]any{"oid": "o-2"}))
+	require.NoError(t, err)
 }

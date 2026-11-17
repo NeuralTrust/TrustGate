@@ -15,7 +15,6 @@
 package modules
 
 import (
-	"fmt"
 	"log/slog"
 
 	secretstorehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/secretstore"
@@ -257,8 +256,13 @@ func ServerAdmin(c *container.Container) error {
 	}
 	return c.Provide(
 		func(p adminServerParams) server.Server {
-			addr := fmt.Sprintf(":%d", p.Cfg.Server.AdminPort)
-			return server.NewHTTPServer("admin", addr, p.Cfg.Server, p.Logger, []router.ServerRouter{p.Router})
+			// The management API binds where SERVER_ADMIN_HOST says (every
+			// interface when unset) and serves HTTPS itself when given a
+			// certificate, so a deployment without a TLS-terminating proxy in
+			// front of it does not send admin tokens in the clear.
+			return server.NewHTTPServer("admin", p.Cfg.Server.AdminAddr(), p.Cfg.Server, p.Logger,
+				[]router.ServerRouter{p.Router},
+				server.WithTLS(p.Cfg.Server.AdminTLSCertFile, p.Cfg.Server.AdminTLSKeyFile))
 		},
 		dig.Name("admin"),
 	)
