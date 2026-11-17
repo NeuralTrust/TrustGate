@@ -191,3 +191,67 @@ func TestRPCGateway_CallThroughNeedsTheInventory(t *testing.T) {
 	_, err = g.Dispatch(context.Background(), inventoryConsumer(t), "tools/call", callThrough(`{"name":"linear_save_issue"}`))
 	require.ErrorIs(t, err, appmcp.ErrToolNotFound)
 }
+
+func expectResolveWithSchema(t *testing.T, composer *mocks.Composer, name, schema string) *appmcp.ResolvedTool {
+	t.Helper()
+	var tool appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"`+name+`","inputSchema":`+schema+`}`), &tool))
+	target := &appmcp.ResolvedTool{Registry: stubRegistry("linear"), Tool: tool, Exposed: name}
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, name).Return(target, nil).Once()
+	return target
+}
+
+// The first call goes out without the schema; when the upstream refuses the
+// arguments, the refusal carries it, so the retry needs no extra round trip.
+// A direct call already had the schema in the client's list and is untouched.
+func TestRPCGateway_CallThroughRefusalCarriesTheSchema(t *testing.T) {
+	t.Parallel()
+	const schema = `{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}`
+	refusal := &appmcp.RPCError{Code: -32602, Message: "title is required"}
+
+	composer := mocks.NewComposer(t)
+	target := expectResolveWithSchema(t, composer, "linear_save_issue", schema)
+	composer.EXPECT().Invoke(mock.Anything, mock.Anything, target, mock.Anything).Return(nil, refusal).Once()
+	_, err := callThroughGateway(t, composer, noopRunner()).Dispatch(context.Background(), inventoryConsumer(t), "tools/call",
+		callThrough(`{"name":"linear_save_issue","arguments":{}}`))
+	var rpcErr *appmcp.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	assert.EqualValues(t, -32602, rpcErr.Code)
+	assert.Contains(t, rpcErr.Message, schema)
+
+	direct := mocks.NewComposer(t)
+	target = expectResolveWithSchema(t, direct, "linear_save_issue", schema)
+	direct.EXPECT().Invoke(mock.Anything, mock.Anything, target, mock.Anything).Return(nil, refusal).Once()
+	_, err = callThroughGateway(t, direct, noopRunner()).Dispatch(context.Background(), inventoryConsumer(t), "tools/call",
+		json.RawMessage(`{"name":"linear_save_issue","arguments":{}}`))
+	require.ErrorAs(t, err, &rpcErr)
+	assert.Equal(t, "title is required", rpcErr.Message)
+}
+
+// A request stage that answers in the tool's place said nothing about the
+// arguments, so its answer is not dressed up as a schema problem.
+func TestRPCGateway_CallThroughLeavesAStagesAnswerAlone(t *testing.T) {
+	t.Parallel()
+	const schema = `{"type":"object","properties":{"title":{"type":"string"}}}`
+	composer := mocks.NewComposer(t)
+	expectResolveWithSchema(t, composer, "linear_save_issue", schema)
+
+	blocked := json.RawMessage(`{"content":[{"type":"text","text":"Blocked by policy"}],"isError":true}`)
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+			if in.Stage == policydomain.StagePreRequest {
+				return &appplugins.StageOutcome{ShortCircuit: true, StatusCode: 200, Body: blocked}, nil
+			}
+			return &appplugins.StageOutcome{}, nil
+		})
+
+	result, err := callThroughGateway(t, composer, appmcp.NewPluginRunner(exec, discardLogger())).
+		Dispatch(context.Background(), inventoryConsumer(t), "tools/call",
+			callThrough(`{"name":"linear_save_issue","arguments":{"title":"x"}}`))
+	require.NoError(t, err)
+	raw, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "Blocked by policy")
+	assert.NotContains(t, string(raw), "input schema")
+}

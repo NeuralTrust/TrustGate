@@ -305,6 +305,21 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	}
 }
 
+// Claude's hosted connectors keep the tool list they fetched when the connector
+// was added, so the instructions tell the model how to learn what the user has
+// now and reach it, instead of sending the user to reconnect.
+func TestHandler_Initialize_InstructionsPointPastAStaleToolList(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	instructions, _ := body["result"].(map[string]any)["instructions"].(string)
+	for _, want := range []string{appmcp.InventoryToolName, `{"brief": true}`, appmcp.CallToolName} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("instructions %q do not mention %s", instructions, want)
+		}
+	}
+}
+
 // Claude drops notifications/tools/list_changed from a server that did not
 // declare the capability, so advertising it is what makes the push stream
 // usable at all.

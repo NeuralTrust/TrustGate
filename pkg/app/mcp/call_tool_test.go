@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -199,5 +200,153 @@ func TestComposer_ToolInventory_CarriesTheToolsInputSchema(t *testing.T) {
 	}
 	if got := string(server.Tools[0].InputSchema); got != schema {
 		t.Fatalf("input schema = %s, want %s", got, schema)
+	}
+}
+
+func schemaTool(t *testing.T, schema string) Tool {
+	t.Helper()
+	var tool Tool
+	raw := `{"name":"save_issue"}`
+	if schema != "" {
+		raw = `{"name":"save_issue","inputSchema":` + schema + `}`
+	}
+	if err := json.Unmarshal([]byte(raw), &tool); err != nil {
+		t.Fatalf("decode tool: %v", err)
+	}
+	return tool
+}
+
+const issueSchema = `{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}`
+
+// The upstream refusing the arguments is the one failure the schema fixes, so
+// it rides on that refusal — still a protocol error, so telemetry records it.
+func TestWithSchemaOnFailure_PutsTheSchemaOnARefusalOfTheArguments(t *testing.T) {
+	t.Parallel()
+	reached := toolInvocation{target: &ResolvedTool{Tool: schemaTool(t, issueSchema)}, upstream: true}
+	refusal := &RPCError{Code: codeInvalidParams, Message: "title is required", Data: json.RawMessage(`{"field":"title"}`)}
+
+	result, err := withSchemaOnFailure("linear_save_issue", reached, nil, refusal)
+	if result != nil {
+		t.Fatalf("result = %v, want the refusal alone", result)
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != codeInvalidParams {
+		t.Fatalf("err = %v, want the -32602 kept", err)
+	}
+	for _, want := range []string{"title is required", issueSchema, CallToolName} {
+		if !strings.Contains(rpcErr.Message, want) {
+			t.Fatalf("message %q does not carry %q", rpcErr.Message, want)
+		}
+	}
+	if string(rpcErr.Data) != `{"field":"title"}` {
+		t.Fatalf("data = %s, want the upstream's own", rpcErr.Data)
+	}
+	if refusal.Message != "title is required" {
+		t.Fatalf("the upstream's error was changed in place: %q", refusal.Message)
+	}
+}
+
+// A server on the newer SDK answers bad arguments as a tool error; the schema
+// is added as one more text block and nothing else in the result moves.
+func TestWithSchemaOnFailure_AddsTheSchemaToAToolError(t *testing.T) {
+	t.Parallel()
+	reached := toolInvocation{target: &ResolvedTool{Tool: schemaTool(t, issueSchema)}, upstream: true}
+	failed := json.RawMessage(`{"content":[{"type":"text","text":"Invalid arguments"}],"isError":true,"_meta":{"k":"v"}}`)
+
+	result, err := withSchemaOnFailure("linear_save_issue", reached, failed, nil)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	var decoded struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool              `json:"isError"`
+		Meta    map[string]string `json:"_meta"`
+	}
+	if err := json.Unmarshal(result.(json.RawMessage), &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !decoded.IsError || decoded.Meta["k"] != "v" || len(decoded.Content) != 2 {
+		t.Fatalf("result = %s, want the original plus one block", result)
+	}
+	if decoded.Content[0].Text != "Invalid arguments" || !strings.Contains(decoded.Content[1].Text, issueSchema) {
+		t.Fatalf("content = %+v", decoded.Content)
+	}
+}
+
+func TestWithSchemaOnFailure_LeavesEverythingElseAlone(t *testing.T) {
+	t.Parallel()
+	withSchema := &ResolvedTool{Tool: schemaTool(t, issueSchema)}
+	ok := json.RawMessage(`{"content":[{"type":"text","text":"done"}]}`)
+	failed := json.RawMessage(`{"content":[{"type":"text","text":"no"}],"isError":true}`)
+	denied := &RPCError{Code: CodePolicyBlocked, Message: "blocked"}
+	refused := &RPCError{Code: codeInvalidParams, Message: "bad"}
+
+	for name, tc := range map[string]struct {
+		reached toolInvocation
+		result  any
+		err     error
+	}{
+		"a success":                     {reached: toolInvocation{target: withSchema, upstream: true}, result: ok},
+		"another protocol error":        {reached: toolInvocation{target: withSchema, upstream: true}, err: denied},
+		"a stage answered for the tool": {reached: toolInvocation{target: withSchema}, result: failed},
+		"a stage refused the call":      {reached: toolInvocation{target: withSchema}, err: refused},
+		"a tool with no schema":         {reached: toolInvocation{target: &ResolvedTool{Tool: schemaTool(t, "")}, upstream: true}, result: failed},
+		"nothing was resolved":          {reached: toolInvocation{}, err: ErrToolNotFound},
+	} {
+		result, err := withSchemaOnFailure("linear_save_issue", tc.reached, tc.result, tc.err)
+		if err != tc.err {
+			t.Fatalf("%s: err = %v, want %v untouched", name, err, tc.err)
+		}
+		if tc.result == nil {
+			if result != nil {
+				t.Fatalf("%s: result = %v, want none", name, result)
+			}
+			continue
+		}
+		if string(result.(json.RawMessage)) != string(tc.result.(json.RawMessage)) {
+			t.Fatalf("%s: result = %s, want it untouched", name, result)
+		}
+	}
+}
+
+// The call at the start of a conversation reads names, not every description
+// on every server.
+func TestInventoryTool_BriefListsNamesOnly(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: twoServerInventory()}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	result := callInventory(t, tool, `{"brief":true}`)
+	servers := structuredServers(t, result)
+	if len(servers) != 2 {
+		t.Fatalf("servers = %d, want both", len(servers))
+	}
+	if got := previewNames(t, servers[0]); len(got) != 2 || got[0] != "search_issues" {
+		t.Fatalf("tools = %v, want the names", got)
+	}
+	for _, entry := range servers[0]["tools"].([]any) {
+		listed := entry.(map[string]any)
+		if _, has := listed["description"]; has {
+			t.Fatalf("brief entry %v carries a description", listed)
+		}
+		if listed["callable"] != true {
+			t.Fatalf("brief entry %v lost whether it can be called", listed)
+		}
+	}
+	structured, _ := result["structuredContent"].(map[string]any)
+	if structured["brief"] != true {
+		t.Fatalf("structured = %v, want brief marked", structured)
+	}
+	text := resultText(t, result)
+	if strings.Contains(text, "Search Linear issues") || !strings.Contains(text, "`tool`") {
+		t.Fatalf("text %q, want names and where the descriptions are", text)
+	}
+
+	full := structuredServers(t, callInventory(t, tool, ""))
+	if first := full[0]["tools"].([]any)[0].(map[string]any); first["description"] != "Search Linear issues" {
+		t.Fatalf("the full listing lost its descriptions: %v", first)
 	}
 }

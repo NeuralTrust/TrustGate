@@ -53,11 +53,15 @@ const GatewayToolDisclaimer = " This is one of the gateway's own tools, not one 
 // reports, as though the user had those too.
 const inventoryClosingNote = "\n\nThat is the whole list. The gateway's own " + InventoryToolName +
 	", " + CallToolName + " and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer." +
-	" A callable tool above that is missing from your own tool list can still be used: read its input schema with " + InventoryToolName +
-	" {\"tool\": <name>} and call it with " + CallToolName + "."
+	" A callable tool above that is missing from your own tool list can still be used: call it with " + CallToolName +
+	" (if it refuses the arguments, the answer carries its input schema; " + InventoryToolName + " {\"tool\": <name>} gives it up front)."
 
 // ErrInventoryToolUnavailable is returned when the inventory meta-tool cannot
 // serve a request (no composed surface behind it, or an unknown tool name).
+// inventoryBriefNote closes a brief answer: what was left out, and where it is.
+const inventoryBriefNote = "\n\nDescriptions are left out of this brief list: call " + InventoryToolName +
+	" with `server` for a server's tool descriptions, or with `tool` for one tool's description and input schema."
+
 var ErrInventoryToolUnavailable = errors.New("mcp: tool inventory unavailable")
 
 // SurfaceInventory is the read side of the caller's composed MCP surface, one
@@ -141,6 +145,10 @@ func (t *inventoryTool) Definitions(_ context.Context, rc *appconsumer.RoutableC
 type inventoryArgs struct {
 	Server string `json:"server,omitempty"`
 	Tool   string `json:"tool,omitempty"`
+	// Brief leaves descriptions out: the shape of the answer a caller reads at
+	// the start of every conversation, where names are what it needs and the
+	// descriptions of every tool on every server would be most of the cost.
+	Brief bool `json:"brief,omitempty"`
 }
 
 func (t *inventoryTool) Call(
@@ -213,7 +221,11 @@ func (t *inventoryTool) Call(
 		}
 		listed := make([]map[string]any, 0, len(tools))
 		for _, tool := range tools {
-			listed = append(listed, inventoryEntryJSON(tool))
+			if args.Brief {
+				listed = append(listed, map[string]any{"name": tool.Name, "callable": tool.Callable})
+			} else {
+				listed = append(listed, inventoryEntryJSON(tool))
+			}
 			if tool.Callable {
 				callable++
 			} else {
@@ -229,6 +241,11 @@ func (t *inventoryTool) Call(
 	}
 
 	installable, offerMode := t.installable(ctx, rc, servers, filter)
+	if args.Brief {
+		for _, entry := range installable {
+			delete(entry, "description")
+		}
+	}
 
 	structured := map[string]any{
 		"servers":        servers,
@@ -242,10 +259,12 @@ func (t *inventoryTool) Call(
 	if len(installable) > 0 {
 		structured["installable"] = installable
 	}
-	return marshalToolResult(
-		inventorySummary(servers, callable, pending, filter, installable, offerMode),
-		structured,
-	)
+	text := inventorySummary(servers, callable, pending, filter, installable, offerMode)
+	if args.Brief {
+		structured["brief"] = true
+		text += inventoryBriefNote
+	}
+	return marshalToolResult(text, structured)
 }
 
 // installable is what the user could add to the surface they just asked about:
@@ -558,11 +577,12 @@ func inventoryDefinition() (Tool, error) {
 		"name":  InventoryToolName,
 		"title": "List the tools this user has",
 		"description": "List every tool the current user has through this gateway, grouped by the MCP server that serves it, with each server's state, and the servers they may add but have not. " +
-			"Call this when you need to know what the user can do beyond the tools currently in your list — the standard tool list only carries the tools of servers that are connected and reachable, so it is silent about a server the user has but has not connected yet, or one that is down. " +
+			"Call it once at the start of every conversation, with `brief: true`, before answering the user: your own tool list may be the one your client fetched when this connector was added, and this is what the user has now. " +
+			"Call it again when you need to know what the user can do beyond the tools currently in your list — the standard tool list only carries the tools of servers that are connected and reachable, so it is silent about a server the user has but has not connected yet, or one that is down. " +
 			"Each server comes back as ready, needs_connect (its tools are named but not callable until the user connects their account), unavailable, or no_tools, and a needs_connect server names the connect tool that gives the user a link. " +
 			"The `installable` list is separate: those servers are not on the user's surface at all, but the Store lets them add each one with " + StoreInstallToolName + " — offer them rather than reporting their tools as available. " +
 			"Use it to answer \"what can you do?\", to find out why an expected tool is missing, and to tell the user which of their servers needs attention or what they could add. " +
-			"A callable tool that is not in your own tool list — your client may still be showing the list from before the user installed or connected its server — can be called with " + CallToolName + ": pass `tool` here first to read its input schema. " +
+			"A callable tool that is not in your own tool list — your client may still be showing the list from before the user installed or connected its server — can be called with " + CallToolName + "; pass `tool` here to read its input schema when its name and description do not make the arguments clear. " +
 			"What it returns is the whole answer: the gateway's own trustgate_* tools — this one, the Store's, the connect ones, " + CallToolName + " — are how that surface is managed, not tools the user has, so do not add them to it.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -574,6 +594,10 @@ func inventoryDefinition() (Tool, error) {
 				"tool": map[string]any{
 					"type":        "string",
 					"description": "The exact name of one tool to describe in full: its whole description and its input schema, which is what " + CallToolName + " needs to call it. Takes precedence over `server`.",
+				},
+				"brief": map[string]any{
+					"type":        "boolean",
+					"description": "Leave tool descriptions out and list names only. Use it for the call at the start of a conversation.",
 				},
 			},
 			"additionalProperties": false,
