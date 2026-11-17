@@ -117,7 +117,10 @@ func pieceTimeoutOf(inspector StreamInspector) time.Duration {
 // failure_mode and timeout_failure_mode). An inspector that implements it has a
 // chunk that ran out of time named a timeout (ChunkTimeout), and is asked, for
 // a chunk it never answered, whether that failure is cut; one that does not
-// keeps its stream options' on_error.
+// keeps its stream options' on_error. For an implementer this answer replaces
+// its on_error for availability failures, in both directions: a failure it does
+// not cut is absorbed as failed_open (entryFailsOpenOn) although its stream
+// options say fail_closed.
 type StreamFailureModes interface {
 	StreamFailsClosedOn(settings map[string]any, reason FailureReason, detail string) bool
 }

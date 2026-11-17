@@ -286,8 +286,6 @@ func (s Settings) failClosedFor(detail string) bool {
 	return s.FailureMode == pluginutil.FailureModeClosed
 }
 
-// mayFailClosed reports whether some failure can be refused under this policy,
-// which is what puts it on the stream with on_error fail_closed.
 func (s Settings) mayFailClosed() bool {
 	return s.failClosedFor("") || s.failClosedFor(appplugins.DetailTimeout)
 }
@@ -342,6 +340,8 @@ func wholeSeconds(settings map[string]any) error {
 			f = n
 		case float32:
 			f = float64(n)
+		case bool:
+			return fmt.Errorf("google_model_armor: timeout_seconds must be a whole number of seconds")
 		default:
 			continue
 		}
