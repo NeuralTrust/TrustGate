@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -41,6 +42,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // ---------------------------------------------------------------------------
@@ -493,7 +495,7 @@ func TestCustomerE2E_G01_AccessLogAttributesCaller(t *testing.T) {
 
 	subject := uniqueName("agent-log")
 	token := route.token(t, map[string]any{"sub": subject, "azp": "agent-app", "email": "should-not-be-logged@corp.example"})
-	status, body := route.chat(t, proxy.proxyURL(), token, nil)
+	status, body := route.chat(t, proxy.proxyURL(), token, map[string]string{"traceparent": clientTraceparent})
 	require.Equal(t, http.StatusOK, status, "%s", body)
 
 	var line string
@@ -511,6 +513,74 @@ func TestCustomerE2E_G01_AccessLogAttributesCaller(t *testing.T) {
 	assert.Equal(t, "agent-app", entry["client_id"])
 	assert.EqualValues(t, 200, entry["status"])
 	assert.NotContains(t, line, "should-not-be-logged@corp.example", "an email is never logged")
+	assert.Equal(t, clientTraceID, entry["client_trace_id"], "the line names the caller's trace")
+	assert.NotEmpty(t, entry["trace_id"], "the line names the gateway's own trace id, which Activity is keyed by")
+}
+
+// ---------------------------------------------------------------------------
+// O01: the gateway's record joins the caller's trace
+
+const (
+	clientTraceID     = "4bf92f3577b34da6a3ce929d0e0e4736"
+	clientTraceparent = "00-" + clientTraceID + "-00f067aa0ba902b7-01"
+)
+
+// otlpRecordInTrace reports whether the receiver got a log record whose own
+// trace context (LogRecord.trace_id, field 9) is traceHex.
+func otlpRecordInTrace(r *otlpReceiver, traceHex string) bool {
+	raw, err := hex.DecodeString(traceHex)
+	if err != nil {
+		return false
+	}
+	field := protowire.AppendBytes(protowire.AppendTag(nil, 9, protowire.BytesType), raw)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, body := range r.bodies {
+		for _, resource := range protoFields(body, 1) {
+			for _, scope := range protoFields(resource, 2) {
+				for _, record := range protoFields(scope, 2) {
+					if bytes.Contains(record, field) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func TestCustomerE2E_O01_GatewayRecordJoinsTheClientTrace(t *testing.T) {
+	defer Track(t, "CustomerHardening")()
+
+	receiver := newOTLPReceiver(t)
+	up := newJSONUpstream(t, "ok")
+	gatewayID := CreateGateway(t, map[string]any{
+		"slug": uniqueName("hard-otel"),
+		"telemetry": map[string]any{
+			"exporters": []map[string]any{{
+				"name":  "customer-collector",
+				"type":  "otlp",
+				"class": "raw",
+				"settings": map[string]any{
+					"endpoint":    receiver.server.URL,
+					"protocol":    "http/protobuf",
+					"insecure":    true,
+					"compression": "none",
+				},
+			}},
+		},
+	})
+	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+	consumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("otel"), registryID)
+	apiKey := createAndAttachAPIKey(t, gatewayID, consumerID)
+
+	status, _, body := gatewayPost(t, ProxyURL, gatewayID, chatCompletionsPath(t, consumerID),
+		map[string]string{proxyAPIKeyHeader: apiKey, "traceparent": clientTraceparent}, chatRequest(false))
+	require.Equal(t, http.StatusOK, status, "%s", body)
+
+	require.Eventually(t, func() bool { return otlpRecordInTrace(receiver, clientTraceID) }, 20*time.Second, 200*time.Millisecond,
+		"no exported record carries the caller's trace id in its trace context")
+	assert.True(t, otlpRecordWith(receiver, otlpStringAttr("trustgate.client_trace_id", clientTraceID)))
 }
 
 // ---------------------------------------------------------------------------
@@ -711,6 +781,28 @@ func TestCustomerE2E_F08_ClientHeadersToProvider(t *testing.T) {
 			status, body := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/v1/gateways/%s/registries", AdminURL, gatewayID), nil, payload)
 			assert.Equal(t, http.StatusUnprocessableEntity, status, "%s must be refused: %v", name, body)
 		}
+	})
+
+	t.Run("anthropic-beta reaches Claude on Azure Foundry", func(t *testing.T) {
+		up := newHeaderUpstream(t)
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("hard-foundry")})
+		registryID := CreateRegistry(t, gatewayID, map[string]any{
+			"name":             uniqueName("foundry"),
+			"provider":         "azure",
+			"weight":           1,
+			"provider_options": map[string]any{"api": "anthropic"},
+			"auth":             map[string]any{"type": "azure", "azure": map[string]any{"endpoint": up.server.URL, "api_key": "az-test"}},
+		})
+		consumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("foundry"), registryID)
+		apiKey := createAndAttachAPIKey(t, gatewayID, consumerID)
+		status, _, body := gatewayPost(t, ProxyURL, gatewayID, "/"+ConsumerSlug(t, consumerID)+"/v1/messages", map[string]string{
+			proxyAPIKeyHeader: apiKey,
+			"anthropic-beta":  "context-management-2025-06-27",
+		}, anthropicChatRequest("claude-sonnet-4-5"))
+		require.Equal(t, http.StatusOK, status, "%s", body)
+		got := up.lastHeaders()
+		assert.Equal(t, "context-management-2025-06-27", got.Get("anthropic-beta"))
+		assert.Equal(t, "2023-06-01", got.Get("anthropic-version"))
 	})
 
 	t.Run("anthropic-beta reaches an Anthropic-format provider", func(t *testing.T) {
