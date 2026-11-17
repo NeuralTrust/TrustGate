@@ -16,6 +16,7 @@ package googlemodelarmor
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -134,6 +135,9 @@ type Settings struct {
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
+	if err := wholeSeconds(settings); err != nil {
+		return Settings{}, err
+	}
 	cfg, err := pluginutil.Parse[Settings](settings)
 	if err != nil {
 		return Settings{}, err
@@ -260,10 +264,11 @@ func (p *Plugin) RetiredSettings() []string {
 // a policy that would rather wait than fail can ask for it.
 const maxTimeoutSeconds = 60
 
-const settingTimeoutFailureMode = "timeout_failure_mode"
+const (
+	settingTimeoutFailureMode = "timeout_failure_mode"
+	settingTimeoutSeconds     = "timeout_seconds"
+)
 
-// callTimeout is the time one call to Model Armor may take under this policy:
-// timeout_seconds when set, else the gateway default.
 func (s Settings) callTimeout(gatewayDefault time.Duration) time.Duration {
 	if s.TimeoutSeconds > 0 {
 		return time.Duration(s.TimeoutSeconds) * time.Second
@@ -307,7 +312,6 @@ func failClosedOf(settings map[string]any, detail string) bool {
 	return failClosedFromRaw(settings, detail)
 }
 
-// mayFailClosedOf is mayFailClosed for settings that may not parse.
 func mayFailClosedOf(settings map[string]any) bool {
 	return failClosedOf(settings, "") || failClosedOf(settings, appplugins.DetailTimeout)
 }
@@ -323,6 +327,29 @@ func failClosedFromRaw(settings map[string]any, detail string) bool {
 		}
 	}
 	return pluginutil.FailClosedFromRaw(settings)
+}
+
+// wholeSeconds rejects a fractional timeout_seconds, which decoding into an int
+// would otherwise truncate (0.5 would silently become the gateway default).
+func wholeSeconds(settings map[string]any) error {
+	for k, v := range settings {
+		if !strings.EqualFold(k, settingTimeoutSeconds) {
+			continue
+		}
+		var f float64
+		switch n := v.(type) {
+		case float64:
+			f = n
+		case float32:
+			f = float64(n)
+		default:
+			continue
+		}
+		if f != math.Trunc(f) {
+			return fmt.Errorf("google_model_armor: timeout_seconds must be a whole number of seconds")
+		}
+	}
+	return nil
 }
 
 func rawString(settings map[string]any, key string) (string, bool) {

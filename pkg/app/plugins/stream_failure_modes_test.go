@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -127,6 +128,61 @@ func TestChunkTimeout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.detail, ChunkTimeout(tc.d, []textchunk.Outcome[struct{}]{tc.out}).Detail)
+		})
+	}
+}
+
+func splitModesChain(t *testing.T, closed, timeoutClosed bool, fn func(StreamSegment) (*SegmentVerdict, error)) (*executor, StageInput) {
+	t.Helper()
+	g := &splitModesGuard{
+		chunkGuard: chunkGuard{
+			fakePlugin: fakePlugin{name: "guard", stages: []policy.Stage{policy.StagePreResponse}, result: &Result{StatusCode: 200}},
+			fn:         fn,
+		},
+		closed:        closed,
+		timeoutClosed: timeoutClosed,
+	}
+	pol := policies(t, polSpec{slug: "guard", enabled: true, priority: 10, stages: []policy.Stage{policy.StagePreResponse}})[0]
+	pol.Mode = policy.ModeEnforce
+	pol.Settings = map[string]any{"enabled": true}
+	exec, ok := NewExecutor(newRegistry(t, g), nil).(*executor)
+	require.True(t, ok)
+	return exec, failureInput([]*policy.Policy{pol})
+}
+
+// A block of ordinary size whose call failed with a failure the policy does not
+// cut is absorbed as failed_open on the entry, as a fail_open guardrail's is,
+// even though the entry's stream options say fail_closed for the failures it
+// does cut. One it cuts is handed back to the guard as before.
+func TestRunStreamSegment_AnEntryWithSplitModesAbsorbsTheFailuresItDoesNotCut(t *testing.T) {
+	t.Parallel()
+	timeout := newExternalStreamFailure("guard", FailureTransport, DetailTimeout, errors.New("slow"))
+	outage := newExternalStreamFailure("guard", FailureTransport, "", errors.New("connection refused"))
+	for _, tc := range []struct {
+		name                  string
+		closed, timeoutClosed bool
+		err                   error
+		handedBack            bool
+	}{
+		{"block outages, allow slow: a timeout is absorbed", true, false, timeout, false},
+		{"allow outages, block slow: an outage is absorbed", false, true, outage, false},
+		{"allow outages, block slow: a timeout is handed back", false, true, timeout, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			exec, in := splitModesChain(t, tc.closed, tc.timeoutClosed, func(StreamSegment) (*SegmentVerdict, error) {
+				return nil, tc.err
+			})
+			text := words(500)
+			out, err := exec.RunStreamSegment(context.Background(), in, StreamSegment{StreamID: "s", Seq: 1, Text: text, Accumulated: text})
+			if tc.handedBack {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			assert.False(t, out.Block)
+			assert.Equal(t, 1, out.FailedEntries)
 		})
 	}
 }

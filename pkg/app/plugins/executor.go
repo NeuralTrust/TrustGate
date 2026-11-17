@@ -225,7 +225,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			cancelled := ctx.Err() != nil
 			if seg.Closing {
 				if !cancelled {
-					spans.closingFailure(event, spanKey(seg, entry), err, call.Report, !Blocks(entry.mode) || entryFailsOpen(inspector, entry))
+					spans.closingFailure(event, spanKey(seg, entry), err, call.Report, !Blocks(entry.mode) || entryFailsOpenOn(inspector, entry, err))
 				}
 				continue
 			}
@@ -244,7 +244,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			// cut), and would end the walk, blinding every entry behind it on
 			// the block, which matters most on the final one. Only an entry that
 			// asked for fail_closed (or states nothing) hands its error back.
-			if !Blocks(entry.mode) || entryFailsOpen(inspector, entry) {
+			if !Blocks(entry.mode) || entryFailsOpenOn(inspector, entry, err) {
 				if !cancelled {
 					first, retiredNow := spans.fail(spanKey(seg, entry), err)
 					SetDecisionFromOutcome(event, DecisionFailedOpen)
@@ -324,6 +324,17 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 func entryFailsOpen(inspector StreamInspector, entry chainEntry) bool {
 	_, opts := inspector.StreamSettings(entry.config.Settings)
 	return opts.OnError == streamOnErrorFailOpen
+}
+
+// entryFailsOpenOn lets a StreamFailureModes inspector fail open on the
+// failures its policy does not cut, although its stream options say
+// fail_closed for the ones it does.
+func entryFailsOpenOn(inspector StreamInspector, entry chainEntry, err error) bool {
+	if modes, ok := entry.plugin.(StreamFailureModes); ok {
+		reason, detail := streamFailureOf(err)
+		return !modes.StreamFailsClosedOn(entry.config.Settings, reason, detail)
+	}
+	return entryFailsOpen(inspector, entry)
 }
 
 func (e *executor) streamEntries(in StageInput) []chainEntry {

@@ -117,10 +117,20 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 // clientFor resolves the *client for cfg's credentials and per-call time limit,
 // reusing the cached client for that pair when one already exists.
 func (p *Plugin) clientFor(cfg Settings) (*client, error) {
+	return p.clientWithin(cfg, cfg.callTimeout(p.timeout))
+}
+
+// streamClientFor is clientFor for a streamed block, whose calls keep the fixed
+// per-block limit whatever timeout_seconds says.
+func (p *Plugin) streamClientFor(cfg Settings) (*client, error) {
+	return p.clientWithin(cfg, streamingDefaults.GuardTimeout)
+}
+
+func (p *Plugin) clientWithin(cfg Settings, timeout time.Duration) (*client, error) {
 	if p.clients == nil {
 		return nil, fmt.Errorf("google_model_armor: plugin has no client cache configured")
 	}
-	return p.clients.get(credentialsFromConfig(cfg.Credentials), cfg.callTimeout(p.timeout))
+	return p.clients.get(credentialsFromConfig(cfg.Credentials), timeout)
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -562,7 +572,11 @@ func (p *Plugin) runGuardrail(
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ChunkTimeout(appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow)), outs)
+	cancelled := errors.Is(ctx.Err(), context.Canceled)
+	decision := appplugins.ClassifyChunks(outs, cancelled, chunkState, appplugins.SlowCall(slow))
+	if !cancelled {
+		decision = appplugins.ChunkTimeout(decision, outs)
+	}
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
