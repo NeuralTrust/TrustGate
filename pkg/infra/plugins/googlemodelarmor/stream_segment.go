@@ -39,6 +39,14 @@ const anonymizeDegradedMessage = "response blocked: guardrail masking could not 
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 var _ appplugins.StreamPieceTimeout = (*Plugin)(nil)
+var _ appplugins.StreamFailureModes = (*Plugin)(nil)
+
+// StreamFailsClosedOn reports whether a piece of a streamed block that Model
+// Armor never answered is cut under these settings: timeout_failure_mode
+// decides a timeout, failure_mode any other availability failure.
+func (p *Plugin) StreamFailsClosedOn(settings map[string]any, _ appplugins.FailureReason, detail string) bool {
+	return failClosedOf(settings, detail)
+}
 
 // StreamGuardTimeout is the time one piece's call may take: the guard timeout the
 // call itself runs under, so the block's deadline and the slow-call threshold are
@@ -194,7 +202,7 @@ func (p *Plugin) InspectSegment(
 		// Resolved by the guard, not here: only it knows whether the status is
 		// still uncommitted, which decides whether the held text is
 		// released; a guardrail that fails is always released.
-		reason, detail := pluginutil.FailureOfError(err)
+		reason, detail := failureOfError(err)
 		return fail.outcome(reason, detail, nil,
 			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
