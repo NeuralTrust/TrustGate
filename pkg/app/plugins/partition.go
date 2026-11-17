@@ -33,7 +33,7 @@ const (
 	// GroupBySubject gives every caller its own counter: who the request
 	// counts as (RequestContext.CallerSubject): a token's subject, a personal
 	// key's owner, the end user an application's key or certificate names, or
-	// else that application key itself, by its id.
+	// else that key (by its id) or certificate (by its subject) itself.
 	GroupBySubject = "subject"
 	// GroupByClaim gives every value of one verified token claim its own
 	// counter, e.g. oid, or a tenant claim.
