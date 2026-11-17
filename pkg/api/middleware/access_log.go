@@ -21,6 +21,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
@@ -74,6 +75,7 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 			)
 		}
 		attrs = append(attrs, callerAttrs(c)...)
+		attrs = append(attrs, traceAttrs(c)...)
 		if err != nil {
 			status = fiber.StatusInternalServerError
 			var fe *fiber.Error
@@ -124,6 +126,22 @@ func callerAttrs(c *fiber.Ctx) []any {
 				attrs = append(attrs, slog.String("client_id", client))
 			}
 		}
+	}
+	return attrs
+}
+
+// traceAttrs ties the line to the request's two traces: trace_id, the
+// gateway's own id it answered in X-AG-Trace-Id and Activity is keyed by, and
+// client_trace_id, the trace the caller's traceparent named, when it sent a
+// valid one. With both, an operator goes from the caller's trace to the log
+// line and from the line to Activity without matching timestamps.
+func traceAttrs(c *fiber.Ctx) []any {
+	var attrs []any
+	if id := string(c.Response().Header.Peek(HeaderTraceID)); id != "" {
+		attrs = append(attrs, slog.String("trace_id", id))
+	}
+	if id := requestmeta.ClientTraceID(requestHeaderValues(c, requestmeta.HeaderTraceparent)); id != "" {
+		attrs = append(attrs, slog.String("client_trace_id", id))
 	}
 	return attrs
 }

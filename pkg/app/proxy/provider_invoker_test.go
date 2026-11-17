@@ -1301,6 +1301,50 @@ func TestProviderInvoke_AnthropicPassthroughCarriesBetaOptIn(t *testing.T) {
 	assert.Equal(t, "context-management-2025-06-27,claude-code-20250219", sent.AnthropicBeta)
 }
 
+// Claude on Azure Foundry's Anthropic Messages surface takes the same body, so
+// the same beta opt-in has to travel with it. Any other Azure surface speaks
+// another wire and never gets it.
+func TestProviderInvoke_FoundryAnthropicPassthroughCarriesBetaOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		api      string
+		wantBeta string
+	}{
+		{api: providers.AzureAPIAnthropic, wantBeta: "context-management-2025-06-27"},
+		{api: providers.AzureAPIDeployments, wantBeta: ""},
+	} {
+		t.Run(tc.api, func(t *testing.T) {
+			var sent *providers.Config
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, cfg *providers.Config, _ []byte) ([]byte, error) {
+					sent = cfg
+					if tc.api == providers.AzureAPIAnthropic {
+						return []byte(anthropicResponseBody), nil
+					}
+					return []byte(openaiResponseBody), nil
+				}).
+				Once()
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get(providers.ProviderAzure).Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			target := apiKeyTarget(providers.ProviderAzure)
+			target.LLMTarget.ProviderOptions = map[string]any{"api": tc.api}
+
+			req := &infracontext.RequestContext{
+				Body:         []byte(anthropicRequestBody),
+				SourceFormat: string(adapter.FormatAnthropic),
+				Headers:      map[string][]string{"anthropic-beta": {"context-management-2025-06-27"}},
+			}
+			_, err := inv.Invoke(context.Background(), target, req)
+
+			require.NoError(t, err)
+			require.NotNil(t, sent)
+			assert.Equal(t, tc.wantBeta, sent.AnthropicBeta)
+		})
+	}
+}
+
 // A body adapted from another wire format is the gateway's, not the caller's:
 // no beta field of theirs is in it, and their opt-in does not go upstream.
 func TestProviderInvoke_CrossFormatSendsNoBetaOptIn(t *testing.T) {

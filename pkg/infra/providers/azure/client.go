@@ -105,9 +105,9 @@ func (c *client) Completions(
 	}
 
 	reqBody = c.sendableBody(config, target.url, reqBody)
-	resp, err := c.rawPostForAPI(ctx, target.url, target.api, auth, reqBody)
+	resp, err := c.rawPostForAPI(ctx, target.url, target.api, auth, config.AnthropicBeta, reqBody)
 	if retryBody, ok := c.retentionRetryBody(ctx, config, target.url, model, reqBody, err); ok {
-		resp, err = c.rawPostForAPI(ctx, target.url, target.api, auth, retryBody)
+		resp, err = c.rawPostForAPI(ctx, target.url, target.api, auth, config.AnthropicBeta, retryBody)
 	}
 	return resp, err
 }
@@ -270,10 +270,14 @@ func (c *client) Files(
 }
 
 func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
-	return c.rawPostForAPI(ctx, url, providers.AzureAPIDeployments, auth, reqBody)
+	return c.rawPostForAPI(ctx, url, providers.AzureAPIDeployments, auth, "", reqBody)
 }
 
-func (c *client) rawPostForAPI(ctx context.Context, url, api string, auth authHeader, reqBody []byte) ([]byte, error) {
+// rawPostForAPI posts reqBody to url for one API surface. On the Foundry
+// Anthropic Messages surface betas, the caller's anthropic-beta flags already
+// validated by the gateway, go with the body that may use them, as on
+// Anthropic's own API; every other surface ignores them.
+func (c *client) rawPostForAPI(ctx context.Context, url, api string, auth authHeader, betas string, reqBody []byte) ([]byte, error) {
 	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
@@ -282,9 +286,7 @@ func (c *client) rawPostForAPI(ctx context.Context, url, api string, auth authHe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	auth.apply(httpReq)
-	if api == providers.AzureAPIAnthropic {
-		httpReq.Header.Set("anthropic-version", anthropicVersion)
-	}
+	setAnthropicHeaders(httpReq, api, betas)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -332,14 +334,14 @@ func (c *client) CompletionsStream(
 	}
 
 	reqBody = c.sendableBody(config, target.url, reqBody)
-	seq, err := c.postStream(ctx, target.url, target.api, auth, reqBody)
+	seq, err := c.postStream(ctx, target.url, target.api, auth, config.AnthropicBeta, reqBody)
 	if retryBody, ok := c.retentionRetryBody(ctx, config, target.url, model, reqBody, err); ok {
-		seq, err = c.postStream(ctx, target.url, target.api, auth, retryBody)
+		seq, err = c.postStream(ctx, target.url, target.api, auth, config.AnthropicBeta, retryBody)
 	}
 	return seq, err
 }
 
-func (c *client) postStream(ctx context.Context, url, api string, auth authHeader, reqBody []byte) (iter.Seq2[[]byte, error], error) {
+func (c *client) postStream(ctx context.Context, url, api string, auth authHeader, betas string, reqBody []byte) (iter.Seq2[[]byte, error], error) {
 	httpClient := c.pool.GetStream(providers.ProviderAzure)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -347,9 +349,7 @@ func (c *client) postStream(ctx context.Context, url, api string, auth authHeade
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	auth.apply(httpReq)
-	if api == providers.AzureAPIAnthropic {
-		httpReq.Header.Set("anthropic-version", anthropicVersion)
-	}
+	setAnthropicHeaders(httpReq, api, betas)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -363,6 +363,18 @@ func (c *client) postStream(ctx context.Context, url, api string, auth authHeade
 	}
 
 	return providers.StreamResponse(ctx, resp.Body), nil
+}
+
+// setAnthropicHeaders sets the headers of the Foundry Anthropic Messages
+// surface: the API version, and the caller's beta opt-in when it sent one.
+func setAnthropicHeaders(req *http.Request, api, betas string) {
+	if api != providers.AzureAPIAnthropic {
+		return
+	}
+	req.Header.Set("anthropic-version", anthropicVersion)
+	if betas != "" {
+		req.Header.Set("anthropic-beta", betas)
+	}
 }
 
 func (h authHeader) apply(req *http.Request) {
