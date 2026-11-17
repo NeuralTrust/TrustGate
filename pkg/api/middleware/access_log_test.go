@@ -26,6 +26,12 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
+
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestAccessLogConnectOutcomesDoNotLeakRequestSecrets(t *testing.T) {
@@ -100,4 +106,53 @@ func TestAccessLogAttributesAdminCalls(t *testing.T) {
 	require.Contains(t, lines[0], `"identity_kind":"human"`)
 	require.Contains(t, lines[0], `"token_issuer":"neuraltrust-app"`)
 	require.NotContains(t, lines[1], "identity_kind")
+}
+
+// A data-plane request is attributed in the default access log: the consumer
+// it entered, the credential, the subject it runs as and the client a bearer
+// token was issued to. A request nobody authenticated carries none of it.
+func TestAccessLogAttributesDataPlaneCallers(t *testing.T) {
+	t.Parallel()
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+	var output bytes.Buffer
+	app := fiber.New()
+	app.Use(NewAccessLogMiddleware(slog.New(slog.NewJSONHandler(&output, nil))).Middleware())
+	app.Post("/cons/v1/chat/completions", func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
+		ctx = appconsumer.WithConsumer(ctx, &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{ID: consumerID}})
+		ctx = appauth.WithAuthContext(ctx, &appauth.AuthContext{Method: appauth.MethodOAuth2, AuthID: authID})
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{
+			Subject: "agent-7",
+			Method:  identity.MethodOAuth,
+			Claims:  map[string]any{"azp": "agent-app", "email": "person@corp.example"},
+		})
+		c.SetUserContext(ctx)
+		return c.SendStatus(fiber.StatusTooManyRequests)
+	})
+	app.Post("/anonymous", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusUnauthorized) })
+
+	for _, path := range []string{"/cons/v1/chat/completions", "/anonymous"} {
+		resp, err := app.Test(httptest.NewRequest(fiber.MethodPost, path, nil))
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	require.Len(t, lines, 2)
+	for _, want := range []string{
+		`"gateway_id":"` + gatewayID.String() + `"`,
+		`"consumer_id":"` + consumerID.String() + `"`,
+		`"auth_id":"` + authID.String() + `"`,
+		`"auth_method":"oauth2"`,
+		`"principal_subject":"agent-7"`,
+		`"client_id":"agent-app"`,
+	} {
+		require.Contains(t, lines[0], want)
+	}
+	require.NotContains(t, lines[0], "person@corp.example", "an email is not logged")
+	require.NotContains(t, lines[1], "consumer_id")
+	require.NotContains(t, lines[1], "principal_subject")
 }
