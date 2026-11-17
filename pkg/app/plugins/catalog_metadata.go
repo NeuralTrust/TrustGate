@@ -75,6 +75,60 @@ type catalogMeta struct {
 	schema      SettingsSchema
 }
 
+// limitPerFields is the "Limit per" setting the rate limiter and the LLM budget
+// share. group is offered only where the plugin counts per group.
+func limitPerFields(counter string, group bool) []Field {
+	options := []EnumOption{
+		{Value: "shared", Label: "Shared across all applications"},
+		{Value: "application", Label: "Application"},
+		{Value: "api_key", Label: "API key"},
+	}
+	groupText := ""
+	appliesTo := "Whether application limiting covers all applications or only the ones in selected."
+	if group {
+		options = append(options, EnumOption{Value: "group", Label: "Group"})
+		groupText = " group one per group of the group key (a request without a group counts toward its application),"
+		appliesTo = "Whether application or group limiting covers all of them or only the ones in selected. A request without a group is never filtered by group selection: it counts toward its application."
+	}
+	appliesTo += " A request outside the selection is not limited by this policy."
+	options = append(options,
+		EnumOption{Value: "model", Label: "Model"},
+		EnumOption{Value: "header", Label: "Header (legacy)"},
+	)
+	return []Field{
+		{
+			Key:   "limit_per",
+			Label: "Limit Per",
+			Type:  FieldTypeEnum,
+			Description: "What each " + counter + " counter belongs to. Absent is shared: one counter for the whole policy scope. application is one per application, api_key one per API key," +
+				groupText + " model one per model, and header one per value of group_by_header. api_key does not limit requests without a key, and application and group do not limit requests without an application.",
+			Enum:    options,
+			Default: "shared",
+		},
+		{
+			Key:         "applies_to",
+			Label:       "Applies To",
+			Type:        FieldTypeEnum,
+			Description: appliesTo,
+			Enum:        []EnumOption{{Value: "all", Label: "All"}, {Value: "selected", Label: "Selected"}},
+		},
+		{
+			Key:         "selected",
+			Label:       "Selected",
+			Type:        FieldTypeArray,
+			Description: "Application ids, or group ids with limit_per group, that applies_to selected limits. Required and non-empty with applies_to selected.",
+			Item:        &Field{Key: "id", Label: "ID", Type: FieldTypeString},
+		},
+		{
+			Key:         "models",
+			Label:       "Only For Models",
+			Type:        FieldTypeArray,
+			Description: "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. @openai/gpt-6-luna or gpt-5*). Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model.",
+			Item:        &Field{Key: "model", Label: "Model", Type: FieldTypeString},
+		},
+	}
+}
+
 // pluginCatalogMeta maps each built-in plugin slug to its catalog metadata and
 // settings schema. Schemas are hand-authored from each plugin's config struct
 // because those structs are private, use mapstructure tags, and carry semantic
@@ -90,7 +144,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			" and then lets it through, so it smooths bursts but does not cap the rate. " +
 			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
-			Fields: []Field{
+			Fields: append([]Field{
 				{
 					Key:         "limit",
 					Label:       "Max Requests",
@@ -132,7 +186,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "With group_by header (or alone, the older spelling), the request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). The caller writes it, so a client can escape the limit by changing it; prefer subject or claim for limits per person. " +
 						"On native MCP tools/call traffic this reads the same transport request headers as an LLM call, so it partitions MCP the same way; when the header is absent from the request the limit falls back to the shared scope counter, on both planes alike.",
 				},
-			},
+			}, limitPerFields("request", true)...),
 		},
 	},
 	"request_size_limiter": {
@@ -180,7 +234,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. Partition key counts per API key instead. " +
 			"Without a partition, if the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
-			Fields: []Field{
+			Fields: append([]Field{
 				{
 					Key:         "unit",
 					Label:       "Unit",
@@ -331,7 +385,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeBoolean,
 					Description: "With partition key, hold each personal key to the budget it carries (set by the console per user) instead of aggregate, when the budget counts in this policy's unit; aggregate then becomes optional, and a key without a budget in this unit is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets.",
 				},
-			},
+			}, limitPerFields("budget", false)...),
 		},
 	},
 	"per_tool_rate_limiter": {
