@@ -57,20 +57,40 @@ func (c *client) Completions(
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-	return c.rawPost(ctx, config.Credentials.ApiKey, config.AnthropicBeta, reqBody)
+	endpoint, err := messagesEndpoint(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.rawPost(ctx, endpoint, config.Credentials.ApiKey, config.AnthropicBeta, reqBody)
 }
 
-func (c *client) rawPost(ctx context.Context, apiKey, betas string, reqBody []byte) ([]byte, error) {
+// messagesEndpoint is the Messages API URL: Anthropic's, or the registry's
+// provider_options.base_url (already validated as an http(s) URL, and dialled
+// through the guarded pool) followed by /messages, as Files already did. A
+// base_url is how a registry reaches an Anthropic-compatible proxy or a test
+// double, which a fixed URL left no way to do.
+func messagesEndpoint(options map[string]any) (string, error) {
+	opts, err := providers.DecodeAnthropicOptions(options)
+	if err != nil {
+		return "", err
+	}
+	if opts.BaseURL == "" {
+		return messagesURL, nil
+	}
+	return strings.TrimRight(opts.BaseURL, "/") + "/messages", nil
+}
+
+func (c *client) rawPost(ctx context.Context, endpoint, apiKey, betas string, reqBody []byte) ([]byte, error) {
 	httpClient := c.pool.Get(providers.ProviderAnthropic, providers.DefaultHTTPTimeout)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	c.setHeaders(httpReq, apiKey)
 	setBetas(httpReq, betas)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- messagesURL or a validated provider_options.base_url, dialled through the guarded pool
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -128,15 +148,19 @@ func (c *client) CompletionsStream(
 		return nil, fmt.Errorf("API key is required")
 	}
 
+	endpoint, err := messagesEndpoint(config.Options)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := c.pool.GetStream(providers.ProviderAnthropic)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	c.setHeaders(httpReq, config.Credentials.ApiKey)
 	setBetas(httpReq, config.AnthropicBeta)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- messagesURL or a validated provider_options.base_url, dialled through the guarded pool
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

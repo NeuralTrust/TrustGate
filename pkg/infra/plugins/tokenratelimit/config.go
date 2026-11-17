@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -73,12 +74,18 @@ type config struct {
 	CostCap            *llmcost.CapConfig             `mapstructure:"cost_cap"`
 	CustomPricing      map[string]llmcost.CustomPrice `mapstructure:"custom_pricing"`
 	Window             windowConfig                   `mapstructure:"window"`
-	GroupByHeader      string                         `mapstructure:"group_by_header"`
-	Partition          string                         `mapstructure:"partition"`
+	// GroupBy, GroupByClaim and GroupByHeader split the budget within the
+	// policy scope, as on rate_limiter (appplugins.ParseGroupBy).
+	GroupBy       string `mapstructure:"group_by"`
+	GroupByClaim  string `mapstructure:"group_by_claim"`
+	GroupByHeader string `mapstructure:"group_by_header"`
+	Partition     string `mapstructure:"partition"`
 	// KeyBudgets makes the policy hold each key to the budget it carries, in
 	// place of the aggregate. Only a policy that opts in reads key budgets, so
 	// a tenant's own partition key policy keeps its limit and its unit.
 	KeyBudgets bool `mapstructure:"key_budgets"`
+
+	groupBy appplugins.GroupBy
 }
 
 var validUnits = map[string]int{
@@ -132,6 +139,11 @@ func canonicalCalendarWindow(window string) string {
 }
 
 func (c *config) validate() error {
+	groupBy, err := appplugins.ParseGroupBy(c.GroupBy, c.GroupByClaim, c.GroupByHeader)
+	if err != nil {
+		return fmt.Errorf("token_rate_limiter: %w", err)
+	}
+	c.groupBy = groupBy
 	if err := c.validatePartition(); err != nil {
 		return err
 	}
@@ -247,6 +259,8 @@ func (c *config) validatePartition() error {
 		return fmt.Errorf("token_rate_limiter: partition %s does not support custom_pricing", partitionKey)
 	case c.GroupByHeader != "":
 		return fmt.Errorf("token_rate_limiter: partition %s does not support group_by_header", partitionKey)
+	case c.groupBy.Partitioned():
+		return fmt.Errorf("token_rate_limiter: partition %s does not support group_by", partitionKey)
 	case c.BehaviorOnExceeded == behaviorDowngradeModel:
 		return fmt.Errorf("token_rate_limiter: partition %s does not support behavior_on_exceeded=%s", partitionKey, behaviorDowngradeModel)
 	}

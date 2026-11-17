@@ -492,6 +492,9 @@ func TestPlugin_DefaultPartition_KeyLayoutUnchanged(t *testing.T) {
 		{name: "global", settings: map[string]any{"aggregate": aggregate}, scope: aliceScope, req: llmRequest("", nil), wantKeys: []string{"trl:tk-1:global:gw-1"}},
 		{name: "legacy window", settings: map[string]any{"window": map[string]any{"unit": "hour", "max": 1000}}, scope: consumer, req: llmRequest("", nil), wantKeys: []string{"trl:tk-1:consumer:p-1"}},
 		{name: "group by header", settings: map[string]any{"aggregate": aggregate, "group_by_header": "X-Team"}, scope: consumer, req: llmRequest("", map[string][]string{"X-Team": {"red"}}), wantKeys: []string{"trl:tk-1:consumer:p-1:hdr:red"}},
+		{name: "group by subject", settings: map[string]any{"aggregate": aggregate, "group_by": "subject"}, scope: consumer, req: withPrincipal(llmRequest("", nil), "agent-a", nil), wantKeys: []string{"trl:tk-1:consumer:p-1:sub:agent-a"}},
+		{name: "group by subject without one", settings: map[string]any{"aggregate": aggregate, "group_by": "subject"}, scope: consumer, req: llmRequest("", nil), wantKeys: []string{"trl:tk-1:consumer:p-1"}},
+		{name: "group by claim", settings: map[string]any{"aggregate": aggregate, "group_by": "claim", "group_by_claim": "oid"}, scope: consumer, req: withPrincipal(llmRequest("", nil), "s", map[string]any{"oid": "o-1"}), wantKeys: []string{"trl:tk-1:consumer:p-1:clm:oid:o-1"}},
 		{name: "rules and aggregate", settings: map[string]any{"aggregate": aggregate, "rules": []map[string]any{{"model": "gpt-5", "max": 100, "time_window": "1h"}}}, scope: consumer, req: llmRequest(`{"model":"gpt-5"}`, nil), wantKeys: []string{"trl:tk-1:consumer:p-1", "trl:tk-1:consumer:p-1:model:gpt-5"}},
 	}
 	for _, tt := range tests {
@@ -621,4 +624,9 @@ func TestCounterSubject(t *testing.T) {
 			assert.Equal(t, tt.wantSubject, subject)
 		})
 	}
+}
+
+func withPrincipal(req *infracontext.RequestContext, subject string, claims map[string]any) *infracontext.RequestContext {
+	req.PrincipalSubject, req.PrincipalClaims = subject, claims
+	return req
 }

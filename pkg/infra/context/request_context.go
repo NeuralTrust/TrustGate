@@ -23,6 +23,7 @@ import (
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/bedrocknative"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	keygroupdomain "github.com/NeuralTrust/TrustGate/pkg/domain/keygroup"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -215,6 +216,13 @@ type RequestContext struct {
 	// them and never modify them.
 	KeyGroupID     string
 	KeyGroupBudget *keygroupdomain.Budget
+	// PrincipalSubject and PrincipalClaims are who the request runs as, from
+	// the verified caller: a token's subject and claims, a personal key's
+	// owner, or the end user an application names. The gateway sets them with
+	// SetPrincipal from the resolved identity, never from a header, so a
+	// limiter may partition on them. Read them, never modify them.
+	PrincipalSubject string
+	PrincipalClaims  map[string]any
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel
@@ -267,6 +275,16 @@ func (r *RequestContext) HeaderValue(name string) string {
 		}
 	}
 	return ""
+}
+
+// SetPrincipal records who the request runs as. A nil principal leaves the
+// request anonymous.
+func (r *RequestContext) SetPrincipal(p *identity.Principal) {
+	if r == nil || p == nil {
+		return
+	}
+	r.PrincipalSubject = p.Subject
+	r.PrincipalClaims = p.Claims
 }
 
 // IsBedrockNative reports whether the client called a Bedrock Runtime operation

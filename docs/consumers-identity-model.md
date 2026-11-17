@@ -418,7 +418,13 @@ Shipped on `claude/composio-mcp-gateway-auth-tyd2z1`, in this order:
    plane (oauth2 / oidc: `azp` else `client_id`) and the MCP plane (JWT,
    introspection, mTLS common name or SAN). This is the per-consumer half of
    "trust anchors live in gateway Settings, keys stay per consumer": the anchor
-   verifies, the binding says which application may enter.
+   verifies, the binding says which application may enter. The binding also
+   carries claim rules for bearer tokens on every plane: `required_claims`
+   (`{claim: [accepted values]}`, an empty list meaning "present") and
+   `forbidden_claims` (`[claim]`). A route for agents typically forbids
+   `email`, `upn`, `name` and `preferred_username` and requires `idtyp: app`
+   (Entra), so a token minted for a person is refused even when it was issued
+   to the agent's own client.
 4. **App-identified end users** (§4.5) and **LLM attribution** (§4.3). On an
    MCP consumer with `source = app`, `X-NeuralTrust-End-User` is required; the
    request runs as `app:<consumer_id>:<end_user>`, so the vault, the connect

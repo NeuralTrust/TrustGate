@@ -528,6 +528,55 @@ func TestForward_FallbackTriggerGating(t *testing.T) {
 	}
 }
 
+func newTestForwarderWithRetries(t *testing.T, invoker appproxy.ProviderInvoker, maxRetries int) appproxy.Forwarder {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Provider.MaxRetries = maxRetries
+	return appproxy.NewForwarder(
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil, nil),
+		newPermissiveCache(t), cache.NewTTLMapManager(time.Minute), invoker, nil, nil,
+		approuting.NewResolver(), nil, nil, cfg, newTestLogger(),
+	)
+}
+
+// A retry is a second billable request. A timeout is never sent to the same
+// backend again, because the provider may still finish the first call; a 5xx
+// is, as many times as PROVIDER_MAX_RETRIES says.
+func TestForward_RetriesSameBackend(t *testing.T) {
+	cases := []struct {
+		name        string
+		maxRetries  int
+		resp        *appproxy.ProviderResponse
+		err         error
+		wantInvokes int
+	}{
+		{name: "no retries by default", maxRetries: 0, resp: &appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, wantInvokes: 1},
+		{name: "a 5xx is retried", maxRetries: 2, resp: &appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, wantInvokes: 3},
+		{name: "a provider 408 is retried", maxRetries: 2, resp: &appproxy.ProviderResponse{StatusCode: 408, Body: []byte("slow")}, wantInvokes: 3},
+		{name: "a network timeout is not retried", maxRetries: 2, err: timeoutErr{}, wantInvokes: 1},
+		{name: "a deadline is not retried", maxRetries: 2, err: context.DeadlineExceeded, wantInvokes: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+
+			invoker := proxymocks.NewProviderInvoker(t)
+			invoker.EXPECT().
+				Invoke(mock.Anything, mock.Anything, mock.Anything).
+				Return(tc.resp, tc.err).
+				Times(tc.wantInvokes)
+
+			fwd := newTestForwarderWithRetries(t, invoker, tc.maxRetries)
+			_, _ = fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{},
+			})
+		})
+	}
+}
+
 func TestForward_CredentialAcquisitionFailureIsTerminal(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	primary := backendFor(gatewayID, "azure")

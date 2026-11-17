@@ -121,7 +121,12 @@ const (
 	defaultUpstreamErrorPassthrough = true
 
 	defaultProviderRequestTimeout = 60 * time.Second
-	defaultProviderMaxRetries     = 2
+	// defaultProviderMaxRetries is how many more times a failed provider call
+	// is sent to the same backend. Zero: every retry is a request the provider
+	// may bill, and the SDKs callers use already retry on their own (two times
+	// by default for OpenAI's and Anthropic's), so a gateway retry multiplies
+	// theirs. Failover to another backend is the consumer's fallback, opt-in.
+	defaultProviderMaxRetries = 0
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -471,7 +476,18 @@ type ConfigSyncConfig struct {
 }
 
 type ServerConfig struct {
-	AdminPort         int
+	AdminPort int
+	// AdminHost is SERVER_ADMIN_HOST, the address the admin API listens on.
+	// Empty listens on every interface, as before; 127.0.0.1 keeps the
+	// management API off the network for a deployment that only reaches it
+	// from the host or a sidecar.
+	AdminHost string
+	// AdminTLSCertFile and AdminTLSKeyFile (SERVER_ADMIN_TLS_CERT_FILE,
+	// SERVER_ADMIN_TLS_KEY_FILE) are a PEM certificate chain and key the admin
+	// API serves HTTPS with (TLS 1.2 or later). Both or neither: without them it
+	// answers plain HTTP, for a deployment that terminates TLS in front of it.
+	AdminTLSCertFile  string
+	AdminTLSKeyFile   string
 	ProxyPort         int
 	MCPPort           int
 	AgentPort         int
@@ -743,7 +759,11 @@ type UpstreamConfig struct {
 type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
-	MaxRetries            int
+	// MaxRetries (PROVIDER_MAX_RETRIES, default 0) is how many more times a
+	// call that failed with a transport error, a 5xx, a 429 or a 408 is sent to
+	// the same backend. A timeout is never retried there whatever this says:
+	// the provider may still finish the first call and charge for it.
+	MaxRetries int
 }
 
 // BedrockNativeConfig tunes the relay of native Bedrock Runtime calls. Every limit
@@ -940,14 +960,17 @@ func LoadConfig() (*Config, error) {
 
 func getServerConfig() ServerConfig {
 	return ServerConfig{
-		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
-		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
-		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
-		AgentPort:    getEnvInt("SERVER_AGENT_PORT", defaultServerAgentPort),
-		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
-		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
-		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
-		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
+		AdminPort:        getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
+		AdminHost:        strings.TrimSpace(getEnv("SERVER_ADMIN_HOST", "")),
+		AdminTLSCertFile: strings.TrimSpace(getEnv("SERVER_ADMIN_TLS_CERT_FILE", "")),
+		AdminTLSKeyFile:  strings.TrimSpace(getEnv("SERVER_ADMIN_TLS_KEY_FILE", "")),
+		ProxyPort:        getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
+		MCPPort:          getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
+		AgentPort:        getEnvInt("SERVER_AGENT_PORT", defaultServerAgentPort),
+		ReadTimeout:      getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
+		WriteTimeout:     getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
+		IdleTimeout:      getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
+		SecretKey:        getEnv("SERVER_SECRET_KEY", ""),
 		GatewayBaseDomain: getEnv(
 			"GATEWAY_BASE_DOMAIN",
 			defaultGatewayBaseDomain,
@@ -1684,6 +1707,9 @@ func (c *Config) Validate() error {
 	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
 		return err
 	}
+	if err := c.Server.validateAdminListener(); err != nil {
+		return err
+	}
 	if err := c.validateServerSecretKey(); err != nil {
 		return err
 	}
@@ -2131,4 +2157,29 @@ func sanitizeLogValue(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// validateAdminListener refuses an admin bind address that is not a host, and
+// a TLS certificate without its key or the other way round: either would
+// start an admin API on an address or a scheme nobody asked for.
+func (s ServerConfig) validateAdminListener() error {
+	if s.AdminHost != "" {
+		if strings.ContainsAny(s.AdminHost, " /") || (strings.Contains(s.AdminHost, ":") && net.ParseIP(s.AdminHost) == nil) {
+			return fmt.Errorf("%w: SERVER_ADMIN_HOST must be an IP address or a host name without a port, got %q", errors.ErrInvalidConfig, s.AdminHost)
+		}
+	}
+	if (s.AdminTLSCertFile == "") != (s.AdminTLSKeyFile == "") {
+		return fmt.Errorf("%w: SERVER_ADMIN_TLS_CERT_FILE and SERVER_ADMIN_TLS_KEY_FILE must be set together", errors.ErrInvalidConfig)
+	}
+	return nil
+}
+
+// AdminAddr is the host:port the admin API listens on.
+func (s ServerConfig) AdminAddr() string {
+	return net.JoinHostPort(s.AdminHost, strconv.Itoa(s.AdminPort))
+}
+
+// AdminTLS reports whether the admin API serves HTTPS itself.
+func (s ServerConfig) AdminTLS() bool {
+	return s.AdminTLSCertFile != "" && s.AdminTLSKeyFile != ""
 }

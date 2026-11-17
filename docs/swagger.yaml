@@ -548,6 +548,24 @@ definitions:
         items:
           type: string
         type: array
+      forbidden_claims:
+        description: |-
+          ForbiddenClaims are claims a bearer token must not carry, e.g. email,
+          upn, name and preferred_username to keep people's tokens off an agent
+          route. At most 32.
+        items:
+          type: string
+        type: array
+      required_claims:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        description: |-
+          RequiredClaims are claims a bearer token must carry, each mapped to the
+          values it may hold (any one of them; an empty list accepts any value).
+          At most 32 claims of 32 values each.
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest:
     properties:
@@ -873,6 +891,20 @@ definitions:
         items:
           type: string
         type: array
+      forbidden_claims:
+        description: ForbiddenClaims are claims a bearer token must not carry.
+        items:
+          type: string
+        type: array
+      required_claims:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        description: |-
+          RequiredClaims maps each claim a bearer token must carry to the values
+          it may hold; an empty list accepts any value.
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse:
     properties:
@@ -1725,6 +1757,11 @@ definitions:
         type: string
       provider_options:
         additionalProperties: {}
+        description: |-
+          ProviderOptions are provider-specific settings (base_url, api, static
+          headers, …). On every LLM provider, forward_client_headers lists client
+          request headers copied onto the provider request (e.g. ["traceparent",
+          "tracestate"]); credentials, framing and gateway headers are refused.
         type: object
       type:
         type: string

@@ -85,7 +85,8 @@ func AppPrincipal(cons *Consumer, caller *identity.Principal) *identity.Principa
 
 // AdmitsPrincipal applies the consumer's auth binding to the verified
 // caller: a bearer token from a shared IdP must have been issued to an allowed
-// client, and a client certificate must carry an allowed subject. API keys are
+// client and pass the binding's claim rules, and a client certificate must
+// carry an allowed subject. API keys are
 // bound to one consumer already, and a missing principal has nothing to bind.
 func AdmitsPrincipal(cons *Consumer, principal *identity.Principal) bool {
 	if cons == nil {
@@ -96,7 +97,7 @@ func AdmitsPrincipal(cons *Consumer, principal *identity.Principal) bool {
 	}
 	switch {
 	case principal.Method.IsBearerToken():
-		return cons.AuthBinding.AllowsClient(principal.Claims)
+		return cons.AuthBinding.AllowsToken(principal.Claims)
 	case principal.Method == identity.MethodMTLS:
 		return cons.AuthBinding.AllowsCertificateClaims(principal.Claims)
 	default:
