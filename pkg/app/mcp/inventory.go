@@ -16,6 +16,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -108,6 +109,10 @@ type InventoryEntry struct {
 	Title       string
 	Description string
 	Callable    bool
+	// InputSchema is the tool's own inputSchema, as the server advertises it.
+	// Only a tool the server served has one. It is what a caller needs to call
+	// a tool its client never listed, through CallToolName.
+	InputSchema json.RawMessage
 }
 
 // ToolInventory reports every bound MCP server's contribution to this
@@ -172,6 +177,7 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 					Title:       stringField(b.tool.payload, "title"),
 					Description: stringField(b.tool.payload, "description"),
 					Callable:    true,
+					InputSchema: b.tool.payload["inputSchema"],
 				})
 			}
 			server.State = InventoryStateReady

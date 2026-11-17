@@ -28,6 +28,9 @@ const (
 	maxPreviewRunes   = 200
 	previewEllipsis   = "…"
 	mcpToolCallMethod = "tools/call"
+	// mcpCallThroughTool is appmcp.CallToolName, which this package cannot
+	// import (app/mcp imports it). Its arguments wrap the called tool's own.
+	mcpCallThroughTool = "trustgate_call_tool"
 )
 
 // promptPreview is the start of the last user turn: in a multi-turn request
@@ -135,13 +138,27 @@ func chatBridgePreview(body string) string {
 func firstStringArgument(body string) string {
 	var envelope struct {
 		Params struct {
+			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
 	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
 		return ""
 	}
-	dec := json.NewDecoder(bytes.NewReader(envelope.Params.Arguments))
+	arguments := envelope.Params.Arguments
+	if envelope.Params.Name == mcpCallThroughTool {
+		// The span names the tool the call-through called, so the preview
+		// reads that tool's arguments, not the wrapper's (whose first string
+		// is the tool's own name).
+		var wrapped struct {
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(arguments, &wrapped); err != nil {
+			return ""
+		}
+		arguments = wrapped.Arguments
+	}
+	dec := json.NewDecoder(bytes.NewReader(arguments))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return ""
 	}

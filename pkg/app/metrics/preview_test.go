@@ -184,6 +184,23 @@ func TestBuilder_MCPPreviewIsToolAndFirstStringArgument(t *testing.T) {
 			want:   "search(" + strings.Repeat("a", maxPreviewRunes-len("search()")) + previewEllipsis + ")",
 		},
 		{
+			// The span names the tool a call-through called; the preview reads
+			// that tool's arguments, not the wrapper's (whose first string is
+			// the tool's own name).
+			name:   "a call-through previews the called tool's arguments",
+			method: "tools/call",
+			tool:   "linear_save_issue",
+			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trustgate_call_tool","arguments":{"name":"linear_save_issue","arguments":{"title":"Login bug","priority":2}}}}`,
+			want:   "linear_save_issue(Login bug)",
+		},
+		{
+			name:   "a call-through with no arguments names the tool alone",
+			method: "tools/call",
+			tool:   "linear_whoami",
+			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trustgate_call_tool","arguments":{"name":"linear_whoami"}}}`,
+			want:   "linear_whoami",
+		},
+		{
 			name:   "other methods have no preview",
 			method: "tools/list",
 			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
