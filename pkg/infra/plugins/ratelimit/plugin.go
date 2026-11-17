@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -123,6 +124,15 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if count >= int64(cfg.Limit) {
+		if cfg.retryAfterResets() {
+			resolved := *cfg
+			if appplugins.Blocks(in.Mode) && !appplugins.Throttles(in.Mode) {
+				resolved.RetryAfter = p.resetRetryAfter(ctx, redisKey, now, window, count, cfg)
+			} else {
+				resolved.RetryAfter = defaultRetryAfter(cfg.Window)
+			}
+			cfg = &resolved
+		}
 		data.RateLimitExceeded = true
 		data.RetryAfter = cfg.RetryAfter
 
@@ -252,6 +262,31 @@ func (p *Plugin) currentCount(ctx context.Context, key string, now time.Time, wi
 		return 0, fmt.Errorf("rate_limiter: count window: %w", err)
 	}
 	return count, nil
+}
+
+// resetRetryAfter is the whole seconds (rounded up, at least 1) until enough
+// entries leave the window for the counter to fall below the limit. Entries are
+// scored in whole seconds and one scored s still counts until now-window passes
+// s+1, so it frees up at s+1+window. If the oldest entry cannot be read it falls
+// back to the full window, the longest the client can need to wait.
+func (p *Plugin) resetRetryAfter(ctx context.Context, key string, now time.Time, window time.Duration, count int64, cfg *config) string {
+	fallback := defaultRetryAfter(cfg.Window)
+	windowStart := now.Add(-window).Unix()
+	entries, err := p.redis.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min:    strconv.FormatInt(windowStart, 10),
+		Max:    strconv.FormatInt(now.Unix(), 10),
+		Offset: count - int64(cfg.Limit),
+		Count:  1,
+	}).Result()
+	if err != nil || len(entries) == 0 {
+		return fallback
+	}
+	frees := time.Unix(int64(entries[0].Score)+1, 0).Add(window)
+	secs := int64(math.Ceil(frees.Sub(now).Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	return strconv.FormatInt(secs, 10)
 }
 
 // record trims expired entries and adds the current request to the window.
