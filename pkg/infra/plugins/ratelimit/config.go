@@ -22,6 +22,7 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -33,7 +34,8 @@ const retryAfterReset = "reset"
 
 // config is the rate_limiter settings. The limit is a single sliding window;
 // whether it is enforced gateway-wide or per consumer is decided by the policy's
-// gateway-wide placement (global or MCP-wide) at runtime, not by configuration.
+// gateway-wide placement (global or MCP-wide) at runtime. LimitPer narrows the
+// counter to one application, key, group or model within that scope.
 //
 // GroupBy optionally sub-partitions the counter within the policy scope, so
 // each caller gets its own budget: by the verified subject the request runs
@@ -49,9 +51,12 @@ type config struct {
 	GroupBy       string `mapstructure:"group_by"`
 	GroupByClaim  string `mapstructure:"group_by_claim"`
 	GroupByHeader string `mapstructure:"group_by_header"`
+	limitper.Spec `mapstructure:",squash"`
 
 	partition appplugins.GroupBy
 }
+
+var limitModes = []string{limitper.Shared, limitper.Application, limitper.APIKey, limitper.Group, limitper.Model, limitper.Header}
 
 func parseConfig(settings map[string]any) (*config, error) {
 	cfg, err := pluginutil.Parse[config](settings)
@@ -113,5 +118,5 @@ func (c *config) validate() error {
 		return fmt.Errorf("rate_limiter: %w", err)
 	}
 	c.partition = partition
-	return nil
+	return c.Spec.Validate("rate_limiter", limitModes, partition)
 }
