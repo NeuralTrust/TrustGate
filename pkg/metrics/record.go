@@ -22,4 +22,6 @@ type SensibleRecord struct {
 	SchemaVersion int     `db:"schema_version" json:"schema_version"`
 	RequestBody   string  `db:"request_body" json:"request_body"`
 	ResponseBody  *string `db:"response_body" json:"response_body,omitempty"`
+	ClientTraceID *string `db:"client_trace_id" json:"client_trace_id,omitempty"`
+	MCPSessionID  *string `db:"mcp_session_id" json:"mcp_session_id,omitempty"`
 }

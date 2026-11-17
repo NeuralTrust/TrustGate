@@ -52,6 +52,12 @@ type Event struct {
 	TurnID    string   `json:"turn_id,omitempty"`
 	IP        string   `json:"ip,omitempty"`
 
+	// ClientTraceID is the trace-id field of the client's W3C traceparent and
+	// MCPSessionID the Mcp-Session-Id of an MCP request. Both are raw-only:
+	// MetadataView strips them, so they reach only the raw sinks.
+	ClientTraceID string `json:"client_trace_id,omitempty"`
+	MCPSessionID  string `json:"mcp_session_id,omitempty"`
+
 	Status    Status   `json:"status"`
 	IsFlagged bool     `json:"is_flagged"`
 	Security  []string `json:"security,omitempty"`

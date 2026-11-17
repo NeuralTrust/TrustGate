@@ -30,3 +30,21 @@ func TestRawColumnsMatchReadColumns(t *testing.T) {
 		t.Errorf("RawColumns len = %d, ReadColumns len = %d", len(RawColumns()), len(ReadColumns()))
 	}
 }
+
+func TestRawColumnsCorrelationIDsAreNullableStrings(t *testing.T) {
+	want := map[string]bool{ColumnClientTraceID: false, ColumnMCPSessionID: false}
+	for _, c := range RawColumns() {
+		if _, ok := want[c.Name]; !ok {
+			continue
+		}
+		want[c.Name] = true
+		if c.Type != ColumnTypeString || !c.Nullable {
+			t.Errorf("raw column %q = %+v, want a nullable string: rows written before it existed have none", c.Name, c)
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("raw column %q missing from RawColumns", name)
+		}
+	}
+}
