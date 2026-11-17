@@ -133,6 +133,12 @@ const (
 	// provider's quota. A throttle on the first chunk or on a single chunk stays
 	// availability.
 	DetailThrottledOversize = "throttled_oversize"
+	// DetailTimeout is a transport failure where the guardrail did not answer
+	// within its time limit (the call, its token minting, or the evaluation's
+	// budget), or answered that it ran out of time itself. It is availability,
+	// like any other transport failure; a plugin may let its policy treat it
+	// apart from an outage.
+	DetailTimeout = "timeout"
 )
 
 // IsMaskOverFinding reports whether a failure detail is a mask that could not

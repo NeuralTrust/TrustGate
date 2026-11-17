@@ -562,7 +562,7 @@ func (p *Plugin) runGuardrail(
 	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
 		// A masked chunk beside a chunk Model Armor could not reach keeps the
 		// mask and records the gap (keepsMaskOnGap).
-		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && cfg.keepsMaskOnGap(in.Mode) {
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && cfg.keepsMaskOnGap(in.Mode, decision.Detail) {
 			gap = &decision
 			break
 		}
@@ -732,7 +732,7 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 		data.EarlierFailureDetail = data.FailureDetail
 	}
 	data.FailureDetail = reason
-	data.FailureMode = pluginutil.FailureModeStamp(failClosedOf(in.Config.Settings))
+	data.FailureMode = pluginutil.FailureModeStamp(failClosedOf(in.Config.Settings, reason))
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
 		Plugin:  PluginName,
@@ -788,7 +788,7 @@ func (p *Plugin) externalFailure(
 	// Read from the raw settings, not cfg: a config failure hands over a zero
 	// cfg, and a policy that asked for closed must not fail open because some
 	// other key made its settings invalid.
-	failClosed := failClosedOf(in.Config.Settings)
+	failClosed := failClosedOf(in.Config.Settings, fi.armorReason)
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		FailClosed: failClosed,
 		Ctx:        ctx,
@@ -873,6 +873,6 @@ func passThrough() *appplugins.Result {
 // filter) refuses instead, since the other filters did not judge this content.
 // Whether a gap may keep a mask at all is the policy's (keepsMaskOnGap).
 func keepsMaskDespiteGap(res assessmentResult, cfg Settings, mode policy.Mode, reason string) bool {
-	return res.anonymize != nil && cfg.keepsMaskOnGap(mode) &&
+	return res.anonymize != nil && cfg.keepsMaskOnGap(mode, reason) &&
 		appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability
 }
