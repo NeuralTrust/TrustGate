@@ -104,7 +104,7 @@ func TestRPCGateway_NoAccountForTheApplicationStillListsTheInventoryMetaTool(t *
 	rc := inventoryConsumer(t)
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{appmcp.InventoryToolName}, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)))
+	require.Equal(t, []string{appmcp.InventoryToolName, appmcp.CallToolName}, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)))
 
 	_, err = g.Dispatch(context.Background(), rc, "tools/call", json.RawMessage(`{"name":"google_drive__search"}`))
 	var notConnected *appmcp.ApplicationNotConnectedError
@@ -128,10 +128,17 @@ func TestRPCGateway_DenyAllToolkitGetsNoInventory(t *testing.T) {
 
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
-	require.NotContains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.InventoryToolName)
+	names := toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool))
+	require.NotContains(t, names, appmcp.InventoryToolName)
+	require.NotContains(t, names, appmcp.CallToolName)
 
 	_, err = g.Dispatch(context.Background(), rc, "tools/call",
 		json.RawMessage(`{"name":"`+appmcp.InventoryToolName+`"}`))
 	var notPermitted *appmcp.ToolNotPermittedError
+	require.ErrorAs(t, err, &notPermitted)
+
+	// Nor can the call-through reach past the toolkit to a tool it denies.
+	_, err = g.Dispatch(context.Background(), rc, "tools/call",
+		json.RawMessage(`{"name":"`+appmcp.CallToolName+`","arguments":{"name":"linear_list_issues"}}`))
 	require.ErrorAs(t, err, &notPermitted)
 }

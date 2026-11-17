@@ -1008,6 +1008,38 @@ tool's description says what its answer excludes, and the answer itself ends by
 saying it is the whole list. The text body carries it, not only
 `structuredContent`, because the text is the part many clients hand the model.
 
+### 16.1 `trustgate_call_tool`: reaching a tool the client never listed
+
+A user who installs or connects a server mid-session gains tools, and the
+gateway announces them with `notifications/tools/list_changed` on every route a
+client may be listening on: the GET stream, a `subscriptions/listen` stream, and
+the reply to the client's next POST. Cursor and a directly configured Claude
+Code re-list within seconds. Claude's hosted connectors (claude.ai web, Desktop,
+mobile, and Claude Code sessions that use claude.ai connectors) do not: they keep
+the `tools/list` they fetched when the connector was added and ignore the
+notification, `ttlMs: 0` and a moved `serverInfo.version` alike, until the user
+disconnects and reconnects the connector (anthropics/claude-ai-mcp#1182,
+anthropics/claude-code#108596). Nothing the gateway sends changes that.
+
+So the gateway offers a way round the stale list that does not depend on the
+client re-listing. `trustgate_call_tool` (`pkg/app/mcp/call_tool.go`) takes
+`{name, arguments}` and calls that tool. It is listed beside the inventory on
+every consumer that gets the gateway's own tools, so it is in the first list a
+client ever fetches; `trustgate_list_tools` with `tool` returns the named tool's
+whole description and input schema, which the listing leaves out. The install
+reply and the server instructions point the model at the pair instead of at the
+user.
+
+- **It is not a way round policy.** The dispatcher unwraps the call and
+  continues with the named tool at resolve: toolkit denial, pending consent,
+  scope selection, pre-request and pre-response policies, the upstream call and
+  the audit all see the real tool and its arguments. Activity records the
+  called tool, not the wrapper, and usage counts it as the user's.
+- **It does not call the gateway's own tools.** They are always in the client's
+  list, and a call-through of the call-through is a loop.
+- **It is annotated as a write** (`destructiveHint: true`). It can reach any of
+  the user's tools, so a client that asks before a write must ask here too.
+
 It is offered to every consumer the gateway may add its own tools to, and
 withheld from a deny-all toolkit — a consumer meant to expose nothing gets no
 gateway tools either, the rule the connect tool already followed

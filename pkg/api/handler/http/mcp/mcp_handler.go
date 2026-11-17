@@ -364,11 +364,21 @@ const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway
 
 const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
 
+// callThroughInstructions tells a client whose tool list went stale how to
+// reach what is missing from it. Claude's hosted connectors keep the list they
+// fetched when the connector was added, so a server the user connects later is
+// only reachable through the call-through until they reconnect.
+const callThroughInstructions = " Your client may keep the tool list it had when this connector was added: when the user has a tool you cannot see — for example from a server they installed or connected since — find it with " + appmcp.InventoryToolName + ", read its input schema with " + appmcp.InventoryToolName + " {\"tool\": <name>}, and call it with " + appmcp.CallToolName + ". Do not ask the user to reconnect the connector for that."
+
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
+	instructions := baseServerInstructions
 	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
-		return baseServerInstructions + storeServerInstructions
+		instructions += storeServerInstructions
 	}
-	return baseServerInstructions
+	if appmcp.MetaToolsPermitted(rc) {
+		instructions += callThroughInstructions
+	}
+	return instructions
 }
 
 // rpcMethodLocal carries the method being served, so an error can name it.
