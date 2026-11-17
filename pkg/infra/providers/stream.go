@@ -52,6 +52,15 @@ func (b *cancelOnCloseBody) Close() error {
 // StreamSSE reads rc line by line until [DONE], EOF or ctx ends. rc is closed
 // as soon as ctx ends so that a read blocked on a silent upstream returns, and
 // the stream then ends with the context's error.
+//
+// The [DONE] line is followed by the empty line that ends its event, and then
+// the sequence ends without reading further. On the wire that blank line comes
+// after the data line, but the read stops at [DONE], so the upstream's own
+// separator is never read: yielding one here is what keeps the event whole for
+// a same-format client, whose lines are relayed verbatim. Without it the client
+// got "data: [DONE]\n" and nothing after, and a strict SSE parser drops an event
+// that the stream ends before dispatching. The separator is yielded once, here,
+// and never in addition to the upstream's, since that one is never read.
 func StreamSSE(ctx context.Context, rc io.ReadCloser) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		defer func() { _ = rc.Close() }()
@@ -84,6 +93,7 @@ func StreamSSE(ctx context.Context, rc io.ReadCloser) iter.Seq2[[]byte, error] {
 			if bytes.HasPrefix(line, []byte("data:")) {
 				payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 				if bytes.Equal(payload, []byte("[DONE]")) {
+					yield([]byte{}, nil)
 					return
 				}
 			}
