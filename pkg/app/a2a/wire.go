@@ -156,7 +156,7 @@ func RequestContent(v Version, k Kind, params json.RawMessage) (Content, *RPCErr
 			return Content{}, invalidParams()
 		}
 		ps, err := parts(v, m["parts"])
-		if err != nil {
+		if err != nil || !filesCarryContent(ps) {
 			return Content{}, invalidParams()
 		}
 		return Content{
@@ -324,6 +324,18 @@ func parts(v Version, raw json.RawMessage) ([]Part, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// filesCarryContent reports whether every file part of a request is its bytes
+// or its url, one of the two. A file with neither (such as fileWithBytes,
+// Vertex's REST name, not A2A's) would reach the agent and the policies empty.
+func filesCarryContent(ps []Part) bool {
+	for _, p := range ps {
+		if p.Type == PartFile && (p.URL == "") == (p.Raw == "") {
+			return false
+		}
+	}
+	return true
 }
 
 func appendParts(dst *[]Part, v Version, raw json.RawMessage) error {

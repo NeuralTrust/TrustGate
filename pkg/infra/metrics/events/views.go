@@ -18,6 +18,8 @@ func (e Event) MetadataView() Event {
 	e.Request.Body = ""
 	e.Request.Preview = ""
 	e.Response.Body = nil
+	e.ClientTraceID = ""
+	e.MCPSessionID = ""
 	return e
 }
 
@@ -29,6 +31,8 @@ func (e Event) SensibleView() Event {
 		TenantID:      e.TenantID,
 		OccurredOn:    e.OccurredOn,
 		Retention:     e.Retention,
+		ClientTraceID: e.ClientTraceID,
+		MCPSessionID:  e.MCPSessionID,
 		Request:       Request{Body: e.Request.Body, Preview: e.Request.Preview},
 		Response:      Response{Body: e.Response.Body},
 	}

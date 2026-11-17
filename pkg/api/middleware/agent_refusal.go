@@ -24,7 +24,7 @@ import (
 // The reasons the agent plane refuses a call before reading it.
 const (
 	agentRefusalUnauthenticated      = "unauthenticated"
-	agentRefusalCredentialNotAllowed = "credential_not_allowed"
+	agentRefusalCredentialNotAllowed = "credential_not_allowed" // #nosec G101 -- a refusal reason code, not a credential
 	agentRefusalCallerNotAllowed     = "caller_not_allowed"
 	agentRefusalNoApplication        = "no_application"
 	agentRefusalInvalidEndUser       = "invalid_end_user"

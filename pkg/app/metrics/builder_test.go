@@ -1254,3 +1254,35 @@ func TestBuilder_ProviderMsOmittedWithoutAttempt(t *testing.T) {
 		assert.Contains(t, string(raw), `"provider_ms":0`)
 	})
 }
+
+func TestBuilder_CarriesTheClientCorrelationIDs(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	tests := []struct {
+		name        string
+		kind        string
+		path        string
+		wantSession string
+	}{
+		{name: "mcp keeps the session", kind: events.KindMCP, path: "/mcp", wantSession: "mcp-sess-1"},
+		{name: "llm drops a stray session", kind: "", path: "/v1/chat/completions", wantSession: ""},
+		{name: "a2a drops a stray session", kind: events.KindA2A, path: "/bot/agents/research", wantSession: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := trace.New("trace-correlation", trace.Metadata{
+				GatewayID:     "gw-1",
+				Kind:          tt.kind,
+				ClientTraceID: traceID,
+				MCPSessionID:  "mcp-sess-1",
+			})
+			req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: tt.path}
+			resp := &infracontext.ResponseContext{StatusCode: 200}
+
+			start := time.UnixMilli(1_000_000)
+			evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+			assert.Equal(t, traceID, evt.ClientTraceID)
+			assert.Equal(t, tt.wantSession, evt.MCPSessionID)
+		})
+	}
+}

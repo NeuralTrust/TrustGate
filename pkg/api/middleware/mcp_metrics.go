@@ -110,6 +110,10 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 		Kind:      m.kind,
 	}
+	meta.ClientTraceID = requestmeta.ClientTraceID(requestHeaderValues(c, requestmeta.HeaderTraceparent))
+	if m.kind == events.KindMCP {
+		meta.MCPSessionID = requestmeta.MCPSessionID(requestHeaderValues(c, requestmeta.HeaderMCPSessionID))
+	}
 	if gw != nil {
 		meta.TenantID = gw.TenantID()
 	}

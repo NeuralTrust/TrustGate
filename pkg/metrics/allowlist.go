@@ -23,6 +23,8 @@ func ReadColumns() []string {
 		ColumnSchemaVersion,
 		ColumnRequestBody,
 		ColumnResponseBody,
+		ColumnClientTraceID,
+		ColumnMCPSessionID,
 		ColumnCreatedAt,
 	}
 }
