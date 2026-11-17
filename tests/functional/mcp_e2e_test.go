@@ -237,7 +237,7 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(registryID, "echo"), exposedToolName(registryID, "search"), appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "echo"), exposedToolName(registryID, "search"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "hola"}})
@@ -283,7 +283,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(registryID, "alias-echo"), appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "alias-echo"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(registryID, "alias-echo"), "arguments": map[string]any{"message": "hola"}})
@@ -389,7 +389,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(liveRegistry, "echo"), appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(liveRegistry, "echo"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(liveRegistry, "echo"), "arguments": map[string]any{"message": "hola"}})
 	result := rpcResult(t, status, body)
