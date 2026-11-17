@@ -38,8 +38,6 @@ const (
 	behaviorDowngradeModel = "downgrade_model"
 	behaviorDowngrade      = "downgrade"
 
-	minWindowSeconds = 1
-
 	// minCalendarTTLSeconds keeps a calendar counter alive past the end of its
 	// period, so a stream that finishes late is still charged to the period
 	// that admitted it.
