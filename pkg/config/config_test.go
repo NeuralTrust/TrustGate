@@ -1829,3 +1829,57 @@ func TestFirewallComplexityModelRevision(t *testing.T) {
 		t.Fatalf("configured revision = %q", got)
 	}
 }
+
+func TestValidate_AdminListener(t *testing.T) {
+	tests := []struct {
+		name      string
+		host      string
+		cert, key string
+		wantErr   bool
+		wantAddr  string
+	}{
+		{name: "every interface by default", wantAddr: ":8080"},
+		{name: "loopback", host: "127.0.0.1", wantAddr: "127.0.0.1:8080"},
+		{name: "ipv6 loopback", host: "::1", wantAddr: "[::1]:8080"},
+		{name: "host name", host: "admin.internal", wantAddr: "admin.internal:8080"},
+		{name: "host with a port", host: "127.0.0.1:9000", wantErr: true},
+		{name: "url", host: "http://127.0.0.1", wantErr: true},
+		{name: "tls pair", cert: "/tls/tls.crt", key: "/tls/tls.key", wantAddr: ":8080"},
+		{name: "certificate without key", cert: "/tls/tls.crt", wantErr: true},
+		{name: "key without certificate", key: "/tls/tls.key", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.AppEnv = "prod"
+			cfg.Server.AdminPort = 8080
+			cfg.Server.AdminHost, cfg.Server.AdminTLSCertFile, cfg.Server.AdminTLSKeyFile = tc.host, tc.cert, tc.key
+			err := cfg.Validate()
+			if tc.wantErr {
+				if !stderrors.Is(err, errors.ErrInvalidConfig) {
+					t.Fatalf("expected ErrInvalidConfig, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if got := cfg.Server.AdminAddr(); got != tc.wantAddr {
+				t.Errorf("AdminAddr = %q, want %q", got, tc.wantAddr)
+			}
+			if got := cfg.Server.AdminTLS(); got != (tc.cert != "") {
+				t.Errorf("AdminTLS = %v", got)
+			}
+		})
+	}
+}
+
+func TestGetServerConfig_AdminListener(t *testing.T) {
+	t.Setenv("SERVER_ADMIN_HOST", " 127.0.0.1 ")
+	t.Setenv("SERVER_ADMIN_TLS_CERT_FILE", "/tls/tls.crt")
+	t.Setenv("SERVER_ADMIN_TLS_KEY_FILE", "/tls/tls.key")
+	got := getServerConfig()
+	if got.AdminHost != "127.0.0.1" || got.AdminTLSCertFile != "/tls/tls.crt" || got.AdminTLSKeyFile != "/tls/tls.key" {
+		t.Fatalf("admin listener settings not read: %+v", got)
+	}
+}
