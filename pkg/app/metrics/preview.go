@@ -75,7 +75,9 @@ func toolCallPreview(mcp *events.MCP, body string) string {
 // is the sanitized one, and the text gets a prompt's credential redaction.
 func a2aMessagePreview(body string) string {
 	var envelope struct {
+		Method string `json:"method"`
 		Params struct {
+			ID      string `json:"id"`
 			Message struct {
 				Parts []struct {
 					Kind string `json:"kind"`
@@ -88,7 +90,12 @@ func a2aMessagePreview(body string) string {
 		return ""
 	}
 	if len(envelope.Params.Message.Parts) == 0 {
-		return chatBridgePreview(body)
+		if preview := chatBridgePreview(body); preview != "" {
+			return preview
+		}
+		// A call that carries no message (tasks/get, GetTask…) is named by its
+		// method and the task it names.
+		return truncatePreview(strings.TrimSpace(envelope.Method + " " + envelope.Params.ID))
 	}
 	texts := make([]string, 0, len(envelope.Params.Message.Parts))
 	for _, part := range envelope.Params.Message.Parts {

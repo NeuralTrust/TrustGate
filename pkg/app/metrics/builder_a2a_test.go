@@ -81,12 +81,12 @@ func TestBuilder_A2AFoldsTheCall(t *testing.T) {
 }
 
 // The Activity list names an A2A call by the text it sends, in either
-// protocol version; a call with no message has no preview.
+// protocol version; a call with no message by its method and task.
 func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 	cases := map[string]string{
 		`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"1","parts":[{"text":"Hello!"},{"data":{"a":1}},{"text":"Find flats"}]}}}`:                             "Hello! Find flats",
 		`{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","kind":"message","messageId":"1","parts":[{"kind":"text","text":"Book a trip"},{"kind":"file","file":{"uri":"x"}}]}}}`: "Book a trip",
-		`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"t-1"}}`: "",
+		`{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"t-1"}}`:                                                                                              "GetTask t-1",
 		`{"model":"x","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":[{"type":"text","text":"Flights?"}]}]}`: "Flights?",
 	}
 	for body, want := range cases {
@@ -95,6 +95,26 @@ func TestBuilder_A2APreviewIsTheMessageText(t *testing.T) {
 		start := time.UnixMilli(2_000_000)
 		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, &infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
 		assert.Equal(t, want, evt.Request.Preview, body)
+	}
+}
+
+// A call the gateway refused or a policy blocked is answered with HTTP 200,
+// so its status records it as blocked, with the refusal's reason.
+func TestBuilder_A2ARefusalIsBlocked(t *testing.T) {
+	for outcome, want := range map[string]string{"refused": "blocked", "blocked": "blocked", "ok": "", "upstream_error": ""} {
+		rt := trace.New("trace-a2a", trace.Metadata{GatewayID: "gw-1", Kind: events.KindA2A})
+		span := rt.StartSpan(trace.SpanA2A, "tasks/get")
+		span.SetA2A(trace.A2AAttrs{Method: "tasks/get", Outcome: outcome, Reason: "method_not_allowed", RPCErrorCode: -32601})
+		span.End()
+		start := time.UnixMilli(2_000_000)
+		evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt,
+			&infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/bot/agents/reg-1"},
+			&infracontext.ResponseContext{StatusCode: http.StatusOK}, start, start.Add(time.Millisecond))
+
+		assert.Equal(t, want, evt.Status.Outcome, outcome)
+		if want != "" {
+			assert.Equal(t, "method_not_allowed", evt.Status.Reason, outcome)
+		}
 	}
 }
 
