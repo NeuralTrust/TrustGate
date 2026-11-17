@@ -122,8 +122,6 @@ type StreamFailureModes interface {
 	StreamFailsClosedOn(settings map[string]any, reason FailureReason, detail string) bool
 }
 
-// entryFailsClosedOn reports whether the entry cuts an availability failure
-// with this reason and detail.
 func entryFailsClosedOn(entry chainEntry, reason FailureReason, detail string) bool {
 	if modes, ok := entry.plugin.(StreamFailureModes); ok {
 		return modes.StreamFailsClosedOn(entry.config.Settings, reason, detail)

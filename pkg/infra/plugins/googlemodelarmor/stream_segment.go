@@ -182,7 +182,7 @@ func (p *Plugin) InspectSegment(
 	if strings.TrimSpace(seg.Accumulated) == "" {
 		return segmentAllow(), nil
 	}
-	cl, err := p.clientFor(cfg)
+	cl, err := p.streamClientFor(cfg)
 	if err != nil {
 		return fail.outcome(appplugins.FailureConfigInvalid, "",
 			nil, fmt.Errorf("resolving client for stream block %d: %w", seg.Seq, err))

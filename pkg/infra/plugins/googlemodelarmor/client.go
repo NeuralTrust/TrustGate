@@ -409,8 +409,9 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	return &out.SanitizationResult, nil
 }
 
-// errCallTimeout marks a call that ended because its own deadline passed: the
-// per-call limit or the evaluation's budget, token minting included. It is read
+// errCallTimeout marks a call that ended because a deadline on its context
+// passed: the per-call limit, the evaluation's budget or a deadline the caller
+// set, token minting included. A cancellation is never one. It is read
 // from the call's context rather than from the error, since a token source or
 // http.Client.Timeout does not always wrap context.DeadlineExceeded.
 var errCallTimeout = errors.New("model_armor: call timed out")

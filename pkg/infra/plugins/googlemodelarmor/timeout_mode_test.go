@@ -53,6 +53,8 @@ func TestParseConfigTimeoutSettings(t *testing.T) {
 		{name: "seconds above the maximum", settings: map[string]any{"timeout_seconds": 61}, wantErr: "timeout_seconds must be between 1 and 60"},
 		{name: "negative seconds", settings: map[string]any{"timeout_seconds": -1}, wantErr: "timeout_seconds must be between 1 and 60"},
 		{name: "seconds not a number", settings: map[string]any{"timeout_seconds": "soon"}, wantErr: "timeout_seconds"},
+		{name: "fractional seconds", settings: map[string]any{"timeout_seconds": 0.5}, wantErr: "timeout_seconds must be a whole number"},
+		{name: "fractional seconds above one", settings: map[string]any{"timeout_seconds": 1.9}, wantErr: "timeout_seconds must be a whole number"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

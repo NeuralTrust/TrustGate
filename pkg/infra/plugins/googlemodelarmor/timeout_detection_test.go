@@ -294,3 +294,16 @@ func TestStreamFailsClosedOn(t *testing.T) {
 	_, opts = p.StreamSettings(settingsOf(nil))
 	assert.NotEqual(t, "fail_closed", opts.OnError)
 }
+
+// A per-policy limit below the streamed block's 2 s does not shorten it.
+func TestInspectSegmentKeepsItsLimitBelowTimeoutSeconds(t *testing.T) {
+	t.Parallel()
+	srv := slowStub(t, 1500*time.Millisecond, http.StatusOK, allowResponse)
+	p := pluginAt(srv.URL, 15*time.Second)
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, settingsOf(map[string]any{"timeout_seconds": 1, "timeout_failure_mode": "closed"}), nil),
+		segment(1, "a paragraph"))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.Block, "a 1.5 s answer fits the 2 s per-block limit")
+}
