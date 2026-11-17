@@ -329,7 +329,9 @@ func TestParseWindow(t *testing.T) {
 		{name: "hour", in: "1h", want: 3600},
 		{name: "day", in: "1d", want: 86400},
 		{name: "ninety minutes", in: "90m", want: 5400},
-		{name: "seconds floored", in: "30s", want: 60},
+		{name: "seconds", in: "30s", want: 30},
+		{name: "one second", in: "1s", want: 1},
+		{name: "zero seconds", in: "0s", wantErr: true},
 		{name: "minute floor exact", in: "1m", want: 60},
 		{name: "uppercase", in: "2H", want: 7200},
 		{name: "empty", in: "", wantErr: true},
@@ -366,8 +368,8 @@ func TestConfigValidate_Partition(t *testing.T) {
 	}{
 		{name: "no partition keeps group by header and custom pricing", cfg: validConfig(func(c *config) { c.GroupByHeader, c.CustomPricing = "X-Team", priced })},
 		{name: "unknown partition", cfg: validConfig(func(c *config) { c.Partition = "owner" }), wantErr: "partition must be key"},
-		{name: "calendar month without partition", cfg: validConfig(func(c *config) { c.Aggregate.TimeWindow = windowCalendarMonth }), wantErr: "aggregate.time_window: calendar_month requires partition key"},
-		{name: "calendar day rule without partition", cfg: validConfig(func(c *config) { c.Rules = dailyRule }), wantErr: "rules[0].time_window: calendar_day requires partition key"},
+		{name: "calendar month without partition", cfg: validConfig(func(c *config) { c.Aggregate.TimeWindow = windowCalendarMonth })},
+		{name: "calendar day rule without partition", cfg: validConfig(func(c *config) { c.Rules = dailyRule })},
 		{name: "key with a rolling window", cfg: key(func(c *config) { c.Aggregate.TimeWindow = "24h" })},
 		{name: "key with calendar windows", cfg: key(func(c *config) { c.Aggregate.TimeWindow, c.Rules = windowCalendarMonth, dailyRule })},
 		{name: "key with custom pricing", cfg: key(func(c *config) { c.CustomPricing = priced }), wantErr: "does not support custom_pricing"},
@@ -397,12 +399,12 @@ func TestCalendarPeriod(t *testing.T) {
 		wantTTL    int
 	}{
 		{name: "december ends at the new year", window: windowCalendarMonth, now: at(12, 31, 0, 0, 0), wantPeriod: "2026-12", wantTTL: 86400},
-		{name: "ttl floor", window: windowCalendarMonth, now: at(10, 31, 23, 59, 30), wantPeriod: "2026-10", wantTTL: minWindowSeconds},
+		{name: "ttl floor", window: windowCalendarMonth, now: at(10, 31, 23, 59, 30), wantPeriod: "2026-10", wantTTL: minCalendarTTLSeconds},
 		{name: "day", window: windowCalendarDay, now: at(10, 2, 18, 0, 0), wantPeriod: "2026-10-02", wantTTL: 6 * 3600},
 		{name: "day in UTC", window: windowCalendarDay, now: at(10, 2, 23, 0, 0).In(time.FixedZone("CEST", 7200)), wantPeriod: "2026-10-02", wantTTL: 3600},
 		{name: "rolling window", window: "24h", now: at(10, 2, 18, 0, 0)},
 		{name: "a request admitted in october is charged to october", window: windowCalendarMonth,
-			at: at(10, 31, 23, 59, 58), now: at(11, 1, 0, 0, 5), wantPeriod: "2026-10", wantTTL: minWindowSeconds},
+			at: at(10, 31, 23, 59, 58), now: at(11, 1, 0, 0, 5), wantPeriod: "2026-10", wantTTL: minCalendarTTLSeconds},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

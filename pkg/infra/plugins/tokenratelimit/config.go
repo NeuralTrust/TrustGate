@@ -38,7 +38,12 @@ const (
 	behaviorDowngradeModel = "downgrade_model"
 	behaviorDowngrade      = "downgrade"
 
-	minWindowSeconds = 60
+	minWindowSeconds = 1
+
+	// minCalendarTTLSeconds keeps a calendar counter alive past the end of its
+	// period, so a stream that finishes late is still charged to the period
+	// that admitted it.
+	minCalendarTTLSeconds = 60
 
 	partitionKey        = "key"
 	windowCalendarMonth = authdomain.BudgetWindowCalendarMonth
@@ -182,7 +187,7 @@ func (c *config) validate() error {
 			if !hasLegacyWindow {
 				return fmt.Errorf("token_rate_limiter: rules[%d].time_window is required when no legacy window is set", i)
 			}
-		} else if err := c.validateWindow(c.Rules[i].TimeWindow); err != nil {
+		} else if err := validateWindow(c.Rules[i].TimeWindow); err != nil {
 			return fmt.Errorf("token_rate_limiter: rules[%d].time_window: %w", i, err)
 		}
 	}
@@ -198,7 +203,7 @@ func (c *config) validate() error {
 			if !hasLegacyWindow {
 				return fmt.Errorf("token_rate_limiter: aggregate.time_window is required when no legacy window is set")
 			}
-		} else if err := c.validateWindow(c.Aggregate.TimeWindow); err != nil {
+		} else if err := validateWindow(c.Aggregate.TimeWindow); err != nil {
 			return fmt.Errorf("token_rate_limiter: aggregate.time_window: %w", err)
 		}
 	}
@@ -264,13 +269,10 @@ func (c *config) refusesUnpriced() bool {
 	return c.keyPartitioned() && c.Unit == unitDollars
 }
 
-func (c *config) validateWindow(window string) error {
+func validateWindow(window string) error {
 	if !isCalendarWindow(window) {
 		_, err := parseWindow(window)
 		return err
-	}
-	if c.Partition != partitionKey {
-		return fmt.Errorf("%s requires partition %s", window, partitionKey)
 	}
 	return nil
 }
@@ -308,9 +310,6 @@ func parseWindow(s string) (int, error) {
 		return 0, fmt.Errorf("invalid time_window %q: unit must be one of s, m, h, d", s)
 	}
 
-	if secs < minWindowSeconds {
-		secs = minWindowSeconds
-	}
 	return secs, nil
 }
 
@@ -319,21 +318,28 @@ func parseWindow(s string) (int, error) {
 // at, so a request that ends after the period does is still charged to the
 // period that admitted it.
 func calendarPeriod(window string, at, now time.Time) (period string, ttlSeconds int, ok bool) {
-	at = at.UTC()
-	var start, end time.Time
-	var layout string
-	switch window {
-	case windowCalendarMonth:
-		start = time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
-		end, layout = start.AddDate(0, 1, 0), "2006-01"
-	case windowCalendarDay:
-		start = time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-		end, layout = start.AddDate(0, 0, 1), "2006-01-02"
-	default:
+	start, end, layout, ok := calendarBounds(window, at)
+	if !ok {
 		return "", 0, false
 	}
 	ttl := int(math.Ceil(end.Sub(now).Seconds()))
-	return start.Format(layout), max(ttl, minWindowSeconds), true
+	return start.Format(layout), max(ttl, minCalendarTTLSeconds), true
+}
+
+// calendarBounds is the UTC month or day at falls in: its start, the start of
+// the next one (when the counter resets) and the period's key layout.
+func calendarBounds(window string, at time.Time) (start, end time.Time, layout string, ok bool) {
+	at = at.UTC()
+	switch window {
+	case windowCalendarMonth:
+		start = time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 1, 0), "2006-01", true
+	case windowCalendarDay:
+		start = time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 0, 1), "2006-01-02", true
+	default:
+		return time.Time{}, time.Time{}, "", false
+	}
 }
 
 func (c *config) windowSeconds() int {

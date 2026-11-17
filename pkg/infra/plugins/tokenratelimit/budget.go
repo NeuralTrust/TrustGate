@@ -39,6 +39,9 @@ type budgetWindow struct {
 	model     string
 	label     string
 	aggregate bool
+	// resetAt is when a calendar window's counter resets; zero for a rolling
+	// window, which resets when its counter key expires.
+	resetAt time.Time
 }
 
 func selectRule(cfg *config, model string) (budgetRule, bool) {
@@ -89,35 +92,38 @@ func windowsFor(cfg *config, base, model string, clock budgetClock) []budgetWind
 	var windows []budgetWindow
 	if cfg.PerModel {
 		if r, ok := selectRule(cfg, model); ok {
-			key, secs := periodWindow(base, r.TimeWindow, clock, ruleWindowSeconds(cfg, r))
+			key, secs, resetAt := periodWindow(base, r.TimeWindow, clock, ruleWindowSeconds(cfg, r))
 			windows = append(windows, budgetWindow{
 				key:       modelKey(key, r.Model),
 				max:       counterMax(cfg, r.Max),
 				windowSec: secs,
 				model:     r.Model,
 				label:     windowLabel(cfg, r.TimeWindow),
+				resetAt:   resetAt,
 			})
 		}
 	}
 	if cfg.Aggregate != nil {
-		key, secs := periodWindow(base, cfg.Aggregate.TimeWindow, clock, aggregateWindowSeconds(cfg))
+		key, secs, resetAt := periodWindow(base, cfg.Aggregate.TimeWindow, clock, aggregateWindowSeconds(cfg))
 		windows = append(windows, budgetWindow{
 			key:       key,
 			max:       counterMax(cfg, cfg.Aggregate.Max),
 			windowSec: secs,
 			label:     windowLabel(cfg, cfg.Aggregate.TimeWindow),
 			aggregate: true,
+			resetAt:   resetAt,
 		})
 	}
 	return windows
 }
 
-func periodWindow(base, timeWindow string, clock budgetClock, rollingSeconds int) (string, int) {
+func periodWindow(base, timeWindow string, clock budgetClock, rollingSeconds int) (key string, ttlSeconds int, resetAt time.Time) {
 	period, ttl, ok := calendarPeriod(timeWindow, clock.at, clock.now)
 	if !ok {
-		return base, rollingSeconds
+		return base, rollingSeconds, time.Time{}
 	}
-	return periodKey(base, period), ttl
+	_, end, _, _ := calendarBounds(timeWindow, clock.at)
+	return periodKey(base, period), ttl, end
 }
 
 func windowLabel(cfg *config, timeWindow string) string {
@@ -240,7 +246,8 @@ func (p *Plugin) budgetGate(
 	if req != nil {
 		provider = req.Provider
 	}
-	windows := windowsFor(cfg, base, model, p.clockFor(req))
+	clock := p.clockFor(req)
+	windows := windowsFor(cfg, base, model, clock)
 	if len(windows) == 0 {
 		if capTel != nil {
 			data := TokenRateLimiterData{
@@ -333,7 +340,17 @@ func (p *Plugin) budgetGate(
 	setTokenExtras(event, data)
 	appplugins.SetDecision(event, mode)
 
-	return p.handleExceeded(cfg, reportWindow, scope, model, req, mode, headers)
+	// A client retrying after Retry-After must clear every breached window.
+	retryAfter := func() int {
+		longest := 1
+		for i := range windows {
+			if exceeds(consumedByWindow[i], windows[i].max) {
+				longest = max(longest, p.windowReset(ctx, windows[i], clock.now))
+			}
+		}
+		return longest
+	}
+	return p.handleExceeded(cfg, reportWindow, scope, model, req, mode, headers, retryAfter)
 }
 
 func (p *Plugin) handleExceeded(
@@ -343,6 +360,7 @@ func (p *Plugin) handleExceeded(
 	req *infracontext.RequestContext,
 	mode policy.Mode,
 	headers map[string][]string,
+	retryAfter func() int,
 ) (*appplugins.Result, error) {
 	if !appplugins.Blocks(mode) {
 		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
@@ -353,9 +371,9 @@ func (p *Plugin) handleExceeded(
 		if _, body, hdr, ok := llmcost.ApplyDowngrade(req, model, cfg.DowngradeTo); ok {
 			return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body, Headers: mergeHeaderValues(headers, hdr)}, nil
 		}
-		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
+		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label), retryAfter())
 	default:
-		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
+		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label), retryAfter())
 	}
 }
 
