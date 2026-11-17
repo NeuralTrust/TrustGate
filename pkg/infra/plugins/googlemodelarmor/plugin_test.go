@@ -83,7 +83,7 @@ func pluginWithStub(s *modelArmorStub) *Plugin {
 		registry:             adapter.NewRegistry(),
 		allowAmbientIdentity: true,
 		clients: &clientCache{
-			build: func(modelArmorCredentials) (*client, error) {
+			build: func(modelArmorCredentials, time.Duration) (*client, error) {
 				return newClientWithTokenSource(s.server.URL, defaultTestTimeout, staticTokenSource("test-token", nil)), nil
 			},
 		},
@@ -99,7 +99,7 @@ func pluginWithClientError(err error) *Plugin {
 		registry:             adapter.NewRegistry(),
 		allowAmbientIdentity: true,
 		clients: &clientCache{
-			build: func(modelArmorCredentials) (*client, error) {
+			build: func(modelArmorCredentials, time.Duration) (*client, error) {
 				return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("", err)), nil
 			},
 		},
@@ -696,7 +696,7 @@ func pluginWithClientBuildError(err error) *Plugin {
 		registry:             adapter.NewRegistry(),
 		allowAmbientIdentity: true,
 		clients: &clientCache{
-			build: func(modelArmorCredentials) (*client, error) { return nil, err },
+			build: func(modelArmorCredentials, time.Duration) (*client, error) { return nil, err },
 		},
 	}
 }
