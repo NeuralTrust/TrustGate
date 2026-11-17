@@ -472,6 +472,33 @@ A request is charged to the calendar period it was admitted in: a stream that
 starts on the last second of a month and ends in the next one counts in the
 month that admitted it.
 
+### Limit per
+
+`limit_per` chooses what each counter of a `rate_limiter` or `token_rate_limiter`
+policy belongs to. Absent is `shared`: one counter for the policy's scope.
+
+| `limit_per` | Counter | Offered on |
+| --- | --- | --- |
+| `shared` | one for the policy scope | both |
+| `application` | one per application | both |
+| `api_key` | one per API key (the owner's counter when the key has one) | both |
+| `group` | one per group of the group key; a request without a group counts toward its application | `rate_limiter` |
+| `model` | one per model named in the request | both |
+| `header` | one per value of `group_by_header` | both |
+
+`application` and `group` take `applies_to: all` (default) or `applies_to:
+selected` with a non-empty `selected` list of application or group ids; a request
+outside the list is not limited by the policy, except that a request without a group always counts toward its application under `group`. `model` takes an optional `models`
+list of patterns (`*` is a wildcard, for example `@openai/gpt-6-luna` or
+`gpt-5*`); a request whose model does not match is not limited, and one that
+names none is counted under the route's default model. `api_key` does not limit
+requests without a key, and `application` and `group` do not limit requests
+without an application. On `token_rate_limiter`, `limit_per: api_key` is `partition: key`, and
+`partition: key` cannot be combined with another `limit_per`. A counter's key
+gains `:app:<id>`, `:grp:<id>` or `:mdl:<model>` for these modes (and
+`:key:<kind>:<id>` on `rate_limiter`) and is unchanged for `shared`; a budget
+per API key keeps the `key:<kind>:<id>` layout above.
+
 ## Group budgets
 
 A group budget caps what a directory group's keys spend in a UTC calendar
