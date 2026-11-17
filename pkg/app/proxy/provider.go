@@ -205,6 +205,7 @@ func (p *providerInvoker) Invoke(
 	if bk.CredentialUnavailable() {
 		return nil, registry.ErrSecretUnavailable
 	}
+	ctx = withForwardedClientHeaders(ctx, bk, req)
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
@@ -290,6 +291,7 @@ func (p *providerInvoker) InvokeStream(
 	if bk.CredentialUnavailable() {
 		return nil, registry.ErrSecretUnavailable
 	}
+	ctx = withForwardedClientHeaders(ctx, bk, req)
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}

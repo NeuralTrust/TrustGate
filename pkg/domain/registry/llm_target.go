@@ -61,6 +61,9 @@ func (t *LLMTarget) validate(requireAuth bool) error {
 			return err
 		}
 	}
+	if err := NormalizeForwardClientHeaders(t.ProviderOptions); err != nil {
+		return err
+	}
 	if t.Pricing != nil {
 		if err := t.Pricing.Validate(); err != nil {
 			return err
