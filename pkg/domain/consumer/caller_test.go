@@ -36,6 +36,7 @@ func TestCallerSubject(t *testing.T) {
 		{"an end user the application named", EndUserPrincipal(cons, key, "u-42"), "auth-1", EndUserSubject(cons.ID, "u-42")},
 		{"the application itself counts as its key", AppPrincipal(cons, key), "auth-1", "key:auth-1"},
 		{"the application itself without a key id", AppPrincipal(cons, key), "", AppSubject(cons.ID)},
+		{"a certificate counts as its subject", AppPrincipal(cons, &identity.Principal{Subject: "svc.internal", Method: identity.MethodMTLS}), "auth-ca", "svc.internal"},
 	}
 	for _, tc := range cases {
 		if got := CallerSubject(tc.p, tc.authID); got != tc.want {

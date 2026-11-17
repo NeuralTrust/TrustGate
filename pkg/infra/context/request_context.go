@@ -220,8 +220,9 @@ type RequestContext struct {
 	// split per claim reads. The gateway sets them with SetCaller from the
 	// resolved identity, never from a header the client could choose freely:
 	// a token's subject, a personal key's owner, app:<consumer>:<end user>
-	// for an end user an application's credential named, or key:<auth id>
-	// for an application's key naming no one (consumer.CallerSubject). Read
+	// for an end user an application's credential named, key:<auth id> for
+	// an application's key naming no one, or a client certificate's subject
+	// (consumer.CallerSubject). Read
 	// them, never modify them.
 	CallerSubject string
 	CallerClaims  map[string]any

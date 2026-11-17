@@ -41,14 +41,23 @@ func KeyCaller(authID string) string {
 // personal key's owner, app:<consumer>:<end user> for an end user an
 // application named — except for a principal that is the application itself
 // (AppPrincipal: a shared api key or certificate naming nobody), which counts
-// as the credential (KeyCaller) so each of the application's keys gets its own
-// limit instead of all of them sharing one. Without a credential id it stays
-// the application. A nil principal is nobody: "".
+// as the credential so each of the application's keys gets its own limit
+// instead of all of them sharing one: an api key by its id (KeyCaller), a
+// client certificate by its subject. Without either it stays the application.
+// A nil principal is nobody: "".
 func CallerSubject(p *identity.Principal, authID string) string {
 	if p == nil {
 		return ""
 	}
 	if isAppItself(p) {
+		// A client certificate is one workload: it counts as its own subject,
+		// as on the LLM proxy plane, not as the CA every certificate of the
+		// application shares.
+		if p.Method == identity.MethodMTLS {
+			if subject, _ := p.Claims[identity.ClaimCredentialSubject].(string); subject != "" {
+				return subject
+			}
+		}
 		if key := KeyCaller(authID); key != "" {
 			return key
 		}
