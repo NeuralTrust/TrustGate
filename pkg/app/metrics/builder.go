@@ -76,6 +76,7 @@ func (b *Builder) Build(
 		EndTimestamp:     endTime.UnixMilli(),
 		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:        meta.SessionID,
+		ClientTraceID:    meta.ClientTraceID,
 		IP:               meta.IP,
 		AuthID:           meta.AuthID,
 		AuthKind:         meta.AuthKind,
@@ -395,6 +396,9 @@ func (b *Builder) buildMCP(
 	startTime, endTime time.Time,
 ) *events.Event {
 	evt.Kind = events.KindMCP
+	if requestTrace != nil {
+		evt.MCPSessionID = requestTrace.Metadata().MCPSessionID
+	}
 
 	mcp, upstreamMs := b.foldMCPSpans(requestTrace)
 	if mcp != nil {

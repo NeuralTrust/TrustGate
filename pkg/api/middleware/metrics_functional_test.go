@@ -77,13 +77,19 @@ func (r *eventRecorder) first(key string) *events.Event {
 type memExporter struct {
 	name  string
 	topic string
+	class metricsschema.DataClass
 	rec   *eventRecorder
 	fail  bool
 }
 
 func (e *memExporter) Name() string { return e.name }
 
-func (e *memExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+func (e *memExporter) DataClass() metricsschema.DataClass {
+	if e.class == "" {
+		return metricsschema.Metadata
+	}
+	return e.class
+}
 
 func (e *memExporter) Publish(_ context.Context, evt *events.Event) error {
 	if e.fail {
@@ -96,9 +102,10 @@ func (e *memExporter) Publish(_ context.Context, evt *events.Event) error {
 func (e *memExporter) Close() {}
 
 type memTemplate struct {
-	name string
-	rec  *eventRecorder
-	fail bool
+	name  string
+	class metricsschema.DataClass
+	rec   *eventRecorder
+	fail  bool
 }
 
 func (t *memTemplate) Name() string { return t.name }
@@ -111,7 +118,7 @@ func (t *memTemplate) ValidateConfig(settings map[string]interface{}) error {
 }
 
 func (t *memTemplate) WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error) {
-	return &memExporter{name: t.name, topic: topicOf(settings), rec: t.rec, fail: t.fail}, nil
+	return &memExporter{name: t.name, topic: topicOf(settings), class: t.class, rec: t.rec, fail: t.fail}, nil
 }
 
 func topicOf(settings map[string]interface{}) string {
@@ -135,6 +142,7 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 		infratelemetry.WithExporter("primary", &memTemplate{name: "primary", rec: rec}),
 		infratelemetry.WithExporter("memory", &memTemplate{name: "memory", rec: rec}),
 		infratelemetry.WithExporter("broken", &memTemplate{name: "broken", rec: rec, fail: true}),
+		infratelemetry.WithExporter("raw", &memTemplate{name: "raw", class: metricsschema.Raw, rec: rec}),
 	)
 	cache := appmetrics.NewExporterCache(factory, logger)
 
@@ -165,9 +173,24 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 
 func postChat(t *testing.T, app *fiber.App) {
 	t.Helper()
-	resp, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil))
+	postChatWithHeaders(t, app, nil)
+}
+
+func postChatWithHeaders(t *testing.T, app *fiber.App, headers map[string]string) {
+	t.Helper()
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func (r *eventRecorder) all(key string) []*events.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*events.Event(nil), r.got[key]...)
 }
 
 func TestMetricsFunctional_DefaultPlusExtraAndTenantID(t *testing.T) {
@@ -228,4 +251,34 @@ func TestMetricsFunctional_FailingExporterDoesNotBreakOthers(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return rec.count("primary/"+defaultTopic) == 1
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// Two steps of one client flow are two gateway requests with two trace ids; the
+// client's traceparent is what the raw records share.
+func TestMetricsFunctional_RequestsOfOneFlowShareTheClientTraceID(t *testing.T) {
+	rec := newEventRecorder()
+	gw := &gatewaydomain.Gateway{
+		ID: ids.New[ids.GatewayKind](),
+		Telemetry: &telemetrydomain.Telemetry{
+			Exporters: []telemetrydomain.ExporterConfig{
+				{Name: "raw", Settings: map[string]interface{}{"topic": "raw-topic"}},
+			},
+		},
+	}
+	app := newMetricsApp(t, gw, rec)
+	const flowTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	postChatWithHeaders(t, app, map[string]string{"traceparent": "00-" + flowTraceID + "-00f067aa0ba902b7-01"})
+	postChatWithHeaders(t, app, map[string]string{"traceparent": "00-" + flowTraceID + "-b7ad6b7169203331-01"})
+
+	require.Eventually(t, func() bool {
+		return rec.count("raw/raw-topic") == 2 && rec.count("primary/"+defaultTopic) == 2
+	}, 2*time.Second, 10*time.Millisecond)
+
+	raw := rec.all("raw/raw-topic")
+	assert.Equal(t, flowTraceID, raw[0].ClientTraceID)
+	assert.Equal(t, flowTraceID, raw[1].ClientTraceID)
+	assert.NotEqual(t, raw[0].TraceID, raw[1].TraceID)
+	for _, evt := range rec.all("primary/" + defaultTopic) {
+		assert.Empty(t, evt.ClientTraceID, "the metadata stream must not carry the client trace id")
+	}
 }
