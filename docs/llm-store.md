@@ -458,10 +458,10 @@ report an aggregate. A budget change reaches the proxies as a rotation does: on
 the next `InvalidateGatewayDataEvent` on the full plane, and with the config
 snapshot on a DB-less proxy.
 
-`calendar_month` and `calendar_day` (UTC) are valid only with `partition: key`;
+`calendar_month` and `calendar_day` (UTC) are valid with any partition;
 `custom_pricing`, `group_by_header` and `behavior_on_exceeded: downgrade_model`
 are refused with it: a hard limit never serves past the budget. In a blocking
-mode, over budget answers 429, a Redis read error 503 `budget_unavailable` with
+mode, over budget answers 429 with `Retry-After` set to the seconds until the window resets, a Redis read error 503 `budget_unavailable` with
 `Retry-After: 5` (the default partition stays fail-open), and a dollar budget on
 a model without a price 403 `model_unpriced`. A `partition: key` policy counts
 the model that will be served: for a request with no model, `auto` or

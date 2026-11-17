@@ -260,7 +260,7 @@ func TestPlugin_KeyBudget_ChargesThePeriodThatAdmittedTheRequest(t *testing.T) {
 	spend(t, p, keyBudgetsOnly(), alice, req, 40)
 
 	assert.Equal(t, []string{"trl:tk-1:key:owner:alice:p:2026-10"}, mr.Keys(), "a stream that ends in november is charged to october")
-	assert.Equal(t, time.Duration(minWindowSeconds)*time.Second, mr.TTL("trl:tk-1:key:owner:alice:p:2026-10"))
+	assert.Equal(t, time.Duration(minCalendarTTLSeconds)*time.Second, mr.TTL("trl:tk-1:key:owner:alice:p:2026-10"))
 }
 
 func TestPlugin_KeyBudget_RefusesDowngradeModel(t *testing.T) {

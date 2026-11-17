@@ -315,7 +315,15 @@ func TestTokenRateLimiterSchema_KeyPartition(t *testing.T) {
 	for _, window := range []Field{ruleWindow, aggregateWindow} {
 		assert.Contains(t, window.Description, "calendar_month")
 		assert.Contains(t, window.Description, "calendar_day")
+		assert.NotContains(t, window.Description, "partition key only")
 	}
+}
+
+func TestCatalog_RateLimiterRetryAfterDocumentsReset(t *testing.T) {
+	meta := pluginCatalogMeta["rate_limiter"]
+	retryAfter, ok := fieldByKey(meta.schema.Fields, "retry_after")
+	require.True(t, ok)
+	assert.Contains(t, retryAfter.Description, "reset")
 }
 
 func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
