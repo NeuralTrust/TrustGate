@@ -1814,6 +1814,39 @@ func TestHandle_StampsAuthAndOwnerFromAuthContext(t *testing.T) {
 	}
 }
 
+// The verified principal reaches the request a limiter partitions on; a
+// header that names someone else does not.
+func TestHandle_StampsPrincipalFromContext(t *testing.T) {
+	authID := ids.New[ids.AuthKind]()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authCtx := appauth.AuthContext{Method: appauth.MethodOIDC, AuthID: authID, GatewayID: gatewayID}
+	principal := &identity.Principal{Subject: "agent-7", Method: identity.MethodJWT, Claims: map[string]any{"oid": "o-7"}}
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: consumerSlug, Active: true, AuthIDs: []ids.AuthID{authID}}},
+	})
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := identity.WithPrincipal(appauth.WithAuthContext(c.UserContext(), &authCtx), principal)
+		c.SetUserContext(appconsumer.WithData(appconsumer.WithGatewayID(ctx, gatewayID), data))
+		return c.Next()
+	})
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+	var got *infracontext.RequestContext
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appproxy.ForwardInput) { got = in.Request }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+
+	req := newProxyRequest()
+	req.Header.Set("X-User-Id", "mallory")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.NotNil(t, got)
+	assert.Equal(t, "agent-7", got.PrincipalSubject)
+	assert.Equal(t, "o-7", got.PrincipalClaims["oid"])
+}
+
 type personalSpec struct {
 	provider, extra string
 	allowed         []string

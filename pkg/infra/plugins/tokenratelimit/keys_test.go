@@ -48,7 +48,7 @@ func TestAggregateKey(t *testing.T) {
 			cfgID:       "cfg-2",
 			dimension:   "consumer",
 			subject:     "co-9",
-			headerValue: "user-1",
+			headerValue: ":hdr:user-1",
 			want:        "trl:cfg-2:consumer:co-9:hdr:user-1",
 		},
 	}
@@ -61,7 +61,7 @@ func TestAggregateKey(t *testing.T) {
 }
 
 func TestModelKey(t *testing.T) {
-	base := aggregateKey("cfg-1", "consumer", "co-9", "user-1")
+	base := aggregateKey("cfg-1", "consumer", "co-9", ":hdr:user-1")
 	assert.Equal(t, "trl:cfg-1:consumer:co-9:hdr:user-1:model:gpt-5", modelKey(base, "gpt-5"))
 	assert.Equal(t, "trl:cfg-1:consumer:co-9:hdr:user-1:model:claude-opus-*", modelKey(base, "claude-opus-*"))
 }
