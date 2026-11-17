@@ -28,6 +28,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
@@ -366,7 +368,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	}
 	token, err := c.tokenSource(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("model_armor: acquiring bearer token: %w", err)
+		return nil, timedOut(ctx, fmt.Errorf("model_armor: acquiring bearer token: %w", err))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(project, location, template, action), bytes.NewReader(payload))
 	if err != nil {
@@ -377,7 +379,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("model_armor: %s call: %w", action, err)
+		return nil, timedOut(ctx, fmt.Errorf("model_armor: %s call: %w", action, err))
 	}
 	// DrainBody rather than a bare Close: with the LimitReader below, an
 	// oversized response would otherwise leave unread bytes on the wire and
@@ -386,7 +388,7 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("model_armor: read response: %w", err)
+		return nil, timedOut(ctx, fmt.Errorf("model_armor: read response: %w", err))
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, &errModelArmor{
@@ -405,6 +407,38 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 		return nil, fmt.Errorf("model_armor: decode response: %w", err)
 	}
 	return &out.SanitizationResult, nil
+}
+
+// errCallTimeout marks a call that ended because a deadline on its context
+// passed: the per-call limit, the evaluation's budget or a deadline the caller
+// set, also when the call was still minting its token. A cancellation is never
+// one. gcpauth does not stop a mint already under way at the deadline, so a
+// slow token endpoint can hold the call past it; the failure is still recorded
+// as a timeout once the mint returns. It is read
+// from the call's context rather than from the error, since a token source or
+// http.Client.Timeout does not always wrap context.DeadlineExceeded.
+var errCallTimeout = errors.New("model_armor: call timed out")
+
+func timedOut(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", errCallTimeout, err)
+	}
+	return err
+}
+
+// failureOfError maps a sanitize error to the shared failure vocabulary. A call
+// that ran out of time, or that Model Armor answered with 504 (its own backend
+// ran out of time), is a transport failure with the timeout detail, which
+// timeout_failure_mode decides.
+func failureOfError(err error) (appplugins.FailureReason, string) {
+	if errors.Is(err, errCallTimeout) {
+		return appplugins.FailureTransport, appplugins.DetailTimeout
+	}
+	var maErr *errModelArmor
+	if errors.As(err, &maErr) && maErr.status == http.StatusGatewayTimeout {
+		return appplugins.FailureTransport, appplugins.DetailTimeout
+	}
+	return pluginutil.FailureOfError(err)
 }
 
 func (c *client) url(project, location, template, action string) string {
@@ -507,11 +541,11 @@ type cacheEntry struct {
 
 type clientCache struct {
 	entries sync.Map
-	build   func(creds modelArmorCredentials) (*client, error)
+	build   func(creds modelArmorCredentials, timeout time.Duration) (*client, error)
 }
 
-func (c *clientCache) get(creds modelArmorCredentials) (*client, error) {
-	key := creds.fingerprint()
+func (c *clientCache) get(creds modelArmorCredentials, timeout time.Duration) (*client, error) {
+	key := creds.fingerprint() + "/" + timeout.String()
 	for {
 		v, _ := c.entries.LoadOrStore(key, &cacheEntry{})
 		entry, ok := v.(*cacheEntry)
@@ -519,7 +553,7 @@ func (c *clientCache) get(creds modelArmorCredentials) (*client, error) {
 			return nil, fmt.Errorf("google_model_armor: invalid cache entry type")
 		}
 		entry.once.Do(func() {
-			entry.client, entry.err = c.build(creds)
+			entry.client, entry.err = c.build(creds, timeout)
 		})
 		if entry.err == nil {
 			return entry.client, nil
@@ -534,9 +568,9 @@ func (c *clientCache) get(creds modelArmorCredentials) (*client, error) {
 // right token source for a credential set via sources and wraps it in a
 // *client pointed at baseURL/timeout, without minting any token yet — that
 // only happens lazily, inside sanitize(), on the first real call.
-func newModelArmorClientCache(baseURL string, timeout time.Duration, sources *credentialSources) *clientCache {
+func newModelArmorClientCache(baseURL string, sources *credentialSources) *clientCache {
 	return &clientCache{
-		build: func(creds modelArmorCredentials) (*client, error) {
+		build: func(creds modelArmorCredentials, timeout time.Duration) (*client, error) {
 			return newClientWithTokenSource(baseURL, timeout, sources.tokenSourceFor(creds)), nil
 		},
 	}
