@@ -512,13 +512,30 @@ func (b *Builder) buildA2A(
 	evt.Request.Preview = a2aMessagePreview(evt.Request.Body)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
-	if a2a != nil && a2a.Outcome == a2aOutcomeUpstreamTimeout {
-		evt.Status.IsTimeout = true
+	if a2a != nil {
+		if a2a.Outcome == a2aOutcomeUpstreamTimeout {
+			evt.Status.IsTimeout = true
+		}
+		// A JSON-RPC refusal is answered with HTTP 200, so the status code
+		// alone reads it as allowed: a call a policy blocked or the gateway
+		// refused (a method outside allowed_methods, invalid params…) is
+		// recorded as blocked, with its reason.
+		if a2a.Outcome == a2aOutcomeBlocked || a2a.Outcome == a2aOutcomeRefused {
+			evt.Status.Outcome = statusOutcomeBlocked
+			if evt.Status.Reason == "" {
+				evt.Status.Reason = a2a.Reason
+			}
+		}
 	}
 	return evt
 }
 
-const a2aOutcomeUpstreamTimeout = "upstream_timeout"
+const (
+	a2aOutcomeUpstreamTimeout = "upstream_timeout"
+	a2aOutcomeBlocked         = "blocked"
+	a2aOutcomeRefused         = "refused"
+	statusOutcomeBlocked      = "blocked"
+)
 
 func foldA2ASpans(requestTrace *trace.RequestTrace) (*events.A2A, int64) {
 	if requestTrace == nil {

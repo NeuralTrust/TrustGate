@@ -371,3 +371,28 @@ func TestRequestContent_RefusesMalformedParts(t *testing.T) {
 	require.NotNil(t, err)
 	assert.Equal(t, a2a.CodeInvalidParams, rpcCode(t, err))
 }
+
+func TestRequestContent_RefusesAFileWithoutItsContent(t *testing.T) {
+	t.Parallel()
+	for v, params := range map[a2a.Version][]string{
+		a2a.Version03: {
+			`{"message":{"parts":[{"kind":"file","file":{"fileWithBytes":"JVBERi0=","mimeType":"application/pdf"}}]}}`,
+			`{"message":{"parts":[{"kind":"file","file":{"bytes":"JVBERi0=","uri":"https://x/a.pdf"}}]}}`,
+		},
+		a2a.Version10: {
+			`{"message":{"parts":[{"raw":"","mediaType":"application/pdf"}]}}`,
+			`{"message":{"parts":[{"url":"","mediaType":"application/pdf"}]}}`,
+		},
+	} {
+		for _, p := range params {
+			_, err := a2a.RequestContent(v, a2a.KindSend, json.RawMessage(p))
+			require.NotNil(t, err, p)
+			assert.Equal(t, a2a.CodeInvalidParams, rpcCode(t, err), p)
+		}
+	}
+
+	c, err := a2a.RequestContent(a2a.Version03, a2a.KindSend, json.RawMessage(`{"message":{"parts":[{"kind":"file","file":{"bytes":"JVBERi0=","mimeType":"application/pdf","name":"f.pdf"}}]}}`))
+	require.Nil(t, err)
+	require.Len(t, c.Parts, 1)
+	assert.Equal(t, "JVBERi0=", c.Parts[0].Raw)
+}
