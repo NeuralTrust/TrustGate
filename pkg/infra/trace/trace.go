@@ -35,6 +35,11 @@ type Metadata struct {
 	IP           string
 	SessionID    string
 	Kind         string
+	// ClientTraceID is the trace-id of the client's traceparent and
+	// MCPSessionID the Mcp-Session-Id of an MCP request; empty when the client
+	// sent none or sent an invalid one.
+	ClientTraceID string
+	MCPSessionID  string
 	// AuthKind is what kind of key AuthID is: AuthKindPersonal for a key a
 	// user owns, AuthKindApplication for any other api key; empty for any
 	// other credential.
