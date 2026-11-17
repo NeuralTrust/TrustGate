@@ -42,6 +42,10 @@ var (
 	mcpCmd            *exec.Cmd
 	agentCmd          *exec.Cmd
 	gatewayBinaryPath string
+	// serverEnv is the environment every plane above boots with, kept so a
+	// test can start one more process of the same binary with a setting of
+	// its own (startExtraServer).
+	serverEnv []string
 
 	AdminURL   = getEnv("ADMIN_URL", "")
 	ProxyURL   = getEnv("PROXY_URL", "")
@@ -180,6 +184,7 @@ func setupTestEnvironment() {
 	firewallComplexityStubURL := StartFirewallComplexityStub()
 	consoleModelRequestsURL := StartConsoleModelRequestsStub()
 	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL)
+	serverEnv = cmdEnv
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
 	// The admin plane runs the migrations on boot; wait for it to be ready before
