@@ -427,6 +427,7 @@ func TestHandle_Streaming_RelaysSSE(t *testing.T) {
 		[]byte("data: {\"delta\":\"hi\"}"),
 		{},
 		[]byte("data: [DONE]"),
+		{},
 	}
 	stream := func(yield func([]byte, error) bool) {
 		for _, l := range lines {
@@ -458,7 +459,7 @@ func TestHandle_Streaming_RelaysSSE(t *testing.T) {
 		t.Fatalf("X-Selected-Provider = %q, want openai", got)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want := "data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n"
+	want := "data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n\n"
 	if string(body) != want {
 		t.Fatalf("body = %q, want %q", string(body), want)
 	}
@@ -2215,7 +2216,9 @@ func TestHandleStore_StreamsThroughTheSharedTail(t *testing.T) {
 		StatusCode: 200,
 		Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
 		Stream: func(yield func([]byte, error) bool) {
-			_ = yield([]byte("data: [DONE]"), nil)
+			if yield([]byte("data: [DONE]"), nil) {
+				_ = yield([]byte{}, nil)
+			}
 		},
 	}, nil).Once()
 
@@ -2225,7 +2228,7 @@ func TestHandleStore_StreamsThroughTheSharedTail(t *testing.T) {
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	assert.Equal(t, "data: [DONE]\n", string(body))
+	assert.Equal(t, "data: [DONE]\n\n", string(body))
 }
 
 func TestHandleStore_TrafficLabelingDoesNotSeeStoreRequests(t *testing.T) {

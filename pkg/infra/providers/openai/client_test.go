@@ -442,7 +442,7 @@ func TestCompletionsStream_RoundTrip(t *testing.T) {
 	lines := collectStreamLines(t, seq)
 	require.NotEmpty(t, lines)
 	assert.Equal(t, `data: {"choices":[{"delta":{"content":"hi"}}]}`, lines[0])
-	assert.Equal(t, `data: [DONE]`, lines[len(lines)-1])
+	assert.Equal(t, []string{`data: [DONE]`, ``}, lines[len(lines)-2:], "the [DONE] event ends with its separator")
 }
 
 func TestCompletionsStream_BackendErrorPassthrough(t *testing.T) {

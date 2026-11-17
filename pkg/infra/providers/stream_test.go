@@ -81,9 +81,41 @@ func TestStreamSSE_YieldsLinesAndStopsOnDone(t *testing.T) {
 
 	lines, err := collect(t, providers.StreamSSE(context.Background(), body))
 	require.NoError(t, err)
-	assert.Equal(t, []string{`data: {"a":1}`, ``, `data: [DONE]`}, lines,
-		"iteration must stop right after the [DONE] marker")
+	assert.Equal(t, []string{`data: {"a":1}`, ``, `data: [DONE]`, ``}, lines,
+		"iteration must stop right after the [DONE] event and its one separator")
 	assert.True(t, body.closed.Load(), "body must be closed when the iterator ends")
+}
+
+// The read stops at [DONE], before the blank line that ends its event on the
+// wire, so StreamSSE supplies it. It must come whether or not the upstream
+// sent one of its own, and only once: a same-format client gets these lines
+// verbatim, and "data: [DONE]\n" without it is an event a strict SSE parser
+// never dispatches.
+func TestStreamSSE_DoneEventEndsWithOneSeparator(t *testing.T) {
+	withSeparator := &trackingReadCloser{r: strings.NewReader("data: {\"a\":1}\n\ndata: [DONE]\n\n")}
+	lines, err := collect(t, providers.StreamSSE(context.Background(), withSeparator))
+	require.NoError(t, err)
+	assert.Equal(t, []string{`data: {"a":1}`, ``, `data: [DONE]`, ``}, lines)
+
+	withoutSeparator := &trackingReadCloser{r: strings.NewReader("data: {\"a\":1}\n\ndata: [DONE]")}
+	lines, err = collect(t, providers.StreamSSE(context.Background(), withoutSeparator))
+	require.NoError(t, err)
+	assert.Equal(t, []string{`data: {"a":1}`, ``, `data: [DONE]`, ``}, lines)
+}
+
+// A consumer that stops on the [DONE] line itself does not get the separator
+// pushed at it.
+func TestStreamSSE_ConsumerStoppingOnDoneGetsNothingMore(t *testing.T) {
+	body := &trackingReadCloser{r: strings.NewReader("data: [DONE]\n\n")}
+
+	var lines []string
+	for line, err := range providers.StreamSSE(context.Background(), body) {
+		require.NoError(t, err)
+		lines = append(lines, string(line))
+		break
+	}
+	assert.Equal(t, []string{`data: [DONE]`}, lines)
+	assert.True(t, body.closed.Load())
 }
 
 func TestStreamSSE_BenignEOFEndsCleanly(t *testing.T) {
