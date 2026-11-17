@@ -383,6 +383,7 @@ func (h *ForwardedHandler) newForwardRequest(
 	reqCtx.ProcessAt = &arrived
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	stampAuth(reqCtx, authCtx)
+	reqCtx.SetPrincipal(identity.PrincipalFromContext(c.UserContext()))
 	return reqCtx
 }
 

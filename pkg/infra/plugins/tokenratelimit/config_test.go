@@ -372,6 +372,9 @@ func TestConfigValidate_Partition(t *testing.T) {
 		{name: "key with calendar windows", cfg: key(func(c *config) { c.Aggregate.TimeWindow, c.Rules = windowCalendarMonth, dailyRule })},
 		{name: "key with custom pricing", cfg: key(func(c *config) { c.CustomPricing = priced }), wantErr: "does not support custom_pricing"},
 		{name: "key with group by header", cfg: key(func(c *config) { c.GroupByHeader = "X-Team" }), wantErr: "does not support group_by_header"},
+		{name: "key with group by subject", cfg: key(func(c *config) { c.GroupBy = "subject" }), wantErr: "does not support group_by"},
+		{name: "no partition with group by claim", cfg: validConfig(func(c *config) { c.GroupBy, c.GroupByClaim = "claim", "oid" })},
+		{name: "group by claim without a claim", cfg: validConfig(func(c *config) { c.GroupBy = "claim" }), wantErr: "group_by_claim is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
