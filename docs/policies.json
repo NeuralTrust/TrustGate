@@ -33,7 +33,7 @@
                 "key": "retry_after",
                 "label": "Retry After",
                 "type": "string",
-                "description": "Value sent in the Retry-After header, in seconds, when the limit is exceeded.",
+                "description": "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Set to reset to send the seconds until the counter admits a request again.",
                 "default": "60"
               },
               {
@@ -188,7 +188,7 @@
                       "key": "time_window",
                       "label": "Time Window",
                       "type": "string",
-                      "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
+                      "description": "Window duration such as 30s, 30m, 1h, or 1d, one second or longer. calendar_month and calendar_day reset at the start of each UTC month or day."
                     }
                   ]
                 }
@@ -210,7 +210,7 @@
                     "key": "time_window",
                     "label": "Time Window",
                     "type": "string",
-                    "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
+                    "description": "Window duration such as 30s, 30m, 1h, or 1d, one second or longer. calendar_month and calendar_day reset at the start of each UTC month or day."
                   }
                 ]
               },

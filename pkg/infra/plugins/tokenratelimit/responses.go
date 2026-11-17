@@ -80,12 +80,22 @@ func withBudgetMeta(headers map[string][]string, unit, scope, window string) map
 	return headers
 }
 
-func budgetExceededError(unit, scope, window string, headers map[string][]string) *appplugins.PluginError {
+func budgetExceededError(unit, scope, window string, headers map[string][]string, retryAfterSeconds int) *appplugins.PluginError {
+	headers = withRetryAfter(headers, retryAfterSeconds)
 	errType := tokenBudgetExceeded
 	if unit == unitDollars {
 		errType = dollarBudgetExceeded
 	}
 	return budgetError(http.StatusTooManyRequests, errType, headers, map[string]any{"scope": scope, "window": window})
+}
+
+// withRetryAfter tells the client how long until the budget window resets.
+func withRetryAfter(headers map[string][]string, seconds int) map[string][]string {
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+	headers[headerRetryAfter] = []string{strconv.Itoa(max(seconds, 1))}
+	return headers
 }
 
 func budgetUnavailableError() *appplugins.PluginError {

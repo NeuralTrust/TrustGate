@@ -17,6 +17,7 @@ package tokenratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -221,12 +222,34 @@ func applyCostCapTelemetry(data *TokenRateLimiterData, t *llmcost.Telemetry) {
 	data.MaxOutputPer1k = t.MaxOutput
 }
 
+// windowReset is the whole seconds, rounded up and at least 1, until w resets:
+// the end of its calendar period, or the expiry of its rolling counter.
+func (p *Plugin) windowReset(ctx context.Context, w budgetWindow, now time.Time) int {
+	if !w.resetAt.IsZero() {
+		return ceilSeconds(w.resetAt.Sub(now), 1)
+	}
+	return p.retryAfterFromCounter(ctx, w.key, w.windowSec)
+}
+
 func (p *Plugin) resetSeconds(ctx context.Context, counterKey string, fallbackSec int) int {
 	ttl, err := p.redis.TTL(ctx, counterKey).Result()
 	if err == nil && ttl > 0 {
 		return int(ttl / time.Second)
 	}
 	return fallbackSec
+}
+
+// retryAfterFromCounter is resetSeconds rounded up to a whole second, minimum 1.
+func (p *Plugin) retryAfterFromCounter(ctx context.Context, counterKey string, fallbackSec int) int {
+	ttl, err := p.redis.PTTL(ctx, counterKey).Result()
+	if err == nil && ttl > 0 {
+		return ceilSeconds(ttl, 1)
+	}
+	return max(fallbackSec, 1)
+}
+
+func ceilSeconds(d time.Duration, floor int) int {
+	return max(int(math.Ceil(d.Seconds())), floor)
 }
 
 func rateLimitHeaders(limit, remaining, resetSeconds int) map[string][]string {
