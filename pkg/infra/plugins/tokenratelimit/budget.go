@@ -27,6 +27,7 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/redis/go-redis/v9"
@@ -212,15 +213,8 @@ func chargedModel(req *infracontext.RequestContext, servedDefault bool) string {
 	if req == nil {
 		return ""
 	}
-	if req.IsBedrockNative() {
-		// The model of a native Bedrock call is the identifier in its path, a
-		// literal one: never a routing reference, and never a field of its body.
-		return req.BedrockNative.ModelID
-	}
-	if len(req.Body) > 0 {
-		if m, err := adapter.ExtractModel(req.Body); err == nil && m != "" {
-			return m
-		}
+	if m, ok := limitper.ExplicitModel(req); ok {
+		return m
 	}
 	if servedDefault && req.DefaultModel != "" && !namesModel(req.RequestedModel) {
 		return req.DefaultModel
