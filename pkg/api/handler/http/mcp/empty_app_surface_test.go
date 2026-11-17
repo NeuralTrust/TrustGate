@@ -100,8 +100,8 @@ func TestHandler_AppWithNoRegistries_InitializeListsEmptyAndUnknownCall(t *testi
 		t.Fatalf("tools/list error = %v, want an empty surface", body["error"])
 	}
 	names := toolNamesFromResult(t, body)
-	if len(names) != 1 || names[0] != appmcp.InventoryToolName {
-		t.Fatalf("tools = %v, want only %s", names, appmcp.InventoryToolName)
+	if len(names) != 2 || names[0] != appmcp.InventoryToolName || names[1] != appmcp.CallToolName {
+		t.Fatalf("tools = %v, want only the gateway's %s and %s", names, appmcp.InventoryToolName, appmcp.CallToolName)
 	}
 
 	status, body = rpcCall(t, app, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+appmcp.InventoryToolName+`"}}`)
