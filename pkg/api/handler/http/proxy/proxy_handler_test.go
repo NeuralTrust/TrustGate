@@ -549,9 +549,9 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
-		{name: "deadline after headers stays in the stream", err: context.DeadlineExceeded, want: clientFrame + genericFrame + "\n\n"},
-		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
+		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + "\n" + genericFrame + "\n\n"},
+		{name: "deadline after headers stays in the stream", err: context.DeadlineExceeded, want: clientFrame + "\n" + genericFrame + "\n\n"},
+		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -627,7 +627,7 @@ func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
 					t.Fatalf("app.Test: %v", err)
 				}
 				body, _ := io.ReadAll(resp.Body)
-				if want := chunk + "\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
+				if want := chunk + "\n\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
 					t.Fatalf("body = %q, want %q", string(body), want)
 				}
 			})
@@ -661,7 +661,7 @@ func TestHandle_Streaming_PanicEndsWithErrorEventAndCancels(t *testing.T) {
 		t.Fatalf("app.Test: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want := `data: {"id":"1"}` + "\n" +
+	want := `data: {"id":"1"}` + "\n\n" +
 		`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n\n"
 	if string(body) != want {
 		t.Fatalf("body = %q, want %q", string(body), want)
@@ -745,7 +745,7 @@ func TestHandle_Streaming_PanicRunsFinalizerOnceWithErrorEvent(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("finalizer calls = %d, want 1", calls)
 	}
-	want := "data: a\ndata: b\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
+	want := "data: a\ndata: b\n\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
 	if string(gotOutput) != want {
 		t.Fatalf("captured output = %q, want %q", string(gotOutput), want)
 	}
@@ -759,8 +759,8 @@ func TestHandle_Streaming_PanicAfterTheStreamEndedWritesNoSecondErrorEvent(t *te
 		err  error
 		want string
 	}{
-		{name: "after the error event", err: upstreamErr, want: "data: a\n" + errorFrame + "\n\n"},
-		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n"},
+		{name: "after the error event", err: upstreamErr, want: "data: a\n\n" + errorFrame + "\n\n"},
+		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1015,7 +1015,7 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		want := "data: a\n" +
+		want := "data: a\n\n" +
 			"event: error\n" +
 			`data: {"type":"error","error":{"type":"api_error","message":"upstream stream terminated unexpectedly"}}` +
 			"\n\n\n"
@@ -1039,7 +1039,7 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		want := "data: a\n" +
+		want := "data: a\n\n" +
 			`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` +
 			"\n\n"
 		if string(body) != want {
