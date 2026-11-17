@@ -86,6 +86,14 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Description: "Extra HTTP headers sent with every upstream request.",
 		},
 	},
+	providers.ProviderAnthropic: {
+		{
+			Key:         "base_url",
+			Label:       "Base URL",
+			Type:        OptionFieldTypeString,
+			Description: "Optional Anthropic-compatible endpoint (http/https) for Messages and Files, e.g. https://proxy.example.com/v1.",
+		},
+	},
 	providers.ProviderBedrock: {
 		{
 			Key:         "reasoning",
