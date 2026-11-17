@@ -8456,6 +8456,23 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "forbidden_claims": {
+                    "description": "ForbiddenClaims are claims a bearer token must not carry, e.g. email,\nupn, name and preferred_username to keep people's tokens off an agent\nroute. At most 32.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_claims": {
+                    "description": "RequiredClaims are claims a bearer token must carry, each mapped to the\nvalues it may hold (any one of them; an empty list accepts any value).\nAt most 32 claims of 32 values each.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
                 }
             }
         },
@@ -8906,6 +8923,23 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                },
+                "forbidden_claims": {
+                    "description": "ForbiddenClaims are claims a bearer token must not carry.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_claims": {
+                    "description": "RequiredClaims maps each claim a bearer token must carry to the values\nit may hold; an empty list accepts any value.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 }
             }
@@ -10110,6 +10144,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider_options": {
+                    "description": "ProviderOptions are provider-specific settings (base_url, api, static\nheaders, …). On every LLM provider, forward_client_headers lists client\nrequest headers copied onto the provider request (e.g. [\"traceparent\",\n\"tracestate\"]); credentials, framing and gateway headers are refused.",
                     "type": "object",
                     "additionalProperties": {}
                 },
