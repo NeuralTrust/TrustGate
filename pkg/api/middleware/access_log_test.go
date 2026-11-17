@@ -156,3 +156,33 @@ func TestAccessLogAttributesDataPlaneCallers(t *testing.T) {
 	require.NotContains(t, lines[1], "consumer_id")
 	require.NotContains(t, lines[1], "principal_subject")
 }
+
+// The access line names the gateway's own trace id, which Activity is keyed
+// by, and the trace the caller's traceparent named. A malformed traceparent
+// names nothing.
+func TestAccessLogTiesTheRequestToBothTraces(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	app := fiber.New()
+	app.Use(NewAccessLogMiddleware(slog.New(slog.NewJSONHandler(&output, nil))).Middleware())
+	app.Post("/v1/chat/completions", func(c *fiber.Ctx) error {
+		c.Set(HeaderTraceID, "gw-trace-1")
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	for _, traceparent := range []string{"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "garbage"} {
+		req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("traceparent", traceparent)
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[0], `"trace_id":"gw-trace-1"`)
+	require.Contains(t, lines[0], `"client_trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`)
+	require.Contains(t, lines[1], `"trace_id":"gw-trace-1"`)
+	require.NotContains(t, lines[1], "client_trace_id")
+}
