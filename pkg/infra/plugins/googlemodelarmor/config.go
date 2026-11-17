@@ -16,6 +16,7 @@ package googlemodelarmor
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -120,11 +121,23 @@ type Settings struct {
 	// either way. Under closed, a block_on filter the template does not enable
 	// refuses every request (filter_not_in_template).
 	FailureMode string `mapstructure:"failure_mode"`
+	// TimeoutFailureMode is what a request costs when Model Armor does not
+	// answer within TimeoutSeconds ("open" or "closed"). Empty follows
+	// FailureMode, so a policy that only sets failure_mode keeps treating a
+	// timeout as any other availability failure.
+	TimeoutFailureMode string `mapstructure:"timeout_failure_mode"`
+	// TimeoutSeconds caps each call to Model Armor, token minting included.
+	// Zero uses the gateway default (MODEL_ARMOR_TIMEOUT). It applies to the
+	// buffered legs; a streamed block keeps its fixed per-block limit.
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
 	// Streaming tunes the per-block inspection of the pre_response leg.
 	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
+	if err := wholeSeconds(settings); err != nil {
+		return Settings{}, err
+	}
 	cfg, err := pluginutil.Parse[Settings](settings)
 	if err != nil {
 		return Settings{}, err
@@ -145,6 +158,9 @@ func (s *Settings) applyDefaults() {
 	}
 	if s.FailureMode == "" {
 		s.FailureMode = pluginutil.DefaultFailureMode
+	}
+	if s.TimeoutFailureMode == "" {
+		s.TimeoutFailureMode = s.FailureMode
 	}
 	s.Streaming.ApplyDefaults(streamingDefaults)
 }
@@ -198,6 +214,14 @@ func (s *Settings) validate() error {
 	if err := pluginutil.ValidateFailureMode(PluginName, s.FailureMode); err != nil {
 		return err
 	}
+	switch s.TimeoutFailureMode {
+	case pluginutil.FailureModeOpen, pluginutil.FailureModeClosed:
+	default:
+		return fmt.Errorf("google_model_armor: timeout_failure_mode must be one of open, closed")
+	}
+	if s.TimeoutSeconds < 0 || s.TimeoutSeconds > maxTimeoutSeconds {
+		return fmt.Errorf("google_model_armor: timeout_seconds must be between 1 and %d, or empty for the gateway default", maxTimeoutSeconds)
+	}
 	if strings.TrimSpace(s.Credentials.ImpersonateServiceAccount) != "" &&
 		strings.TrimSpace(s.Credentials.ServiceAccountJSON) != "" {
 		return fmt.Errorf(
@@ -236,25 +260,106 @@ func (p *Plugin) RetiredSettings() []string {
 	}
 }
 
-// failClosed reports whether this policy refuses what Model Armor cannot evaluate.
-func (s Settings) failClosed() bool { return s.FailureMode == pluginutil.FailureModeClosed }
+// maxTimeoutSeconds bounds timeout_seconds. It may exceed the gateway default:
+// a policy that would rather wait than fail can ask for it.
+const maxTimeoutSeconds = 60
+
+const (
+	settingTimeoutFailureMode = "timeout_failure_mode"
+	settingTimeoutSeconds     = "timeout_seconds"
+)
+
+func (s Settings) callTimeout(gatewayDefault time.Duration) time.Duration {
+	if s.TimeoutSeconds > 0 {
+		return time.Duration(s.TimeoutSeconds) * time.Second
+	}
+	return gatewayDefault
+}
+
+// failClosedFor reports whether this policy refuses a failure with this
+// detail: timeout_failure_mode decides a timeout, failure_mode every other
+// failure.
+func (s Settings) failClosedFor(detail string) bool {
+	if detail == appplugins.DetailTimeout {
+		return s.TimeoutFailureMode == pluginutil.FailureModeClosed
+	}
+	return s.FailureMode == pluginutil.FailureModeClosed
+}
+
+func (s Settings) mayFailClosed() bool {
+	return s.failClosedFor("") || s.failClosedFor(appplugins.DetailTimeout)
+}
 
 // keepsMaskOnGap reports whether a usable mask is applied in this mode although
 // some content went without a verdict for an availability reason (a block_on
 // filter the template never enabled, a chunk Model Armor did not answer). It is
 // the one place that rule lives: a mode that blocks keeps the mask, since the
 // de-identified text is already in hand and releasing the original would send
-// the raw data, unless the policy fails closed, which refuses what was not
-// evaluated instead.
-func (s Settings) keepsMaskOnGap(mode policy.Mode) bool {
-	return appplugins.Blocks(mode) && !s.failClosed()
+// the raw data, unless the policy fails closed on that failure, which refuses
+// what was not evaluated instead.
+func (s Settings) keepsMaskOnGap(mode policy.Mode, detail string) bool {
+	return appplugins.Blocks(mode) && !s.failClosedFor(detail)
 }
 
-// failClosedOf reports whether a policy with these settings fails closed,
-// reading failure_mode leniently when the settings do not parse.
-func failClosedOf(settings map[string]any) bool {
+// failClosedOf reports whether a policy with these settings refuses a failure
+// with this detail, reading the modes leniently when the settings do not parse.
+func failClosedOf(settings map[string]any, detail string) bool {
 	if cfg, err := parseConfig(settings); err == nil {
-		return cfg.failClosed()
+		return cfg.failClosedFor(detail)
+	}
+	return failClosedFromRaw(settings, detail)
+}
+
+func mayFailClosedOf(settings map[string]any) bool {
+	return failClosedOf(settings, "") || failClosedOf(settings, appplugins.DetailTimeout)
+}
+
+// failClosedFromRaw reads the mode that decides a failure with this detail
+// straight from settings that do not parse. A timeout reads
+// timeout_failure_mode when it is a non-empty string and falls back to
+// failure_mode, as applyDefaults does.
+func failClosedFromRaw(settings map[string]any, detail string) bool {
+	if detail == appplugins.DetailTimeout {
+		if mode, ok := rawString(settings, settingTimeoutFailureMode); ok {
+			return strings.EqualFold(mode, pluginutil.FailureModeClosed)
+		}
 	}
 	return pluginutil.FailClosedFromRaw(settings)
+}
+
+// wholeSeconds rejects a fractional timeout_seconds, which decoding into an int
+// would otherwise truncate (0.5 would silently become the gateway default).
+func wholeSeconds(settings map[string]any) error {
+	for k, v := range settings {
+		if !strings.EqualFold(k, settingTimeoutSeconds) {
+			continue
+		}
+		var f float64
+		switch n := v.(type) {
+		case float64:
+			f = n
+		case float32:
+			f = float64(n)
+		case bool:
+			return fmt.Errorf("google_model_armor: timeout_seconds must be a whole number of seconds")
+		default:
+			continue
+		}
+		if f != math.Trunc(f) {
+			return fmt.Errorf("google_model_armor: timeout_seconds must be a whole number of seconds")
+		}
+	}
+	return nil
+}
+
+func rawString(settings map[string]any, key string) (string, bool) {
+	for k, v := range settings {
+		if !strings.EqualFold(k, key) {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s), true
+		}
+	}
+	return "", false
 }

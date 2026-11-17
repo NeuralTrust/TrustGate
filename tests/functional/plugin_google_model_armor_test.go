@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +100,17 @@ func newModelArmorStub(t *testing.T) *modelArmorStub {
 		atomic.AddInt64(&s.hits, 1)
 		raw, _ := io.ReadAll(r.Body)
 		body := string(raw)
+		switch {
+		case strings.Contains(r.URL.Path, "/templates/"+modelArmorDownTemplate+":"):
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		case strings.Contains(r.URL.Path, "/templates/"+modelArmorSlowTemplate+":"):
+			select {
+			case <-time.After(modelArmorSlowDelay):
+			case <-r.Context().Done():
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(body, modelArmorRAIWord):

@@ -1221,7 +1221,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable, slow or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. Under closed, every filter in block_on must be enabled in the template, or every request is blocked. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. If it does not answer within the time limit, timeout_failure_mode decides the same way, and follows failure_mode when left empty. Under closed, every filter in block_on must be enabled in the template, or every request is blocked. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block, each block within a fixed 2-second limit.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1275,9 +1275,22 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "failure_mode",
 					Label:       "Failure mode",
 					Type:        FieldTypeEnum,
-					Description: "What happens when Model Armor cannot evaluate a request (unreachable, too slow, credentials refused): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key, or a block_on filter the template does not enable, blocks every request.",
+					Description: "What happens when Model Armor cannot evaluate a request (unreachable, credentials refused, a filter that gave no verdict): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key, or a block_on filter the template does not enable, blocks every request. A timeout follows timeout_failure_mode.",
 					Enum:        enumOptions("open", "closed"),
 					Default:     "open",
+				},
+				{
+					Key:         "timeout_failure_mode",
+					Label:       "When it's too slow",
+					Type:        FieldTypeEnum,
+					Description: "What happens when Model Armor does not answer within the time limit: open lets the request through, closed blocks it (enforce) or records it (observe). Empty follows failure_mode. A streamed block that takes longer than 2 seconds follows it too.",
+					Enum:        enumOptions("open", "closed"),
+				},
+				{
+					Key:         "timeout_seconds",
+					Label:       "Time limit in seconds",
+					Type:        FieldTypeInteger,
+					Description: "How long one call to Model Armor may take, sign-in included, from 1 to 60. Empty uses the gateway default (15 seconds unless the gateway sets MODEL_ARMOR_TIMEOUT). It applies to non-streamed requests and responses; a streamed block keeps its 2-second limit.",
 				},
 			},
 		},

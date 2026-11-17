@@ -61,7 +61,8 @@ func newAmbientRig(t *testing.T, allow bool) *ambientRig {
 	}
 	r.plugin = &Plugin{
 		registry:             adapter.NewRegistry(),
-		clients:              newModelArmorClientCache(srv.URL, time.Second, sources),
+		clients:              newModelArmorClientCache(srv.URL, sources),
+		timeout:              time.Second,
 		allowAmbientIdentity: allow,
 	}
 	return r
