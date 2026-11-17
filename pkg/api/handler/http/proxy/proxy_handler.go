@@ -255,7 +255,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		Request:   h.newForwardRequest(c, gatewayID, route, authCtx),
+		Request:   h.newForwardRequest(c, gatewayID, route, authCtx, consumer),
 	})
 }
 
@@ -286,7 +286,7 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if len(links) == 0 {
 		return writeProxyError(c, errNoModelAccess)
 	}
-	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx)
+	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx, nil)
 	// A group key is held to its group's budget, as the gateway's data has
 	// it; nil for a personal key or a group with none.
 	reqCtx.KeyGroupBudget = data.KeyGroupBudget(authCtx.KeyGroupID)
@@ -377,14 +377,54 @@ func (h *ForwardedHandler) newForwardRequest(
 	gatewayID ids.GatewayID,
 	route apiresolver.ProxyRoute,
 	authCtx *appauth.AuthContext,
+	rc *appconsumer.RoutableConsumer,
 ) *infracontext.RequestContext {
 	reqCtx := buildRequestContext(c, gatewayID, route)
 	arrived := h.now().UTC()
 	reqCtx.ProcessAt = &arrived
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	stampAuth(reqCtx, authCtx)
-	reqCtx.SetPrincipal(identity.PrincipalFromContext(c.UserContext()))
+	principal := identity.PrincipalFromContext(c.UserContext())
+	var claims map[string]any
+	if principal != nil {
+		claims = principal.Claims
+	}
+	reqCtx.SetCaller(proxyCaller(principal, authCtx, rc, c.Get(domainconsumer.EndUserHeader)), claims)
 	return reqCtx
+}
+
+// proxyCaller is who an LLM request counts as for a limit split per caller,
+// by the same rules as the MCP and agent planes (consumer.CallerSubject):
+//
+//   - a personal key is its owner, whatever the end-user header says: the key
+//     is the person (stampKeyOwner);
+//   - an application's api key or client certificate that names an end user
+//     is that end user within the application, app:<consumer>:<end user>. The
+//     header comes with the application's credential, so the application
+//     vouches for it; a caller without that credential cannot name anyone;
+//   - an application's api key naming no one is the key, by its id;
+//   - anything else, a token above all, is its own subject.
+//
+// endUserHeader is the raw header; Handle has already refused a malformed one.
+func proxyCaller(p *identity.Principal, authCtx *appauth.AuthContext, rc *appconsumer.RoutableConsumer, endUserHeader string) string {
+	if authCtx != nil {
+		if authCtx.OwnerID != "" {
+			return authCtx.OwnerID
+		}
+		machine := authCtx.Method == appauth.MethodAPIKey || authCtx.Method == appauth.MethodMTLS
+		if machine {
+			if endUser, err := endUserAttribution(rc, endUserHeader); err == nil && endUser != "" {
+				return domainconsumer.EndUserSubject(rc.Consumer.ID, endUser)
+			}
+		}
+		if authCtx.Method == appauth.MethodAPIKey && !authCtx.AuthID.IsNil() {
+			return domainconsumer.KeyCaller(authCtx.AuthID.String())
+		}
+	}
+	if p == nil {
+		return ""
+	}
+	return p.Subject
 }
 
 // envelopeNativeError gives an error the gateway made itself, a plugin block, a

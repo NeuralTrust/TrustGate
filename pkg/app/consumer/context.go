@@ -17,6 +17,8 @@ package consumer
 import (
 	"context"
 
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -63,4 +65,20 @@ func WithConsumer(ctx context.Context, consumer *RoutableConsumer) context.Conte
 func ConsumerFromContext(ctx context.Context) (*RoutableConsumer, bool) {
 	consumer, ok := ctx.Value(ConsumerKey).(*RoutableConsumer)
 	return consumer, ok && consumer != nil
+}
+
+// CallerFromContext is who a request on ctx counts as for a per-caller limit
+// and the verified claims a per-claim limit reads, from the principal and the
+// credential the auth middleware attached (consumer.CallerSubject). Nothing
+// attached is nobody.
+func CallerFromContext(ctx context.Context) (string, map[string]any) {
+	p := identity.PrincipalFromContext(ctx)
+	if p == nil {
+		return "", nil
+	}
+	authID := ""
+	if id, ok := AuthIDFromContext(ctx); ok && !id.IsNil() {
+		authID = id.String()
+	}
+	return domain.CallerSubject(p, authID), p.Claims
 }

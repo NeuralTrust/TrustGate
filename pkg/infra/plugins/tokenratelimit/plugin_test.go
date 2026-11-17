@@ -627,6 +627,6 @@ func TestCounterSubject(t *testing.T) {
 }
 
 func withPrincipal(req *infracontext.RequestContext, subject string, claims map[string]any) *infracontext.RequestContext {
-	req.PrincipalSubject, req.PrincipalClaims = subject, claims
+	req.CallerSubject, req.CallerClaims = subject, claims
 	return req
 }

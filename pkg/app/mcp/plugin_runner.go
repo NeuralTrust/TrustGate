@@ -26,7 +26,6 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -290,7 +289,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 		MCP:               true,
 		Body:              []byte(`{}`),
 	}
-	reqCtx.SetPrincipal(identity.PrincipalFromContext(ctx))
+	reqCtx.SetCaller(appconsumer.CallerFromContext(ctx))
 	respCtx := &infracontext.ResponseContext{
 		GatewayID: rc.Consumer.GatewayID.String(),
 		Body:      result,
@@ -408,7 +407,7 @@ func (r *PluginRunner) buildRequestContext(
 		Body:              body,
 		Headers:           headers,
 	}
-	reqCtx.SetPrincipal(identity.PrincipalFromContext(ctx))
+	reqCtx.SetCaller(appconsumer.CallerFromContext(ctx))
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
 		reqCtx.MCPServerID = call.Registry.ScopeKey().String()

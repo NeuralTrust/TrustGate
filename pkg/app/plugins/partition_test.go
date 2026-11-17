@@ -59,9 +59,9 @@ func TestParseGroupBy(t *testing.T) {
 
 func TestGroupByKeySuffix(t *testing.T) {
 	req := &infracontext.RequestContext{
-		Headers:          map[string][]string{"X-User": {"u:1"}},
-		PrincipalSubject: "spiffe://corp/agent:a",
-		PrincipalClaims:  map[string]any{"oid": "o-1", "roles": []any{"a"}, "ver": float64(2), "empty": ""},
+		Headers:       map[string][]string{"X-User": {"u:1"}},
+		CallerSubject: "spiffe://corp/agent:a",
+		CallerClaims:  map[string]any{"oid": "o-1", "roles": []any{"a"}, "ver": float64(2), "empty": ""},
 	}
 	cases := []struct {
 		g    GroupBy
@@ -85,7 +85,7 @@ func TestGroupByKeySuffix(t *testing.T) {
 	if got := (GroupBy{Mode: GroupBySubject}).KeySuffix(&infracontext.RequestContext{}); got != "" {
 		t.Errorf("anonymous request: KeySuffix = %q, want shared counter", got)
 	}
-	long := &infracontext.RequestContext{PrincipalSubject: strings.Repeat("s", maxPartitionValueLength+1)}
+	long := &infracontext.RequestContext{CallerSubject: strings.Repeat("s", maxPartitionValueLength+1)}
 	got := GroupBy{Mode: GroupBySubject}.KeySuffix(long)
 	if !strings.HasPrefix(got, ":sub:h") || len(got) != len(":sub:h")+64 {
 		t.Errorf("a long subject must be keyed by its digest, got %q", got)

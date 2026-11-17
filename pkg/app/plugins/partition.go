@@ -30,9 +30,10 @@ import (
 // application, or the gateway for a global policy). Leaving it unset keeps one
 // shared counter for the whole scope.
 const (
-	// GroupBySubject gives every caller its own counter: the verified subject
-	// the request runs as (a token's subject, a personal key's owner, the end
-	// user an application names).
+	// GroupBySubject gives every caller its own counter: who the request
+	// counts as (RequestContext.CallerSubject): a token's subject, a personal
+	// key's owner, the end user an application's key or certificate names, or
+	// else that key (by its id) or certificate (by its subject) itself.
 	GroupBySubject = "subject"
 	// GroupByClaim gives every value of one verified token claim its own
 	// counter, e.g. oid, or a tenant claim.
@@ -136,11 +137,11 @@ func (g GroupBy) KeySuffix(req *infracontext.RequestContext) string {
 			return ":hdr:" + v
 		}
 	case GroupBySubject:
-		if v := strings.TrimSpace(req.PrincipalSubject); v != "" {
+		if v := strings.TrimSpace(req.CallerSubject); v != "" {
 			return ":sub:" + partitionValue(v)
 		}
 	case GroupByClaim:
-		if v, ok := claimPartitionValue(req.PrincipalClaims[g.Claim]); ok {
+		if v, ok := claimPartitionValue(req.CallerClaims[g.Claim]); ok {
 			return ":clm:" + url.QueryEscape(g.Claim) + ":" + partitionValue(v)
 		}
 	}
