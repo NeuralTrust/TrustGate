@@ -136,3 +136,44 @@ func TestFiles_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, be.StatusCode)
 	assert.JSONEq(t, `{"error":{"type":"authentication_error"}}`, string(be.Body))
 }
+
+func TestMessagesEndpoint(t *testing.T) {
+	got, err := messagesEndpoint(nil)
+	require.NoError(t, err)
+	assert.Equal(t, messagesURL, got)
+	got, err = messagesEndpoint(map[string]any{"base_url": "https://proxy.example/v1/"})
+	require.NoError(t, err)
+	assert.Equal(t, "https://proxy.example/v1/messages", got)
+	_, err = messagesEndpoint(map[string]any{"base_url": "proxy.example/v1"})
+	require.Error(t, err)
+}
+
+// A registry's base_url reaches Messages, streamed or not, with the caller's
+// beta opt-in, the way it already reached Files.
+func TestMessages_BaseURLRoundTrip(t *testing.T) {
+	var gotPath, gotKey, gotBeta string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotKey, gotBeta = r.URL.Path, r.Header.Get("x-api-key"), r.Header.Get("anthropic-beta")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &providers.Config{
+		Credentials:   providers.Credentials{ApiKey: "sk-ant-test"},
+		Options:       map[string]any{"base_url": srv.URL + "/v1"},
+		AnthropicBeta: "context-management-2025-06-27",
+	}
+	c := NewAnthropicClient()
+	_, err := c.Completions(context.Background(), cfg, []byte(`{"model":"claude"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/messages", gotPath)
+	assert.Equal(t, "sk-ant-test", gotKey)
+	assert.Equal(t, "context-management-2025-06-27", gotBeta)
+
+	gotPath = ""
+	seq, err := c.CompletionsStream(context.Background(), cfg, []byte(`{"model":"claude","stream":true}`))
+	require.NoError(t, err)
+	for range seq {
+	}
+	assert.Equal(t, "/v1/messages", gotPath)
+}
