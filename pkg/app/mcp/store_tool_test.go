@@ -1087,8 +1087,10 @@ func TestStoreOfferIsEmptyWhenTheStoreIsClosed(t *testing.T) {
 	}
 }
 
-// Some clients do not act on tools/list_changed, and only the user can make
-// them re-read the list: every install that brings tools says how.
+// Some clients do not act on tools/list_changed — Claude's hosted connectors
+// keep the list they fetched when the connector was added — so every install
+// that brings tools says how to reach them without one: through the inventory
+// and the call-through, not by sending the user to reconnect.
 func TestInstallMessage_TellsHowToGetTheNewTools(t *testing.T) {
 	for name, tc := range map[string]struct {
 		res     appstore.InstallResult
@@ -1099,12 +1101,12 @@ func TestInstallMessage_TellsHowToGetTheNewTools(t *testing.T) {
 		"already installed, connect": {res: appstore.InstallResult{Name: "Linear", RequiresAuth: true, AlreadyInstalled: true}, connect: "https://gw.example/store/mcp/connect?ticket=t"},
 	} {
 		text := installMessage(&tc.res, "", tc.connect)
-		if !strings.Contains(text, "refresh this connector's tools") || !strings.Contains(text, "start a new conversation") {
+		if !strings.Contains(text, CallToolName) || !strings.Contains(text, InventoryToolName) {
 			t.Fatalf("%s: %q does not say how to get the new tools", name, text)
 		}
 	}
-	if text := installMessage(&appstore.InstallResult{Name: "Linear", Pending: true}, "", ""); strings.Contains(text, "refresh") {
-		t.Fatalf("a pending request has no tools to refresh: %q", text)
+	if text := installMessage(&appstore.InstallResult{Name: "Linear", Pending: true}, "", ""); strings.Contains(text, CallToolName) {
+		t.Fatalf("a pending request has no tools to call: %q", text)
 	}
 }
 

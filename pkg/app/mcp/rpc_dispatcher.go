@@ -197,6 +197,12 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	}
 	if d.inventory != nil && metaToolsPermitted(req.consumer) {
 		tools = appendGatewayTools(tools, d.inventory.Definitions(ctx, req.consumer))
+		// The call-through rides with the inventory: the inventory is how a
+		// caller learns a tool's name and schema, the call-through is how it
+		// calls one its client never listed.
+		if def, err := callToolDefinition(); err == nil {
+			tools = appendGatewayTools(tools, []Tool{def})
+		}
 	}
 	result["tools"] = tools
 	return result, nil
@@ -220,6 +226,9 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
+	if params.Name == CallToolName && d.inventory != nil {
+		return d.callThrough(ctx, req, params.Arguments, params.Meta)
+	}
 	if d.connections != nil && d.connections.Handles(params.Name) {
 		markMetaTool(ctx)
 		if !metaToolsPermitted(req.consumer) {
@@ -241,14 +250,78 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
+	result, _, err := d.invokeTool(ctx, req, params.Name, params.Arguments, params.Meta)
+	return result, err
+}
+
+// callThrough serves CallToolName: it calls the named tool exactly as a
+// tools/call naming it would have, so the inner call is resolved, scoped,
+// guarded, audited and counted as that tool — the wrapper itself is not a tool
+// the user has and leaves no trace of its own. Only a call-through that never
+// reaches a tool is marked as the gateway's own.
+//
+// What the caller got wrong comes back as a tool error rather than a protocol
+// one: the model wrote the arguments, and it is the one that can fix them.
+func (d *RPCDispatcher) callThrough(
+	ctx context.Context,
+	req dispatchRequest,
+	arguments, meta json.RawMessage,
+) (any, error) {
+	if !metaToolsPermitted(req.consumer) {
+		markMetaTool(ctx)
+		return nil, &ToolNotPermittedError{Tool: CallToolName}
+	}
+	args, err := decodeCallToolArgs(arguments)
+	if err != nil {
+		markMetaTool(ctx)
+		return toolErrorResult(
+			CallToolName+" takes {\"name\": <tool name>, \"arguments\": {…}}, and these arguments could not be read as that. Fix them and call again.",
+			map[string]any{"error": "invalid_arguments"},
+		)
+	}
+	if args.Name == "" {
+		markMetaTool(ctx)
+		return toolErrorResult(
+			CallToolName+" needs `name`: the exact name of the tool to call, as "+InventoryToolName+" lists it.",
+			map[string]any{"error": "missing_name"},
+		)
+	}
+	if isGatewayToolName(args.Name) {
+		markMetaTool(ctx)
+		return toolErrorResult(
+			args.Name+" is one of the gateway's own tools and is already in your tool list: call it directly, not through "+CallToolName+".",
+			map[string]any{"error": "gateway_tool", "name": args.Name},
+		)
+	}
+	result, reached, err := d.invokeTool(ctx, req, args.Name, args.Arguments, meta)
+	return withSchemaOnFailure(args.Name, reached, result, err)
+}
+
+// toolInvocation is what a call reached: the tool it resolved to, and whether
+// what came back is the upstream's own answer rather than one a policy stage
+// gave in its place.
+type toolInvocation struct {
+	target   *ResolvedTool
+	upstream bool
+}
+
+// invokeTool calls one of the caller's own tools: resolve it, run the request
+// stages, call the upstream, run the response stages.
+func (d *RPCDispatcher) invokeTool(
+	ctx context.Context,
+	req dispatchRequest,
+	name string,
+	arguments, meta json.RawMessage,
+) (any, toolInvocation, error) {
 	// The binding is fixed before any plugin sees the request, so the plan is
 	// chosen for the real destination and a body rewrite cannot reroute the call.
 	// A name nobody serves, a toolkit denial or a pending consent answers here,
 	// before any stage runs.
-	target, err := d.composer.Resolve(ctx, req.consumer, params.Name)
+	target, err := d.composer.Resolve(ctx, req.consumer, name)
 	if err != nil {
-		return nil, err
+		return nil, toolInvocation{}, err
 	}
+	reached := toolInvocation{target: target}
 	if span := trace.SpanFromContext(ctx); span != nil {
 		annotateRegistry(span, target.Registry, target.Tool.Name)
 		span.SetMCPToolRisk(target.Tool.Risk())
@@ -258,25 +331,26 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		Exposed:          target.Exposed,
 		Registry:         target.Registry,
 		NativeTool:       target.Tool.Name,
-		Arguments:        params.Arguments,
+		Arguments:        arguments,
 		Plan:             planFor(ctx, req.consumer, target),
-		ClientToolCallID: clientToolCallID(params.Meta),
+		ClientToolCallID: clientToolCallID(meta),
 	}
 	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
 	if err != nil {
-		return nil, err
+		return nil, reached, err
 	}
 	if pre != nil {
 		if pre.Result != nil {
-			return pre.Result, nil
+			return pre.Result, reached, nil
 		}
 		if pre.Arguments != nil {
 			call.Arguments = pre.Arguments
 		}
 	}
 	result, err := d.composer.Invoke(ctx, req.consumer, target, call.Arguments)
+	reached.upstream = true
 	if err != nil {
-		return nil, err
+		return nil, reached, err
 	}
 	// The text block has to exist before response plugins run. TrustGuard
 	// inspects text blocks and the string values of structuredContent, not
@@ -285,12 +359,16 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	result = withStructuredContentText(result)
 	post, err := d.plugins.PreResponse(ctx, req.consumer, call, result)
 	if err != nil {
-		return nil, err
+		// A response stage refused the answer: whatever it says, it is not
+		// the upstream's word on the arguments.
+		reached.upstream = false
+		return nil, reached, err
 	}
 	if post != nil && post.Result != nil {
 		result = post.Result
+		reached.upstream = false
 	}
-	return result, nil
+	return result, reached, nil
 }
 
 // clientToolCallID reads the tool_call_id a caller volunteered in
@@ -487,6 +565,13 @@ func appendGatewayTools(tools []Tool, gatewayTools []Tool) []Tool {
 		}
 	}
 	return tools
+}
+
+// MetaToolsPermitted reports whether the gateway adds its own tools — the
+// inventory and the call-through among them — to this consumer's surface, so
+// text that points at them is only said where they are.
+func MetaToolsPermitted(consumer *appconsumer.RoutableConsumer) bool {
+	return metaToolsPermitted(consumer)
 }
 
 // metaToolsPermitted reports whether the gateway may add its own tools to this

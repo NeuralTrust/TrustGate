@@ -654,11 +654,12 @@ func (t *storeTool) displayNameFor(code string) string {
 	return code
 }
 
-// toolsRefreshHint is what to tell a user whose client does not pick up the
-// new tools. The gateway announces them (tools/list_changed), but some clients
-// read the tool list only when asked to or when a conversation opens, and the
-// user is the only one who can make them.
-const toolsRefreshHint = "Its tools are announced to the user's client; if they do not show up in your tool list, tell the user to refresh this connector's tools in their client or start a new conversation."
+// toolsRefreshHint is what to do when the client does not pick up the new
+// tools. The gateway announces them (tools/list_changed), but Claude's hosted
+// connectors keep the tool list they fetched when the connector was added until
+// the user disconnects and reconnects it. The call-through reaches the new
+// tools without either, so the caller is pointed at it before the user is.
+const toolsRefreshHint = "Its tools are announced to the user's client. If they do not show up in your tool list, do not ask the user to reconnect: call " + InventoryToolName + " with the server's code to see its tools, and call them with " + CallToolName + " (a refused call answers with the tool's input schema)."
 
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
