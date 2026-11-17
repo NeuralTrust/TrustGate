@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -33,6 +34,10 @@ import (
 // the caller's surface now — the same tools/call path, the same policies,
 // guards and audit, only the name travels as an argument.
 const CallToolName = "trustgate_call_tool"
+
+// codeInvalidParams is the JSON-RPC code an upstream answers arguments it
+// refuses with.
+const codeInvalidParams = -32602
 
 // callToolArgs is the meta-tool's input: the tool to call and its arguments.
 type callToolArgs struct {
@@ -108,7 +113,7 @@ func callToolDefinition() (Tool, error) {
 		"title": "Call one of the user's tools by name",
 		"description": "Call one of the user's tools through this gateway by its name, with its arguments. " +
 			"Use it when a tool the user has is missing from your own tool list: a server the user installed or connected after this connector was added is reachable here even when your client is still showing the tool list from before. " +
-			"Find the tool's exact name with " + InventoryToolName + ", and pass `tool` to " + InventoryToolName + " to read its input schema before the first call. " +
+			"Find the tool's exact name with " + InventoryToolName + ". You can call it straight away with arguments inferred from its name and description: if the tool refuses them, the answer carries its input schema, so fix the arguments and call again. For a tool whose arguments are not obvious, read its schema first with " + InventoryToolName + " {\"tool\": <name>}. " +
 			"The call runs exactly as a direct call to that tool would — the same policies, approvals and audit — and returns that tool's result. " +
 			"When the tool is already in your list, call it directly instead." + GatewayToolDisclaimer,
 		"inputSchema": map[string]any{
@@ -144,4 +149,117 @@ func callToolDefinition() (Tool, error) {
 		return Tool{}, err
 	}
 	return def, nil
+}
+
+// withSchemaOnFailure puts the called tool's input schema next to the
+// upstream's refusal of a call-through.
+//
+// A caller going through CallToolName has never been handed the tool's
+// definition: its client never listed the tool. It can read the schema from
+// the inventory first, but that is a round trip on every first call, when most
+// calls get their arguments right from the tool's name and description. So the
+// first call goes straight out, and only a refusal pays for the schema — on the
+// answer the caller is already reading.
+//
+// Only the upstream's own answer qualifies. A request or response stage that
+// answered in its place said nothing about the arguments, and pointing at the
+// schema there sends the caller to fix what was not broken.
+func withSchemaOnFailure(name string, reached toolInvocation, result any, err error) (any, error) {
+	if !reached.upstream || reached.target == nil {
+		return result, err
+	}
+	schema := toolInputSchema(reached.target.Tool)
+	if schema == nil {
+		return result, err
+	}
+	if err != nil {
+		var rpcErr *RPCError
+		if !errors.As(err, &rpcErr) || rpcErr.Code != codeInvalidParams {
+			return result, err
+		}
+		// Kept a protocol error, so telemetry still records the refusal; the
+		// message is what clients hand the model, so the schema rides in it.
+		enriched := *rpcErr
+		enriched.Message = fmt.Sprintf("%s The input schema of %s is %s — fix the arguments and call it again through %s.",
+			strings.TrimSpace(rpcErr.Message), name, schema, CallToolName)
+		return nil, &enriched
+	}
+	if !isToolErrorResult(result) {
+		return result, nil
+	}
+	return appendResultText(result, fmt.Sprintf(
+		"If the arguments were the problem, this is the input schema of %s: %s", name, schema)), nil
+}
+
+// toolInputSchema is the tool's advertised inputSchema, nil when it has none
+// worth reading.
+func toolInputSchema(tool Tool) json.RawMessage {
+	raw := bytes.TrimSpace(tool.payload["inputSchema"])
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) || !json.Valid(raw) {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+// isToolErrorResult reports whether a tools/call result says the call failed.
+func isToolErrorResult(result any) bool {
+	raw, ok := resultJSON(result)
+	if !ok {
+		return false
+	}
+	var envelope struct {
+		IsError bool `json:"isError"`
+	}
+	return json.Unmarshal(raw, &envelope) == nil && envelope.IsError
+}
+
+// appendResultText adds one text block to a tool result, leaving everything
+// else in it as it was. A result that cannot be read is returned untouched:
+// the hint is worth less than the answer it would ride on.
+func appendResultText(result any, text string) any {
+	raw, ok := resultJSON(result)
+	if !ok {
+		return result
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return result
+	}
+	var content []json.RawMessage
+	if existing, has := fields["content"]; has {
+		if err := json.Unmarshal(existing, &content); err != nil {
+			return result
+		}
+	}
+	block, err := json.Marshal(map[string]string{"type": "text", "text": text})
+	if err != nil {
+		return result
+	}
+	encoded, err := json.Marshal(append(content, block))
+	if err != nil {
+		return result
+	}
+	fields["content"] = encoded
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return result
+	}
+	return json.RawMessage(out)
+}
+
+func resultJSON(result any) (json.RawMessage, bool) {
+	switch typed := result.(type) {
+	case nil:
+		return nil, false
+	case json.RawMessage:
+		return typed, len(typed) > 0
+	case []byte:
+		return typed, len(typed) > 0
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return nil, false
+		}
+		return raw, true
+	}
 }

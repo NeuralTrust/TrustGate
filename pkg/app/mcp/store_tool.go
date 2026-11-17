@@ -659,7 +659,7 @@ func (t *storeTool) displayNameFor(code string) string {
 // connectors keep the tool list they fetched when the connector was added until
 // the user disconnects and reconnects it. The call-through reaches the new
 // tools without either, so the caller is pointed at it before the user is.
-const toolsRefreshHint = "Its tools are announced to the user's client. If they do not show up in your tool list, do not ask the user to reconnect: call " + InventoryToolName + " with the server's code to see its tools, " + InventoryToolName + " with `tool` to read one's input schema, and call it with " + CallToolName + "."
+const toolsRefreshHint = "Its tools are announced to the user's client. If they do not show up in your tool list, do not ask the user to reconnect: call " + InventoryToolName + " with the server's code to see its tools, and call them with " + CallToolName + " (a refused call answers with the tool's input schema)."
 
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {

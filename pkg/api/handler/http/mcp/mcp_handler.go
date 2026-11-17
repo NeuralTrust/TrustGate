@@ -368,7 +368,7 @@ const storeServerInstructions = " This gateway includes an MCP Store. When the u
 // reach what is missing from it. Claude's hosted connectors keep the list they
 // fetched when the connector was added, so a server the user connects later is
 // only reachable through the call-through until they reconnect.
-const callThroughInstructions = " Your client may keep the tool list it had when this connector was added: when the user has a tool you cannot see — for example from a server they installed or connected since — find it with " + appmcp.InventoryToolName + ", read its input schema with " + appmcp.InventoryToolName + " {\"tool\": <name>}, and call it with " + appmcp.CallToolName + ". Do not ask the user to reconnect the connector for that."
+const callThroughInstructions = " Your client may keep the tool list it had when this connector was added. At the start of every conversation, before answering, call " + appmcp.InventoryToolName + " once with {\"brief\": true} to learn which tools the user has now. Call a tool from that answer that is missing from your own list with " + appmcp.CallToolName + " — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
 
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	instructions := baseServerInstructions

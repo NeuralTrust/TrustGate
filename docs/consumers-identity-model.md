@@ -1030,6 +1030,27 @@ whole description and input schema, which the listing leaves out. The install
 reply and the server instructions point the model at the pair instead of at the
 user.
 
+A stale list also hides that anything is missing, so the model has to be told
+to look:
+
+- **The inventory is read at the start of every conversation.** The server
+  instructions and the inventory's own description (the one text a client is
+  sure to hand the model) ask for one `trustgate_list_tools {"brief": true}`
+  before answering. Brief drops every description — the full inventory of a
+  user with Linear alone is ~16 KB — and keeps names and whether each can be
+  called; `server` and `tool` give the rest on demand. A tool result is never
+  cached the way `tools/list` is, so this is the user's surface as it is now.
+  It costs one call per conversation on every client, Cursor included.
+- **The schema comes with a refusal, not before the first call.** Most calls
+  get their arguments right from the tool's name and description, so a
+  call-through goes straight out. When the upstream refuses the arguments —
+  a `-32602`, or an `isError` result from servers on the newer SDK — the
+  answer carries the tool's input schema: in the error message (it stays a
+  protocol error, so telemetry still records it) or as one more text block.
+  Only the upstream's own answer qualifies: a policy stage that answered or
+  refused in the tool's place said nothing about the arguments. Direct calls
+  are untouched; their client already has the schema.
+
 - **It is not a way round policy.** The dispatcher unwraps the call and
   continues with the named tool at resolve: toolkit denial, pending consent,
   scope selection, pre-request and pre-response policies, the upstream call and
