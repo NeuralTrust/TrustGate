@@ -156,6 +156,19 @@ func invalidParams() *RPCError {
 	return &RPCError{Code: CodeInvalidParams, Message: "Invalid params"}
 }
 
+// ReasonAgentRejected marks a -32602 the agent answered, not the gateway.
+const ReasonAgentRejected = "agent_rejected"
+
+// agentRejectedParams is -32602 for a call the agent refused as invalid, with
+// its HTTP status and its own message, so it is not read as the gateway's.
+func agentRejectedParams(status int, message string) *RPCError {
+	data := map[string]any{"reason": ReasonAgentRejected, "upstream_status": status}
+	if message != "" {
+		data["message"] = message
+	}
+	return newRPCError(CodeInvalidParams, "Invalid params", data)
+}
+
 // MethodNotFound is -32601, with why: the method is not of version v, the
 // agent's pinned version, or it is outside the agent's allowed methods.
 func MethodNotFound(reason string, v Version) *RPCError {

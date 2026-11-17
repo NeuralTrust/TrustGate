@@ -3901,6 +3901,12 @@ definitions:
           group key, and "application" for any other api key; absent for any
           other credential.
         type: string
+      client_trace_id:
+        description: |-
+          ClientTraceID is the trace-id field of the client's W3C traceparent and
+          MCPSessionID the Mcp-Session-Id of an MCP request. Both are raw-only:
+          MetadataView strips them, so they reach only the raw sinks.
+        type: string
       consumer:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer'
       cost:
@@ -3921,6 +3927,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency'
       mcp:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP'
+      mcp_session_id:
+        type: string
       occurred_on:
         type: integer
       policy_chain:

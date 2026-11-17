@@ -14,7 +14,7 @@
 
 package metrics
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type DataClass string
 

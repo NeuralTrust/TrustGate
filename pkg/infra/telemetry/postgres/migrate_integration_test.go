@@ -109,6 +109,9 @@ func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
 		OccurredOn: time.Now().UnixMilli(),
 		Request:    events.Request{Body: "hello-req"},
 		Response:   events.Response{Body: &resp},
+
+		ClientTraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
+		MCPSessionID:  "mcp-sess-1",
 	}
 
 	require.NoError(t, e.Publish(ctx, evt))
@@ -117,14 +120,51 @@ func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
 	var reqBody string
 	var respBody *string
 	var schemaVer int
+	var clientTraceID, mcpSessionID *string
 	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT request_body, response_body, schema_version FROM "+metrics.TableName+" WHERE trace_id=$1", trace,
-	).Scan(&reqBody, &respBody, &schemaVer))
+		"SELECT request_body, response_body, schema_version, client_trace_id, mcp_session_id FROM "+metrics.TableName+" WHERE trace_id=$1", trace,
+	).Scan(&reqBody, &respBody, &schemaVer, &clientTraceID, &mcpSessionID))
 	require.Equal(t, "hello-req", reqBody)
 	require.NotNil(t, respBody)
 	require.Equal(t, "hello-resp", *respBody)
 	require.Equal(t, metrics.SchemaVersion, schemaVer)
+	require.NotNil(t, clientTraceID)
+	require.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", *clientTraceID)
+	require.NotNil(t, mcpSessionID)
+	require.Equal(t, "mcp-sess-1", *mcpSessionID)
 
 	_, err = pool.Exec(ctx, "DELETE FROM "+metrics.TableName+" WHERE trace_id=$1", trace)
+	require.NoError(t, err)
+}
+
+func TestRunMigrationsUpgradesAnExistingTableAndOldRowsReadNull(t *testing.T) {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, integrationDSN(t))
+	require.NoError(t, err)
+	defer pool.Close()
+
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS "+metrics.TableName+", "+metrics.MigrationVersionTable)
+	require.NoError(t, err)
+	first := metrics.Migrations()[0]
+	_, err = pool.Exec(ctx, first.UpSQL)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, metrics.MigrationVersionTableDDL)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "INSERT INTO "+metrics.MigrationVersionTable+" (id, name) VALUES ($1, $2)", first.ID, first.Name)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "INSERT INTO "+metrics.TableName+
+		" (trace_id, gateway_id, occurred_on, schema_version, request_body) VALUES ('old-row', 'g', 1, 2, 'b')")
+	require.NoError(t, err)
+
+	require.NoError(t, runMigrations(ctx, pool, discardLogger()))
+
+	var clientTraceID, mcpSessionID *string
+	require.NoError(t, pool.QueryRow(ctx,
+		"SELECT client_trace_id, mcp_session_id FROM "+metrics.TableName+" WHERE trace_id='old-row'",
+	).Scan(&clientTraceID, &mcpSessionID))
+	require.Nil(t, clientTraceID)
+	require.Nil(t, mcpSessionID)
+
+	_, err = pool.Exec(ctx, "DELETE FROM "+metrics.TableName+" WHERE trace_id='old-row'")
 	require.NoError(t, err)
 }

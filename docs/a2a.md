@@ -419,7 +419,11 @@ A part the gateway cannot read fails the call rather than reaching the
 policies unchecked: a `parts`, `artifacts` or `history` that is not a list,
 an item that is not an object, a text that is not a string, or a part of no
 known kind. In a request that answers `-32602`; in an answer or a stream
-event, `-32092` `invalid_upstream_response`.
+event, `-32092` `invalid_upstream_response`. A request's file part must also
+carry its content, one way: `file.bytes` or `file.uri` (0.3), `raw` or `url`
+(1.0). A file with neither (such as `fileWithBytes`, Vertex's REST name, not
+A2A's) answers `-32602`, since it would reach the agent and the policies
+empty.
 
 A `tasks/cancel` (`CancelTask`) answer is relayed with the task's state only:
 its artifacts, history and status message are removed. Read them with
@@ -473,7 +477,7 @@ method).
 | `-32700` | Body is not JSON | |
 | `-32600` | Not a single JSON-RPC 2.0 request with an `id` (a null or non-scalar `id`; no `id` at all is a notification), `Content-Type` is not `application/json`, or the request, its `params`, `message` or `configuration` or one of its parts names a key twice (ignoring case and underscores) | |
 | `-32601` | Method not of the pinned version, unknown, or outside `allowed_methods` | `{"reason": "method_not_in_version" \| "method_not_allowed", "version": "<pinned version>"}` |
-| `-32602` | Params lack the message or the task `id`, `referenceTaskIds` is not a list of up to 32 strings, or a part cannot be read | |
+| `-32602` | Params lack the message or the task `id`, `referenceTaskIds` is not a list of up to 32 strings, a part cannot be read, or a file part carries no content | Vertex: `{"reason": "agent_rejected", "upstream_status", "message"}` when the agent refused it |
 | `-32001` | Task or context not found or not the caller's | 1.0: `ErrorInfo` with `TASK_NOT_FOUND` |
 | `-32003` | Push notifications refused | |
 | `-32004` | `ListTasks`, or streaming on an agent without it | |
@@ -527,7 +531,9 @@ credentials only to that host over HTTPS.
 - Vertex speaks HTTP+JSON. Callers still use JSON-RPC 0.3 (`message/send`,
   `tasks/get`, `tasks/cancel`); the gateway calls `/v1/message:send`,
   `/v1/tasks/{id}` and `/v1/tasks/{id}:cancel`. Not yet verified against a
-  deployed Agent Engine.
+  deployed Agent Engine. A call Vertex refuses as invalid (400, 422) answers
+  `-32602` with `error.data` `{"reason": "agent_rejected", "upstream_status",
+  "message"}`, the agent's own message, so it is not read as the gateway's.
 - A credential the gateway cannot obtain answers `-32092` `cloud_auth_failed`.
 
 ## Translated agents
