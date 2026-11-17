@@ -52,7 +52,9 @@ const GatewayToolDisclaimer = " This is one of the gateway's own tools, not one 
 // just read tools/list tends to append the gateway's own tools to the list it
 // reports, as though the user had those too.
 const inventoryClosingNote = "\n\nThat is the whole list. The gateway's own " + InventoryToolName +
-	" and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer."
+	", " + CallToolName + " and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer." +
+	" A callable tool above that is missing from your own tool list can still be used: read its input schema with " + InventoryToolName +
+	" {\"tool\": <name>} and call it with " + CallToolName + "."
 
 // ErrInventoryToolUnavailable is returned when the inventory meta-tool cannot
 // serve a request (no composed surface behind it, or an unknown tool name).
@@ -134,9 +136,11 @@ func (t *inventoryTool) Definitions(_ context.Context, rc *appconsumer.RoutableC
 	return []Tool{def}
 }
 
-// inventoryArgs is the meta-tool's input: an optional narrowing to one server.
+// inventoryArgs is the meta-tool's input: an optional narrowing to one server,
+// or one tool to describe in full.
 type inventoryArgs struct {
 	Server string `json:"server,omitempty"`
+	Tool   string `json:"tool,omitempty"`
 }
 
 func (t *inventoryTool) Call(
@@ -160,6 +164,9 @@ func (t *inventoryTool) Call(
 	inventory, err := t.surface.ToolInventory(ctx, rc)
 	if err != nil {
 		return nil, err
+	}
+	if tool := strings.TrimSpace(args.Tool); tool != "" {
+		return describeInventoryTool(inventory, tool)
 	}
 	filter := strings.ToLower(strings.TrimSpace(args.Server))
 	previews := t.catalogTools()
@@ -555,13 +562,18 @@ func inventoryDefinition() (Tool, error) {
 			"Each server comes back as ready, needs_connect (its tools are named but not callable until the user connects their account), unavailable, or no_tools, and a needs_connect server names the connect tool that gives the user a link. " +
 			"The `installable` list is separate: those servers are not on the user's surface at all, but the Store lets them add each one with " + StoreInstallToolName + " — offer them rather than reporting their tools as available. " +
 			"Use it to answer \"what can you do?\", to find out why an expected tool is missing, and to tell the user which of their servers needs attention or what they could add. " +
-			"What it returns is the whole answer: the gateway's own trustgate_* tools — this one, the Store's, the connect ones — are how that surface is managed, not tools the user has, so do not add them to it.",
+			"A callable tool that is not in your own tool list — your client may still be showing the list from before the user installed or connected its server — can be called with " + CallToolName + ": pass `tool` here first to read its input schema. " +
+			"What it returns is the whole answer: the gateway's own trustgate_* tools — this one, the Store's, the connect ones, " + CallToolName + " — are how that surface is managed, not tools the user has, so do not add them to it.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"server": map[string]any{
 					"type":        "string",
 					"description": "Narrow the answer to servers whose name or catalog code contains this text, on the user's surface and in what they may add. Omit to list every server the user has.",
+				},
+				"tool": map[string]any{
+					"type":        "string",
+					"description": "The exact name of one tool to describe in full: its whole description and its input schema, which is what " + CallToolName + " needs to call it. Takes precedence over `server`.",
 				},
 			},
 			"additionalProperties": false,
@@ -587,4 +599,73 @@ func inventoryDefinition() (Tool, error) {
 // no connection meta-tool is offered for it.
 func callerCannotConnect(cause string) bool {
 	return cause == InventoryCauseSharedAccountNotConnected || cause == InventoryCauseEndUserNotNamed
+}
+
+// describeInventoryTool answers a request for one tool: where it is, whether it
+// can be called, and — for one that can — its whole description and input
+// schema, which is what a call through CallToolName needs. The listing trims
+// descriptions and leaves schemas out, because a whole surface of them would
+// drown the answer to "what do I have".
+func describeInventoryTool(inventory *ToolInventory, name string) (json.RawMessage, error) {
+	type match struct {
+		server InventoryServer
+		entry  InventoryEntry
+	}
+	var found *match
+	for _, server := range inventory.Servers {
+		for _, entry := range server.Tools {
+			if entry.Name == name {
+				found = &match{server: server, entry: entry}
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	if found == nil {
+		return marshalToolResult(
+			fmt.Sprintf("No tool named %q is on the user's surface. Call %s without `tool` to list the tools they have, and use one of those names exactly.", name, InventoryToolName),
+			map[string]any{"tool": name, "found": false},
+		)
+	}
+	structured := map[string]any{
+		"tool":     found.entry.Name,
+		"found":    true,
+		"server":   found.server.Name,
+		"state":    found.server.State,
+		"callable": found.entry.Callable,
+	}
+	if found.server.Code != "" {
+		structured["code"] = found.server.Code
+	}
+	if title := strings.TrimSpace(found.entry.Title); title != "" {
+		structured["title"] = title
+	}
+	if desc := strings.TrimSpace(found.entry.Description); desc != "" {
+		structured["description"] = desc
+	}
+	if !found.entry.Callable {
+		return marshalToolResult(
+			fmt.Sprintf("%s is on %s, which is %s, so it cannot be called yet.", found.entry.Name, found.server.Name, inventoryStateText(map[string]any{"state": found.server.State, "cause": found.server.Cause})),
+			structured,
+		)
+	}
+	schema := json.RawMessage(`{"type":"object"}`)
+	if len(found.entry.InputSchema) > 0 && json.Valid(found.entry.InputSchema) {
+		schema = found.entry.InputSchema
+	}
+	structured["input_schema"] = schema
+	structured["call_with"] = CallToolName
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (on %s)", found.entry.Name, found.server.Name)
+	if title := strings.TrimSpace(found.entry.Title); title != "" {
+		fmt.Fprintf(&b, " — %s", title)
+	}
+	if desc := strings.TrimSpace(found.entry.Description); desc != "" {
+		fmt.Fprintf(&b, "\n\n%s", desc)
+	}
+	fmt.Fprintf(&b, "\n\nInput schema: %s", schema)
+	fmt.Fprintf(&b, "\n\nIf %s is not in your own tool list, call it with %s: {\"name\": %q, \"arguments\": {…}}.", found.entry.Name, CallToolName, found.entry.Name)
+	return marshalToolResult(b.String(), structured)
 }

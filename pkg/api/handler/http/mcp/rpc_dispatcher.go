@@ -143,6 +143,11 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	case "server/discover", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		return "discovery", "", "", ""
 	case "tools/call":
+		// A call-through is recorded as the tool it called: that is the tool
+		// that ran, and the one Activity, policies and usage are about.
+		if inner, _, ok := appmcp.CallThroughTarget(params); ok {
+			return "tool", inner, "", ""
+		}
 		var p struct {
 			Name string `json:"name"`
 		}
