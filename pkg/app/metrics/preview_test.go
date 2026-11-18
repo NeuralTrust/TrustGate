@@ -201,6 +201,20 @@ func TestBuilder_MCPPreviewIsToolAndFirstStringArgument(t *testing.T) {
 			want:   "linear_whoami",
 		},
 		{
+			name:   "a call to an agent previews the message",
+			method: "tools/call",
+			tool:   "Travel planner",
+			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trustgate_call_agent","arguments":{"agent":"Travel planner","message":"Book Lisbon","context_id":"ctx-1"}}}`,
+			want:   "Book Lisbon",
+		},
+		{
+			name:   "a task read of an agent names the agent alone",
+			method: "tools/call",
+			tool:   "Travel planner",
+			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trustgate_call_agent","arguments":{"agent":"Travel planner","task_id":"t-1"}}}`,
+			want:   "Travel planner",
+		},
+		{
 			name:   "other methods have no preview",
 			method: "tools/list",
 			body:   `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,

@@ -55,6 +55,8 @@ type dataFinder struct {
 	// materializer replaces the secret references of the loaded registries
 	// with their values. Nil leaves registries as stored.
 	materializer RegistryMaterializer
+	// agents loads every enabled A2A registry of the gateway, routed to or not.
+	agents bool
 }
 
 // RegistryMaterializer turns the secret references held by a gateway's
@@ -81,6 +83,13 @@ func WithKeyGroupBudgets(r keygroupdomain.Reader) DataFinderOption {
 // data, never in the repositories or the shared registry cache.
 func WithSecretReferences(m RegistryMaterializer) DataFinderOption {
 	return func(f *dataFinder) { f.materializer = m }
+}
+
+// WithAgents loads every enabled A2A registry of a gateway into its data,
+// whether or not an application routes to it, so the Employee portal can call
+// the agents published to people.
+func WithAgents() DataFinderOption {
+	return func(f *dataFinder) { f.agents = true }
 }
 
 func NewDataFinder(
@@ -179,6 +188,11 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	if err != nil {
 		return nil, err
 	}
+	if f.agents {
+		if err := f.loadAgents(ctx, gatewayID, backendByID); err != nil {
+			return nil, err
+		}
+	}
 	if f.materializer != nil {
 		backendByID = f.materializer.GatewayRegistries(ctx, gatewayID, backendByID)
 	}
@@ -225,6 +239,14 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		PolicyPlan:     f.buildPolicyPlan(onMCP.unscoped),
 		ScopedPolicies: onMCP.scoped,
 		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, onMCP.unscoped, onMCP.scoped, f.logger),
+	}
+	portal := domain.BuildPortalAgentConsumer(gatewayID)
+	portalPolicies, portalPlan, _ := f.plansFor(portal, everywhere.unscoped, everywhere.scoped, everywhere.crossing)
+	data.AgentConsumer = &RoutableConsumer{
+		Consumer:       portal,
+		Policies:       portalPolicies,
+		PolicyPlan:     portalPlan,
+		ScopedPolicies: everywhere.scoped,
 	}
 	data.SetRegistryIndex(backendByID)
 	if f.budgets != nil {
@@ -405,6 +427,24 @@ func (f *dataFinder) loadBackends(
 		byID[b.ID] = b
 	}
 	return byID, nil
+}
+
+func (f *dataFinder) loadAgents(ctx context.Context, gatewayID ids.GatewayID, byID map[ids.RegistryID]*registrydomain.Registry) error {
+	const size = 100
+	for page := 1; ; page++ {
+		batch, total, err := f.registryRepo.List(ctx, registrydomain.ListFilter{GatewayID: gatewayID, Page: page, Size: size})
+		if err != nil {
+			return err
+		}
+		for _, r := range batch {
+			if r != nil && r.Type == registrydomain.TypeA2A && r.Enabled {
+				byID[r.ID] = r
+			}
+		}
+		if len(batch) < size || page*size >= total {
+			return nil
+		}
+	}
 }
 
 // loadedPolicies is a gateway's policies split by placement: everywhere holds

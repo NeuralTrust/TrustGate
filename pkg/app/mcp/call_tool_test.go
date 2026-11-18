@@ -102,7 +102,7 @@ func TestCallToolDefinition_IsNotReadOnly(t *testing.T) {
 
 func TestIsGatewayToolName(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{CallToolName, InventoryToolName, StoreInstallToolName, ConnectToolName("com.notion/mcp")} {
+	for _, name := range []string{CallToolName, InventoryToolName, ListAgentsToolName, CallAgentToolName, StoreInstallToolName, ConnectToolName("com.notion/mcp")} {
 		if !isGatewayToolName(name) {
 			t.Fatalf("%s is the gateway's own", name)
 		}
