@@ -10247,6 +10247,13 @@ const docTemplate = `{
                 "mcp_target": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
                 },
+                "model_labels": {
+                    "description": "ModelLabels maps a model id or inference profile ARN to the display\nname analytics show for it. LLM registries only. Keys and values are\ntrimmed and must not be empty; at most 200 entries, keys up to 2048\ncharacters, values up to 128.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
@@ -10657,6 +10664,13 @@ const docTemplate = `{
                 },
                 "mcp_target": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
+                },
+                "model_labels": {
+                    "description": "ModelLabels replaces the stored model labels when present; an empty\nobject clears them and an absent field keeps them. Same limits as on\ncreate.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -11282,6 +11296,13 @@ const docTemplate = `{
                 },
                 "mcp_target": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse"
+                },
+                "model_labels": {
+                    "description": "ModelLabels maps a model id or inference profile ARN to its display name.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -13565,6 +13586,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "model": {
+                    "type": "string"
+                },
+                "model_display_name": {
+                    "description": "ModelDisplayName is the name the serving registry's model_labels give the\nmodel, such as a readable name for a Bedrock inference profile ARN.",
                     "type": "string"
                 },
                 "model_label": {
