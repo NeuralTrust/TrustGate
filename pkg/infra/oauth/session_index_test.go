@@ -67,7 +67,7 @@ func TestApplyDirectoryGroupsUpdatesOnlyTheMatchingSessions(t *testing.T) {
 	t.Parallel()
 	store, mr := newSessionStore(t)
 	ctx := context.Background()
-	expires := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	expires := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	match := defaultSession("gw-1", "org-1", "user-1", expires)
 	match.Groups = []string{"eng", "idp-only"}
 	match.ClaimGroups = []string{"idp-only", "eng"}
