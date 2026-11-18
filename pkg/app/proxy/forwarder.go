@@ -695,19 +695,20 @@ func (f *forwarder) recordSpan(
 		Name:      bk.Provider(),
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
-			RegistryID:     bk.ID.String(),
-			Managed:        bk.Managed,
-			Provider:       bk.Provider(),
-			RouteModel:     route.Model,
-			RequestedModel: dto.request.RequestedModel,
-			Attempt:        attempt,
-			Fallback:       fromFallback,
-			Pinned:         dto.pinned,
-			Route:          dto.routeSource,
-			Outcome:        outcome.String(),
-			Baseline:       dto.baseline,
-			ServedPricing:  bk.Pricing(),
-			TierApplied:    dto.tierRouted,
+			RegistryID:        bk.ID.String(),
+			Managed:           bk.Managed,
+			Provider:          bk.Provider(),
+			RouteModel:        route.Model,
+			RequestedModel:    dto.request.RequestedModel,
+			Attempt:           attempt,
+			Fallback:          fromFallback,
+			Pinned:            dto.pinned,
+			Route:             dto.routeSource,
+			Outcome:           outcome.String(),
+			Baseline:          dto.baseline,
+			ServedPricing:     bk.Pricing(),
+			ServedModelLabels: bk.ModelLabels(),
+			TierApplied:       dto.tierRouted,
 		},
 	}
 	if resp != nil {
@@ -841,6 +842,7 @@ func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.RegistryID = bk.ID.String()
 	req.Provider = bk.Provider()
 	req.RegistryPricing = bk.Pricing()
+	req.RegistryModelLabels = bk.ModelLabels()
 }
 
 func failureReason(resp *ProviderResponse, err error) error {
