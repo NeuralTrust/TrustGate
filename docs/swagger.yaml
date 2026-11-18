@@ -1749,6 +1749,15 @@ definitions:
         type: boolean
       mcp_target:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest'
+      model_labels:
+        additionalProperties:
+          type: string
+        description: |-
+          ModelLabels maps a model id or inference profile ARN to the display
+          name analytics show for it. LLM registries only. Keys and values are
+          trimmed and must not be empty; at most 200 entries, keys up to 2048
+          characters, values up to 128.
+        type: object
       name:
         type: string
       pricing:
@@ -2043,6 +2052,14 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest'
       mcp_target:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest'
+      model_labels:
+        additionalProperties:
+          type: string
+        description: |-
+          ModelLabels replaces the stored model labels when present; an empty
+          object clears them and an absent field keeps them. Same limits as on
+          create.
+        type: object
       name:
         type: string
       pricing:
@@ -2480,6 +2497,12 @@ definitions:
         type: boolean
       mcp_target:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse'
+      model_labels:
+        additionalProperties:
+          type: string
+        description: ModelLabels maps a model id or inference profile ARN to its display
+          name.
+        type: object
       name:
         type: string
       pricing:
@@ -4131,6 +4154,11 @@ definitions:
       method:
         type: string
       model:
+        type: string
+      model_display_name:
+        description: |-
+          ModelDisplayName is the name the serving registry's model_labels give the
+          model, such as a readable name for a Bedrock inference profile ARN.
         type: string
       model_label:
         type: string
