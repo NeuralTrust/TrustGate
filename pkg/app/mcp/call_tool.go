@@ -103,6 +103,8 @@ var errCallToolArgumentsNotObject = errors.New("mcp: call-through arguments are 
 func isGatewayToolName(name string) bool {
 	return name == CallToolName ||
 		name == InventoryToolName ||
+		name == ListAgentsToolName ||
+		name == CallAgentToolName ||
 		strings.HasPrefix(name, StoreToolNamePrefix) ||
 		strings.HasPrefix(name, ConnectToolNamePrefix)
 }

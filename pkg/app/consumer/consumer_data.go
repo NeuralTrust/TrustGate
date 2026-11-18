@@ -67,6 +67,8 @@ type Data struct {
 	GatewayID     ids.GatewayID
 	Consumers     []RoutableConsumer
 	StoreConsumer *RoutableConsumer
+	// AgentConsumer is what an Employee portal call to an agent runs as.
+	AgentConsumer *RoutableConsumer
 	bySlug        map[string]*RoutableConsumer
 	registryByID  map[ids.RegistryID]*registrydomain.Registry
 	storeLinks    map[ids.AuthID][]StoreLink
@@ -160,6 +162,24 @@ func (d *Data) RegistryByID(id ids.RegistryID) (*registrydomain.Registry, bool) 
 	}
 	reg, ok := d.registryByID[id]
 	return reg, ok
+}
+
+// Agents returns the gateway's enabled A2A registries, by name. Every one of
+// them is in the data when it was loaded WithAgents.
+func (d *Data) Agents() []*registrydomain.Registry {
+	if d == nil {
+		return nil
+	}
+	out := make([]*registrydomain.Registry, 0)
+	for _, reg := range d.registryByID {
+		if reg.Type == registrydomain.TypeA2A && reg.Enabled && reg.A2ATarget != nil {
+			out = append(out, reg)
+		}
+	}
+	slices.SortFunc(out, func(a, b *registrydomain.Registry) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.ID.String(), b.ID.String()))
+	})
+	return out
 }
 
 func (d *Data) indexRegistries() {

@@ -503,6 +503,76 @@ context ids, task state, the agent's HTTP status, outcome (`ok`, `blocked`,
 plugin, the reason, and the identity mode and subject kind (`user` or `app`),
 never the token.
 
+## Agents in the Employee portal
+
+People call the gateway's A2A agents from the Employee portal (the Store) and
+from an MCP client connected to the Store at `/store/mcp`, without an
+application in between.
+
+### Access
+
+Access → Agents stores one row per principal:
+
+| Field | Value |
+|---|---|
+| `principal_type` | `all`, `group` or `user` |
+| `principal_id` | empty for `all`; the group key (as Store access policies name groups); the user's subject |
+| `mode` | `all`, `selected` or `none` |
+| `registry_ids` | the A2A registries picked when `selected`, empty otherwise |
+
+A person may call:
+
+1. Nothing, when their own `user` row is `none`.
+2. Nothing, when they have no own row and one of their groups' rows is `none`.
+3. Otherwise everything their own row, their groups' rows and the `all` row
+   give, added up: `all` is every enabled A2A registry of the gateway,
+   including ones added later; `selected` is the picked ones that are enabled
+   A2A registries.
+4. Nothing, when no row applies: agents are published to people explicitly.
+
+A group key has no subject: its group's row and the `all` row decide.
+
+`GET /v1/gateways/{gateway_id}/store/agent-access` answers
+`{"rows": [{"principal_type", "principal_id", "mode", "registry_ids"}]}`.
+`PUT` on the same path takes one row and answers it (200), or 204 when `mode`
+is empty, which deletes the row. A body that cannot be read, or a registry id
+that is not a UUID, answers 400; any other invalid row, or a registry that is
+not an A2A registry of the gateway, 422. Deleting a registry removes it from
+every row. The rows ride the config snapshot (field 19), so DB-less planes
+apply them; a plane built before the field offers no agent.
+
+### Tools
+
+The Store's MCP surface lists two more tools, on the Store only:
+
+- `trustgate_list_agents` `{"query"?}` lists the agents the caller may call:
+  id, name, the card's description, its skills (a skill TrustGuard flagged is
+  left out, the agent stays), the A2A version and whether it streams. `query`
+  filters on name, description and skill names, case-insensitive.
+- `trustgate_call_agent` `{"agent", "message" | "task_id", "context_id"?}`
+  sends `message` (text only) to the agent, by id or by its exact name when no
+  other agent the caller may call has it, and answers the agent's text with
+  `context_id: …`; a task that is not completed adds `task_id: … (state: …)`.
+  `task_id` instead of `message` reads that task (`tasks/get`, `GetTask`).
+  `structuredContent` is `{text, context_id, task_id?, state?}`. An agent the
+  caller may not call and one that does not exist answer the same tool error.
+  A refusal is a tool error (`isError`): a block reads "Blocked by the
+  gateway's policy.", an agent's own error carries its message.
+
+The call goes through the agent plane's forwarder in the MCP request. It runs
+as the portal's agent consumer: the Store's id, slug and name with type A2A,
+carrying the gateway's global policies whose plugin supports A2A, so
+TrustGuard evaluates it with `protocol: "a2a"` as on the agent plane. Tasks
+and contexts belong to the Store and the person's subject: a `context_id` or
+`task_id` continues only for the person who started it. Activity records the
+call under the agent's name, with the message as its preview.
+
+An answer has to fit in the tools/call response, so the call gives up after
+three quarters of `SERVER_WRITE_TIMEOUT` (45 s by default) with "… did not
+answer in time", which names the task to read later when the call read one.
+The answer is not streamed to the client: the MCP plane sends no
+notifications during a tools/call.
+
 ## Hosted agents
 
 `a2a_target.provider` is `bedrock_agentcore`, `azure_foundry` or

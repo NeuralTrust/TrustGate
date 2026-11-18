@@ -60,10 +60,11 @@ const (
 	slotKeyGroupBudgets
 	slotUsageEnforcement
 	slotStoreEveryone
+	slotStoreAgentAccess
 	slotCount
 )
 
-var gatewaySlots = []slot{slotGateways, slotConsumers, slotRegistries, slotPolicies, slotAuths, slotStoreGrants, slotStorePolicies, slotKeyGroupBudgets, slotStoreEveryone}
+var gatewaySlots = []slot{slotGateways, slotConsumers, slotRegistries, slotPolicies, slotAuths, slotStoreGrants, slotStorePolicies, slotKeyGroupBudgets, slotStoreEveryone, slotStoreAgentAccess}
 
 var fromGateway = func() (out [slotCount]bool) {
 	for _, s := range gatewaySlots {
@@ -372,15 +373,16 @@ func (h *runHeap) Pop() any {
 // its own admits exactly what the full compile admits.
 func encodeGateway(gateway gatewaydomain.Gateway, data readmodel.Data) (*gatewayFragment, error) {
 	own := readmodel.Data{
-		Gateways:        []gatewaydomain.Gateway{gateway},
-		Consumers:       data.Consumers,
-		Registries:      data.Registries,
-		Policies:        data.Policies,
-		Auths:           data.Auths,
-		StoreGrants:     data.StoreGrants,
-		StorePolicies:   data.StorePolicies,
-		StoreEveryone:   data.StoreEveryone,
-		KeyGroupBudgets: data.KeyGroupBudgets,
+		Gateways:         []gatewaydomain.Gateway{gateway},
+		Consumers:        data.Consumers,
+		Registries:       data.Registries,
+		Policies:         data.Policies,
+		Auths:            data.Auths,
+		StoreGrants:      data.StoreGrants,
+		StorePolicies:    data.StorePolicies,
+		StoreEveryone:    data.StoreEveryone,
+		StoreAgentAccess: data.StoreAgentAccess,
+		KeyGroupBudgets:  data.KeyGroupBudgets,
 	}
 	msg, err := toProto(own)
 	if err != nil {
@@ -428,6 +430,12 @@ func encodeGateway(gateway gatewaydomain.Gateway, data readmodel.Data) (*gateway
 			func(i int) *snapshotpb.Snapshot {
 				return &snapshotpb.Snapshot{StoreEveryone: msg.StoreEveryone[i : i+1]}
 			}},
+		{slotStoreAgentAccess, len(msg.StoreAgentAccess), func(i int) string {
+			a := own.StoreAgentAccess[i]
+			return compositeKey(a.GatewayID.String(), string(a.PrincipalType), a.PrincipalID)
+		}, func(i int) *snapshotpb.Snapshot {
+			return &snapshotpb.Snapshot{StoreAgentAccess: msg.StoreAgentAccess[i : i+1]}
+		}},
 	}
 	for _, fd := range fields {
 		elements := make([]element, fd.count)

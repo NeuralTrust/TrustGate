@@ -37,6 +37,7 @@ var ErrInvalidSize = errors.New("query parameter 'size' must be an integer >= 1 
 var ErrInvalidSort = errors.New("query parameter 'sort' must be an allowed field and 'order' must be asc or desc")
 var ErrInvalidFilter = errors.New("query filter value is invalid")
 var ErrInvalidQuery = errors.New("one or more query parameters are invalid; check names and values against the Admin API docs")
+var ErrInvalidBody = errors.New("the request body could not be read; send a JSON object matching the Admin API schema")
 
 func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
 	raw := c.Params(name)

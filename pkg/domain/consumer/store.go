@@ -72,3 +72,13 @@ func BuildStoreConsumer(gatewayID ids.GatewayID) *Consumer {
 		Identity: Identity{},
 	}
 }
+
+// BuildPortalAgentConsumer returns the consumer an Employee portal call to an
+// A2A agent runs as: the Store's identity, typed A2A so the call is judged as
+// agent traffic. It is never routed to; it only carries the gateway-wide
+// policies and keys the ownership of the tasks a person starts.
+func BuildPortalAgentConsumer(gatewayID ids.GatewayID) *Consumer {
+	c := BuildStoreConsumer(gatewayID)
+	c.Type = TypeA2A
+	return c
+}

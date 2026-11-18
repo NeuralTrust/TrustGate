@@ -176,6 +176,9 @@ func legacyToProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	if msg.StoreEveryone, err = legacyEncodeJSON(data.StoreEveryone, "store everyone", func(_ int, blob []byte) *snapshotpb.StoreEveryone { return &snapshotpb.StoreEveryone{Json: blob} }); err != nil {
 		return nil, err
 	}
+	if msg.StoreAgentAccess, err = legacyEncodeJSON(data.StoreAgentAccess, "store agent access", func(_ int, blob []byte) *snapshotpb.StoreAgentAccess { return &snapshotpb.StoreAgentAccess{Json: blob} }); err != nil {
+		return nil, err
+	}
 	for i := range data.PlaygroundTokenKeys {
 		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
 			Kid: data.PlaygroundTokenKeys[i].KID,
@@ -336,6 +339,16 @@ func legacySortData(data *readmodel.Data) {
 	sort.SliceStable(data.StoreEveryone, func(i, j int) bool {
 		return data.StoreEveryone[i].GatewayID.String() < data.StoreEveryone[j].GatewayID.String()
 	})
+	sort.SliceStable(data.StoreAgentAccess, func(i, j int) bool {
+		a, b := data.StoreAgentAccess[i], data.StoreAgentAccess[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.PrincipalType != b.PrincipalType {
+			return a.PrincipalType < b.PrincipalType
+		}
+		return a.PrincipalID < b.PrincipalID
+	})
 	sort.SliceStable(data.KeyGroupBudgets, func(i, j int) bool {
 		a, b := data.KeyGroupBudgets[i], data.KeyGroupBudgets[j]
 		if a.GatewayID != b.GatewayID {
@@ -403,6 +416,7 @@ func legacyAppendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway,
 	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
 	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 	dst.StoreEveryone = append(dst.StoreEveryone, gwData.StoreEveryone...)
+	dst.StoreAgentAccess = append(dst.StoreAgentAccess, gwData.StoreAgentAccess...)
 	dst.KeyGroupBudgets = append(dst.KeyGroupBudgets, gwData.KeyGroupBudgets...)
 }
 
