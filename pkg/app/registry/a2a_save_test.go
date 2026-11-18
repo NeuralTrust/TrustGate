@@ -64,8 +64,12 @@ func TestCreatorA2APinsTheCard(t *testing.T) {
 	fetcher.EXPECT().Probe(mock.Anything, "https://travel.example.com/a2a", domain.A2AVersion10, mock.Anything).Return(nil).Once()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	// The Employee portal offers agents no application lists, so a new one
+	// drops every replica's cached gateway data.
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).Return(nil).Once()
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil,
-		appregistry.WithAgentCards(fetcher, anonymousCards(t)))
+		appregistry.WithAgentCards(fetcher, anonymousCards(t)), appregistry.WithCachePublisher(publisher))
 
 	b, err := creator.Create(context.Background(), appregistry.CreateInput{
 		GatewayID: gwID, Name: "Travel planner", Type: domain.TypeA2A,
