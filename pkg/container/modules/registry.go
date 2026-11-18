@@ -214,8 +214,8 @@ func provideRegistryServices(c *container.Container) error {
 	if err := provideAgentCards(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, save registrySaveParams) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, save.options(compiler)...)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, save registrySaveParams) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, append(save.options(compiler), appregistry.WithCachePublisher(publisher))...)
 	}); err != nil {
 		return err
 	}
