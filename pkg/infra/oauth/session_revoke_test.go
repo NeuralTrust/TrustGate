@@ -500,7 +500,9 @@ func TestCodeRevokedDuringTakeIsRefused(t *testing.T) {
 	t.Parallel()
 	store, mr := newSessionStore(t)
 	ctx := context.Background()
-	issued := time.Date(2026, 10, 19, 13, 4, 5, 123456789, time.UTC)
+	// Recent, so the session it mints is not already past its lifetime, and
+	// with nanoseconds the comparison must keep.
+	issued := time.Now().UTC().Truncate(time.Second).Add(123456789 * time.Nanosecond)
 	if err := store.SaveCode(ctx, "racing", sessionCode("user-1", issued)); err != nil {
 		t.Fatalf("save code: %v", err)
 	}
@@ -523,7 +525,9 @@ func TestRevocationComparisonKeepsNanoseconds(t *testing.T) {
 	t.Parallel()
 	store, mr := newSessionStore(t)
 	ctx := context.Background()
-	issued := time.Date(2026, 10, 19, 13, 4, 5, 123456789, time.UTC)
+	// Recent, so the session it mints is not already past its lifetime, and
+	// with nanoseconds the comparison must keep.
+	issued := time.Now().UTC().Truncate(time.Second).Add(123456789 * time.Nanosecond)
 	if err := mr.Set(revocationMarkerKey, issued.Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("seed marker: %v", err)
 	}
