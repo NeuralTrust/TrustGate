@@ -342,8 +342,12 @@ The settings decide how much is held at a time, which is what a verdict can stil
 
 - **Head.** Nothing is written until the head has a verdict. The head closes on
   `head_chars` of inspectable text (400 by default), on the terminal event, or on the
-  held-bytes ceiling (1 MiB), and an open tool call extends it. A refusal at the head is a
-  real HTTP 403 with no byte sent.
+  held-bytes ceiling (1 MiB), and an open tool call extends it. A block at the head ends the
+  stream as a block after it does, before any of the text is written: an HTTP 200 that
+  carries only the events that open the message, then the cut, with `cut_at_eval` 1 and
+  `cut_offset_chars` 0. A refusal that is not a verdict on the content (the guard could not
+  be consulted, a guardrail that could not inspect the text and found nothing, a mask the
+  stream cannot apply, a guard's plan limit) is still an HTTP status with no byte sent.
 - **Blocks.** After the head, a block closes on the terminal event; on the first event
   that arrives once `max_hold_ms` has passed since the block opened (800 ms by default;
   500 ms for `openai_moderation` and `regex_replace`); once it carries
@@ -405,12 +409,13 @@ Text leaves without the verdict a policy asked for in these cases:
   appears on events from data planes older than this version. A hybrid data plane on an
   older version still honours a stored `streaming.enabled: false` until it is upgraded.
 
-**`status.reason` does not yet name a mid-stream cut.** It is set on the error path only
-(`writeProxyError`), so a head-of-stream block — which happens before a single byte is
-written and is a real HTTP 403 — carries a reason, while a cut after the first release is
-an HTTP 200 whose `status.reason` is empty. On the wire the response ends with the
-dialect's content-filter terminator, and on the event the cut is visible only through
-`streaming.cut_at_eval`. Charting cuts means reading that field, not `status.reason`.
+**`status.reason` does not name a stream cut.** It is set on the error path only
+(`writeProxyError`), and a block on a stream is never an error response: at the head as
+after it, the response is an HTTP 200 whose `status.reason` is empty. On the wire the
+response ends with the dialect's content-filter terminator, and on the event the cut is
+visible only through `streaming.cut_at_eval` (1 when the block landed on the head).
+Charting cuts means reading that field, not `status.reason` or the status code. Only a
+refusal at the head that is not a block (above) carries a reason.
 
 ### External guardrail failures
 
@@ -489,7 +494,8 @@ member path and the Model Armor resource prefix.
 A streamed response leg classifies the same way. A failure of the `availability` class
 records `failed_open` and releases the held text; an `input` failure in a mode that blocks cuts
 the stream, which is recorded `failed_closed` on the policy that authored the cut (`blocked` and
-`degraded` for a mask over a finding), at the head (HTTP 403) and after it. In observe it records
+`degraded` for a mask over a finding), at the head and after it; at the head, a failure that
+found nothing is refused with HTTP 403 `guardrail_input_uninspectable` instead. In observe it records
 `failed_open`. An `input` failure is not counted toward retiring a policy for the rest of the
 stream (below): a client padding a stream must not be able to switch its inspection off.
 
@@ -534,7 +540,7 @@ with the next policy on the same block, so a failing policy neither cuts the
 stream nor stops the policies behind it from inspecting. A cut resolved on a failed call
 (a rewriter that asks for `fail_closed`, such as `regex_replace`, or a guardrail's `input`
 failure) is labelled `failed_closed` on the failing policy (RUN-1710; it used to read `blocked`), at the
-head (HTTP 403) and after it. Only the policy whose own call failed carries it: the other
+head (an HTTP 403, unless the failure carries a finding, which is cut) and after it. Only the policy whose own call failed carries it: the other
 policies on the stream do not, and a cut that is a block verdict, or a mask that could not be
 applied, stays `blocked`.
 
