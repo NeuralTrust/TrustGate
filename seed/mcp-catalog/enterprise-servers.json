@@ -2702,10 +2702,9 @@
         "summary": "Register TrustGate as an OAuth app in Checkr.",
         "steps": [
           "Create an OAuth app in Checkr.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.checkr/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.checkr/mcp."
+        ]
       },
       "tools": [
         {
@@ -4212,7 +4211,7 @@
       "name": "com.datadoghq/mcp",
       "vendor": "Datadog",
       "category": "Observability",
-      "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP (US1). Endpoint https://mcp.datadoghq.com/v1/mcp; other sites use https://mcp.<site>/v1/mcp. OAuth (recommended), or DD_API_KEY + DD_APPLICATION_KEY headers. Optional ?toolsets=… to filter tools.",
+      "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP.",
       "capabilities": [
         "Monitor metrics",
         "Monitor logs",
@@ -4480,7 +4479,7 @@
       "name": "com.getdbt/mcp",
       "vendor": "dbt Labs",
       "category": "Data & Analytics",
-      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta). An admin registers an OAuth app; dbt issues a client ID and no client secret.",
+      "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta).",
       "capabilities": [
         "Query semantic layer",
         "Query model metadata",
@@ -4530,11 +4529,10 @@
         "summary": "Register TrustGate as an OAuth app in dbt.",
         "steps": [
           "In Account settings, Integrations, App integrations, add a manual integration.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID. dbt does not issue a client secret."
         ],
-        "docs_url": "https://docs.getdbt.com/docs/platform/manage-access/connect-apps-oauth",
-        "note": "{dbt_host} is the account host, for example cloud.getdbt.com or prefix.us1.dbt.com. The client must use PKCE. Register the callback https://<gateway-mcp host>/oauth/callback/com.getdbt/mcp."
+        "docs_url": "https://docs.getdbt.com/docs/platform/manage-access/connect-apps-oauth"
       },
       "relevance": 70,
       "tools": [
@@ -5798,7 +5796,7 @@
       "name": "com.freshworks/mcp",
       "vendor": "Freshworks",
       "category": "Customer Support",
-      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway. An admin must create an OAuth app in Freshworks.",
+      "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway.",
       "capabilities": [
         "Manage tickets",
         "Look up assets",
@@ -5858,10 +5856,9 @@
         "summary": "Register TrustGate as an OAuth app in Freshworks.",
         "steps": [
           "Create an OAuth app in Freshworks.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "{domain} is the subdomain label only, for example yourco, not yourco.freshservice.com. An admin must create an OAuth app in Freshworks. Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.freshworks/mcp."
+        ]
       },
       "relevance": 60
     },
@@ -6245,7 +6242,7 @@
       "name": "com.slack/mcp",
       "vendor": "Slack",
       "category": "Communication",
-      "description": "Slack remote MCP: search messages, files, channels and users; read channels and threads; send messages; and read/create/update canvases. Confidential OAuth with a pre-registered Slack app (directory or internal); Streamable HTTP only.",
+      "description": "Search messages, files, channels, and users; read threads; send messages; and manage canvases in Slack.",
       "capabilities": [
         "Search messages, files, and people",
         "Read channels and threads",
@@ -6412,7 +6409,7 @@
       "name": "com.google.workspace/calendar",
       "vendor": "Google Calendar",
       "category": "Productivity & Docs",
-      "description": "Google Calendar remote MCP: list calendars, search and manage events, suggest free time, and RSVP (Google Workspace, OAuth).",
+      "description": "List calendars, search and manage events, suggest free time, and RSVP in Google Calendar.",
       "capabilities": [
         "List calendars",
         "Manage events",
@@ -8581,10 +8578,9 @@
         "summary": "Register TrustGate as an OAuth app in Intercom.",
         "steps": [
           "Create an OAuth app in Intercom.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.intercom/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.intercom/mcp."
+        ]
       },
       "relevance": 75,
       "tools": [
@@ -10248,7 +10244,7 @@
       "name": "com.microsoft/azure-devops",
       "vendor": "Azure DevOps",
       "category": "Developer Tools",
-      "description": "Azure DevOps remote MCP: projects, repos, PRs, work items, pipelines, wiki, and test plans (Entra OAuth; org must be Entra-backed).",
+      "description": "Azure DevOps projects, repos, PRs, work items, pipelines, wiki, and test plans.",
       "capabilities": [
         "Work with projects",
         "Work with repos",
@@ -11689,7 +11685,7 @@
       "name": "com.newrelic/mcp",
       "vendor": "New Relic",
       "category": "Observability",
-      "description": "Query New Relic telemetry, dashboards, and alerts. An admin must register an OAuth app that accepts the gateway callback.",
+      "description": "Query New Relic telemetry, dashboards, and alerts.",
       "capabilities": [
         "Query telemetry",
         "Monitor dashboards",
@@ -11717,11 +11713,10 @@
         "summary": "Register TrustGate as an OAuth app in New Relic.",
         "steps": [
           "Create an OAuth app in New Relic.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.newrelic/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
         ],
-        "docs_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/overview/",
-        "note": "New Relic dynamic client registration returns one shared client and only allows localhost redirect URIs, so this gateway's callback is rejected. Registration is manual. Scopes are observability:read, offline, and offline_access. The host is the region: mcp.newrelic.com (United States) or mcp.eu.newrelic.com (Europe). Register the callback https://<gateway-mcp host>/oauth/callback/com.newrelic/mcp."
+        "docs_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/overview/"
       },
       "url_variables": [
         {
@@ -12366,7 +12361,7 @@
       "name": "com.paypal/mcp",
       "vendor": "PayPal",
       "category": "Payments",
-      "description": "Invoices, payments, orders, and disputes via PayPal remote MCP. Production streamable HTTP: https://mcp.paypal.com/mcp (sandbox: https://mcp.sandbox.paypal.com/mcp). OAuth login; docs also document SSE at /sse.",
+      "description": "Invoices, payments, orders, and disputes via PayPal.",
       "capabilities": [
         "Create a new invoice",
         "Create an order",
@@ -12672,7 +12667,7 @@
       "name": "com.pipedream/mcp",
       "vendor": "Pipedream",
       "category": "Automation",
-      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth). x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use.",
+      "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps.",
       "capabilities": [
         "Call tools across connected apps",
         "Run hosted automations",
@@ -12728,7 +12723,7 @@
           "Enter x-pd-project-id, x-pd-environment, x-pd-external-user-id, and x-pd-app-slug."
         ],
         "docs_url": "https://pipedream.com/docs/connect/mcp/developers",
-        "note": "The gateway posts client_id and client_secret to https://api.pipedream.com/v1/oauth/token and sends the access token as Bearer. x-pd-external-user-id is one admin-set external user id. All users act as this one Pipedream end user and share its connected accounts. Any user can call tools on any account connected under this id. Only connect accounts every user may use."
+        "note": "Every user acts as the one x-pd-external-user-id and can use all its connected accounts. Connect only accounts every user may use."
       },
       "relevance": 60
     },
@@ -13232,10 +13227,9 @@
         "summary": "Register TrustGate as an OAuth app in Prismic.",
         "steps": [
           "Create an OAuth app in Prismic.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/io.prismic/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/io.prismic/mcp."
+        ]
       },
       "tools": [
         {
@@ -13668,7 +13662,7 @@
       "name": "com.replicate/mcp",
       "vendor": "Replicate",
       "category": "AI & ML",
-      "description": "Official hosted Replicate MCP (SSE): discover, compare, and run models. Endpoint https://mcp.replicate.com/sse. OAuth (DCR) or Replicate API token via client login.",
+      "description": "Discover, compare, and run models on Replicate.",
       "capabilities": [
         "Work with discover",
         "Work with compare",
@@ -13844,7 +13838,7 @@
       "name": "com.salesforce/mcp",
       "vendor": "Salesforce",
       "category": "Sales & CRM",
-      "description": "Hosted Salesforce MCP servers for a production org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
+      "description": "Hosted Salesforce MCP servers for a production org.",
       "capabilities": [
         "Query Salesforce records",
         "Update CRM objects",
@@ -13879,11 +13873,11 @@
         "steps": [
           "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
           "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the consumer key as the client ID and the consumer secret as the client secret."
         ],
         "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
-        "note": "Production orgs authorize at https://login.salesforce.com. Sandbox and scratch orgs use com.salesforce/mcp-sandbox, which authorizes at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp."
+        "note": "For a sandbox or scratch org, use Salesforce (Sandbox)."
       },
       "relevance": 100
     },
@@ -13891,7 +13885,7 @@
       "name": "com.salesforce/mcp-sandbox",
       "vendor": "Salesforce (Sandbox)",
       "category": "Sales & CRM",
-      "description": "Hosted Salesforce MCP servers for a sandbox or scratch org. The server name is one path segment, for example sobject-all. An admin must create an External Client App.",
+      "description": "Hosted Salesforce MCP servers for a sandbox or scratch org.",
       "capabilities": [
         "Query Salesforce records",
         "Update CRM objects",
@@ -13926,11 +13920,10 @@
         "steps": [
           "Create an External Client App with OAuth, PKCE, and JWT-based access tokens.",
           "Add the scopes Access MCP servers (mcp_api) and Perform requests at any time (refresh_token).",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox.",
+          "Register the redirect URI below as the callback.",
           "Enter the consumer key as the client ID and the consumer secret as the client secret."
         ],
-        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
-        "note": "Sandbox and scratch orgs authorize at https://test.salesforce.com. The server name is one path segment and cannot contain '/'. Register the callback https://<gateway-mcp host>/oauth/callback/com.salesforce/mcp-sandbox."
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html"
       },
       "relevance": 100
     },
@@ -14198,10 +14191,9 @@
         "summary": "Register TrustGate as an OAuth app in Semrush.",
         "steps": [
           "Create an OAuth app in Semrush.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.semrush/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.semrush/mcp."
+        ]
       },
       "relevance": 55,
       "tools": [
@@ -14421,7 +14413,7 @@
       "name": "com.servicenow/mcp",
       "vendor": "ServiceNow",
       "category": "ITSM",
-      "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name. An admin must create an OAuth app on the instance.",
+      "description": "Per-instance ServiceNow MCP server (Zurich+).",
       "capabilities": [
         "Manage incidents and requests",
         "Search the knowledge base",
@@ -14459,11 +14451,11 @@
         "summary": "Register TrustGate as an OAuth app on the ServiceNow instance.",
         "steps": [
           "Create an OAuth authorization-code inbound integration for the MCP client.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
         ],
         "docs_url": "https://www.servicenow.com/docs/r/zurich/intelligent-experiences/create-oauth-inbound-integration-mcp-client.html",
-        "note": "{instance} is the instance name only, for example acme, not acme.service-now.com. Use the useraccount scope and leave the integration broadly scoped so MCP tools stay visible. Register the callback https://<gateway-mcp host>/oauth/callback/com.servicenow/mcp."
+        "note": "Use the useraccount scope, and leave the integration broadly scoped so the MCP tools stay visible."
       },
       "relevance": 85
     },
@@ -14534,10 +14526,9 @@
         "summary": "Register TrustGate as an OAuth app in Shortcut.",
         "steps": [
           "Create an OAuth app in Shortcut.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.shortcut/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.shortcut/mcp."
+        ]
       },
       "tools": [
         {
@@ -14954,7 +14945,7 @@
       "name": "com.snowflake/mcp",
       "vendor": "Snowflake",
       "category": "Data & Analytics",
-      "description": "Snowflake-managed Cortex MCP server scoped to a database/schema. An admin must create a Snowflake OAuth security integration.",
+      "description": "Snowflake-managed Cortex MCP server scoped to a database and schema.",
       "capabilities": [
         "Query Cortex data",
         "Explore database schemas",
@@ -14965,7 +14956,7 @@
       "url_variables": [
         {
           "name": "account_url",
-          "description": "Snowflake account URL host.",
+          "description": "Snowflake account host, e.g. org-account.snowflakecomputing.com.",
           "required": true,
           "host_suffix": [
             "*.snowflakecomputing.com"
@@ -15007,11 +14998,10 @@
         "steps": [
           "Create a custom OAuth security integration (confidential, or public with PKCE).",
           "Set ALLOWED_ROLES_LIST to the roles this integration may use, and set OAUTH_USE_SECONDARY_ROLES = NONE.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
         ],
-        "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
-        "note": "{account_url} is the account host, for example org-account.snowflakecomputing.com. The session uses the user's default role (session:role:all) and refresh_token keeps the grant refreshable. Set ALLOWED_ROLES_LIST to the roles this integration may use and OAUTH_USE_SECONDARY_ROLES = NONE. Register the callback https://<gateway-mcp host>/oauth/callback/com.snowflake/mcp."
+        "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp"
       },
       "relevance": 95
     },
@@ -15065,7 +15055,7 @@
       "name": "com.sonarsource/cloud-mcp",
       "vendor": "SonarQube",
       "category": "Code Quality",
-      "description": "SonarQube Cloud-hosted MCP (fixed tool subset). Default https://api.sonarcloud.io/mcp; US-region orgs use https://api.sonarqube.us/mcp. Auth: Bearer user token + SONARQUBE_ORG. Optional SONARQUBE_READ_ONLY (default true) and SONARQUBE_TOOLSETS.",
+      "description": "SonarQube Cloud code quality and security issues.",
       "capabilities": [
         "Work with bearer user token + SONARQUBE_ORG",
         "Work with SONARQUBE_TOOLSETS",
@@ -15254,10 +15244,9 @@
         "summary": "Register TrustGate as an OAuth app in Square.",
         "steps": [
           "Create an OAuth app in Square.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.squareup/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.squareup/mcp."
+        ]
       },
       "relevance": 70,
       "tools": [
@@ -15329,10 +15318,9 @@
         "summary": "Register TrustGate as an OAuth app in Storyblok.",
         "steps": [
           "Create an OAuth app in Storyblok.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Storyblok restricts redirect URIs to loopback or an allowlisted hosted-connector and rejects this gateway's callback (invalid_redirect_uri). Registration is manual. Register the callback https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp."
+        ]
       },
       "relevance": 60,
       "tools": [
@@ -16634,10 +16622,9 @@
         "summary": "Register TrustGate as an OAuth app in ThoughtSpot.",
         "steps": [
           "Create an OAuth app in ThoughtSpot.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/app.thoughtspot/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/app.thoughtspot/mcp."
+        ]
       },
       "tools": [
         {
@@ -17121,10 +17108,9 @@
         "summary": "Register TrustGate as an OAuth app in Vercel.",
         "steps": [
           "Create an OAuth app in Vercel.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.vercel/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Dynamic client registration is not available for this gateway. Register the callback https://<gateway-mcp host>/oauth/callback/com.vercel/mcp."
+        ]
       },
       "relevance": 85,
       "tools": [
@@ -17214,7 +17200,7 @@
       "name": "com.vimeo/mcp",
       "vendor": "Vimeo",
       "category": "Media & Video",
-      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse). An admin must register an OAuth app with Vimeo that accepts the gateway callback URL (https://<gateway>/oauth/callback/com.vimeo/mcp). If Vimeo does not allow that callback, the connector cannot be used.",
+      "description": "Manage and query Vimeo videos.",
       "capabilities": [
         "Manage videos",
         "Query the video library",
@@ -17246,10 +17232,9 @@
         "summary": "Register TrustGate as an OAuth app in Vimeo.",
         "steps": [
           "Create an OAuth app in Vimeo.",
-          "Register the callback https://<gateway>/oauth/callback/com.vimeo/mcp.",
+          "Register the redirect URI below as the callback.",
           "Enter the client ID and client secret."
-        ],
-        "note": "Vimeo rejects the gateway callback URI at authorize (400 'redirect_uri not allowed') for any dynamic client, so dynamic client registration cannot work. Registration is manual. An admin must register an OAuth app with Vimeo that accepts https://<gateway>/oauth/callback/com.vimeo/mcp. If Vimeo does not allow that callback, the connector cannot be used."
+        ]
       }
     },
     {
@@ -17679,9 +17664,9 @@
       "config_guide": {
         "summary": "Register TrustGate as an OAuth app in Zoom Docs.",
         "steps": [
-          "Add TrustGate's OAuth callback URL, then enter the client ID."
+          "Register the redirect URI below as the callback, then enter the client ID."
         ],
-        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+        "note": "Zoom keeps one token per app, so each Zoom server needs its own Zoom app."
       },
       "relevance": 90,
       "tools": [
@@ -17765,9 +17750,9 @@
       "config_guide": {
         "summary": "Register TrustGate as an OAuth app in Zoom Team Chat.",
         "steps": [
-          "Add TrustGate's OAuth callback URL, then enter the client ID."
+          "Register the redirect URI below as the callback, then enter the client ID."
         ],
-        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+        "note": "Zoom keeps one token per app, so each Zoom server needs its own Zoom app."
       },
       "relevance": 90,
       "tools": [
@@ -17832,9 +17817,9 @@
       "config_guide": {
         "summary": "Register TrustGate as an OAuth app in Zoom Whiteboard.",
         "steps": [
-          "Add TrustGate's OAuth callback URL, then enter the client ID."
+          "Register the redirect URI below as the callback, then enter the client ID."
         ],
-        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+        "note": "Zoom keeps one token per app, so each Zoom server needs its own Zoom app."
       },
       "relevance": 90,
       "tools": [
@@ -17919,9 +17904,9 @@
       "config_guide": {
         "summary": "Register TrustGate as an OAuth app in Zoom Workspace.",
         "steps": [
-          "Add TrustGate's OAuth callback URL, then enter the client ID."
+          "Register the redirect URI below as the callback, then enter the client ID."
         ],
-        "note": "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+        "note": "Zoom keeps one token per app, so each Zoom server needs its own Zoom app."
       },
       "relevance": 90,
       "tools": [
@@ -17988,10 +17973,9 @@
         "steps": [
           "Attach arn:aws:iam::aws:policy/AWSMCPSignInOAuthAccessPolicy to the IAM role or user that will sign in.",
           "Enter the endpoint region: us-east-1 or eu-central-1.",
-          "Register the callback https://<gateway-mcp host>/oauth/callback/com.amazon.aws/mcp, then enter the client ID and client secret."
+          "Register the redirect URI below as the callback, then enter the client ID and client secret."
         ],
-        "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html",
-        "note": "AWS Sign-In rejects dynamic client registration for this gateway's redirect URI (invalid_redirect_uri). An admin registers the OAuth app and the callback https://<gateway-mcp host>/oauth/callback/com.amazon.aws/mcp."
+        "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html"
       },
       "relevance": 95,
       "tools": [
@@ -18033,7 +18017,7 @@
       "name": "com.microsoft/outlook",
       "vendor": "Outlook",
       "category": "Productivity & Docs",
-      "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; each user needs a Microsoft 365 Copilot license and Work IQ billing).",
+      "description": "Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages.",
       "capabilities": [
         "Search messages",
         "Send and reply messages",
@@ -18071,11 +18055,11 @@
           "Copy the Directory (tenant) ID from Entra ID → Overview.",
           "Create the Agent 365 Tools service principal in the tenant if it does not exist yet.",
           "Add the Agent 365 Tools delegated permission McpServers.Mail.All and grant admin consent.",
-          "Add a Web platform redirect URI https://<gateway-mcp host>/oauth/callback/com.microsoft/outlook. Use the gateway's MCP sign-in host, not the host shown under Access → How to connect. The gateway redeems the code server-side, so register it on the Web platform, not as a Single-page application.",
+          "Add the redirect URI below on the Web platform, not as a Single-page application.",
           "Create a client secret and enter the app's client ID and secret."
         ],
         "docs_url": "https://learn.microsoft.com/en-us/microsoft-agent-365/tooling-servers-overview",
-        "note": "Every user who connects needs a Microsoft 365 Copilot license and must be covered by a Copilot usage-based billing spending policy that includes Work IQ API for custom apps and agents (Microsoft 365 admin center → Copilot → Cost management). Without either, calls fail with \"WorkIQ license check failed\"."
+        "note": "Every user who connects needs a Microsoft 365 Copilot license and Copilot usage-based billing that includes the Work IQ API."
       },
       "relevance": 92,
       "tools": [
