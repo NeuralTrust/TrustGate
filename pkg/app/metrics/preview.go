@@ -31,6 +31,9 @@ const (
 	// mcpCallThroughTool is appmcp.CallToolName, which this package cannot
 	// import (app/mcp imports it). Its arguments wrap the called tool's own.
 	mcpCallThroughTool = "trustgate_call_tool"
+	// mcpCallAgentTool is appmcp.CallAgentToolName. Its span names the agent,
+	// and its preview is the message sent to it.
+	mcpCallAgentTool = "trustgate_call_agent"
 )
 
 // promptPreview is the start of the last user turn: in a multi-turn request
@@ -61,6 +64,12 @@ func toolCallPreview(mcp *events.MCP, body string) string {
 		return ""
 	}
 	tool := truncatePreview(mcp.Tool)
+	if message, ok := callAgentMessage(body); ok {
+		if message == "" {
+			return tool
+		}
+		return truncatePreview(events.RedactCredentialsInText(message, maxPreviewRunes))
+	}
 	budget := maxPreviewRunes - utf8.RuneCountInString(tool) - len("()")
 	arg := truncateRunes(events.RedactCredentialsInText(firstStringArgument(body), budget), budget)
 	if arg == "" {
@@ -137,6 +146,23 @@ func chatBridgePreview(body string) string {
 		return truncatePreview(events.RedactCredentialsInText(text, maxPreviewRunes))
 	}
 	return ""
+}
+
+// callAgentMessage is the message of a call to an agent through the Store,
+// empty for a task read. ok is false for any other call.
+func callAgentMessage(body string) (message string, ok bool) {
+	var envelope struct {
+		Params struct {
+			Name      string `json:"name"`
+			Arguments struct {
+				Message string `json:"message"`
+			} `json:"arguments"`
+		} `json:"params"`
+	}
+	if json.Unmarshal([]byte(body), &envelope) != nil || envelope.Params.Name != mcpCallAgentTool {
+		return "", false
+	}
+	return strings.TrimSpace(envelope.Params.Arguments.Message), true
 }
 
 // firstStringArgument walks params.arguments as a token stream because a Go

@@ -62,6 +62,7 @@ type RPCDispatcher struct {
 	connections ConnectionTool
 	store       StoreTool
 	inventory   InventoryTool
+	agents      AgentTools
 	storeScoper appstore.Scoper
 	handlers    map[string]rpcHandler
 }
@@ -94,6 +95,12 @@ func NewRPCDispatcher(
 
 func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatcher {
 	d.inventory = inventory
+	return d
+}
+
+// WithAgentTools wires the Store's agent meta-tools (see AgentTools).
+func (d *RPCDispatcher) WithAgentTools(agents AgentTools) *RPCDispatcher {
+	d.agents = agents
 	return d
 }
 
@@ -195,6 +202,9 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if d.store != nil && req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
 		tools = appendGatewayTools(tools, d.store.Definitions(ctx, req.consumer))
 	}
+	if d.agents != nil && req.consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
+		tools = appendGatewayTools(tools, d.agents.Definitions())
+	}
 	if d.inventory != nil && metaToolsPermitted(req.consumer) {
 		tools = appendGatewayTools(tools, d.inventory.Definitions(ctx, req.consumer))
 		// The call-through rides with the inventory: the inventory is how a
@@ -242,6 +252,17 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 			return nil, &ToolNotPermittedError{Tool: params.Name}
 		}
 		return d.inventory.Call(ctx, req.consumer, params.Name, params.Arguments)
+	}
+	if d.agents != nil && d.agents.Handles(params.Name) {
+		// A call to an agent is real work the person asked for, counted like
+		// a tool call; only the listing is the gateway's own.
+		if params.Name == ListAgentsToolName {
+			markMetaTool(ctx)
+		}
+		if req.consumer == nil || !consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
+			return nil, &ToolNotPermittedError{Tool: params.Name}
+		}
+		return d.agents.Call(ctx, params.Name, params.Arguments)
 	}
 	if d.store != nil && d.store.Handles(params.Name) {
 		markMetaTool(ctx)
