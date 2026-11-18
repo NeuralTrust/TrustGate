@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -325,11 +326,12 @@ func sseLinesStream(lines [][]byte) iter.Seq2[[]byte, error] {
 	}
 }
 
-// TestForward_HeadGateBlockIsARealStatus is the property the whole slice exists
-// for: the head verdict lands before finalizeStream returns, so the rejection
-// is a status code and a body rather than a terminator, and not one byte of
-// the upstream response is relayed.
-func TestForward_HeadGateBlockIsARealStatus(t *testing.T) {
+// TestForward_HeadBlockIsCutInStream: the head verdict lands before
+// finalizeStream returns, and a policy block there ends the stream the way a
+// block on any later block does. The response is the provider's 200, not one
+// byte of the upstream text is relayed, and since the status has not gone out
+// yet the direction header still rides it.
+func TestForward_HeadBlockIsCutInStream(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 
 	lines := [][]byte{
@@ -359,10 +361,14 @@ func TestForward_HeadGateBlockIsARealStatus(t *testing.T) {
 		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
 	})
 	require.NoError(t, err)
-	assert.Nil(t, res.Stream, "a head-gate block must write nothing")
-	assert.Equal(t, 403, res.StatusCode)
-	assert.Contains(t, string(res.Body), "blocked in the head")
-	assert.NotContains(t, string(res.Body), "secret")
+	assert.Equal(t, 200, res.StatusCode)
+	assert.Nil(t, res.Body)
+	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, res.Headers[appplugins.BlockDirectionHeader])
+	got := strings.Join(collectStream(t, res.Stream), "\n")
+	assert.NotContains(t, got, "secret", "a head block must relay none of the text")
+	assert.Contains(t, got, `"finish_reason":"content_filter"`)
+	assert.Contains(t, got, `"message":"blocked in the head","type":"content_filter","direction":"output"`)
+	assert.True(t, strings.HasSuffix(got, "data: [DONE]\n"))
 }
 
 // TestForward_PreResponseShortCircuitStopsAStream pins the half of

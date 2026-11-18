@@ -160,6 +160,7 @@ type guardRun struct {
 	text    string
 	pe      *appplugins.PluginError
 	stopped bool
+	headCut bool
 }
 
 func runModerationGuard(t *testing.T, g *streamGuard) guardRun {
@@ -172,7 +173,7 @@ func runModerationGuard(t *testing.T, g *streamGuard) guardRun {
 	}
 	got, err := collectGuardOutput(t, g, out)
 	require.NoError(t, err)
-	return guardRun{text: streamedText(t, adapter.FormatOpenAI, got), stopped: g.stopped}
+	return guardRun{text: streamedText(t, adapter.FormatOpenAI, got), stopped: g.stopped, headCut: g.cutAtHead()}
 }
 
 const fullText = "first block of text second block of text third block of text"
@@ -185,8 +186,9 @@ func TestStreamGuard_GuardrailsInspectAStreamWithNoStreamingKey(t *testing.T) {
 
 	run := runModerationGuard(t, g)
 
-	require.NotNil(t, run.pe, "a flagged head is a clean 403 in enforce")
-	assert.Equal(t, http.StatusForbidden, run.pe.StatusCode)
+	require.Nil(t, run.pe)
+	assert.True(t, run.headCut, "a flagged head is cut in-stream in enforce")
+	assert.Empty(t, run.text, "none of the text reaches the client")
 	assert.Positive(t, calls.Load())
 }
 
@@ -199,8 +201,9 @@ func TestStreamGuard_GuardrailStoredEnabledFalseStillInspects(t *testing.T) {
 
 	run := runModerationGuard(t, g)
 
-	require.NotNil(t, run.pe, "a flagged head is a clean 403 in enforce")
-	assert.Equal(t, http.StatusForbidden, run.pe.StatusCode)
+	require.Nil(t, run.pe)
+	assert.True(t, run.headCut, "a flagged head is cut in-stream in enforce")
+	assert.Empty(t, run.text, "none of the text reaches the client")
 	assert.Positive(t, calls.Load())
 }
 
