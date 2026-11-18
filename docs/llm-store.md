@@ -284,7 +284,9 @@ sent in any of the key headers above. It is the Store a signed-in session gets:
 what the owner installed, narrowed by the Store grants and access policies that
 name them or one of their groups, with the `trustgate_store_*` and
 `trustgate_list_tools` tools, and every call made with the owner's own
-upstream accounts.
+upstream accounts. `trustgate_list_agents` and `trustgate_call_agent` reach the
+A2A agents published to the owner (see "Agents in the Employee portal" in
+`docs/a2a.md`).
 
 - The principal is the key's owner (`subject` = `owner_id`), method
   `personal_key`, with the groups recorded by `PUT …/auths/{auth_id}/groups` as

@@ -125,6 +125,27 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// Which A2A agents each principal may call from the Employee portal.
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storeaccessdomain.AgentAccessRepository {
+		return storeaccessrepo.NewAgentAccessRepository(conn, appender)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo storeaccessdomain.AgentAccessRepository) storeaccessdomain.AgentAccessReader { return repo }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		repo storeaccessdomain.AgentAccessRepository,
+		registries registrydomain.Repository,
+		sig snapshotSignalParams,
+	) (appstore.AgentAccessService, error) {
+		return appstore.NewAgentAccessService(repo, registries, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(storehttp.NewAgentAccessHandler); err != nil {
+		return err
+	}
 	// The control-plane registry materialiser: self-service installs create the
 	// shared registry from the catalog through the same Creator the admin's
 	// connect-from-catalog path uses. On the data plane this port is served by

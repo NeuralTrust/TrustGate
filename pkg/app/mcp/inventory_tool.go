@@ -52,7 +52,7 @@ const GatewayToolDisclaimer = " This is one of the gateway's own tools, not one 
 // just read tools/list tends to append the gateway's own tools to the list it
 // reports, as though the user had those too.
 const inventoryClosingNote = "\n\nThat is the whole list. The gateway's own " + InventoryToolName +
-	", " + CallToolName + " and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer." +
+	", " + CallToolName + ", " + ListAgentsToolName + ", " + CallAgentToolName + " and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer." +
 	" A callable tool above that is missing from your own tool list can still be used: call it with " + CallToolName +
 	" (if it refuses the arguments, the answer carries its input schema; " + InventoryToolName + " {\"tool\": <name>} gives it up front)."
 

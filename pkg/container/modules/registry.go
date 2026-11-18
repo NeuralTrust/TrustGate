@@ -115,9 +115,10 @@ func provideRegistryRepository(c *container.Container) error {
 // pending requests for a deleted custom server.
 type registryDeleterCleaners struct {
 	dig.In
-	Grants   storeaccessdomain.Repository         `optional:"true"`
-	Everyone storeaccessdomain.EveryoneRepository `optional:"true"`
-	Installs installationdomain.Repository        `optional:"true"`
+	Grants   storeaccessdomain.Repository            `optional:"true"`
+	Everyone storeaccessdomain.EveryoneRepository    `optional:"true"`
+	Agents   storeaccessdomain.AgentAccessRepository `optional:"true"`
+	Installs installationdomain.Repository           `optional:"true"`
 	// Vault holds per-user header values, removed with their registry.
 	Vault vaultdomain.Repository `optional:"true"`
 }
@@ -129,6 +130,9 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 	}
 	if p.Everyone != nil {
 		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
+	}
+	if p.Agents != nil {
+		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewAgentAccessRegistryCleaner(p.Agents)))
 	}
 	if p.Vault != nil {
 		if cleaner := appregistry.NewUserHeaderValuesCleaner(p.Vault, logger); cleaner != nil {

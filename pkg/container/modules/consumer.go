@@ -182,7 +182,7 @@ type dataFinderParams struct {
 }
 
 func provideDataFinder(p dataFinderParams) appconsumer.DataFinder {
-	opts := []appconsumer.DataFinderOption{appconsumer.WithKeyGroupBudgets(p.Budgets)}
+	opts := []appconsumer.DataFinderOption{appconsumer.WithKeyGroupBudgets(p.Budgets), appconsumer.WithAgents()}
 	if p.SecretRefs != nil {
 		opts = append(opts, appconsumer.WithSecretReferences(p.SecretRefs))
 	}
