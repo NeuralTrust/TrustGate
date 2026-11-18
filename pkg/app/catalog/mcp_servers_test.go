@@ -382,7 +382,7 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.Empty(t, server.OAuth.Resource)
 	require.NotNil(t, server.ConfigGuide)
 	require.Contains(t, server.ConfigGuide.Steps[0], "AWSMCPSignInOAuthAccessPolicy")
-	require.Contains(t, server.ConfigGuide.Note, "/oauth/callback/com.amazon.aws/mcp")
+	require.Contains(t, server.ConfigGuide.Steps[2], "redirect URI below")
 }
 
 // A templated oauth.resource is stored as the concrete audience when the row
@@ -551,7 +551,7 @@ func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
 	require.Equal(t, "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1", server.OAuth.Resource)
 	require.NotNil(t, server.ConfigGuide)
 	require.Contains(t, server.ConfigGuide.Note, "Microsoft 365 Copilot")
-	require.Contains(t, server.ConfigGuide.Note, "Work IQ API for custom apps and agents")
+	require.Contains(t, server.ConfigGuide.Note, "Work IQ API")
 	for _, step := range server.ConfigGuide.Steps {
 		require.NotContains(t, step, "{gatewayBaseUrl}")
 	}
@@ -643,10 +643,7 @@ func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 			if tc.code == "com.storyblok/mcp" {
 				require.False(t, server.SelfService)
 				require.NotNil(t, server.ConfigGuide)
-				require.Contains(t, server.ConfigGuide.Note, "restricts redirect URIs")
-				require.Contains(t, server.ConfigGuide.Note, "Registration is manual")
-				require.Contains(t, server.ConfigGuide.Note, "https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp")
-				require.Contains(t, server.ConfigGuide.Steps[1], "https://<gateway-mcp host>/oauth/callback/com.storyblok/mcp")
+				require.Equal(t, "Register the redirect URI below as the callback.", server.ConfigGuide.Steps[1])
 			}
 		})
 	}
