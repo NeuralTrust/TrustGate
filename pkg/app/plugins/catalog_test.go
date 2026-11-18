@@ -326,6 +326,19 @@ func TestCatalog_RateLimiterRetryAfterDocumentsReset(t *testing.T) {
 	assert.Contains(t, retryAfter.Description, "reset")
 }
 
+func TestCatalog_RateLimiterMaxParallelIsOptional(t *testing.T) {
+	meta := pluginCatalogMeta["rate_limiter"]
+	maxParallel, ok := fieldByKey(meta.schema.Fields, "max_parallel")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeInteger, maxParallel.Type)
+	assert.False(t, maxParallel.Required)
+	assert.Contains(t, maxParallel.Description, "no Retry-After")
+	limit, ok := fieldByKey(meta.schema.Fields, "limit")
+	require.True(t, ok)
+	assert.True(t, limit.Required, "Max Requests stays required")
+	assert.Contains(t, meta.description, "Max Parallel Requests")
+}
+
 func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
 	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
 
