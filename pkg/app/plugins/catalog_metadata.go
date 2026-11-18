@@ -142,6 +142,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		description: "Applies to LLM and native MCP traffic. Limit request volume with a sliding window. Counts gateway-wide for global or MCP-wide policies, otherwise per consumer, with an optional header-based partition. " +
 			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
 			" and then lets it through, so it smooths bursts but does not cap the rate. " +
+			"Max Parallel Requests also caps the requests in progress at once, shared across gateway replicas. " +
 			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: append([]Field{
@@ -158,6 +159,12 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeDuration,
 					Description: "Sliding window duration, one second or longer (e.g. 1s, 1m, 1h).",
 					Required:    true,
+				},
+				{
+					Key:         "max_parallel",
+					Label:       "Max Parallel Requests",
+					Type:        FieldTypeInteger,
+					Description: "Optional. Maximum number of requests in progress at once, open streams included, counted across gateway replicas per the same limit per as Max Requests. A request over it is rejected with 429 and no Retry-After header, in Enforce and Throttle; Observe only reports it. A slot is freed when the response ends or, if a gateway pod stops, after two minutes. Empty or 0 means no limit.",
 				},
 				{
 					Key:         "retry_after",
