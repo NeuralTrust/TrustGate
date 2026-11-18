@@ -445,6 +445,41 @@ func TestCodecRoundTripsStoreEveryone(t *testing.T) {
 	assert.True(t, bytes.Equal(empty, without), "no Everyone keeps the snapshot bytes unchanged")
 }
 
+func TestCodecRoundTripsStoreAgentAccess(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	agent := ids.New[ids.RegistryKind]()
+	group, err := storeaccessdomain.NewAgentAccess(gw, storeaccessdomain.PrincipalGroup, "eng", "selected", []ids.RegistryID{agent})
+	require.NoError(t, err)
+	everyone, err := storeaccessdomain.NewAgentAccess(gw, storeaccessdomain.PrincipalAll, "", "none", nil)
+	require.NoError(t, err)
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "agents", StoreAgentAccess: []storeaccessdomain.AgentAccess{*everyone, *group}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.StoreAgentAccessByGateway(gw)
+	require.Len(t, got, 2)
+	assert.Equal(t, storeaccessdomain.PrincipalAll, got[0].PrincipalType)
+	assert.Empty(t, got[0].PrincipalID)
+	assert.Equal(t, "none", got[0].Mode)
+	assert.Equal(t, "eng", got[1].PrincipalID)
+	assert.Equal(t, []ids.RegistryID{agent}, got[1].RegistryIDs)
+	assert.Empty(t, snap.StoreAgentAccessByGateway(ids.New[ids.GatewayKind]()))
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+
+	empty, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "agents"}))
+	require.NoError(t, err)
+	without, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "agents", StoreAgentAccess: nil}))
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(empty, without), "no agent access keeps the snapshot bytes unchanged")
+}
+
 func TestCodecRoundTripsKeyGroupBudgets(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()

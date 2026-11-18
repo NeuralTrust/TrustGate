@@ -56,6 +56,7 @@ type Data struct {
 	StoreGrants         []storeaccessdomain.Grant
 	StorePolicies       []storeaccessdomain.Policy
 	StoreEveryone       []storeaccessdomain.Everyone
+	StoreAgentAccess    []storeaccessdomain.AgentAccess
 	PlaygroundTokenKeys []VerificationKey
 	// TenantCaps are the plan caps of the tenants the gateways above belong to.
 	// A scoped snapshot carries only its own tenant.
@@ -119,6 +120,7 @@ type Snapshot struct {
 	storeGrantsByGateway   map[ids.GatewayID][]*storeaccessdomain.Grant
 	storePoliciesByGateway map[ids.GatewayID][]*storeaccessdomain.Policy
 	storeEveryoneByGateway map[ids.GatewayID]*storeaccessdomain.Everyone
+	agentAccessByGateway   map[ids.GatewayID][]*storeaccessdomain.AgentAccess
 
 	tenantCaps       map[string]*ratelimitdomain.TenantCaps
 	sessionRevokedAt map[sessionRevocationKey]time.Time
@@ -161,6 +163,7 @@ func Build(data Data) *Snapshot {
 		storeGrantsByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.Grant),
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
 		storeEveryoneByGateway: make(map[ids.GatewayID]*storeaccessdomain.Everyone),
+		agentAccessByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.AgentAccess),
 		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
 		sessionRevokedAt:       make(map[sessionRevocationKey]time.Time, len(data.SessionRevocations)),
 
@@ -216,6 +219,16 @@ func (s *Snapshot) buildStoreGrants() {
 		e := &s.data.StoreEveryone[i]
 		s.storeEveryoneByGateway[e.GatewayID] = e
 	}
+	for i := range s.data.StoreAgentAccess {
+		a := &s.data.StoreAgentAccess[i]
+		s.agentAccessByGateway[a.GatewayID] = append(s.agentAccessByGateway[a.GatewayID], a)
+	}
+}
+
+// StoreAgentAccessByGateway returns a gateway's agent access rows. The slice
+// is shared and must not be modified.
+func (s *Snapshot) StoreAgentAccessByGateway(gatewayID ids.GatewayID) []*storeaccessdomain.AgentAccess {
+	return s.agentAccessByGateway[gatewayID]
 }
 
 // StoreEveryoneByGateway returns a gateway's Everyone Store access, or nil.

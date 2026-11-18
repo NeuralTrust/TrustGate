@@ -141,6 +141,9 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	if msg.StoreEveryone, err = encodeJSON(data.StoreEveryone, "store everyone", func(_ int, blob []byte) *snapshotpb.StoreEveryone { return &snapshotpb.StoreEveryone{Json: blob} }); err != nil {
 		return nil, err
 	}
+	if msg.StoreAgentAccess, err = encodeJSON(data.StoreAgentAccess, "store agent access", func(_ int, blob []byte) *snapshotpb.StoreAgentAccess { return &snapshotpb.StoreAgentAccess{Json: blob} }); err != nil {
+		return nil, err
+	}
 	for i := range data.PlaygroundTokenKeys {
 		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
 			Kid: data.PlaygroundTokenKeys[i].KID,
@@ -249,6 +252,9 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		return readmodel.Data{}, err
 	}
 	if data.StoreEveryone, err = decodeJSON[*snapshotpb.StoreEveryone, storeaccessdomain.Everyone](msg.GetStoreEveryone(), "store everyone", func(m *snapshotpb.StoreEveryone) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
+	}
+	if data.StoreAgentAccess, err = decodeJSON[*snapshotpb.StoreAgentAccess, storeaccessdomain.AgentAccess](msg.GetStoreAgentAccess(), "store agent access", func(m *snapshotpb.StoreAgentAccess) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
 	for _, m := range msg.GetPlaygroundTokenKeys() {

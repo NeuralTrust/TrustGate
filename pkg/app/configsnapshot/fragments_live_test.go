@@ -85,6 +85,12 @@ func TestFragmentsMatchLiveCompile(t *testing.T) {
 		appsnapshot.WithStoreEveryone(fakeStoreEveryone{byGateway: map[string]*storeaccessdomain.Everyone{
 			initech.String(): {GatewayID: initech, Mode: "curated"},
 		}}),
+		appsnapshot.WithStoreAgentAccess(fakeStoreAgentAccess{byGateway: map[string][]*storeaccessdomain.AgentAccess{
+			acme.String(): {
+				{GatewayID: acme, PrincipalType: storeaccessdomain.PrincipalGroup, PrincipalID: "eng", Mode: "selected", RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+				{GatewayID: acme, PrincipalType: storeaccessdomain.PrincipalAll, Mode: "all"},
+			},
+		}}),
 		appsnapshot.WithPlaygroundTokenKeys([]readmodel.VerificationKey{{KID: "k2", PEM: "b"}, {KID: "k1", PEM: "a"}}),
 		appsnapshot.WithUsageEnforcement(true),
 	)

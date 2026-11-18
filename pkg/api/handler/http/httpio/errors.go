@@ -103,6 +103,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_uuid", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidQuery):
 		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_query", Message: publicMessage(err, "")}
+	case errors.Is(err, ErrInvalidBody):
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_body", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidPage), errors.Is(err, ErrInvalidSize):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_pagination", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidSort):

@@ -148,6 +148,9 @@ type AdminRouterDeps struct {
 	// StoreEveryone serves the Store access every group passes on (Access page
 	// Everyone). Present only on the full plane.
 	StoreEveryone *storehttp.EveryoneHandler
+	// StoreAgentAccess serves which A2A agents each principal may call from
+	// the Employee portal (Access page Agents). Present only on the full plane.
+	StoreAgentAccess *storehttp.AgentAccessHandler
 	// StorePrincipal serves the Portal's admin preview of one user's Store state.
 	StorePrincipal *storehttp.PrincipalHandler
 	// StoreLLMAvailability says whether the gateway's data planes serve the LLM Store.
@@ -272,7 +275,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil || r.deps.StoreLLMAvailability != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil || r.deps.StoreEveryone != nil || r.deps.StoreAgentAccess != nil || r.deps.StorePrincipal != nil || r.deps.StoreLLMKey != nil || r.deps.StoreLLMAvailability != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -291,6 +294,10 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.StoreEveryone != nil {
 			store.Get("/everyone", r.deps.StoreEveryone.Get)
 			store.Put("/everyone", r.deps.StoreEveryone.Set)
+		}
+		if r.deps.StoreAgentAccess != nil {
+			store.Get("/agent-access", r.deps.StoreAgentAccess.List)
+			store.Put("/agent-access", r.deps.StoreAgentAccess.Set)
 		}
 		if r.deps.StorePrincipal != nil {
 			store.Get("/principal", r.deps.StorePrincipal.Get)
