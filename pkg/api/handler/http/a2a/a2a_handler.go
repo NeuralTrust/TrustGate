@@ -66,6 +66,10 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 	if !ok {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
+	ctx := c.UserContext()
+	// Before any refusal: a call the gateway turns away is still the
+	// application's and its end user's in Activity.
+	stampTrace(ctx, rc)
 	if mediaType, _, err := mime.ParseMediaType(c.Get(fiber.HeaderContentType)); err != nil || mediaType != fiber.MIMEApplicationJSON {
 		return send(c, nil, nil, appa2a.InvalidRequest())
 	}
@@ -86,8 +90,6 @@ func (h *Handler) RPC(c *fiber.Ctx) error {
 	for name, value := range c.Request().Header.All() {
 		header.Add(string(name), string(value))
 	}
-	ctx := c.UserContext()
-	stampTrace(ctx, rc)
 	x, rpcErr := h.forwarder.Prepare(ctx, &appa2a.Call{
 		Consumer:  rc,
 		Agent:     agent,
