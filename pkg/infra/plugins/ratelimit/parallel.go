@@ -109,14 +109,22 @@ type lease struct {
 	once   sync.Once
 }
 
-// hold registers the release on the request's end and starts the heartbeat. A
-// request that already ended releases at once.
-func (p *Plugin) hold(done *appplugins.RequestDone, key, member string) {
+// newLease registers the release on the request's end, before the slot is
+// requested: an acquire whose reply is lost may still have added the member, and
+// releasing a member that was never added is harmless. It reports false when the
+// request already ended.
+func (p *Plugin) newLease(done *appplugins.RequestDone, key, member string) (*lease, bool) {
 	l := &lease{p: p, key: key, member: member, started: p.now()}
-	l.schedule()
-	if !done.OnDone(l.release) {
-		l.release()
-	}
+	return l, done.OnDone(l.release)
+}
+
+// disarm drops a lease whose slot was refused, so its release touches nothing.
+func (l *lease) disarm() {
+	l.once.Do(func() {
+		l.mu.Lock()
+		l.closed = true
+		l.mu.Unlock()
+	})
 }
 
 func (l *lease) schedule() {
@@ -158,14 +166,19 @@ func (l *lease) release() {
 		if stop != nil {
 			stop()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), redisCallTimeout)
-		defer cancel()
-		if err := l.p.redis.ZRem(ctx, l.key, l.member).Err(); err != nil {
-			// The lease expires on its own TTL.
-			slog.Warn("rate_limiter: parallel slot release failed",
-				slog.String("error_class", appplugins.CounterErrorClass(err)))
-		}
+		// Off the response path: the heartbeat is already stopped, and a lost
+		// ZREM only leaves the lease to expire on its TTL.
+		l.p.spawn(l.remove)
 	})
+}
+
+func (l *lease) remove() {
+	ctx, cancel := context.WithTimeout(context.Background(), redisCallTimeout)
+	defer cancel()
+	if err := l.p.redis.ZRem(ctx, l.key, l.member).Err(); err != nil {
+		slog.Warn("rate_limiter: parallel slot release failed",
+			slog.String("error_class", appplugins.CounterErrorClass(err)))
+	}
 }
 
 // parallelKey names the in-flight set of a counter. tail is the limit_per and

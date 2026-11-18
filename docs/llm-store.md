@@ -514,7 +514,8 @@ Enforce and Throttle; Observe lets it through and reports it in the event
 the response ends: a buffered answer, a stream (a long one keeps its slot with a
 heartbeat), a client that disconnects or another policy rejecting the request.
 A slot that is never released, such as one held by a pod that stopped, expires
-two minutes after its last heartbeat. If the counter store is unavailable the
+two minutes after its last heartbeat. The heartbeat keeps a slot for at most one
+hour, so a stream open longer than that no longer counts. If the counter store is unavailable the
 request is allowed through with decision `failed_open` and `failure_detail:
 acquire`.
 

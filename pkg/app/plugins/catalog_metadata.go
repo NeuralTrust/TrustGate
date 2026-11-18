@@ -164,7 +164,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "max_parallel",
 					Label:       "Max Parallel Requests",
 					Type:        FieldTypeInteger,
-					Description: "Optional. Maximum number of requests in progress at once, open streams included, counted across gateway replicas per the same limit per as Max Requests. A request over it is rejected with 429 and no Retry-After header, in Enforce and Throttle; Observe only reports it. A slot is freed when the response ends or, if a gateway pod stops, after two minutes. Empty or 0 means no limit.",
+					Description: "Optional. Maximum number of requests in progress at once, open streams included, counted across gateway replicas per the same limit per as Max Requests. A request over it is rejected with 429 and no Retry-After header, in Enforce and Throttle; Observe only reports it. A slot is freed when the response ends or, if a gateway pod stops, after two minutes; a heartbeat keeps a slot for at most one hour. Empty or 0 means no limit.",
 				},
 				{
 					Key:         "retry_after",
