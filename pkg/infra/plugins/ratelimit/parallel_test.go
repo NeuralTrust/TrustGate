@@ -26,6 +26,8 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -79,6 +81,8 @@ type commandLog struct {
 	mu       sync.Mutex
 	names    []string
 	failEval error
+	// failAfterEval runs the script server-side, then loses the reply.
+	failAfterEval error
 }
 
 func (c *commandLog) DialHook(next redis.DialHook) redis.DialHook {
@@ -91,7 +95,11 @@ func (c *commandLog) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 		if c.failEval != nil && strings.HasPrefix(cmd.Name(), "eval") {
 			return c.failEval
 		}
-		return next(ctx, cmd)
+		err := next(ctx, cmd)
+		if c.failAfterEval != nil && cmd.Name() == "eval" && err == nil {
+			return c.failAfterEval
+		}
+		return err
 	}
 }
 
@@ -154,6 +162,7 @@ func newParallelEnv(t *testing.T) *parallelEnv {
 		WithIDGenerator(func() string { seq++; return "req-" + string(rune('a'+seq)) }),
 		WithHeartbeatTimer(env.timers.after),
 	)
+	env.p.spawn = func(f func()) { f() }
 	return env
 }
 
@@ -366,9 +375,21 @@ func TestPlugin_Parallel_ObserveReportsAndDoesNotBlock(t *testing.T) {
 
 	first, _, err := env.start(settings, globalScope(), policy.ModeObserve)
 	require.NoError(t, err)
-	second, res, err := env.start(settings, globalScope(), policy.ModeObserve)
+	span := trace.New("t", trace.Metadata{}).StartSpan(trace.SpanPlugin, PluginName)
+	done := appplugins.NewRequestDone()
+	in := execInput(settings, globalScope())
+	in.Mode = policy.ModeObserve
+	in.Event = metrics.NewEventContext(span)
+	res, err := env.p.Execute(done.Bind(context.Background()), in)
 	require.NoError(t, err)
+	second := done
 
+	data, ok := span.Plugin.Extras.(RateLimiterData)
+	require.True(t, ok)
+	assert.True(t, data.ParallelExceeded)
+	assert.EqualValues(t, 2, data.CurrentParallel)
+	assert.Equal(t, 1, data.MaxParallel)
+	assert.Equal(t, "observe", span.Plugin.Decision)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.Equal(t, 2, env.inFlight(parallelKeyOfGlobal), "observe keeps the in-flight count true")
 	first.Run()
@@ -403,11 +424,79 @@ func TestPlugin_Parallel_CounterErrorFailsOpen(t *testing.T) {
 	env := newParallelEnv(t)
 	env.cmds.failEval = errors.New("redis down")
 
-	_, res, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
+	span := trace.New("t", trace.Metadata{}).StartSpan(trace.SpanPlugin, PluginName)
+	in := execInput(parallelSettings(1, nil), globalScope())
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := env.p.Execute(appplugins.NewRequestDone().Bind(context.Background()), in)
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.Empty(t, env.timers.fns, "no lease was taken")
+	assert.Equal(t, "failed_open", span.Plugin.Decision)
+	data, ok := span.Plugin.Extras.(RateLimiterData)
+	require.True(t, ok)
+	assert.Equal(t, "acquire", data.FailureDetail)
+	assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+}
+
+func TestPlugin_Parallel_LostAcquireReplyDoesNotLeakTheSlot(t *testing.T) {
+	env := newParallelEnv(t)
+	env.cmds.failAfterEval = errors.New("reply lost")
+
+	done, res, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, res.StatusCode, "the request failed open")
+	require.Equal(t, 1, env.inFlight(parallelKeyOfGlobal), "the script did add the member")
+
+	done.Run()
+
+	assert.Zero(t, env.inFlight(parallelKeyOfGlobal), "the end of the request frees it")
+}
+
+func TestPlugin_Parallel_ReleaseDoesNotBlockTheResponse(t *testing.T) {
+	env := newParallelEnv(t)
+	var pending []func()
+	env.p.spawn = func(f func()) { pending = append(pending, f) }
+	done, _, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
+	require.NoError(t, err)
+
+	done.Run()
+
+	require.Len(t, pending, 1)
+	assert.Equal(t, 1, env.inFlight(parallelKeyOfGlobal), "the ZREM has not run on the caller's path")
+	assert.Zero(t, env.timers.liveCount(), "the heartbeat is already stopped")
+	pending[0]()
+	assert.Zero(t, env.inFlight(parallelKeyOfGlobal))
+}
+
+func TestPlugin_Parallel_RefusedRequestsAndTheRequestCounter(t *testing.T) {
+	const requestKey = "ratelimit:plugin-1:global:gw-1"
+	t.Run("a parallel 429 is not recorded as a request", func(t *testing.T) {
+		env := newParallelEnv(t)
+		settings := parallelSettings(1, nil)
+		_, _, err := env.start(settings, globalScope(), policy.ModeEnforce)
+		require.NoError(t, err)
+
+		_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
+		requirePluginError(t, err)
+
+		members, zerr := env.mr.ZMembers(requestKey)
+		require.NoError(t, zerr)
+		assert.Len(t, members, 1)
+	})
+	t.Run("a request-limit 429 takes no slot", func(t *testing.T) {
+		env := newParallelEnv(t)
+		settings := limitSettings(1, "1m")
+		settings["max_parallel"] = 5
+		_, _, err := env.start(settings, globalScope(), policy.ModeEnforce)
+		require.NoError(t, err)
+
+		_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
+		requirePluginError(t, err)
+
+		assert.Equal(t, 1, env.inFlight(parallelKeyOfGlobal), "only the admitted request holds a slot")
+	})
 }
 
 func TestPlugin_Parallel_WithoutEndHookIsSkipped(t *testing.T) {

@@ -40,6 +40,8 @@ type Plugin struct {
 	now   func() time.Time
 	newID func() string
 	after afterFunc
+	// spawn runs a release off the request path.
+	spawn func(func())
 }
 
 type Option func(*Plugin)
@@ -58,6 +60,7 @@ func New(redisClient redis.UniversalClient, opts ...Option) *Plugin {
 		now:   time.Now,
 		newID: func() string { return uuid.NewString() },
 		after: defaultAfterFunc,
+		spawn: func(f func()) { go f() },
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -226,6 +229,10 @@ func (p *Plugin) takeSlot(
 		return nil, false, nil
 	}
 	member := p.newID()
+	held, live := p.newLease(done, key, member)
+	if !live {
+		return nil, false, nil
+	}
 	granted, inFlight, err := p.acquire(ctx, key, member, cfg.MaxParallel, !appplugins.Blocks(in.Mode))
 	if err != nil {
 		res, err = p.counterUnavailable(ctx, in, *data, nil, "acquire", err)
@@ -234,7 +241,9 @@ func (p *Plugin) takeSlot(
 	data.MaxParallel = cfg.MaxParallel
 	data.CurrentParallel = inFlight
 	if granted {
-		p.hold(done, key, member)
+		held.schedule()
+	} else {
+		held.disarm()
 	}
 	if granted && inFlight <= int64(cfg.MaxParallel) {
 		return nil, false, nil

@@ -14,7 +14,9 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,4 +45,18 @@ func TestRequestDone_Context(t *testing.T) {
 	assert.Nil(t, RequestDoneFrom(context.Background()))
 	d := NewRequestDone()
 	assert.Same(t, d, RequestDoneFrom(d.Bind(context.Background())))
+}
+
+func TestRequestDone_LogsAPanickingCleanup(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	d := NewRequestDone()
+	d.OnDone(func() { panic("cleanup exploded") })
+
+	d.Run()
+
+	assert.Contains(t, logs.String(), "cleanup exploded")
+	assert.Contains(t, logs.String(), "panic in a request cleanup")
 }

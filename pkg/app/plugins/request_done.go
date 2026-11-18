@@ -15,6 +15,8 @@ package plugins
 
 import (
 	"context"
+	"log/slog"
+	"runtime/debug"
 	"sync"
 )
 
@@ -81,6 +83,12 @@ func (d *RequestDone) Run() {
 }
 
 func runGuarded(fn func()) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in a request cleanup",
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+		}
+	}()
 	fn()
 }
