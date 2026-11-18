@@ -76,6 +76,7 @@ type Compiler struct {
 	// holds group keys to them too.
 	keyGroupBudgets KeyGroupBudgetReader
 	storeEveryone   StoreEveryoneReader
+	storeAgents     StoreAgentAccessReader
 	// sharedOAuth is optional: it fills the platform's shared OAuth client
 	// secret into the registries that use that client (WithSharedOAuth).
 	sharedOAuth mcpoauth.Provider
@@ -132,6 +133,13 @@ type StoreEveryoneReader interface {
 	ListEveryone(ctx context.Context, page, size int) ([]*storeaccessdomain.Everyone, int, error)
 }
 
+// StoreAgentAccessReader is the read side the compiler needs for which A2A
+// agents each principal may call from the Employee portal.
+type StoreAgentAccessReader interface {
+	ListAgentAccessByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.AgentAccess, error)
+	ListAgentAccess(ctx context.Context, page, size int) ([]*storeaccessdomain.AgentAccess, int, error)
+}
+
 // KeyGroupBudgetReader is the read side the compiler needs for the budgets of
 // directory groups' keys.
 type KeyGroupBudgetReader interface {
@@ -165,6 +173,12 @@ func WithStorePolicies(r StorePolicyReader) CompilerOption {
 // snapshot.
 func WithStoreEveryone(r StoreEveryoneReader) CompilerOption {
 	return func(c *Compiler) { c.storeEveryone = r }
+}
+
+// WithStoreAgentAccess includes each gateway's agent access rows in every
+// snapshot.
+func WithStoreAgentAccess(r StoreAgentAccessReader) CompilerOption {
+	return func(c *Compiler) { c.storeAgents = r }
 }
 
 // WithKeyGroupBudgets includes the group budgets in every snapshot.
@@ -626,6 +640,7 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
 	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 	dst.StoreEveryone = append(dst.StoreEveryone, gwData.StoreEveryone...)
+	dst.StoreAgentAccess = append(dst.StoreAgentAccess, gwData.StoreAgentAccess...)
 	dst.KeyGroupBudgets = append(dst.KeyGroupBudgets, gwData.KeyGroupBudgets...)
 }
 
@@ -715,6 +730,7 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		storePolicies []*storeaccessdomain.Policy
 		budgets       []*keygroupdomain.Budget
 		everyone      []*storeaccessdomain.Everyone
+		agentAccess   []*storeaccessdomain.AgentAccess
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
@@ -763,6 +779,14 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 			return err
 		})
 	}
+	if c.storeAgents != nil {
+		g.Go(func() (err error) {
+			agentAccess, err = listAll(gctx, "store agent access", func(ctx context.Context, page int) ([]*storeaccessdomain.AgentAccess, int, error) {
+				return c.storeAgents.ListAgentAccess(ctx, page, compilerBulkPageSize)
+			})
+			return err
+		})
+	}
 	if c.keyGroupBudgets != nil {
 		g.Go(func() (err error) {
 			budgets, err = listAll(gctx, "key group budgets", func(ctx context.Context, page int) ([]*keygroupdomain.Budget, int, error) {
@@ -789,6 +813,9 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	})
 	groupByGateway(byGateway, everyone, func(x *storeaccessdomain.Everyone) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Everyone) {
 		data.StoreEveryone = append(data.StoreEveryone, x)
+	})
+	groupByGateway(byGateway, agentAccess, func(x *storeaccessdomain.AgentAccess) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.AgentAccess) {
+		data.StoreAgentAccess = append(data.StoreAgentAccess, x)
 	})
 	for _, data := range byGateway {
 		for i := range data.Registries {
@@ -1019,6 +1046,17 @@ func (c *Compiler) collectGatewayData(ctx context.Context, gatewayID ids.Gateway
 			data.StoreEveryone = append(data.StoreEveryone, *everyone)
 		}
 	}
+	if c.storeAgents != nil {
+		rows, err := c.storeAgents.ListAgentAccessByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store agent access for gateway %s: %w", gatewayID, err)
+		}
+		for _, row := range rows {
+			if row != nil {
+				data.StoreAgentAccess = append(data.StoreAgentAccess, *row)
+			}
+		}
+	}
 	if c.keyGroupBudgets != nil {
 		budgets, err := c.keyGroupBudgets.ListByGateway(ctx, gatewayID)
 		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
@@ -1210,6 +1248,16 @@ func sortData(data *readmodel.Data) {
 	})
 	sort.SliceStable(data.StoreEveryone, func(i, j int) bool {
 		return data.StoreEveryone[i].GatewayID.String() < data.StoreEveryone[j].GatewayID.String()
+	})
+	sort.SliceStable(data.StoreAgentAccess, func(i, j int) bool {
+		a, b := data.StoreAgentAccess[i], data.StoreAgentAccess[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.PrincipalType != b.PrincipalType {
+			return a.PrincipalType < b.PrincipalType
+		}
+		return a.PrincipalID < b.PrincipalID
 	})
 	sort.SliceStable(data.KeyGroupBudgets, func(i, j int) bool {
 		a, b := data.KeyGroupBudgets[i], data.KeyGroupBudgets[j]

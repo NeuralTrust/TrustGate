@@ -364,6 +364,10 @@ const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway
 
 const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
 
+// storeAgentInstructions points a client at the organization's agents, which
+// no tool list names.
+const storeAgentInstructions = " The user may also have the organization's A2A agents: " + appmcp.ListAgentsToolName + " lists the ones they can call, and " + appmcp.CallAgentToolName + " sends one a message and returns its answer — reuse the context_id it returns to continue the conversation."
+
 // callThroughInstructions tells a client whose tool list went stale how to
 // reach what is missing from it. Claude's hosted connectors keep the list they
 // fetched when the connector was added, so a server the user connects later is
@@ -373,7 +377,7 @@ const callThroughInstructions = " Your client may keep the tool list it had when
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	instructions := baseServerInstructions
 	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
-		instructions += storeServerInstructions
+		instructions += storeServerInstructions + storeAgentInstructions
 	}
 	if appmcp.MetaToolsPermitted(rc) {
 		instructions += callThroughInstructions

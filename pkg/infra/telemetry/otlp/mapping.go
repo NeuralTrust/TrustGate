@@ -131,6 +131,11 @@ const (
 	attrRequestBody          = "trustgate.request.body"
 	attrRequestPreview       = "trustgate.request.preview"
 	attrResponseBody         = "trustgate.response.body"
+	// The two correlation attributes are named after their trustgate_raw
+	// columns: DataCore's raw view reads trustgate.<column> for any column
+	// it has no special case for.
+	attrClientTraceID = "trustgate.client_trace_id"
+	attrMCPSessionID  = "trustgate.mcp_session_id"
 )
 
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
@@ -350,6 +355,8 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	if evt.Response.Body != nil {
 		appendStr(attrResponseBody, *evt.Response.Body)
 	}
+	appendStr(attrClientTraceID, evt.ClientTraceID)
+	appendStr(attrMCPSessionID, evt.MCPSessionID)
 	attrs = appendRetention(attrs, evt)
 
 	rec.AddAttributes(attrs...)

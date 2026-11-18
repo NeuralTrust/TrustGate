@@ -465,3 +465,31 @@ func TestEventToRecord_StreamedFailureReasonTravelsInThePolicyChain(t *testing.T
 		})
 	}
 }
+
+func TestCorrelationIDs_OnlyOnTheRawRecord(t *testing.T) {
+	evt := fullEvent()
+	evt.ClientTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	evt.MCPSessionID = "mcp-sess-1"
+
+	raw := evt.SensibleView()
+	rawAttrs := attrsOf(rawEventToRecord(&raw))
+	assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", rawAttrs["trustgate.client_trace_id"].AsString())
+	assert.Equal(t, "mcp-sess-1", rawAttrs["trustgate.mcp_session_id"].AsString())
+
+	metadata := evt.MetadataView()
+	metaAttrs := attrsOf(eventToRecord(&metadata))
+	_, leakedTrace := metaAttrs["trustgate.client_trace_id"]
+	_, leakedSession := metaAttrs["trustgate.mcp_session_id"]
+	assert.False(t, leakedTrace, "metadata record must not carry the client trace id")
+	assert.False(t, leakedSession, "metadata record must not carry the MCP session id")
+}
+
+func TestRawEventToRecord_OmitsAbsentCorrelationIDs(t *testing.T) {
+	raw := fullEvent().SensibleView()
+	attrs := attrsOf(rawEventToRecord(&raw))
+
+	_, hasTrace := attrs["trustgate.client_trace_id"]
+	_, hasSession := attrs["trustgate.mcp_session_id"]
+	assert.False(t, hasTrace)
+	assert.False(t, hasSession)
+}

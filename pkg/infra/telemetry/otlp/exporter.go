@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -101,7 +102,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	}
 	if e.class == metrics.Raw {
 		raw := evt.SensibleView()
-		e.logger.Emit(ctx, rawEventToRecord(&raw))
+		e.logger.Emit(withClientTrace(ctx, raw.ClientTraceID), rawEventToRecord(&raw))
 		infratelemetry.LogPublish(e.slog, ExporterName, metrics.Raw, &raw)
 		return nil
 	}
@@ -139,4 +140,29 @@ func (e *Exporter) Close() {
 	if err := e.provider.Shutdown(ctx); err != nil {
 		e.slog.Warn("otlp exporter shutdown failed", slog.String("error", err.Error()))
 	}
+}
+
+// withClientTrace puts the client's trace on ctx, so the record emitted with it
+// carries that trace id in its own trace context and an observability backend
+// shows the gateway's record inside the trace of the agent that made the
+// request — the client_trace_id attribute alone needs a search to find it.
+//
+// Only the trace id, which the client sent in its traceparent: the record
+// names no span of its own. A request without one keeps ctx as it is. This
+// labels the client's own request records; it never changes which trace the
+// gateway's spans belong to, nor the gateway's trace id, which keys storage.
+func withClientTrace(ctx context.Context, clientTraceID string) context.Context {
+	if clientTraceID == "" {
+		return ctx
+	}
+	traceID, err := trace.TraceIDFromHex(clientTraceID)
+	if err != nil {
+		return ctx
+	}
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	return trace.ContextWithSpanContext(ctx, sc)
 }

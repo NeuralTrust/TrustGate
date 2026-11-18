@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 // anthropicBetaHeader is the header an Anthropic client opts into beta
@@ -69,4 +70,12 @@ func anthropicBetas(req *infracontext.RequestContext) string {
 		}
 	}
 	return strings.Join(flags, ",")
+}
+
+// carriesAnthropicBetas reports whether a provider serving the Anthropic
+// Messages wire takes the caller's beta flags as a header: Anthropic itself,
+// and Azure Foundry's Anthropic Messages surface (the only Azure surface with
+// that wire). Bedrock maps them into its own request (bedrockBetas).
+func carriesAnthropicBetas(provider string) bool {
+	return provider == providers.ProviderAnthropic || provider == providers.ProviderAzure
 }

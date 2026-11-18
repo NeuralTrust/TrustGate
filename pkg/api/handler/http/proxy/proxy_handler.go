@@ -255,7 +255,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		Request:   h.newForwardRequest(c, gatewayID, route, authCtx),
+		Request:   h.newForwardRequest(c, gatewayID, route, authCtx, consumer),
 	})
 }
 
@@ -286,7 +286,7 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 	if len(links) == 0 {
 		return writeProxyError(c, errNoModelAccess)
 	}
-	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx)
+	reqCtx := h.newForwardRequest(c, gatewayID, route, authCtx, nil)
 	// A group key is held to its group's budget, as the gateway's data has
 	// it; nil for a personal key or a group with none.
 	reqCtx.KeyGroupBudget = data.KeyGroupBudget(authCtx.KeyGroupID)
@@ -377,13 +377,54 @@ func (h *ForwardedHandler) newForwardRequest(
 	gatewayID ids.GatewayID,
 	route apiresolver.ProxyRoute,
 	authCtx *appauth.AuthContext,
+	rc *appconsumer.RoutableConsumer,
 ) *infracontext.RequestContext {
 	reqCtx := buildRequestContext(c, gatewayID, route)
 	arrived := h.now().UTC()
 	reqCtx.ProcessAt = &arrived
 	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	stampAuth(reqCtx, authCtx)
+	principal := identity.PrincipalFromContext(c.UserContext())
+	var claims map[string]any
+	if principal != nil {
+		claims = principal.Claims
+	}
+	reqCtx.SetCaller(proxyCaller(principal, authCtx, rc, c.Get(domainconsumer.EndUserHeader)), claims)
 	return reqCtx
+}
+
+// proxyCaller is who an LLM request counts as for a limit split per caller,
+// by the same rules as the MCP and agent planes (consumer.CallerSubject):
+//
+//   - a personal key is its owner, whatever the end-user header says: the key
+//     is the person (stampKeyOwner);
+//   - an application's api key or client certificate that names an end user
+//     is that end user within the application, app:<consumer>:<end user>. The
+//     header comes with the application's credential, so the application
+//     vouches for it; a caller without that credential cannot name anyone;
+//   - an application's api key naming no one is the key, by its id;
+//   - anything else, a token above all, is its own subject.
+//
+// endUserHeader is the raw header; Handle has already refused a malformed one.
+func proxyCaller(p *identity.Principal, authCtx *appauth.AuthContext, rc *appconsumer.RoutableConsumer, endUserHeader string) string {
+	if authCtx != nil {
+		if authCtx.OwnerID != "" {
+			return authCtx.OwnerID
+		}
+		machine := authCtx.Method == appauth.MethodAPIKey || authCtx.Method == appauth.MethodMTLS
+		if machine {
+			if endUser, err := endUserAttribution(rc, endUserHeader); err == nil && endUser != "" {
+				return domainconsumer.EndUserSubject(rc.Consumer.ID, endUser)
+			}
+		}
+		if authCtx.Method == appauth.MethodAPIKey && !authCtx.AuthID.IsNil() {
+			return domainconsumer.KeyCaller(authCtx.AuthID.String())
+		}
+	}
+	if p == nil {
+		return ""
+	}
+	return p.Subject
 }
 
 // envelopeNativeError gives an error the gateway made itself, a plugin block, a
@@ -476,6 +517,10 @@ func writeStream(
 		// a client already told, can still panic while its iterator unwinds;
 		// a second error event after that would corrupt what the client got.
 		terminated := false
+		// open is whether the last line the client got left an event that no
+		// blank line has ended yet. A passthrough relays the upstream's lines
+		// as they were read, so a stream can fail between an event's lines.
+		open := false
 		format := adapter.FormatOpenAI
 		if req != nil {
 			format = adapter.Format(req.SourceFormat)
@@ -487,19 +532,20 @@ func writeStream(
 					slog.Any("panic", value),
 					slog.String("stack", string(stack)))
 				if !terminated {
-					writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
+					writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames, open)
 				}
 			}
 		}()
 		for line, err := range result.Stream {
 			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
 				terminated = true
+				endOpenEvent(w, &captured, finalizer != nil, open)
 				_ = w.Flush()
 				return
 			}
 			if err != nil {
 				terminated = true
-				writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames)
+				writeStreamError(w, &captured, finalizer != nil, format, result.RawFrames, open)
 				return
 			}
 			if result.RawFrames {
@@ -523,6 +569,7 @@ func writeStream(
 				terminated = true
 				return
 			}
+			open = len(line) > 0
 		}
 	})
 	return nil
@@ -568,7 +615,10 @@ func writeStreamLine(w *bufio.Writer, line []byte) bool {
 // A native Bedrock stream ends with the exception frame Bedrock itself uses for
 // a failure after the 200, which SDKs raise as a typed error, not with an SSE
 // event no eventstream parser can read.
-func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format, raw bool) {
+//
+// open says the client's last event has not been ended by a blank line; see
+// endOpenEvent, which ends it before the error event is written.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, format adapter.Format, raw, open bool) {
 	if raw {
 		_, _ = w.Write(adapter.BedrockExceptionFrame("internalServerException", adapter.StreamErrorMessageUpstreamTerminated))
 		_ = w.Flush()
@@ -580,6 +630,7 @@ func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, for
 		adapter.StreamErrorTypeUpstream,
 		adapter.StreamErrorMessageUpstreamTerminated,
 	)
+	endOpenEvent(w, captured, capture, open)
 	if capture {
 		captured.Write(event)
 		captured.Write(newline)
@@ -588,6 +639,25 @@ func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool, for
 	_, _ = w.Write(newline)
 	_, _ = w.Write(newline)
 	_ = w.Flush()
+}
+
+// endOpenEvent writes the blank line that ends the event the client has open,
+// when open says it has one. A same-format stream relays the upstream's lines
+// as they were read, so an upstream that fails between an event's lines leaves
+// the client inside that event. Written straight after it, the error event's
+// lines would join it, and the client would parse one event whose data is both
+// payloads run together, which it cannot read as the stream error it is. A
+// stream that ends with the client already told, after its upstream's own
+// terminal event, gets that event ended too, or a strict SSE parser drops it
+// at the end of the body.
+func endOpenEvent(w *bufio.Writer, captured *bytes.Buffer, capture, open bool) {
+	if !open {
+		return
+	}
+	if capture {
+		captured.Write(newline)
+	}
+	_, _ = w.Write(newline)
 }
 
 func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {

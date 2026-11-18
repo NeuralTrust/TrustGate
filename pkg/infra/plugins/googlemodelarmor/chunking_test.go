@@ -507,7 +507,7 @@ func TestEveryCallHangingPastTheBudgetFailsOpen(t *testing.T) {
 		return http.StatusOK, allowResponse
 	})
 	p := pluginWithStub(s.modelArmorStub)
-	p.clients = &clientCache{build: func(modelArmorCredentials) (*client, error) {
+	p.clients = &clientCache{build: func(modelArmorCredentials, time.Duration) (*client, error) {
 		return newClientWithTokenSource(s.server.URL, 800*time.Millisecond, staticTokenSource("test-token", nil)), nil
 	}}
 	event, span := newStreamEvent()
@@ -534,7 +534,7 @@ func TestFastCallsAndACutTailAreChunkBudget(t *testing.T) {
 		return http.StatusOK, allowResponse
 	})
 	p := pluginWithStub(s.modelArmorStub)
-	p.clients = &clientCache{build: func(modelArmorCredentials) (*client, error) {
+	p.clients = &clientCache{build: func(modelArmorCredentials, time.Duration) (*client, error) {
 		return newClientWithTokenSource(s.server.URL, 30*time.Second, staticTokenSource("test-token", nil)), nil
 	}}
 	event, span := newStreamEvent()

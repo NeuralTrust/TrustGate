@@ -490,6 +490,9 @@ func (f *forwarder) invokeWithFailover(
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
 				f.logRetry(bk, reason, budget)
+				if !retriesSameBackend(err) {
+					break
+				}
 				continue
 			}
 			break
@@ -609,6 +612,16 @@ func (f *forwarder) relayLast(
 		return nil, last.err
 	}
 	return nil, ErrNoBackendAvailable
+}
+
+// retriesSameBackend reports whether a failed call may be sent to the same
+// backend again. One that timed out on our side may not: the provider can
+// still be generating the first answer, and charge for it, while the retry
+// pays for a second one. A 408 is the provider saying it never got the request
+// in time, so it is retried like a 5xx. Either way the failure still moves on
+// to the next candidate as the consumer's fallback triggers allow.
+func retriesSameBackend(err error) bool {
+	return err == nil || !isTimeoutError(err)
 }
 
 func (f *forwarder) attemptsPerBackend() int {

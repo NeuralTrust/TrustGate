@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -29,15 +30,22 @@ const minWindow = time.Second
 // whether it is enforced gateway-wide or per consumer is decided by the policy's
 // gateway-wide placement (global or MCP-wide) at runtime, not by configuration.
 //
-// GroupByHeader optionally sub-partitions the counter within the policy scope by
-// the value of a request header (e.g. a tenant or end-user id), so each distinct
-// header value gets its own budget. When empty (or the header is absent on a
-// request), the counter is keyed by the scope subject (gateway or consumer).
+// GroupBy optionally sub-partitions the counter within the policy scope, so
+// each caller gets its own budget: by the verified subject the request runs
+// as ("subject"), by a verified token claim named in GroupByClaim ("claim"),
+// or by a request header named in GroupByHeader ("header"; a header alone,
+// with GroupBy empty, is the older spelling of the same). A request with no
+// value for the partition, and every request when it is unset, is counted
+// against the scope subject (gateway or consumer).
 type config struct {
 	Limit         int    `mapstructure:"limit"`
 	Window        string `mapstructure:"window"`
 	RetryAfter    string `mapstructure:"retry_after"`
+	GroupBy       string `mapstructure:"group_by"`
+	GroupByClaim  string `mapstructure:"group_by_claim"`
 	GroupByHeader string `mapstructure:"group_by_header"`
+
+	partition appplugins.GroupBy
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
@@ -83,5 +91,10 @@ func (c *config) validate() error {
 	if window < minWindow {
 		return fmt.Errorf("rate_limiter: window must be at least %s, got %s", minWindow, c.Window)
 	}
+	partition, err := appplugins.ParseGroupBy(c.GroupBy, c.GroupByClaim, c.GroupByHeader)
+	if err != nil {
+		return fmt.Errorf("rate_limiter: %w", err)
+	}
+	c.partition = partition
 	return nil
 }

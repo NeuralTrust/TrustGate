@@ -70,6 +70,7 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 		[]byte(`data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}`),
 		{},
 		[]byte("data: [DONE]"),
+		{},
 	}
 	client := providermocks.NewClient(t)
 	client.EXPECT().
@@ -91,6 +92,7 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 		`data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}`,
 		``,
 		`data: [DONE]`,
+		``,
 	}, got)
 }
 

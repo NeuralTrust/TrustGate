@@ -4841,6 +4841,119 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/agent-access": {
+            "get": {
+                "description": "Returns every agent access row of the gateway: for everyone (principal_type all), a group or a user, the mode (all | selected | none) and the A2A registries picked when selected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "List the Employee portal's agent access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "description": "Sets which A2A agents everyone (principal_type all, empty principal_id), a group or a user may call from the Employee portal: mode all, selected (the agents in registry_ids) or none. An empty mode deletes the row.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Set one principal's agent access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The row",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess"
+                        }
+                    },
+                    "204": {
+                        "description": "Row deleted"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/everyone": {
             "get": {
                 "description": "Returns the Store level and servers every group passes on to its members, and the excluded groups. An empty mode means the gateway has none.",
@@ -8456,6 +8569,23 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "forbidden_claims": {
+                    "description": "ForbiddenClaims are claims a bearer token must not carry, e.g. email,\nupn, name and preferred_username to keep people's tokens off an agent\nroute. At most 32.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_claims": {
+                    "description": "RequiredClaims are claims a bearer token must carry, each mapped to the\nvalues it may hold (any one of them; an empty list accepts any value).\nAt most 32 claims of 32 values each.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
                 }
             }
         },
@@ -8906,6 +9036,23 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                },
+                "forbidden_claims": {
+                    "description": "ForbiddenClaims are claims a bearer token must not carry.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_claims": {
+                    "description": "RequiredClaims maps each claim a bearer token must carry to the values\nit may hold; an empty list accepts any value.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 }
             }
@@ -10110,6 +10257,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider_options": {
+                    "description": "ProviderOptions are provider-specific settings (base_url, api, static\nheaders, …). On every LLM provider, forward_client_headers lists client\nrequest headers copied onto the provider request (e.g. [\"traceparent\",\n\"tracestate\"]); credentials, framing and gateway headers are refused.",
                     "type": "object",
                     "additionalProperties": {}
                 },
@@ -11694,6 +11842,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone": {
             "type": "object",
             "properties": {
@@ -11748,6 +11916,37 @@ const docTemplate = `{
                 },
                 "principal_type": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess"
+                    }
                 }
             }
         },
@@ -13093,6 +13292,10 @@ const docTemplate = `{
                     "description": "AuthKind is \"personal\" for a key a user owns, their personal key or a\ngroup key, and \"application\" for any other api key; absent for any\nother credential.",
                     "type": "string"
                 },
+                "client_trace_id": {
+                    "description": "ClientTraceID is the trace-id field of the client's W3C traceparent and\nMCPSessionID the Mcp-Session-Id of an MCP request. Both are raw-only:\nMetadataView strips them, so they reach only the raw sinks.",
+                    "type": "string"
+                },
                 "consumer": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"
                 },
@@ -13122,6 +13325,9 @@ const docTemplate = `{
                 },
                 "mcp": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP"
+                },
+                "mcp_session_id": {
+                    "type": "string"
                 },
                 "occurred_on": {
                     "type": "integer"

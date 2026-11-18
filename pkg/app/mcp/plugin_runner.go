@@ -289,6 +289,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 		MCP:               true,
 		Body:              []byte(`{}`),
 	}
+	reqCtx.SetCaller(appconsumer.CallerFromContext(ctx))
 	respCtx := &infracontext.ResponseContext{
 		GatewayID: rc.Consumer.GatewayID.String(),
 		Body:      result,
@@ -406,6 +407,7 @@ func (r *PluginRunner) buildRequestContext(
 		Body:              body,
 		Headers:           headers,
 	}
+	reqCtx.SetCaller(appconsumer.CallerFromContext(ctx))
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
 		reqCtx.MCPServerID = call.Registry.ScopeKey().String()

@@ -44,11 +44,11 @@ func TestParseConfigFailureMode(t *testing.T) {
 	cfg, err := parseConfig(validSettings())
 	require.NoError(t, err)
 	assert.Equal(t, pluginutil.FailureModeOpen, cfg.FailureMode, "an absent failure_mode fails open")
-	assert.False(t, cfg.failClosed())
+	assert.False(t, cfg.failClosedFor(""))
 
 	cfg, err = parseConfig(withFailureMode(validSettings(), "closed"))
 	require.NoError(t, err)
-	assert.True(t, cfg.failClosed())
+	assert.True(t, cfg.failClosedFor(""))
 
 	_, err = parseConfig(withFailureMode(validSettings(), "maybe"))
 	require.Error(t, err)
@@ -60,10 +60,10 @@ func TestParseConfigFailureMode(t *testing.T) {
 func TestFailClosedOfReadsUnparseableSettingsLeniently(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, failClosedOf(map[string]any{"Failure_Mode": " CLOSED "}))
-	assert.False(t, failClosedOf(map[string]any{"failure_mode": "open"}))
-	assert.False(t, failClosedOf(map[string]any{}))
-	assert.False(t, failClosedOf(map[string]any{"failure_mode": 1}))
+	assert.True(t, failClosedOf(map[string]any{"Failure_Mode": " CLOSED "}, ""))
+	assert.False(t, failClosedOf(map[string]any{"failure_mode": "open"}, ""))
+	assert.False(t, failClosedOf(map[string]any{}, ""))
+	assert.False(t, failClosedOf(map[string]any{"failure_mode": 1}, ""))
 }
 
 func TestExecuteAvailabilityFailureFollowsFailureMode(t *testing.T) {

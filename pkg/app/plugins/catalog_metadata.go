@@ -112,10 +112,24 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
+					Key:   "group_by",
+					Label: "Group By",
+					Type:  FieldTypeEnum,
+					Description: "Optional split of the limit within the policy scope, so each caller gets its own budget: subject (the verified caller: a token's subject, a personal key's owner, the end user an application's key or certificate names in the end-user header, or else the application key or certificate itself), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). " +
+						"When empty the limit is counted per gateway (global) or per consumer. A request with no value for the partition counts against that shared counter.",
+					Enum: enumOptions(GroupBySubject, GroupByClaim, GroupByHeader),
+				},
+				{
+					Key:         "group_by_claim",
+					Label:       "Group By Claim",
+					Type:        FieldTypeString,
+					Description: "With group_by claim, the verified token claim whose value partitions the limit (e.g. oid, email). A string, number or boolean claim; an array or object counts against the shared counter.",
+				},
+				{
 					Key:   "group_by_header",
 					Label: "Group By Header",
 					Type:  FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer. " +
+					Description: "With group_by header (or alone, the older spelling), the request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). The caller writes it, so a client can escape the limit by changing it; prefer subject or claim for limits per person. " +
 						"On native MCP tools/call traffic this reads the same transport request headers as an LLM call, so it partitions MCP the same way; when the header is absent from the request the limit falls back to the shared scope counter, on both planes alike.",
 				},
 			},
@@ -284,10 +298,23 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
+					Key:         "group_by",
+					Label:       "Group By",
+					Type:        FieldTypeEnum,
+					Description: "Optional split of the budget within the policy scope, so each caller gets its own: subject (the verified caller: a token's subject, a personal key's owner, the end user an application's key or certificate names, or else the application key or certificate itself), claim (a verified token claim, named in group_by_claim) or header (a request header, named in group_by_header; the client controls it). When empty the budget is counted per gateway (global) or per consumer, and so is a request with no value for the partition. Not allowed with partition key.",
+					Enum:        enumOptions(GroupBySubject, GroupByClaim, GroupByHeader),
+				},
+				{
+					Key:         "group_by_claim",
+					Label:       "Group By Claim",
+					Type:        FieldTypeString,
+					Description: "With group_by claim, the verified token claim whose value partitions the budget (e.g. oid).",
+				},
+				{
 					Key:         "group_by_header",
 					Label:       "Group By Header",
 					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer. Not allowed with partition key.",
+					Description: "With group_by header (or alone, the older spelling), the request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer. Not allowed with partition key.",
 				},
 				{
 					Key:   "partition",
@@ -295,7 +322,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:  FieldTypeEnum,
 					Description: "Set to key to count the budget per API key: per owner when the key has one, so rotating or re-creating it keeps the spend, otherwise per key. Requests without an API key pass uncounted. " +
 						"In enforce mode a key budget fails closed: 503 budget_unavailable when the counter store is unavailable, and 403 model_unpriced on a dollar budget for a model with no catalog or registry price. " +
-						"Not allowed with custom_pricing, group_by_header or behavior_on_exceeded downgrade_model.",
+						"Not allowed with custom_pricing, group_by, group_by_header or behavior_on_exceeded downgrade_model.",
 					Enum: enumOptions("key"),
 				},
 				{
@@ -1194,7 +1221,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"google_model_armor": {
 		name:        "Google Model Armor",
 		group:       groupGuardrails,
-		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable, slow or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. Under closed, every filter in block_on must be enabled in the template, or every request is blocked. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block.",
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. If Model Armor is unavailable or rejects the credentials, failure_mode decides: open (default) lets the request through and records failed_open, closed blocks it in enforce and records it in observe. If it does not answer within the time limit, timeout_failure_mode decides the same way, and follows failure_mode when left empty. Under closed, every filter in block_on must be enabled in the template, or every request is blocked. Content it cannot inspect is blocked in enforce and only recorded in observe. Streamed responses are always inspected block by block, each block within a fixed 2-second limit.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1248,9 +1275,22 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "failure_mode",
 					Label:       "Failure mode",
 					Type:        FieldTypeEnum,
-					Description: "What happens when Model Armor cannot evaluate a request (unreachable, too slow, credentials refused): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key, or a block_on filter the template does not enable, blocks every request.",
+					Description: "What happens when Model Armor cannot evaluate a request (unreachable, credentials refused, a filter that gave no verdict): open lets it through, closed blocks it (enforce) or records it (observe). With closed, a wrong service account key, or a block_on filter the template does not enable, blocks every request. A timeout follows timeout_failure_mode.",
 					Enum:        enumOptions("open", "closed"),
 					Default:     "open",
+				},
+				{
+					Key:         "timeout_failure_mode",
+					Label:       "When it's too slow",
+					Type:        FieldTypeEnum,
+					Description: "What happens when Model Armor does not answer within the time limit: open lets the request through, closed blocks it (enforce) or records it (observe). Empty follows failure_mode. A streamed block that takes longer than 2 seconds follows it too.",
+					Enum:        enumOptions("open", "closed"),
+				},
+				{
+					Key:         "timeout_seconds",
+					Label:       "Time limit in seconds",
+					Type:        FieldTypeInteger,
+					Description: "How long one call to Model Armor may take, sign-in included, from 1 to 60. Empty uses the gateway default (15 seconds unless the gateway sets MODEL_ARMOR_TIMEOUT). It applies to non-streamed requests and responses; a streamed block keeps its 2-second limit.",
 				},
 			},
 		},

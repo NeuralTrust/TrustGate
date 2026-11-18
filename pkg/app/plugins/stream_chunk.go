@@ -112,6 +112,44 @@ func pieceTimeoutOf(inspector StreamInspector) time.Duration {
 	return defaultStreamPieceTimeout
 }
 
+// StreamFailureModes is the optional declaration of an inspector whose policy
+// decides each availability failure on its own (google_model_armor's
+// failure_mode and timeout_failure_mode). An inspector that implements it has a
+// chunk that ran out of time named a timeout (ChunkTimeout), and is asked, for
+// a chunk it never answered, whether that failure is cut; one that does not
+// keeps its stream options' on_error. For an implementer this answer replaces
+// its on_error for availability failures, in both directions: a failure it does
+// not cut is absorbed as failed_open (entryFailsOpenOn) although its stream
+// options say fail_closed.
+type StreamFailureModes interface {
+	StreamFailsClosedOn(settings map[string]any, reason FailureReason, detail string) bool
+}
+
+func entryFailsClosedOn(entry chainEntry, reason FailureReason, detail string) bool {
+	if modes, ok := entry.plugin.(StreamFailureModes); ok {
+		return modes.StreamFailsClosedOn(entry.config.Settings, reason, detail)
+	}
+	return entryFailsClosed(entry)
+}
+
+// ChunkTimeout names a chunked evaluation's bare transport failure a timeout
+// when the chunk that decided it ran out of time: never started before the
+// deadline (ClassifyChunks reports that as a bare transport failure once a
+// call was slow), cut by the deadline mid-call, or ended on its own timeout.
+// A failure that already names a detail is kept.
+func ChunkTimeout[T any](d ChunkDecision, outs []textchunk.Outcome[T]) ChunkDecision {
+	if d.Kind != ChunkAvailabilityFailure || d.Reason != FailureTransport || d.Detail != "" {
+		return d
+	}
+	if d.Index < 0 || d.Index >= len(outs) {
+		return d
+	}
+	if out := outs[d.Index]; !out.Started || out.TimedOut || out.BudgetCut {
+		d.Detail = DetailTimeout
+	}
+	return d
+}
+
 // entryFailsClosed reports whether the entry's own stream options say
 // fail_closed: an explicit opt-in, so an empty or unparseable answer is not one.
 func entryFailsClosed(entry chainEntry) bool {
@@ -371,7 +409,11 @@ func mergeChunkVerdicts(
 	// would send text no call judged, raw beside the masks of the chunks that
 	// answered. The stream-wide on_error cannot do this, since a guardrail that
 	// owns the stream options sets it to fail_open.
-	if d.Kind == ChunkAvailabilityFailure && Blocks(entry.mode) && entryFailsClosed(entry) {
+	_, splitsModes := entry.plugin.(StreamFailureModes)
+	if splitsModes {
+		d = ChunkTimeout(d, outs)
+	}
+	if d.Kind == ChunkAvailabilityFailure && Blocks(entry.mode) && entryFailsClosedOn(entry, d.Reason, d.Detail) {
 		v, err := ExternalStreamOutcomeUnder(entry.plugin.Name(), entry.mode, d.Reason, d.Detail, nil, true,
 			chunkFailureError(d, outs, len(chunks)))
 		if v != nil {
@@ -385,6 +427,10 @@ func mergeChunkVerdicts(
 		availability = outs[d.Index].Err
 		if availability == nil {
 			availability = chunkFailureError(d, outs, len(chunks))
+		}
+		var typed *ExternalStreamFailure
+		if splitsModes && d.Detail == DetailTimeout && !errors.As(availability, &typed) {
+			availability = newExternalStreamFailure(entry.plugin.Name(), d.Reason, d.Detail, availability)
 		}
 	}
 	merged := carry(SegmentVerdict{})

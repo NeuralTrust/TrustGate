@@ -115,18 +115,18 @@ func (p *HTTPClientPool) Get(key string, timeout time.Duration) *http.Client {
 		}
 		cl := &http.Client{
 			Timeout:   timeout,
-			Transport: newTransport(p.trusted),
+			Transport: &forwardingTransport{base: newTransport(p.trusted)},
 		}
 		p.pool.Store(key, cl)
 		return cl, nil
 	})
 	if err != nil {
-		return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
+		return &http.Client{Timeout: timeout, Transport: &forwardingTransport{base: newTransport(p.trusted)}}
 	}
 	if cl, ok := v.(*http.Client); ok {
 		return cl
 	}
-	return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
+	return &http.Client{Timeout: timeout, Transport: &forwardingTransport{base: newTransport(p.trusted)}}
 }
 
 // GetStream returns an *http.Client suitable for SSE streaming. Unlike Get, it

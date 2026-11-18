@@ -215,6 +215,17 @@ type RequestContext struct {
 	// them and never modify them.
 	KeyGroupID     string
 	KeyGroupBudget *keygroupdomain.Budget
+	// CallerSubject is who the request counts as for a limit split per caller
+	// (group_by subject) and CallerClaims the verified token claims a limit
+	// split per claim reads. The gateway sets them with SetCaller from the
+	// resolved identity, never from a header the client could choose freely:
+	// a token's subject, a personal key's owner, app:<consumer>:<end user>
+	// for an end user an application's credential named, key:<auth id> for
+	// an application's key naming no one, or a client certificate's subject
+	// (consumer.CallerSubject). Read
+	// them, never modify them.
+	CallerSubject string
+	CallerClaims  map[string]any
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel
@@ -267,6 +278,16 @@ func (r *RequestContext) HeaderValue(name string) string {
 		}
 	}
 	return ""
+}
+
+// SetCaller records who the request counts as for a per-caller limit and the
+// verified claims a per-claim limit reads.
+func (r *RequestContext) SetCaller(subject string, claims map[string]any) {
+	if r == nil {
+		return
+	}
+	r.CallerSubject = subject
+	r.CallerClaims = claims
 }
 
 // IsBedrockNative reports whether the client called a Bedrock Runtime operation

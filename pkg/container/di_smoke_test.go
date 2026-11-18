@@ -21,6 +21,7 @@ import (
 
 	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appconfigsyncrevocation "github.com/NeuralTrust/TrustGate/pkg/app/configsyncrevocation"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
@@ -29,6 +30,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -187,6 +189,10 @@ func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
 				}
 				invErr = c.Invoke(func(p dblessProxyServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			case "mcp":
+				// The Store's agent tools are wired only when both resolve.
+				if err := c.Invoke(func(storeaccessdomain.AgentAccessReader, *appa2a.Forwarder) {}); err != nil {
+					t.Fatalf("Invoke(agent access reader + a2a forwarder): %v", err)
+				}
 				invErr = c.Invoke(func(p dblessMCPServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			case "agent":
 				invErr = c.Invoke(func(p dblessAgentServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })

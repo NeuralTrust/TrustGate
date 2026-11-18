@@ -115,3 +115,95 @@ func TestAuthBinding_AllowsCertificateClaims(t *testing.T) {
 		t.Fatal("without an allowed list every certificate passes")
 	}
 }
+
+func TestAuthBinding_ClaimRulesNormalizeAndValidate(t *testing.T) {
+	t.Parallel()
+	b := AuthBinding{
+		RequiredClaims:  map[string][]string{" idtyp ": {" app ", "app", ""}, "  ": {"dropped"}},
+		ForbiddenClaims: []string{" email", "email", "upn", ""},
+	}
+	b.Normalize()
+	if len(b.RequiredClaims) != 1 || len(b.RequiredClaims["idtyp"]) != 1 || b.RequiredClaims["idtyp"][0] != "app" {
+		t.Fatalf("required claims must be trimmed and de-duplicated, got %v", b.RequiredClaims)
+	}
+	if len(b.ForbiddenClaims) != 2 || b.ForbiddenClaims[0] != "email" || b.ForbiddenClaims[1] != "upn" {
+		t.Fatalf("forbidden claims must be trimmed and de-duplicated in order, got %v", b.ForbiddenClaims)
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if b.IsZero() {
+		t.Fatal("a binding with claim rules narrows something")
+	}
+
+	invalid := map[string]AuthBinding{
+		"whitespace in a forbidden claim":   {ForbiddenClaims: []string{"bad name"}},
+		"long claim name":                   {ForbiddenClaims: []string{strings.Repeat("c", maxClaimNameLength+1)}},
+		"whitespace in a required claim":    {RequiredClaims: map[string][]string{"bad name": nil}},
+		"long required value":               {RequiredClaims: map[string][]string{"idtyp": {strings.Repeat("v", maxAuthBindingEntryLength+1)}}},
+		"claim both required and forbidden": {RequiredClaims: map[string][]string{"email": nil}, ForbiddenClaims: []string{"email"}},
+	}
+	tooManyValues := make([]string, maxClaimValuesPerClaim+1)
+	for i := range tooManyValues {
+		tooManyValues[i] = strings.Repeat("v", i+1)
+	}
+	invalid["too many values"] = AuthBinding{RequiredClaims: map[string][]string{"roles": tooManyValues}}
+	tooManyClaims := make([]string, maxClaimRules+1)
+	for i := range tooManyClaims {
+		tooManyClaims[i] = "claim" + strings.Repeat("x", i)
+	}
+	invalid["too many forbidden claims"] = AuthBinding{ForbiddenClaims: tooManyClaims}
+	for name, b := range invalid {
+		if err := b.Validate(); !errors.Is(err, ErrInvalidAuthBinding) {
+			t.Errorf("%s: err = %v, want ErrInvalidAuthBinding", name, err)
+		}
+	}
+}
+
+func TestAuthBinding_AllowsClaims(t *testing.T) {
+	t.Parallel()
+	machineOnly := AuthBinding{
+		ForbiddenClaims: []string{"email", "upn", "name", "preferred_username"},
+		RequiredClaims:  map[string][]string{"idtyp": {"app"}},
+	}
+	cases := []struct {
+		name    string
+		binding AuthBinding
+		claims  map[string]any
+		want    bool
+	}{
+		{"no rules admit anything", AuthBinding{}, map[string]any{"email": "a@b.c"}, true},
+		{"workload token passes", machineOnly, map[string]any{"sub": "agent", "idtyp": "app"}, true},
+		{"a person's token is refused", machineOnly, map[string]any{"sub": "u", "idtyp": "app", "upn": "u@corp"}, false},
+		{"an empty forbidden claim says nothing", machineOnly, map[string]any{"idtyp": "app", "email": ""}, true},
+		{"a null forbidden claim says nothing", machineOnly, map[string]any{"idtyp": "app", "name": nil}, true},
+		{"missing required claim", machineOnly, map[string]any{"sub": "agent"}, false},
+		{"wrong required value", machineOnly, map[string]any{"idtyp": "user"}, false},
+		{"array claim matches an element", AuthBinding{RequiredClaims: map[string][]string{"roles": {"agent"}}}, map[string]any{"roles": []any{"reader", "agent"}}, true},
+		{"array claim without the value", AuthBinding{RequiredClaims: map[string][]string{"roles": {"agent"}}}, map[string]any{"roles": []any{"reader"}}, false},
+		{"empty array is not present", AuthBinding{RequiredClaims: map[string][]string{"roles": nil}}, map[string]any{"roles": []any{}}, false},
+		{"presence only", AuthBinding{RequiredClaims: map[string][]string{"oid": nil}}, map[string]any{"oid": "abc"}, true},
+		{"boolean compared in its JSON spelling", AuthBinding{RequiredClaims: map[string][]string{"agent": {"true"}}}, map[string]any{"agent": true}, true},
+		{"number compared in its JSON spelling", AuthBinding{RequiredClaims: map[string][]string{"ver": {"2"}}}, map[string]any{"ver": float64(2)}, true},
+		{"object never matches", AuthBinding{RequiredClaims: map[string][]string{"x": {"y"}}}, map[string]any{"x": map[string]any{"y": "y"}}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.binding.AllowsClaims(tc.claims); got != tc.want {
+			t.Errorf("%s: AllowsClaims = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestAuthBinding_AllowsTokenCombinesClientAndClaims(t *testing.T) {
+	t.Parallel()
+	b := AuthBinding{AllowedClientIDs: []string{"agent-app"}, ForbiddenClaims: []string{"upn"}}
+	if !b.AllowsToken(map[string]any{"azp": "agent-app"}) {
+		t.Fatal("allowed client without forbidden claims must pass")
+	}
+	if b.AllowsToken(map[string]any{"azp": "agent-app", "upn": "someone@corp"}) {
+		t.Fatal("a delegated token issued to the allowed client must still be refused")
+	}
+	if b.AllowsToken(map[string]any{"azp": "other"}) {
+		t.Fatal("another client must be refused")
+	}
+}

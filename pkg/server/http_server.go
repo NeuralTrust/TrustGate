@@ -26,6 +26,21 @@ import (
 type httpServer struct {
 	*BaseServer
 	mu sync.Mutex
+	// tlsCert and tlsKey, when set, are the PEM files the server serves HTTPS
+	// with instead of plain HTTP.
+	tlsCert, tlsKey string
+}
+
+// HTTPServerOption tunes an HTTP server built by NewHTTPServer.
+type HTTPServerOption func(*httpServer)
+
+// WithTLS serves HTTPS with the PEM certificate chain and key at these paths.
+// Fiber's listener requires TLS 1.2 or later. Empty paths leave the server on
+// plain HTTP.
+func WithTLS(certFile, keyFile string) HTTPServerOption {
+	return func(s *httpServer) {
+		s.tlsCert, s.tlsKey = certFile, keyFile
+	}
 }
 
 func NewHTTPServer(
@@ -33,17 +48,27 @@ func NewHTTPServer(
 	cfg config.ServerConfig,
 	logger *slog.Logger,
 	routers []router.ServerRouter,
+	opts ...HTTPServerOption,
 ) Server {
-	return &httpServer{
+	s := &httpServer{
 		BaseServer: NewBaseServer(name, addr, cfg, logger).WithRouters(routers...),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *httpServer) Run() error {
+	tls := s.tlsCert != "" && s.tlsKey != ""
 	s.logger.Info(bootlog.HTTPStart(s.Name),
 		slog.String("server", s.Name),
 		slog.String("addr", s.Addr),
+		slog.Bool("tls", tls),
 	)
+	if tls {
+		return s.Router.ListenTLS(s.Addr, s.tlsCert, s.tlsKey)
+	}
 	return s.Router.Listen(s.Addr)
 }
 

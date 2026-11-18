@@ -23,10 +23,14 @@ import (
 )
 
 type CreateRegistryRequest struct {
-	Name            string               `json:"name"`
-	Type            string               `json:"type,omitempty"`
-	Enabled         *bool                `json:"enabled,omitempty"`
-	Provider        string               `json:"provider,omitempty"`
+	Name     string `json:"name"`
+	Type     string `json:"type,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// ProviderOptions are provider-specific settings (base_url, api, static
+	// headers, …). On every LLM provider, forward_client_headers lists client
+	// request headers copied onto the provider request (e.g. ["traceparent",
+	// "tracestate"]); credentials, framing and gateway headers are refused.
 	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
 	Description     string               `json:"description,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
