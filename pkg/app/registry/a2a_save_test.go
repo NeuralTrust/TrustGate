@@ -16,6 +16,7 @@ package registry_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -82,6 +83,27 @@ func TestCreatorA2APinsTheCard(t *testing.T) {
 	assert.Equal(t, domain.MCPAuthModeNone, b.A2ATarget.Auth.Mode)
 	assert.NotEmpty(t, b.A2ATarget.CardDigest)
 	assert.False(t, b.A2ATarget.CardPinnedAt.IsZero())
+}
+
+// A Databricks agent publishes no card, so nothing tried its sign-in: its
+// client credentials are tried on save, and a token endpoint that refuses
+// them refuses the agent (ENG-3410).
+func TestCreatorA2ARefusesABuiltCardAgentWhoseSignInMintsNoToken(t *testing.T) {
+	t.Parallel()
+	creds := appmocks.NewCardCredentials(t)
+	creds.EXPECT().Token(mock.Anything, mock.Anything).Return("", errors.New("invalid_client")).Once()
+	creator := appregistry.NewCreator(repomocks.NewRepository(t), newCacheManager(), newTestLogger(), nil, nil,
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), creds))
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: ids.New[ids.GatewayKind](), Name: "Gestoria", Type: domain.TypeA2A,
+		A2ATarget: &domain.A2ATarget{
+			Provider:   domain.A2AProviderDatabricks,
+			Databricks: &domain.DatabricksLocator{WorkspaceURL: "https://acme.cloud.databricks.com", ServingEndpoint: "agents_gestoria"},
+			Auth:       &domain.MCPAuth{Mode: domain.MCPAuthModeClientCredentials, ClientID: "sp", ClientSecret: "wrong"},
+		},
+	})
+	require.ErrorIs(t, err, domain.ErrAgentSignInRefused)
 }
 
 // A card on a website that is not an agent: its endpoint does not answer
@@ -264,8 +286,10 @@ func TestUpdaterA2ADropsCloudAuthTheNewModeDoesNotUse(t *testing.T) {
 		AWSAuth: domain.AWSAuth{AccessKeyID: "AKIA", SecretAccessKey: "stored-secret"},
 	}}))
 	repo, publisher := expectSavedUpdate(t, existing)
+	creds := appmocks.NewCardCredentials(t)
+	creds.EXPECT().Token(mock.Anything, mock.Anything).Return("token", nil).Once()
 	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil,
-		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), appmocks.NewCardCredentials(t)))
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), creds))
 
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
@@ -276,6 +300,31 @@ func TestUpdaterA2ADropsCloudAuthTheNewModeDoesNotUse(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got.A2ATarget.CloudAuth)
 	assert.Equal(t, domain.MCPAuthModeClientCredentials, got.A2ATarget.Auth.Mode)
+}
+
+// New client credentials are tried on save: a secret, scope or token URL the
+// token endpoint refuses is refused then, not on the first call (ENG-3410).
+func TestUpdaterA2ARefusesClientCredentialsThatMintNoToken(t *testing.T) {
+	t.Parallel()
+	gw, _ := gatewayOn(t, gatewaydomain.DataPlaneDedicated)
+	existing := storedCloudAgent(gw, cloudTarget(domain.A2AProviderBedrockAgentCore, &domain.A2ACloudAuth{AWS: &domain.A2AAWSAuth{
+		AWSAuth: domain.AWSAuth{AccessKeyID: "AKIA", SecretAccessKey: "stored-secret"},
+	}}))
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	creds := appmocks.NewCardCredentials(t)
+	creds.EXPECT().Token(mock.Anything, mock.Anything).Return("", errors.New("invalid_client")).Once()
+	updater := appregistry.NewUpdater(repo, newCacheManager(), nil, newTestLogger(), nil, nil,
+		appregistry.WithAgentCards(appmocks.NewCardFetcher(t), creds))
+
+	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		A2ATarget: &domain.A2ATarget{Auth: &domain.MCPAuth{
+			Mode: domain.MCPAuthModeClientCredentials, ClientID: "app", ClientSecret: "wrong", TokenURL: "https://idp.example.com/token",
+		}},
+	})
+	require.ErrorIs(t, err, domain.ErrAgentSignInRefused)
+	assert.ErrorContains(t, err, "invalid_client")
 }
 
 func TestUpdaterA2AKeepsCloudAuthWhileTheModeUsesIt(t *testing.T) {

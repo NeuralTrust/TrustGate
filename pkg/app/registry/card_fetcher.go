@@ -138,6 +138,13 @@ func (a agentCards) pin(ctx context.Context, gatewayID ids.GatewayID, t *domain.
 	if err := a.probe(ctx, gatewayID, t); err != nil {
 		return err
 	}
+	// An agent whose card the gateway builds was read with no credential, so
+	// its sign-in is tried here; the others' already was.
+	if t.Provider.BuildsCard() {
+		if err := a.signIn(ctx, gatewayID, t); err != nil {
+			return err
+		}
+	}
 	t.SkillScan = a.scanSkills(ctx, gatewayID, t, t.Card)
 	return nil
 }
@@ -164,6 +171,27 @@ func (a agentCards) probe(ctx context.Context, gatewayID ids.GatewayID, t *domai
 		return err
 	}
 	return a.fetcher.Probe(ctx, t.Endpoint(), t.ProtocolVersion, authorize)
+}
+
+// signIn mints t's client-credentials token, as the first call would, so
+// credentials the token endpoint refuses are refused on save rather than on
+// that call. Any other sign-in, or a secret this plane cannot read, is not
+// tried.
+func (a agentCards) signIn(ctx context.Context, gatewayID ids.GatewayID, t *domain.A2ATarget) error {
+	if t.Auth == nil || t.Auth.Mode != domain.MCPAuthModeClientCredentials {
+		return nil
+	}
+	target, err := a.withSecrets(ctx, gatewayID, t, true, false)
+	if errors.Is(err, domain.ErrSecretUnavailable) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := a.credentials.Token(ctx, target.Auth); err != nil {
+		return fmt.Errorf("%w: %w", domain.ErrAgentSignInRefused, err)
+	}
+	return nil
 }
 
 // withSecrets returns t with the secret references of the credentials a
