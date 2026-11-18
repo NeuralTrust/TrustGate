@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -38,6 +39,7 @@ type Plugin struct {
 	redis redis.UniversalClient
 	now   func() time.Time
 	newID func() string
+	after afterFunc
 }
 
 type Option func(*Plugin)
@@ -55,6 +57,7 @@ func New(redisClient redis.UniversalClient, opts ...Option) *Plugin {
 		redis: redisClient,
 		now:   time.Now,
 		newID: func() string { return uuid.NewString() },
+		after: defaultAfterFunc,
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -113,7 +116,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	now := p.now()
-	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject) + counter.Suffix + cfg.partition.KeySuffix(in.Request)
+	tail := counter.Suffix + cfg.partition.KeySuffix(in.Request)
+	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject) + tail
+	slotKey := parallelKey(in.Config.ID, dimension, subject, tail)
 	if counter.Dimension != "" {
 		dimension = counter.Dimension
 	}
@@ -168,6 +173,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 	}
 
+	if cfg.MaxParallel > 0 {
+		if res, handled, err := p.takeSlot(ctx, in, cfg, slotKey, &data); handled {
+			return res, err
+		}
+	}
+
 	if err := p.record(ctx, redisKey, now, window); err != nil {
 		// A read that already allowed the request must not turn into a
 		// refusal just because the write-back failed: the client keeps the
@@ -193,6 +204,70 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		in.Event.SetExtras(data)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+// takeSlot counts the request among those in progress. It returns handled when
+// the request is already answered: refused with a 429 (no Retry-After: a slot
+// frees when some other request ends, not at a known time), or passed through
+// because the counter store failed. In observe the slot is taken even over the
+// cap so the count stays true, and the overage is only reported. The slot is
+// freed when the request ends, through the hook the plane installed; without
+// one nothing could free it, so the cap is skipped.
+func (p *Plugin) takeSlot(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg *config,
+	key string,
+	data *RateLimiterData,
+) (res *appplugins.Result, handled bool, err error) {
+	done := appplugins.RequestDoneFrom(ctx)
+	if done == nil {
+		slog.Warn("rate_limiter: max_parallel skipped, the request has no end hook")
+		return nil, false, nil
+	}
+	member := p.newID()
+	granted, inFlight, err := p.acquire(ctx, key, member, cfg.MaxParallel, !appplugins.Blocks(in.Mode))
+	if err != nil {
+		res, err = p.counterUnavailable(ctx, in, *data, nil, "acquire", err)
+		return res, true, err
+	}
+	data.MaxParallel = cfg.MaxParallel
+	data.CurrentParallel = inFlight
+	if granted {
+		p.hold(done, key, member)
+	}
+	if granted && inFlight <= int64(cfg.MaxParallel) {
+		return nil, false, nil
+	}
+	data.RateLimitExceeded = true
+	data.ParallelExceeded = true
+	if granted {
+		return nil, false, nil
+	}
+	appplugins.SetDecisionFromOutcome(in.Event, "blocked")
+	if in.Event != nil {
+		in.Event.SetExtras(*data)
+	}
+	message := fmt.Sprintf("TrustGate blocked this request: too many requests in progress (max %d at once).", cfg.MaxParallel)
+	return nil, true, &appplugins.PluginError{
+		StatusCode: http.StatusTooManyRequests,
+		Message:    message,
+		Body:       parallelRejectBody(data.ExceededType, message, cfg.MaxParallel),
+	}
+}
+
+func parallelRejectBody(dimension, message string, maxParallel int) []byte {
+	raw, err := json.Marshal(map[string]any{
+		"error":        "too many parallel requests",
+		"message":      message,
+		"reason":       dimension,
+		"scope":        dimension,
+		"max_parallel": maxParallel,
+	})
+	if err != nil {
+		return []byte(`{"error":"too many parallel requests"}`)
+	}
+	return raw
 }
 
 // counterUnavailable turns a counter-store (Redis) failure into a pass-through
