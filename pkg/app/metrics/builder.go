@@ -509,6 +509,12 @@ func (b *Builder) buildA2A(
 	}
 
 	b.fillRequest(evt, req, nil)
+	if a2a != nil {
+		// The agent is what Activity's Provider names for an agent call,
+		// whichever door (application key, playground) it came through.
+		evt.Request.Provider = a2a.AgentName
+		evt.Request.RegistryID = a2a.RegistryID
+	}
 	evt.Request.Preview = a2aMessagePreview(evt.Request.Body)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
