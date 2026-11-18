@@ -78,3 +78,15 @@ func TestInsertColumnsExcludeDefaultedCreatedAt(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationsAddEveryInsertColumn(t *testing.T) {
+	var ddl strings.Builder
+	for _, m := range Migrations() {
+		ddl.WriteString(m.UpSQL)
+	}
+	for _, c := range InsertColumns() {
+		if !strings.Contains(ddl.String(), c) {
+			t.Errorf("insert column %q is created by no migration", c)
+		}
+	}
+}

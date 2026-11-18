@@ -23,6 +23,7 @@ import (
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	appa2a "github.com/NeuralTrust/TrustGate/pkg/app/a2a"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -335,6 +336,10 @@ type rpcGatewayParams struct {
 	// SecretRefs resolves the secret references of the Store's shelf
 	// registries, which the scoper reads outside the gateway's runtime data.
 	SecretRefs appsecretref.Materializer `optional:"true"`
+	// Forwarder and AgentAccess let the Store call the A2A agents published
+	// to people. Either absent, the Store offers no agent tools.
+	Forwarder   *appa2a.Forwarder                   `optional:"true"`
+	AgentAccess storeaccessdomain.AgentAccessReader `optional:"true"`
 }
 
 // storeModelsAdapter answers the Store's models tool with the proxy's own
@@ -417,6 +422,17 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		return nil, err
 	}
 	gateway = gateway.WithInventoryTool(inventory)
+
+	if p.Forwarder != nil && p.AgentAccess != nil {
+		// An agent call answers inside the tools/call response, so it gives up
+		// with the same margin under the server's write deadline the
+		// notification stream keeps.
+		agents, err := appmcp.NewAgentTools(p.Forwarder, p.AgentAccess, p.Cfg.Server.WriteTimeout*3/4)
+		if err != nil {
+			return nil, err
+		}
+		gateway = gateway.WithAgentTools(agents)
+	}
 
 	if p.Installs != nil && p.Registries != nil {
 		scoperOpts := []appstore.ScoperOption{

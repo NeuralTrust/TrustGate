@@ -91,7 +91,13 @@ func (vertex) decode(x *Exchange, res *http.Response, body []byte) (json.RawMess
 		}
 		return result, nil, false
 	case s == http.StatusBadRequest || s == http.StatusUnprocessableEntity:
-		return nil, invalidParams(), true
+		var refusal struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(body, &refusal)
+		return nil, agentRejectedParams(s, refusal.Error.Message), true
 	case s == http.StatusUnauthorized:
 		return nil, IdentityRequired(), false
 	case s == http.StatusForbidden:

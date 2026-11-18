@@ -115,6 +115,9 @@ func (w *world) addGateway() {
 	for i := 0; i < w.rng.IntN(3); i++ {
 		w.addStorePolicy(g.ID, data)
 	}
+	for i := 0; i < w.rng.IntN(3); i++ {
+		w.addAgentAccess(g.ID, data)
+	}
 	if w.rng.IntN(2) == 0 {
 		data.StoreEveryone = []storeaccessdomain.Everyone{{GatewayID: g.ID, Mode: "curated", CreatedAt: fixedTime, UpdatedAt: fixedTime}}
 	}
@@ -193,6 +196,22 @@ func (w *world) addStoreGrant(gw ids.GatewayID, data *readmodel.Data) {
 		}
 	}
 	data.StoreGrants = append(data.StoreGrants, g)
+}
+
+func (w *world) addAgentAccess(gw ids.GatewayID, data *readmodel.Data) {
+	a := storeaccessdomain.AgentAccess{
+		GatewayID: gw, PrincipalType: storeaccessdomain.PrincipalGroup, PrincipalID: fmt.Sprintf("group-%d", w.rng.IntN(20)),
+		Mode: "selected", RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}, CreatedAt: fixedTime, UpdatedAt: fixedTime,
+	}
+	if w.rng.IntN(3) == 0 {
+		a.PrincipalType, a.PrincipalID, a.Mode, a.RegistryIDs = storeaccessdomain.PrincipalAll, "", "all", nil
+	}
+	for _, existing := range data.StoreAgentAccess {
+		if existing.PrincipalType == a.PrincipalType && existing.PrincipalID == a.PrincipalID {
+			return
+		}
+	}
+	data.StoreAgentAccess = append(data.StoreAgentAccess, a)
 }
 
 func (w *world) addStorePolicy(gw ids.GatewayID, data *readmodel.Data) {

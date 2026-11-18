@@ -750,3 +750,70 @@ func TestCompilerShipsStoreEveryone(t *testing.T) {
 		})
 	}
 }
+
+type fakeStoreAgentAccess struct {
+	byGateway map[string][]*storeaccessdomain.AgentAccess
+}
+
+func (f fakeStoreAgentAccess) ListAgentAccessByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.AgentAccess, error) {
+	return f.byGateway[gatewayID.String()], nil
+}
+
+func (f fakeStoreAgentAccess) ListAgentAccess(_ context.Context, page, _ int) ([]*storeaccessdomain.AgentAccess, int, error) {
+	if page > 1 {
+		return nil, 0, nil
+	}
+	var items []*storeaccessdomain.AgentAccess
+	for _, rows := range f.byGateway {
+		items = append(items, rows...)
+	}
+	return items, len(items), nil
+}
+
+func TestCompilerShipsStoreAgentAccess(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	other := mustGatewayID(t, "33333333-3333-3333-3333-333333333333")
+	corrupt := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	agent := ids.New[ids.RegistryKind]()
+	access := fakeStoreAgentAccess{byGateway: map[string][]*storeaccessdomain.AgentAccess{
+		gw.String(): {
+			{GatewayID: gw, PrincipalType: storeaccessdomain.PrincipalUser, PrincipalID: "ana", Mode: "none"},
+			{GatewayID: gw, PrincipalType: storeaccessdomain.PrincipalGroup, PrincipalID: "eng", Mode: "selected", RegistryIDs: []ids.RegistryID{agent}},
+			{GatewayID: gw, PrincipalType: storeaccessdomain.PrincipalAll, Mode: "all"},
+		},
+		other.String(): {{GatewayID: other, PrincipalType: storeaccessdomain.PrincipalAll, Mode: "none"}},
+	}}
+	perGateway := fakeRegistries{errByGateway: map[string]error{corrupt.String(): fmt.Errorf("decrypt auth: %w", commonerrors.ErrCorruptData)}}
+
+	for name, registries := range map[string]fakeRegistries{"bulk": {}, "per gateway": perGateway} {
+		t.Run(name, func(t *testing.T) {
+			compiler := appsnapshot.NewCompiler(
+				fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}, {ID: other}, {ID: corrupt}}},
+				fakeConsumers{}, registries, fakePolicies{}, fakeAuths{}, fakeCatalog{}, nil,
+				appsnapshot.WithStoreAgentAccess(access),
+			)
+			snapshot, err := compiler.Compile(context.Background())
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got := snapshot.StoreAgentAccessByGateway(gw)
+			if len(got) != 3 || got[0].PrincipalType != storeaccessdomain.PrincipalAll || got[1].PrincipalID != "eng" ||
+				got[1].RegistryIDs[0] != agent || got[2].PrincipalID != "ana" {
+				t.Fatalf("rows of %s, sorted by principal, = %+v", gw, got)
+			}
+			if rows := snapshot.Data().StoreAgentAccess; len(rows) != 4 || rows[0].GatewayID != gw {
+				t.Fatalf("every gateway's rows ride the global snapshot, sorted by gateway, got %+v", rows)
+			}
+			if len(snapshot.StoreAgentAccessByGateway(corrupt)) != 0 {
+				t.Fatal("a gateway without rows has none")
+			}
+			scoped, err := compiler.CompileFor(context.Background(), other.String())
+			if err != nil {
+				t.Fatalf("compile for %s: %v", other, err)
+			}
+			if rows := scoped.Data().StoreAgentAccess; len(rows) != 1 || rows[0].GatewayID != other {
+				t.Fatalf("a scoped snapshot carries its own gateway's rows only, got %+v", rows)
+			}
+		})
+	}
+}

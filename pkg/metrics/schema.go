@@ -27,6 +27,12 @@ const (
 	ColumnRequestBody   = "request_body"
 	ColumnResponseBody  = "response_body"
 	ColumnCreatedAt     = "created_at"
+	// ColumnClientTraceID is the trace-id field of the W3C traceparent the
+	// client sent, stored as received. It joins the gateway requests of one
+	// client flow, which TrustGate's own trace_id cannot do.
+	ColumnClientTraceID = "client_trace_id"
+	// ColumnMCPSessionID is the Mcp-Session-Id header of an MCP request.
+	ColumnMCPSessionID = "mcp_session_id"
 )
 
 type Migration = migrations.Migration
@@ -48,5 +54,7 @@ func InsertColumns() []string {
 		ColumnSchemaVersion,
 		ColumnRequestBody,
 		ColumnResponseBody,
+		ColumnClientTraceID,
+		ColumnMCPSessionID,
 	}
 }

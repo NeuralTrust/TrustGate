@@ -205,6 +205,7 @@ func (p *providerInvoker) Invoke(
 	if bk.CredentialUnavailable() {
 		return nil, registry.ErrSecretUnavailable
 	}
+	ctx = withForwardedClientHeaders(ctx, bk, req)
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
@@ -290,6 +291,7 @@ func (p *providerInvoker) InvokeStream(
 	if bk.CredentialUnavailable() {
 		return nil, registry.ErrSecretUnavailable
 	}
+	ctx = withForwardedClientHeaders(ctx, bk, req)
 	if req.IsBedrockNative() {
 		return p.invokeBedrockNative(ctx, bk, req)
 	}
@@ -498,7 +500,7 @@ func (p *providerInvoker) prepare(
 		crossFormat:  crossFormat,
 		capability:   capability,
 	}
-	if !crossFormat && bk.Provider() == providers.ProviderAnthropic && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
+	if !crossFormat && carriesAnthropicBetas(bk.Provider()) && adapter.IsSameWireFormat(targetFormat, adapter.FormatAnthropic) {
 		prep.cfg.AnthropicBeta = anthropicBetas(req)
 	}
 	if converse.betas != "" {

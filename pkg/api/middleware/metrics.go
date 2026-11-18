@@ -203,6 +203,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 		meta.RetentionPlan = gw.Entitlements.Tier
 	}
 	meta.SessionID = strings.Clone(EffectiveSessionID(c))
+	meta.ClientTraceID = requestmeta.ClientTraceID(requestHeaderValues(c, requestmeta.HeaderTraceparent))
 	meta.EndUser = detectEndUser(c)
 	return meta
 }
@@ -287,6 +288,20 @@ func cloneStreamHeaders(headers map[string][]string) map[string][]string {
 		}
 	}
 	return owned
+}
+
+// requestHeaderValues copies every value of one request header, so a repeated
+// header stays visible to callers that must reject it.
+func requestHeaderValues(c *fiber.Ctx, name string) []string {
+	raw := c.Request().Header.PeekAll(name)
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, len(raw))
+	for i, v := range raw {
+		out[i] = string(v)
+	}
+	return out
 }
 
 func metricsClientIP(c *fiber.Ctx, resolve func(string, string) string) string {

@@ -115,9 +115,10 @@ func provideRegistryRepository(c *container.Container) error {
 // pending requests for a deleted custom server.
 type registryDeleterCleaners struct {
 	dig.In
-	Grants   storeaccessdomain.Repository         `optional:"true"`
-	Everyone storeaccessdomain.EveryoneRepository `optional:"true"`
-	Installs installationdomain.Repository        `optional:"true"`
+	Grants   storeaccessdomain.Repository            `optional:"true"`
+	Everyone storeaccessdomain.EveryoneRepository    `optional:"true"`
+	Agents   storeaccessdomain.AgentAccessRepository `optional:"true"`
+	Installs installationdomain.Repository           `optional:"true"`
 	// Vault holds per-user header values, removed with their registry.
 	Vault vaultdomain.Repository `optional:"true"`
 }
@@ -129,6 +130,9 @@ func (p registryDeleterCleaners) options(logger *slog.Logger) []appregistry.Dele
 	}
 	if p.Everyone != nil {
 		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewEveryoneRegistryCleaner(p.Everyone)))
+	}
+	if p.Agents != nil {
+		opts = append(opts, appregistry.WithAfterDeleteCleaner(appstore.NewAgentAccessRegistryCleaner(p.Agents)))
 	}
 	if p.Vault != nil {
 		if cleaner := appregistry.NewUserHeaderValuesCleaner(p.Vault, logger); cleaner != nil {
@@ -210,8 +214,8 @@ func provideRegistryServices(c *container.Container) error {
 	if err := provideAgentCards(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, save registrySaveParams) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, save.options(compiler)...)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, save registrySaveParams) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, append(save.options(compiler), appregistry.WithCachePublisher(publisher))...)
 	}); err != nil {
 		return err
 	}

@@ -73,3 +73,18 @@ func (r *storeGrantReader) ListByGateway(_ context.Context, gatewayID ids.Gatewa
 	}
 	return cloneSlice(snap.StoreGrantsByGateway(gatewayID))
 }
+
+// NewStoreAgentAccessReader wires the snapshot-backed agent access reader.
+func NewStoreAgentAccessReader(store configsync.ConfigStore[*readmodel.Snapshot]) domain.AgentAccessReader {
+	return &storeGrantReader{store: store}
+}
+
+// ListAgentAccessByGateway returns the gateway's agent access rows; an
+// unloaded snapshot yields none, so no agent is offered.
+func (r *storeGrantReader) ListAgentAccessByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*domain.AgentAccess, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return cloneSlice(snap.StoreAgentAccessByGateway(gatewayID))
+}

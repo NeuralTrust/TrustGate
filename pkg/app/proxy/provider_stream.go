@@ -104,7 +104,11 @@ func stripStreamOptions(body []byte) []byte {
 // ClientNotifiedStreamError wraps an upstream stream failure an Anthropic,
 // Cohere, Responses or Gemini client has already been sent a terminal event
 // for in its own format, so the transport must not append a generic error
-// frame of its own.
+// frame of its own. A same-format client is in that position too once its
+// upstream's own terminal event, or the error the upstream sent in its place,
+// has been relayed: a read that fails after that, such as a reset on the way
+// to the body's end, cost the client nothing, and an error event behind a
+// finished answer would tell it the answer failed.
 type ClientNotifiedStreamError struct {
 	Err error
 }
@@ -171,6 +175,13 @@ func (e *ClientNotifiedStreamError) Unwrap() error {
 // the usage once: on the include_usage chunk when one follows the finish,
 // otherwise on the finish chunk. A Mistral client of a Groq or OpenRouter
 // upstream gets it once, on the finish chunk.
+//
+// A same-format stream whose upstream ends, without a read error, before the
+// terminal event its wire format closes a response with (passthroughEnd) ends
+// with errPassthroughUnterminated, so the transport writes its error event
+// instead of letting a truncated answer pass for a finished one. A read error
+// after that terminal, or after an error the upstream sent in-band, is wrapped
+// in ClientNotifiedStreamError: the client already has its ending.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
 	registry providerCodec,
@@ -195,6 +206,10 @@ func adaptStream(
 	}
 	if deferred != nil {
 		deferred.geminiCalls = geminiCalls
+	}
+	var ends *passthroughEnd
+	if !crossFormat {
+		ends = newPassthroughEnd(target)
 	}
 	usage := newUsageOnce(registry, source, target, crossFormat, logger)
 	// On the cross-format path the adapter re-encodes payload chunks but never
@@ -229,14 +244,21 @@ func adaptStream(
 				if usage != nil && !usage.flush(emit) {
 					return false
 				}
+				if ends.settled() {
+					logStreamFailure(logger, "upstream stream failed after the client got its terminal event", source, target, err, nil, false)
+					err = &ClientNotifiedStreamError{Err: err}
+				}
 				yield(nil, err)
 				return false
 			}
 
 			if !crossFormat {
-				if payload, ok := dataPayload(line); ok {
-					observeChunk(registry, payload, target, onChunk)
+				var chunk *adapter.CanonicalStreamChunk
+				if payload, ok := dataPayload(line); ok && (onChunk != nil || ends.pending()) {
+					chunk = decodeChunk(registry, payload, target)
 				}
+				ends.observe(line, chunk)
+				reportChunk(chunk, onChunk)
 				return yield(line, nil)
 			}
 
@@ -318,6 +340,14 @@ func adaptStream(
 					return
 				}
 			}
+		}
+		if ends.pending() {
+			logger.Warn("upstream stream ended before its terminal event; ended the client stream with an error event",
+				slog.String("target", string(target)),
+				slog.String("source", string(source)),
+			)
+			yield(nil, errPassthroughUnterminated)
+			return
 		}
 		if deferred != nil {
 			if !deferred.end(emit, registry, source, logger) {
@@ -402,8 +432,24 @@ func observeChunk(
 	if onChunk == nil {
 		return
 	}
+	reportChunk(decodeChunk(registry, payload, target), onChunk)
+}
+
+// decodeChunk decodes payload for the target format, or returns nil when it
+// does not decode. A passthrough decodes each payload once, for the observer
+// and for its terminal both.
+func decodeChunk(registry providerCodec, payload []byte, target adapter.Format) *adapter.CanonicalStreamChunk {
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
-	if err != nil || canonical == nil || canonical.UpstreamErrorOnly() {
+	if err != nil {
+		return nil
+	}
+	return canonical
+}
+
+// reportChunk hands a decoded chunk to onChunk, unless there is none or it
+// carries nothing but an upstream error.
+func reportChunk(canonical *adapter.CanonicalStreamChunk, onChunk func(*adapter.CanonicalStreamChunk)) {
+	if onChunk == nil || canonical == nil || canonical.UpstreamErrorOnly() {
 		return
 	}
 	onChunk(canonical)

@@ -129,7 +129,8 @@ func TestCompletions_FoundrySurfaces(t *testing.T) {
 
 			client := NewAzureClient()
 			config := &providers.Config{
-				Options: map[string]any{"api": tt.api},
+				Options:       map[string]any{"api": tt.api},
+				AnthropicBeta: "context-management-2025-06-27",
 				Credentials: providers.Credentials{
 					ApiKey: "foundry-key",
 					Azure: &providers.Azure{
@@ -152,6 +153,13 @@ func TestCompletions_FoundrySurfaces(t *testing.T) {
 			assert.Equal(t, tt.wantPath, gotPath)
 			assert.Equal(t, "foundry-key", gotHeaders.Get(tt.wantAPIKeyHeader))
 			assert.Equal(t, tt.wantVersion, gotHeaders.Get("anthropic-version"))
+			// The caller's beta opt-in reaches the Anthropic surface, whose body
+			// may use it, and no other.
+			wantBeta := ""
+			if tt.api == providers.AzureAPIAnthropic {
+				wantBeta = "context-management-2025-06-27"
+			}
+			assert.Equal(t, wantBeta, gotHeaders.Get("anthropic-beta"))
 		})
 	}
 }

@@ -391,7 +391,7 @@ func TestVertexErrorStatuses(t *testing.T) {
 		code   int64
 		reason string
 	}{
-		{status: http.StatusBadRequest, method: "message/send", code: a2a.CodeInvalidParams},
+		{status: http.StatusBadRequest, method: "message/send", code: a2a.CodeInvalidParams, reason: a2a.ReasonAgentRejected},
 		{status: http.StatusUnauthorized, method: "message/send", code: a2a.CodeIdentityRequired, reason: a2a.ReasonIdentityRequired},
 		{status: http.StatusForbidden, method: "message/send", code: a2a.CodeGatewayFailure, reason: a2a.ReasonUpstreamAuthFailed},
 		{status: http.StatusNotFound, method: "tasks/get", code: a2a.CodeTaskNotFound},
@@ -417,6 +417,19 @@ func TestVertexErrorStatuses(t *testing.T) {
 			assert.Equal(t, tc.reason, reasonOf(t, rpcErr), tc.status)
 		}
 	}
+}
+
+func TestVertexRejectionCarriesTheAgentsMessage(t *testing.T) {
+	t.Parallel()
+	ag := newAgent(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"file parts are not supported","status":"INVALID_ARGUMENT"}}`))
+	})
+	h := newVertexHarness(t, ag)
+	_, rpcErr := h.send(t, rpcRequest("message/send", `{"message":{"messageId":"m-1","role":"user","parts":[]}}`), nil)
+	require.NotNil(t, rpcErr)
+	assert.Equal(t, a2a.CodeInvalidParams, rpcErr.Code)
+	assert.JSONEq(t, `{"reason":"agent_rejected","upstream_status":400,"message":"file parts are not supported"}`, string(rpcErr.Data))
 }
 
 func TestVertexStreamIsRefusedBeforeTheAgent(t *testing.T) {

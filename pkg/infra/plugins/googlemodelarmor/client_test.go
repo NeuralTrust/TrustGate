@@ -700,7 +700,7 @@ func TestModelArmorClientCacheSingleFlight(t *testing.T) {
 	t.Parallel()
 	var builds atomic.Int64
 	cache := &clientCache{
-		build: func(modelArmorCredentials) (*client, error) {
+		build: func(modelArmorCredentials, time.Duration) (*client, error) {
 			builds.Add(1)
 			return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("t", nil)), nil
 		},
@@ -715,7 +715,7 @@ func TestModelArmorClientCacheSingleFlight(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			c, err := cache.get(creds)
+			c, err := cache.get(creds, time.Second)
 			assert.NoError(t, err)
 			assert.NotNil(t, c)
 		}()
@@ -731,7 +731,7 @@ func TestModelArmorClientCacheDoesNotCacheFailedBuild(t *testing.T) {
 	var builds atomic.Int64
 	buildErr := errors.New("boom")
 	cache := &clientCache{
-		build: func(modelArmorCredentials) (*client, error) {
+		build: func(modelArmorCredentials, time.Duration) (*client, error) {
 			if builds.Add(1) == 1 {
 				return nil, buildErr
 			}
@@ -740,10 +740,10 @@ func TestModelArmorClientCacheDoesNotCacheFailedBuild(t *testing.T) {
 	}
 
 	creds := baseModelArmorCredentials()
-	_, err := cache.get(creds)
+	_, err := cache.get(creds, time.Second)
 	require.ErrorIs(t, err, buildErr)
 
-	c, err := cache.get(creds)
+	c, err := cache.get(creds, time.Second)
 	require.NoError(t, err)
 	assert.NotNil(t, c)
 	assert.Equal(t, int64(2), builds.Load(), "expected the retry after a failed build to build again")
@@ -751,7 +751,7 @@ func TestModelArmorClientCacheDoesNotCacheFailedBuild(t *testing.T) {
 
 func TestNewModelArmorClientCacheWiresBuildSeam(t *testing.T) {
 	t.Parallel()
-	cache := newModelArmorClientCache("", time.Second, newCredentialSources(gcpauth.NewApplicationDefaultCache()))
+	cache := newModelArmorClientCache("", newCredentialSources(gcpauth.NewApplicationDefaultCache()))
 	require.NotNil(t, cache)
 	require.NotNil(t, cache.build)
 }
@@ -849,7 +849,7 @@ func TestClientCacheSeparatesCredentialFingerprints(t *testing.T) {
 
 	var builds atomic.Int64
 	cache := &clientCache{
-		build: func(creds modelArmorCredentials) (*client, error) {
+		build: func(creds modelArmorCredentials, _ time.Duration) (*client, error) {
 			builds.Add(1)
 			return newClientWithTokenSource(srv.URL, time.Second, sources.tokenSourceFor(creds)), nil
 		},
@@ -859,15 +859,15 @@ func TestClientCacheSeparatesCredentialFingerprints(t *testing.T) {
 	credsB := modelArmorCredentials{impersonateServiceAccount: "tenant-b@customer.iam.gserviceaccount.com"}
 	require.NotEqual(t, credsA.fingerprint(), credsB.fingerprint(), "precondition: the two credential sets must be distinct")
 
-	clientA, err := cache.get(credsA)
+	clientA, err := cache.get(credsA, time.Second)
 	require.NoError(t, err)
-	clientB, err := cache.get(credsB)
+	clientB, err := cache.get(credsB, time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), builds.Load(), "two distinct credential sets must each build their own client")
 
 	// Re-fetching credsA must reuse the cached client rather than building a
 	// third one — this is "do not mint a new token source per request".
-	again, err := cache.get(credsA)
+	again, err := cache.get(credsA, time.Second)
 	require.NoError(t, err)
 	assert.Same(t, clientA, again)
 	assert.Equal(t, int64(2), builds.Load())

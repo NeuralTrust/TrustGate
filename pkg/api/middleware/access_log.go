@@ -19,6 +19,11 @@ import (
 	"log/slog"
 	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
@@ -69,6 +74,8 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 				slog.String("token_issuer", identity.Issuer),
 			)
 		}
+		attrs = append(attrs, callerAttrs(c)...)
+		attrs = append(attrs, traceAttrs(c)...)
 		if err != nil {
 			status = fiber.StatusInternalServerError
 			var fe *fiber.Error
@@ -80,4 +87,61 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 		m.logger.Info("http access", append([]any{slog.Int("status", status)}, attrs...)...)
 		return err
 	}
+}
+
+// callerAttrs attributes a data-plane request to who made it, so the default
+// access log answers "who sent this" without telemetry exporters or a debug
+// level: the gateway, the consumer (application) it entered, the credential
+// (auth id and how it authenticated), the subject it runs as and, for a
+// bearer token, the client it was issued to. Every value comes from the
+// verified identity the auth middleware attached, never from a header, and a
+// field nobody resolved is left out. A person's email is not logged: the
+// subject identifies them and telemetry carries the rest.
+func callerAttrs(c *fiber.Ctx) []any {
+	ctx := c.UserContext()
+	var attrs []any
+	if gatewayID, ok := appconsumer.GatewayIDFromContext(ctx); ok && !gatewayID.IsNil() {
+		attrs = append(attrs, slog.String("gateway_id", gatewayID.String()))
+	}
+	if rc, ok := appconsumer.ConsumerFromContext(ctx); ok && rc.Consumer != nil {
+		attrs = append(attrs, slog.String("consumer_id", rc.Consumer.ID.String()))
+	}
+	if authCtx, ok := appauth.AuthContextFromContext(ctx); ok {
+		if !authCtx.AuthID.IsNil() {
+			attrs = append(attrs, slog.String("auth_id", authCtx.AuthID.String()))
+		}
+		if authCtx.Method != "" {
+			attrs = append(attrs, slog.String("auth_method", string(authCtx.Method)))
+		}
+	}
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		if p.Subject != "" {
+			attrs = append(attrs, slog.String("principal_subject", p.Subject))
+		}
+		if p.Method != "" {
+			attrs = append(attrs, slog.String("principal_method", string(p.Method)))
+		}
+		if p.Method.IsBearerToken() {
+			if client := consumerdomain.ClientOfClaims(p.Claims); client != "" {
+				attrs = append(attrs, slog.String("client_id", client))
+			}
+		}
+	}
+	return attrs
+}
+
+// traceAttrs ties the line to the request's two traces: trace_id, the
+// gateway's own id it answered in X-AG-Trace-Id and Activity is keyed by, and
+// client_trace_id, the trace the caller's traceparent named, when it sent a
+// valid one. With both, an operator goes from the caller's trace to the log
+// line and from the line to Activity without matching timestamps.
+func traceAttrs(c *fiber.Ctx) []any {
+	var attrs []any
+	if id := string(c.Response().Header.Peek(HeaderTraceID)); id != "" {
+		attrs = append(attrs, slog.String("trace_id", id))
+	}
+	if id := requestmeta.ClientTraceID(requestHeaderValues(c, requestmeta.HeaderTraceparent)); id != "" {
+		attrs = append(attrs, slog.String("client_trace_id", id))
+	}
+	return attrs
 }

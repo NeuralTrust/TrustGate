@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -59,6 +60,7 @@ type creator struct {
 	cards       agentCards
 	shared      sharedPlane
 	secretRefs  SecretRefValidator
+	publisher   cache.EventPublisher
 }
 
 func NewCreator(
@@ -81,6 +83,7 @@ func NewCreator(
 		cards:       o.cards,
 		shared:      o.shared,
 		secretRefs:  o.secretRefs,
+		publisher:   o.publisher,
 	}
 }
 
@@ -119,6 +122,11 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	}
 	audit()
 	c.memoryCache.Set(b.ID.String(), b)
+	if b.Type == domain.TypeA2A {
+		// An agent no application lists is still in the gateway's data, which
+		// replicas cache, because the Employee portal offers it to people.
+		invalidation.GatewayData(ctx, c.publisher, c.logger, b.GatewayID)
+	}
 	if c.signaler != nil {
 		c.signaler.Signal(ctx)
 	}

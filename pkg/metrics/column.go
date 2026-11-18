@@ -44,6 +44,8 @@ func RawColumns() []Column {
 		{Name: ColumnSchemaVersion, Type: ColumnTypeInt32},
 		{Name: ColumnRequestBody, Type: ColumnTypeString},
 		{Name: ColumnResponseBody, Type: ColumnTypeString, Nullable: true},
+		{Name: ColumnClientTraceID, Type: ColumnTypeString, Nullable: true},
+		{Name: ColumnMCPSessionID, Type: ColumnTypeString, Nullable: true},
 		{Name: ColumnCreatedAt, Type: ColumnTypeTimestamp},
 	}
 }

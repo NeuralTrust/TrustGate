@@ -65,6 +65,12 @@ func (g *RPCGateway) WithInventoryTool(inventory appmcp.InventoryTool) *RPCGatew
 	return g
 }
 
+// WithAgentTools wires the Store's agent meta-tools (see appmcp.AgentTools).
+func (g *RPCGateway) WithAgentTools(agents appmcp.AgentTools) *RPCGateway {
+	g.dispatcher.WithAgentTools(agents)
+	return g
+}
+
 func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
 	g.dispatcher.WithStoreScoper(scoper)
 	return g
@@ -147,6 +153,11 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		// that ran, and the one Activity, policies and usage are about.
 		if inner, _, ok := appmcp.CallThroughTarget(params); ok {
 			return "tool", inner, "", ""
+		}
+		// A call to an agent is recorded as the agent it called; the agent
+		// tool puts the agent's name in place of an id once it resolves it.
+		if agent, _, ok := appmcp.CallAgentTarget(params); ok && agent != "" {
+			return "tool", agent, "", ""
 		}
 		var p struct {
 			Name string `json:"name"`

@@ -548,6 +548,24 @@ definitions:
         items:
           type: string
         type: array
+      forbidden_claims:
+        description: |-
+          ForbiddenClaims are claims a bearer token must not carry, e.g. email,
+          upn, name and preferred_username to keep people's tokens off an agent
+          route. At most 32.
+        items:
+          type: string
+        type: array
+      required_claims:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        description: |-
+          RequiredClaims are claims a bearer token must carry, each mapped to the
+          values it may hold (any one of them; an empty list accepts any value).
+          At most 32 claims of 32 values each.
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest:
     properties:
@@ -873,6 +891,20 @@ definitions:
         items:
           type: string
         type: array
+      forbidden_claims:
+        description: ForbiddenClaims are claims a bearer token must not carry.
+        items:
+          type: string
+        type: array
+      required_claims:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        description: |-
+          RequiredClaims maps each claim a bearer token must carry to the values
+          it may hold; an empty list accepts any value.
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse:
     properties:
@@ -1725,6 +1757,11 @@ definitions:
         type: string
       provider_options:
         additionalProperties: {}
+        description: |-
+          ProviderOptions are provider-specific settings (base_url, api, static
+          headers, …). On every LLM provider, forward_client_headers lists client
+          request headers copied onto the provider request (e.g. ["traceparent",
+          "tracestate"]); credentials, framing and gateway headers are refused.
         type: object
       type:
         type: string
@@ -2851,6 +2888,19 @@ definitions:
         example: false
         type: boolean
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess:
+    properties:
+      mode:
+        type: string
+      principal_id:
+        type: string
+      principal_type:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone:
     properties:
       excluded_groups:
@@ -2887,6 +2937,26 @@ definitions:
         type: string
       principal_type:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess:
+    properties:
+      mode:
+        type: string
+      principal_id:
+        type: string
+      principal_type:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList:
+    properties:
+      rows:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess'
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.DecidedRequest:
     properties:
@@ -3864,6 +3934,12 @@ definitions:
           group key, and "application" for any other api key; absent for any
           other credential.
         type: string
+      client_trace_id:
+        description: |-
+          ClientTraceID is the trace-id field of the client's W3C traceparent and
+          MCPSessionID the Mcp-Session-Id of an MCP request. Both are raw-only:
+          MetadataView strips them, so they reach only the raw sinks.
+        type: string
       consumer:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer'
       cost:
@@ -3884,6 +3960,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency'
       mcp:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP'
+      mcp_session_id:
+        type: string
       occurred_on:
         type: integer
       policy_chain:
@@ -8566,6 +8644,83 @@ paths:
       security:
       - BearerAuth: []
       summary: Set an MCP Store access policy
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/agent-access:
+    get:
+      description: 'Returns every agent access row of the gateway: for everyone (principal_type
+        all), a group or a user, the mode (all | selected | none) and the A2A registries
+        picked when selected.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the Employee portal's agent access
+      tags:
+      - store
+    put:
+      consumes:
+      - application/json
+      description: 'Sets which A2A agents everyone (principal_type all, empty principal_id),
+        a group or a user may call from the Employee portal: mode all, selected (the
+        agents in registry_ids) or none. An empty mode deletes the row.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: The row
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess'
+        "204":
+          description: Row deleted
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Set one principal's agent access
       tags:
       - store
   /v1/gateways/{gateway_id}/store/everyone:

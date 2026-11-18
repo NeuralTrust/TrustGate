@@ -105,7 +105,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 	adc := gcpauth.NewApplicationDefaultCache()
 	return &Plugin{
 		registry:             registry,
-		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources(adc)),
+		clients:              newModelArmorClientCache(baseURL, newCredentialSources(adc)),
 		baseURL:              baseURL,
 		logger:               logger,
 		allowAmbientIdentity: allowAmbientIdentity,
@@ -114,13 +114,23 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allo
 	}
 }
 
-// clientFor resolves the *client for cfg's credentials, reusing the cached
-// client for that credential fingerprint when one already exists.
+// clientFor resolves the *client for cfg's credentials and per-call time limit,
+// reusing the cached client for that pair when one already exists.
 func (p *Plugin) clientFor(cfg Settings) (*client, error) {
+	return p.clientWithin(cfg, cfg.callTimeout(p.timeout))
+}
+
+// streamClientFor is clientFor for a streamed block, whose calls keep the fixed
+// per-block limit whatever timeout_seconds says.
+func (p *Plugin) streamClientFor(cfg Settings) (*client, error) {
+	return p.clientWithin(cfg, streamingDefaults.GuardTimeout)
+}
+
+func (p *Plugin) clientWithin(cfg Settings, timeout time.Duration) (*client, error) {
 	if p.clients == nil {
 		return nil, fmt.Errorf("google_model_armor: plugin has no client cache configured")
 	}
-	return p.clients.get(credentialsFromConfig(cfg.Credentials))
+	return p.clients.get(credentialsFromConfig(cfg.Credentials), timeout)
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -297,7 +307,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
 		return cl.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, chunk)
 	}
-	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, p.budget(cl), sanitize, span)
 }
 
 // executePreResponse sanitizes the completion in its own call, separate from
@@ -344,7 +354,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	sanitize := func(ctx context.Context, chunk string) (*SanitizationResult, error) {
 		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, chunk, userPrompt)
 	}
-	return p.runGuardrail(ctx, in, cfg, text, cl.timeout, sanitize, span)
+	return p.runGuardrail(ctx, in, cfg, text, p.budget(cl), sanitize, span)
 }
 
 // A buffered text is split into chunks of chunkBytes. Model Armor screens at
@@ -357,8 +367,8 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 // fills exactly that. The overlap is 4,096 bytes, enough for a long secret (a PEM
 // key, a service-account JSON of about 3.5 KB) to lie whole in one chunk; a
 // pattern longer than it, or a context that a cut separates by more than it,
-// can still be cut in two. The ceiling is what half of the client's timeout for the
-// whole evaluation admits at chunkParallel calls at once and callReserve a round
+// can still be cut in two. The ceiling is what half of the evaluation's budget
+// (budget: the gateway default, or a longer timeout_seconds) admits at chunkParallel calls at once and callReserve a round
 // (chunk 0, sent alone, is a round of its own), at most maxBufferedChunks (16 at
 // the default 15 s, 856,064 bytes): a text above it is refused
 // before any call as chunk_limit. The project's quota is 1,200 requests a minute,
@@ -498,6 +508,13 @@ func (e chunkEval) state() appplugins.ChunkState {
 	return appplugins.ChunkState{}
 }
 
+// budget is the time a buffered evaluation may take: the gateway default, or
+// the policy's per-call limit when it is longer. A shorter per-call limit does
+// not shrink it, so the chunk ceiling stays what the gateway default admits.
+func (p *Plugin) budget(cl *client) time.Duration {
+	return max(cl.timeout, p.timeout)
+}
+
 func (p *Plugin) runGuardrail(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -550,19 +567,23 @@ func (p *Plugin) runGuardrail(
 	latency := time.Since(start).Milliseconds()
 	chunkState := func(i int, _ struct{}, err error) appplugins.ChunkState {
 		if err != nil {
-			reason, detail := pluginutil.FailureOfError(err)
+			reason, detail := failureOfError(err)
 			return appplugins.ChunkState{Failure: &appplugins.ChunkFailure{Reason: reason, Detail: detail}}
 		}
 		return evals[i].state()
 	}
-	decision := appplugins.ClassifyChunks(outs, errors.Is(ctx.Err(), context.Canceled), chunkState, appplugins.SlowCall(slow))
+	cancelled := errors.Is(ctx.Err(), context.Canceled)
+	decision := appplugins.ClassifyChunks(outs, cancelled, chunkState, appplugins.SlowCall(slow))
+	if !cancelled {
+		decision = appplugins.ChunkTimeout(decision, outs)
+	}
 
 	var gap *appplugins.ChunkDecision
 	switch decision.Kind {
 	case appplugins.ChunkInputFailure, appplugins.ChunkAvailabilityFailure:
 		// A masked chunk beside a chunk Model Armor could not reach keeps the
 		// mask and records the gap (keepsMaskOnGap).
-		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && cfg.keepsMaskOnGap(in.Mode) {
+		if decision.Kind == appplugins.ChunkAvailabilityFailure && decision.Masked && cfg.keepsMaskOnGap(in.Mode, decision.Detail) {
 			gap = &decision
 			break
 		}
@@ -732,7 +753,7 @@ func (p *Plugin) anonymizeDegraded(ctx context.Context, in appplugins.ExecInput,
 		data.EarlierFailureDetail = data.FailureDetail
 	}
 	data.FailureDetail = reason
-	data.FailureMode = pluginutil.FailureModeStamp(failClosedOf(in.Config.Settings))
+	data.FailureMode = pluginutil.FailureModeStamp(failClosedOf(in.Config.Settings, reason))
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		Ctx:     ctx,
 		Plugin:  PluginName,
@@ -788,7 +809,7 @@ func (p *Plugin) externalFailure(
 	// Read from the raw settings, not cfg: a config failure hands over a zero
 	// cfg, and a policy that asked for closed must not fail open because some
 	// other key made its settings invalid.
-	failClosed := failClosedOf(in.Config.Settings)
+	failClosed := failClosedOf(in.Config.Settings, fi.armorReason)
 	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
 		FailClosed: failClosed,
 		Ctx:        ctx,
@@ -873,6 +894,6 @@ func passThrough() *appplugins.Result {
 // filter) refuses instead, since the other filters did not judge this content.
 // Whether a gap may keep a mask at all is the policy's (keepsMaskOnGap).
 func keepsMaskDespiteGap(res assessmentResult, cfg Settings, mode policy.Mode, reason string) bool {
-	return res.anonymize != nil && cfg.keepsMaskOnGap(mode) &&
+	return res.anonymize != nil && cfg.keepsMaskOnGap(mode, reason) &&
 		appplugins.ClassOf(appplugins.FailureVerdictIncomplete, reason) == appplugins.FailureClassAvailability
 }

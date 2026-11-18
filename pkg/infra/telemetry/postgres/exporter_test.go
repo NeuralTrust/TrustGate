@@ -31,8 +31,8 @@ func TestDataClassIsRaw(t *testing.T) {
 
 func TestBuildInsertSQL(t *testing.T) {
 	t.Parallel()
-	want := "INSERT INTO " + metrics.TableName + " (trace_id, gateway_id, tenant_id, occurred_on, schema_version, request_body, response_body) " +
-		"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (trace_id) DO NOTHING"
+	want := "INSERT INTO " + metrics.TableName + " (trace_id, gateway_id, tenant_id, occurred_on, schema_version, request_body, response_body, client_trace_id, mcp_session_id) " +
+		"VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (trace_id) DO NOTHING"
 	assert.Equal(t, want, buildInsertSQL(metrics.TableName))
 }
 
@@ -47,6 +47,8 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 		TenantID:      "team1",
 		OccurredOn:    42,
 		IP:            "1.2.3.4",
+		ClientTraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
+		MCPSessionID:  "mcp-sess-1",
 		Request:       events.Request{Body: "req-body", Headers: map[string][]string{"h": {"v"}}},
 		Response:      events.Response{Body: &resp, StatusCode: 200},
 	}
@@ -62,6 +64,10 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 	assert.Equal(t, "req-body", rec.RequestBody)
 	require.NotNil(t, rec.ResponseBody)
 	assert.Equal(t, "resp-body", *rec.ResponseBody)
+	require.NotNil(t, rec.ClientTraceID)
+	assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", *rec.ClientTraceID)
+	require.NotNil(t, rec.MCPSessionID)
+	assert.Equal(t, "mcp-sess-1", *rec.MCPSessionID)
 }
 
 func TestToRecordNilTeamAndResponse(t *testing.T) {
@@ -74,6 +80,8 @@ func TestToRecordNilTeamAndResponse(t *testing.T) {
 	assert.Nil(t, rec.TenantID)
 	assert.Nil(t, rec.ResponseBody)
 	assert.Empty(t, rec.RequestBody)
+	assert.Nil(t, rec.ClientTraceID)
+	assert.Nil(t, rec.MCPSessionID)
 }
 
 func TestPublishOnClosedExporterFails(t *testing.T) {
