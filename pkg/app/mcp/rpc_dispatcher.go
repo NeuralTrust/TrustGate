@@ -434,6 +434,10 @@ func (d *RPCDispatcher) invokeTool(
 	name string,
 	arguments, meta json.RawMessage,
 ) (any, toolInvocation, error) {
+	// A plugin's per-request hold (a parallel slot) is freed on every exit.
+	done := appplugins.NewRequestDone()
+	defer done.Run()
+	ctx = done.Bind(ctx)
 	// The binding is fixed before any plugin sees the request, so the plan is
 	// chosen for the real destination and a body rewrite cannot reroute the call.
 	// A name nobody serves, a toolkit denial or a pending consent answers here,
