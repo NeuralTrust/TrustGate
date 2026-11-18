@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +36,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-func TestForward_StreamedTrustGuardBlockMatchesBufferedBody(t *testing.T) {
+// TestForward_StreamedTrustGuardBlockCarriesTheBufferedFields: a TrustGuard
+// block on the head of a stream is not the buffered leg's 403. The stream opens
+// and ends on the content-filter terminator and blocked event, and that event
+// carries the policy fields the buffered body names the finding with, so an
+// integrator correlates a block the same way on both legs.
+func TestForward_StreamedTrustGuardBlockCarriesTheBufferedFields(t *testing.T) {
 	t.Parallel()
 
 	block := trustguard.GuardResponse{
@@ -133,24 +139,30 @@ func TestForward_StreamedTrustGuardBlockMatchesBufferedBody(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusForbidden, buffered.StatusCode)
-	require.Equal(t, http.StatusForbidden, streamed.StatusCode)
-	require.Nil(t, streamed.Stream)
-	require.JSONEq(t, string(buffered.Body), string(streamed.Body))
-
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(streamed.Body, &body))
-	assert.Equal(t, "block", body["status"])
-	assert.Equal(t, "trustguard_blocked", body["type"])
-	assert.Equal(t, "output", body["direction"])
-	assert.Equal(t, "secret", body["reason"])
-	assert.Equal(t, "data_loss_prevention", body["plugin"])
-	assert.Equal(t, "probe-canary-output", body["detector_name"])
-	assert.Equal(t, "trace-canary", body["trace_id"])
-	assert.Equal(t, "req-canary", body["request_id"])
-	assert.Equal(t, "Request blocked by security policy: secret (probe-canary-output).", body["message"])
-	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, streamed.Headers[appplugins.BlockDirectionHeader])
 	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, buffered.Headers[appplugins.BlockDirectionHeader])
-	assert.Equal(t, []string{"application/json"}, streamed.Headers["Content-Type"])
+	var want map[string]any
+	require.NoError(t, json.Unmarshal(buffered.Body, &want))
+	assert.Equal(t, "trustguard_blocked", want["type"])
+
+	require.Equal(t, http.StatusOK, streamed.StatusCode)
+	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, streamed.Headers[appplugins.BlockDirectionHeader],
+		"the head's headers were still unsent, so the block's direction rides the 200")
+	got := collectStream(t, streamed.Stream)
+	require.Equal(t, "data: [DONE]", got[len(got)-2])
+	var event struct {
+		Error map[string]any `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(got[len(got)-4], "data: ")), &event))
+	assert.NotContains(t, strings.Join(got, "\n"), "the secret", "none of the text reaches the client")
+	assert.Contains(t, got[len(got)-6], `"finish_reason":"content_filter"`)
+
+	assert.Equal(t, "content_filter", event.Error["type"], "the dialect's type is the one every cut carries")
+	assert.Equal(t, want["message"], event.Error["message"])
+	for _, field := range []string{"direction", "reason", "plugin", "detector_name", "trace_id", "request_id"} {
+		assert.Equal(t, want[field], event.Error[field], field)
+	}
+	assert.Equal(t, "probe-canary-output", event.Error["detector_name"])
+	assert.Equal(t, "trace-canary", event.Error["trace_id"])
 }
 
 func TestForward_StreamedTrustGuardRateLimitMatchesBuffered(t *testing.T) {
