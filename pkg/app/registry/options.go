@@ -27,6 +27,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 // AuthLookup loads the gateway auth an MCP exchange is pinned to.
@@ -49,6 +50,7 @@ type options struct {
 	scanner    SkillScanner
 	shared     sharedPlane
 	secretRefs SecretRefValidator
+	publisher  cache.EventPublisher
 }
 
 // SecretRefValidator checks the secret references a registry write holds,
@@ -90,6 +92,13 @@ func WithCardSecrets(m RegistryMaterializer, v SecretRefValidator) Option {
 // pinned, previewed or compared. Without it skills are not scanned.
 func WithSkillScanner(s SkillScanner) Option {
 	return func(o *options) { o.scanner = s }
+}
+
+// WithCachePublisher lets a create tell every replica that the gateway's data
+// changed. Only an A2A registry needs it: the Employee portal offers a
+// gateway's agents whether or not an application lists them.
+func WithCachePublisher(p cache.EventPublisher) Option {
+	return func(o *options) { o.publisher = p }
 }
 
 // WithSharedDataPlane marks the deployment as the shared SaaS one: a save of
