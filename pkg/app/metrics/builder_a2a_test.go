@@ -73,6 +73,9 @@ func TestBuilder_A2AFoldsTheCall(t *testing.T) {
 		IdentitySubjectKind: "user",
 		RPCErrorCode:        -32092,
 	}, evt.A2A)
+	// Activity's Provider names the agent, whichever door the call came through.
+	assert.Equal(t, "Travel planner", evt.Request.Provider)
+	assert.Equal(t, "reg-1", evt.Request.RegistryID)
 	assert.True(t, evt.Status.IsTimeout)
 	require.NotNil(t, evt.Latency.ProviderMs)
 	assert.Equal(t, int64(150), *evt.Latency.ProviderMs)
