@@ -74,10 +74,10 @@ func (noPricing) InvalidateCache() {}
 // guarded stream on every way it can end. The guard's hold elapses inside the
 // provider span, and the metrics fold takes it back out of provider_ms on that
 // premise, so the span has to last until the stream ended for the client. A
-// stream the head verdict refused kept the span at time to first byte: the
-// hold was taken out of the upstream's share instead, clamping it to zero when
-// the hold was the longer of the two, and the remainder reported it as gateway
-// overhead.
+// stream the head verdict cut is no exception: had the span stopped at time to
+// first byte, the hold would be taken out of the upstream's share instead,
+// clamping it to zero when the hold was the longer of the two, and the
+// remainder would report it as gateway overhead.
 //
 // The bounds are one-sided on purpose. provider_ms can only be at least what
 // the upstream was made to take, and gateway_ms, the time spent outside the
@@ -94,10 +94,10 @@ func TestForward_StreamGuardHoldIsNotGatewayOverhead(t *testing.T) {
 		verdict  *appplugins.SegmentVerdict
 		blockSeq int
 		options  appplugins.StreamOptions
-		refused  bool
+		headCut  bool
 	}{
-		{name: "head block slower to first byte than to verdict", ttfb: 150 * time.Millisecond, hold: 100 * time.Millisecond, verdict: block, refused: true},
-		{name: "head block slower to verdict than to first byte", ttfb: 30 * time.Millisecond, hold: 150 * time.Millisecond, verdict: block, refused: true},
+		{name: "head block slower to first byte than to verdict", ttfb: 150 * time.Millisecond, hold: 100 * time.Millisecond, verdict: block, headCut: true},
+		{name: "head block slower to verdict than to first byte", ttfb: 30 * time.Millisecond, hold: 150 * time.Millisecond, verdict: block, headCut: true},
 		{name: "allowed stream", ttfb: 150 * time.Millisecond, hold: 100 * time.Millisecond, verdict: &appplugins.SegmentVerdict{}},
 		{
 			name: "cut after the head", ttfb: 150 * time.Millisecond, hold: 100 * time.Millisecond, verdict: block, blockSeq: 2,
@@ -154,18 +154,18 @@ func TestForward_StreamGuardHoldIsNotGatewayOverhead(t *testing.T) {
 			start := time.Now()
 			res, err := fwd.Forward(ctx, appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
 			require.NoError(t, err)
-			if tc.refused {
-				require.Nil(t, res.Stream, "the head verdict refuses the stream before the first byte")
-				assert.Equal(t, http.StatusForbidden, res.StatusCode)
-			} else {
-				require.NotNil(t, res.Stream)
-				for _, lineErr := range res.Stream {
-					require.NoError(t, lineErr)
-				}
-				if res.StreamSettled != nil {
-					if settled := res.StreamSettled(); settled != nil {
-						<-settled
-					}
+			require.NotNil(t, res.Stream)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+			if tc.headCut {
+				assert.Equal(t, []string{appplugins.BlockDirectionOutput}, res.Headers[appplugins.BlockDirectionHeader],
+					"the head verdict cuts the stream before its first byte")
+			}
+			for _, lineErr := range res.Stream {
+				require.NoError(t, lineErr)
+			}
+			if res.StreamSettled != nil {
+				if settled := res.StreamSettled(); settled != nil {
+					<-settled
 				}
 			}
 			end := time.Now()

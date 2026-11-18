@@ -172,15 +172,24 @@ func TestNativeStreamGuard_InvokeChunksAreInspectedAndRelayed(t *testing.T) {
 	assert.Contains(t, runner.texts[0], "HIDDEN", "the union principle holds on stream chunks")
 }
 
-func TestNativeStreamGuard_BlockInTheHeadIsAStatusNotAFrame(t *testing.T) {
+// A block on the head ends a native stream as a block after it does: with the
+// exception frame, and none of the text frames in front of it. The messageStart
+// the head cleared carries no text and goes out first.
+func TestNativeStreamGuard_BlockInTheHeadIsAnExceptionFrame(t *testing.T) {
 	t.Parallel()
 	frames := textFrames(t, "Hello", " world")
 	runner := &sequenceRunner{outcomes: []*appplugins.SegmentOutcome{{Block: true, Type: "guardrail_blocked", Message: "nope"}}}
-	got, pe := runNativeGuard(t, nativeGuardFor(runner, fastBlocks), frames)
-	require.NotNil(t, pe, "before any byte went out the block is still a real HTTP status")
-	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-	assert.Equal(t, "guardrail_blocked", pe.Type)
-	assert.Empty(t, got)
+	g := nativeGuardFor(runner, fastBlocks)
+	got, pe := runNativeGuard(t, g, frames)
+	require.Nil(t, pe, "a policy block on the head is cut in-stream, not refused with a status")
+	require.True(t, g.cutAtHead())
+	require.Len(t, got, 2, "the opaque messageStart, then the exception frame")
+	assert.Equal(t, frames[0], got[0])
+	assert.JSONEq(t, `{"role":"assistant"}`, decodeFrameText(t, got[0]))
+	excType, payload := decodeException(t, got[1])
+	assert.Equal(t, "validationException", excType)
+	assert.Contains(t, payload, "nope")
+	assert.Contains(t, payload, "guardrail_blocked")
 }
 
 func TestNativeStreamGuard_BlockMidStreamEmitsAnExceptionFrameAndStops(t *testing.T) {

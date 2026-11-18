@@ -83,6 +83,8 @@ const (
 	// BlockDirectionHeader tells the caller which leg of the exchange a policy
 	// block ended: the request it sent or the response the model produced. It
 	// follows the X-NeuralTrust-* naming of the gateway's other response headers.
+	// It rides a policy block's 403, and the 200 of a stream a block cut at its
+	// head, whose headers were still unsent when the verdict came.
 	BlockDirectionHeader = "X-NeuralTrust-Block-Direction"
 
 	// BlockDirectionInput is a block at pre_request (or post_request).
