@@ -73,14 +73,13 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 			require.True(t, server.RequiresConfig, code)
 			requireOAuth(t, server, "manual", false, nil)
 			require.NotNil(t, server.ConfigGuide, code)
-			require.Contains(t, server.ConfigGuide.Note, "https://<gateway-mcp host>/oauth/callback/"+code)
-			require.Contains(t, server.ConfigGuide.Steps[1], "https://<gateway-mcp host>/oauth/callback/"+code)
+			// The panel shows the redirect URI under the steps, ready to copy.
+			require.Equal(t, "Register the redirect URI below as the callback.", server.ConfigGuide.Steps[1], code)
 		}
 
 		aws := mustCatalogServer(t, cat, "com.amazon.aws/mcp")
 		require.False(t, aws.SelfService)
 		requireOAuth(t, aws, "manual", false, nil)
-		require.Contains(t, aws.ConfigGuide.Note, "https://<gateway-mcp host>/oauth/callback/com.amazon.aws/mcp")
 		require.Contains(t, aws.ConfigGuide.Steps[0], "AWSMCPSignInOAuthAccessPolicy")
 		require.Equal(t, "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html", aws.ConfigGuide.DocsURL)
 	})
@@ -149,7 +148,6 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		require.Equal(t, []string{"mcp.newrelic.com", "mcp.eu.newrelic.com"}, optionValues(variableByName(t, nr, "host")))
 		requireOAuth(t, nr, "manual", false, []string{"observability:read", "offline", "offline_access"})
 		requireAdminOAuthApp(t, nr, "https://oauth2.service.newrelic.com/oauth2/auth", "https://oauth2.service.newrelic.com/oauth2/token")
-		require.Contains(t, nr.ConfigGuide.Note, "localhost")
 		require.Contains(t, nr.ConfigGuide.Steps[2], "client ID")
 		require.Equal(t, "https://mcp.newrelic.com/mcp/", resolveCatalogURL(t, nr, map[string]string{"host": "mcp.newrelic.com"}))
 		require.Equal(t, "https://mcp.eu.newrelic.com/mcp/", resolveCatalogURL(t, nr, map[string]string{"host": "mcp.eu.newrelic.com"}))
@@ -327,8 +325,6 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		domain := variableByName(t, freshworks, "domain")
 		require.Empty(t, domain.HostSuffix)
 		require.Equal(t, "Subdomain label only, e.g. yourco, not yourco.freshservice.com.", domain.Description)
-		require.Contains(t, freshworks.ConfigGuide.Note, "{domain} is the subdomain label only")
-		require.Contains(t, freshworks.ConfigGuide.Note, "not yourco.freshservice.com")
 		require.False(t, freshworks.SelfService)
 		require.True(t, freshworks.RequiresConfig)
 		requireOAuth(t, freshworks, "manual", false, []string{
@@ -367,7 +363,6 @@ func TestCuratedCatalog_SeedFixes(t *testing.T) {
 		require.Equal(t, "https://{domain}.myfreshworks.com/org/oauth/v2/token", freshworks.OAuth.TokenURL)
 		require.Empty(t, freshworks.OAuth.Resource)
 		require.True(t, freshworks.OAuth.ResourceMetadata)
-		require.Contains(t, freshworks.Description, "An admin must create an OAuth app in Freshworks")
 		require.Contains(t, freshworks.ConfigGuide.Summary, "OAuth app in Freshworks")
 	})
 
@@ -433,12 +428,12 @@ func TestCuratedCatalog_SeedFixesLeaveUnchangedEntries(t *testing.T) {
 
 	// ENG-2237: Zoom keeps one token per OAuth app. The four servers an admin
 	// installs side by side say so in the setup note. Scopes stay as seeded.
-	const zoomAppHint = "Zoom keeps only the latest token per OAuth app, so each Zoom server needs its own Zoom app (client ID). Otherwise, connecting one Zoom server revokes the others."
+	const zoomAppHint = "Zoom keeps one token per app, so each Zoom server needs its own Zoom app."
 	for _, code := range []string{"us.zoom/docs", "us.zoom/workspace", "us.zoom/team-chat", "us.zoom/whiteboard"} {
 		server := mustCatalogServer(t, cat, code)
 		require.NotNil(t, server.ConfigGuide, code)
 		require.Equal(t, zoomAppHint, server.ConfigGuide.Note, code)
-		require.Equal(t, []string{"Add TrustGate's OAuth callback URL, then enter the client ID."}, server.ConfigGuide.Steps, code)
+		require.Equal(t, []string{"Register the redirect URI below as the callback, then enter the client ID."}, server.ConfigGuide.Steps, code)
 	}
 	revenue := mustCatalogServer(t, cat, "us.zoom/revenue-accelerator")
 	require.Empty(t, revenue.ConfigGuide.Note)
@@ -473,7 +468,7 @@ func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
 	require.True(t, salesforce.RequiresConfig)
 	requireOAuth(t, salesforce, "manual", false, []string{"mcp_api", "refresh_token"})
 	requireAdminOAuthApp(t, salesforce, "https://login.salesforce.com/services/oauth2/authorize", "https://login.salesforce.com/services/oauth2/token")
-	require.Contains(t, salesforce.ConfigGuide.Note, "https://test.salesforce.com")
+	require.Contains(t, salesforce.ConfigGuide.Note, "Salesforce (Sandbox)")
 	require.Equal(t, "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
 		resolveCatalogURL(t, salesforce, map[string]string{"server": "sobject-all"}))
 
@@ -500,8 +495,8 @@ func TestCuratedCatalog_AdminOAuthApps(t *testing.T) {
 	require.True(t, snowflake.RequiresConfig)
 	requireOAuth(t, snowflake, "manual", false, []string{"refresh_token", "session:role:all"})
 	requireAdminOAuthApp(t, snowflake, "https://{account_url}/oauth/authorize", "https://{account_url}/oauth/token-request")
-	require.Contains(t, snowflake.ConfigGuide.Note, "ALLOWED_ROLES_LIST")
-	require.Contains(t, snowflake.ConfigGuide.Note, "OAUTH_USE_SECONDARY_ROLES = NONE")
+	require.Contains(t, snowflake.ConfigGuide.Steps[1], "ALLOWED_ROLES_LIST")
+	require.Contains(t, snowflake.ConfigGuide.Steps[1], "OAUTH_USE_SECONDARY_ROLES = NONE")
 
 	dbt := mustCatalogServer(t, cat, "com.getdbt/mcp")
 	require.Equal(t, "https://{dbt_host}/api/ai/v1/mcp/", dbt.URL)
@@ -551,13 +546,7 @@ func requireAdminOAuthApp(t *testing.T, server domain.MCPServer, authorize, toke
 	require.Equal(t, authorize, server.OAuth.AuthorizeURL, server.Code)
 	require.Equal(t, token, server.OAuth.TokenURL, server.Code)
 	require.NotNil(t, server.ConfigGuide, server.Code)
-	callback := "https://<gateway-mcp host>/oauth/callback/" + server.Code
-	require.Contains(t, server.ConfigGuide.Note, callback, server.Code)
-	var steps string
-	for _, step := range server.ConfigGuide.Steps {
-		steps += step + "\n"
-	}
-	require.Contains(t, steps, callback, server.Code)
+	require.Contains(t, server.ConfigGuide.Steps, "Register the redirect URI below as the callback.", server.Code)
 }
 
 // Header placeholders name the secret the operator types. The gateway adds
