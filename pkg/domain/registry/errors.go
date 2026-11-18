@@ -32,6 +32,7 @@ var (
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
 	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
 	ErrInvalidPricing         = fmt.Errorf("registry: invalid pricing: %w", commonerrors.ErrValidation)
+	ErrInvalidModelLabels     = fmt.Errorf("registry: invalid model labels: %w", commonerrors.ErrValidation)
 	// ErrAgentCardUnavailable reports an agent card that could not be fetched
 	// or is not a JSON object with a name.
 	ErrAgentCardUnavailable = fmt.Errorf("registry: agent card unavailable: %w", commonerrors.ErrValidation)
