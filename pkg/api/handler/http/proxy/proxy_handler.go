@@ -322,7 +322,15 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error {
 	// The user context is never cancelled when the client goes away, so the
 	// upstream request gets a context of its own that ends with the response.
-	ctx, cancel := context.WithCancel(c.UserContext())
+	ctx, cancelCtx := context.WithCancel(c.UserContext())
+	// Plugins free what they hold per request (a parallel slot) when the
+	// response ends, which is when cancel runs, streams included.
+	done := appplugins.NewRequestDone()
+	ctx = done.Bind(ctx)
+	cancel := context.CancelFunc(func() {
+		done.Run()
+		cancelCtx()
+	})
 	streaming := false
 	defer func() {
 		if !streaming {
