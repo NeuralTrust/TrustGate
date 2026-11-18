@@ -45,6 +45,9 @@ type config struct {
 	Window        string `mapstructure:"window"`
 	RetryAfter    string `mapstructure:"retry_after"`
 	GroupByHeader string `mapstructure:"group_by_header"`
+	// MaxParallel caps the requests in progress at once, open streams included,
+	// across gateway replicas. Zero is no cap.
+	MaxParallel   int `mapstructure:"max_parallel"`
 	limitper.Spec `mapstructure:",squash"`
 }
 
@@ -91,6 +94,9 @@ func (c *config) retryAfterResets() bool { return c.RetryAfter == retryAfterRese
 func (c *config) validate() error {
 	if c.Limit <= 0 {
 		return fmt.Errorf("rate_limiter: limit must be positive")
+	}
+	if c.MaxParallel < 0 {
+		return fmt.Errorf("rate_limiter: max_parallel must not be negative")
 	}
 	if c.Window == "" {
 		return fmt.Errorf("rate_limiter: window is required")
