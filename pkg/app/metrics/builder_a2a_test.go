@@ -73,6 +73,9 @@ func TestBuilder_A2AFoldsTheCall(t *testing.T) {
 		IdentitySubjectKind: "user",
 		RPCErrorCode:        -32092,
 	}, evt.A2A)
+	// Activity's Provider names the agent, whichever door the call came through.
+	assert.Equal(t, "Travel planner", evt.Request.Provider)
+	assert.Equal(t, "reg-1", evt.Request.RegistryID)
 	assert.True(t, evt.Status.IsTimeout)
 	require.NotNil(t, evt.Latency.ProviderMs)
 	assert.Equal(t, int64(150), *evt.Latency.ProviderMs)
@@ -145,4 +148,26 @@ func TestBuilder_OtherKindsCarryNoA2A(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotContains(t, string(raw), `"a2a"`, kind)
 	}
+}
+
+// An agent called from an MCP client through the Store's trustgate_call_agent
+// is recorded as an agent call: kind a2a, the agent as provider, and the
+// message sent to it as the preview.
+func TestBuilder_StoreCallAgentIsAnAgentCall(t *testing.T) {
+	rt := trace.New("trace-store", trace.Metadata{GatewayID: "gw-1", ConsumerID: "store", Kind: events.KindMCP})
+	rt.StartSpan(trace.SpanMCP, "tools/call").SetMCPRequest("tools/call", "tool", "Vedar Kamchatka", "", "")
+	rt.StartSpan(trace.SpanA2A, "SendMessage").SetA2A(trace.A2AAttrs{
+		Method: "SendMessage", RegistryID: "reg-1", AgentName: "Vedar Kamchatka", Provider: "generic", ProtocolVersion: "1.0",
+	})
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trustgate_call_agent","arguments":{"agent":"Vedar Kamchatka","message":"Volcano alerts this week?"}}}`
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/store/mcp", Body: []byte(body)}
+	resp := &infracontext.ResponseContext{StatusCode: http.StatusOK}
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(100*time.Millisecond))
+
+	assert.Equal(t, events.KindA2A, evt.Kind)
+	require.NotNil(t, evt.A2A)
+	assert.Equal(t, "Vedar Kamchatka", evt.Request.Provider)
+	assert.Equal(t, "Volcano alerts this week?", evt.Request.Preview)
 }
