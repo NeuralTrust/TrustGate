@@ -43,6 +43,8 @@ type CardCredentials interface {
 	// as the gateway signs it, or false when that credential is a user's
 	// (an exchange), which no request has at registration.
 	CallAuthorizer(ctx context.Context, t *domain.A2ATarget) (CardAuthorizer, bool, error)
+	// Token mints the access token of the OAuth client credentials in auth.
+	Token(ctx context.Context, auth *domain.MCPAuth) (string, error)
 }
 
 var _ CardCredentials = (*cardCredentials)(nil)
@@ -107,6 +109,10 @@ func (c *cardCredentials) CallAuthorizer(ctx context.Context, t *domain.A2ATarge
 	default:
 		return nil, false, nil
 	}
+}
+
+func (c *cardCredentials) Token(ctx context.Context, auth *domain.MCPAuth) (string, error) {
+	return c.grant(ctx, auth)
 }
 
 // toHost sets header on a request to host only: the endpoint's own, over the

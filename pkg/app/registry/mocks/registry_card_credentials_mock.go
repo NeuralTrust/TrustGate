@@ -150,6 +150,63 @@ func (_c *CardCredentials_CallAuthorizer_Call) RunAndReturn(run func(context.Con
 	return _c
 }
 
+// Token provides a mock function with given fields: ctx, auth
+func (_m *CardCredentials) Token(ctx context.Context, auth *registry.MCPAuth) (string, error) {
+	ret := _m.Called(ctx, auth)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Token")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.MCPAuth) (string, error)); ok {
+		return rf(ctx, auth)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.MCPAuth) string); ok {
+		r0 = rf(ctx, auth)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *registry.MCPAuth) error); ok {
+		r1 = rf(ctx, auth)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// CardCredentials_Token_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Token'
+type CardCredentials_Token_Call struct {
+	*mock.Call
+}
+
+// Token is a helper method to define mock.On call
+//   - ctx context.Context
+//   - auth *registry.MCPAuth
+func (_e *CardCredentials_Expecter) Token(ctx interface{}, auth interface{}) *CardCredentials_Token_Call {
+	return &CardCredentials_Token_Call{Call: _e.mock.On("Token", ctx, auth)}
+}
+
+func (_c *CardCredentials_Token_Call) Run(run func(ctx context.Context, auth *registry.MCPAuth)) *CardCredentials_Token_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*registry.MCPAuth))
+	})
+	return _c
+}
+
+func (_c *CardCredentials_Token_Call) Return(_a0 string, _a1 error) *CardCredentials_Token_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *CardCredentials_Token_Call) RunAndReturn(run func(context.Context, *registry.MCPAuth) (string, error)) *CardCredentials_Token_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewCardCredentials creates a new instance of CardCredentials. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewCardCredentials(t interface {
