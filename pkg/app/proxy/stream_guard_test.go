@@ -161,9 +161,15 @@ type guardCase struct {
 	wantCalls     int
 	wantBlocked   bool
 	wantBodyIsSet bool
-	wantOut       []string
-	wantAccum     string
-	wantFinal     bool
+	// wantHeadCut is a policy block on the head block: no status, but a cut
+	// after the first wantPrelude lines, the opaque prelude the head cleared,
+	// ending on wantTail.
+	wantHeadCut bool
+	wantPrelude int
+	wantTail    []string
+	wantOut     []string
+	wantAccum   string
+	wantFinal   bool
 }
 
 func guardCases() []guardCase {
@@ -197,12 +203,19 @@ func guardCases() []guardCase {
 			wantFinal: true,
 		},
 		{
-			name:        "head-gate block writes nothing",
+			name:        "a head block is cut in-stream and releases none of the text",
 			format:      adapter.FormatOpenAI,
 			lines:       openAIStreamLines(),
 			outcome:     &appplugins.SegmentOutcome{Block: true, Type: "guardrail_violation", Message: "nope"},
 			wantCalls:   1,
-			wantBlocked: true,
+			wantHeadCut: true,
+			wantPrelude: 2,
+			wantTail: []string{
+				`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5","choices":` +
+					`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
+				`data: {"error":{"message":"nope","type":"content_filter","direction":"output"}}`, "",
+				"data: [DONE]", "",
+			},
 		},
 		{
 			// A masking policy must not become a no-op on a streamed response.
@@ -218,13 +231,22 @@ func guardCases() []guardCase {
 			wantBlocked: true,
 		},
 		{
-			name:          "a blocked head speaks the caller's dialect",
-			format:        adapter.FormatAnthropic,
-			lines:         anthropicStreamLines(),
-			outcome:       &appplugins.SegmentOutcome{Block: true, Message: "nope"},
-			wantCalls:     1,
-			wantBlocked:   true,
-			wantBodyIsSet: true,
+			// The message_start the head cleared goes out first, so an SDK that
+			// assembles the message has one to put the refusal on.
+			name:        "a head block opens the message and ends it in the caller's dialect",
+			format:      adapter.FormatAnthropic,
+			lines:       anthropicStreamLines(),
+			outcome:     &appplugins.SegmentOutcome{Block: true, Message: "nope"},
+			wantCalls:   1,
+			wantHeadCut: true,
+			wantPrelude: 3,
+			wantTail: []string{
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},"usage":{"input_tokens":0,"output_tokens":0}}`, "",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`, "",
+			},
 		},
 		{
 			name:      "fail_open releases the head when the guard call fails",
@@ -284,6 +306,20 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 			checkInvariant(t, g)
 			require.Equal(t, tc.wantCalls, runner.calls)
 
+			if tc.wantHeadCut {
+				require.Nil(t, pe, "a policy block on the head is cut in-stream, not refused with a status")
+				got, err := collectGuardOutput(t, g, out)
+				require.NoError(t, err)
+				require.True(t, g.cutAtHead())
+				require.True(t, g.wasCut())
+				_, tail := splitAtCut(t, got, tc.lines, tc.wantPrelude)
+				require.Equal(t, tc.wantTail, tail)
+				for _, ev := range g.produced[:g.releasedIdx] {
+					require.Zero(t, ev.chars(), "only the opaque prelude is released before a head cut")
+				}
+				return
+			}
+
 			if tc.wantBlocked {
 				require.NotNil(t, pe)
 				require.Equal(t, http.StatusForbidden, pe.StatusCode)
@@ -295,6 +331,7 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader],
 						"a head-gate refusal is a real 403, so the direction header is still a channel")
 				}
+				require.False(t, g.cutAtHead(), "a refusal that is not a policy block keeps its status")
 				require.Zero(t, g.releasedIdx, "a head-gate block must have written nothing")
 				drained, _ := collectGuardOutput(t, g, out)
 				require.Zero(t, g.releasedIdx, "draining the remainder must not release held events")
@@ -357,17 +394,64 @@ func TestStreamGuard_HeadGateRateLimitKeepsStatusAndHeaders(t *testing.T) {
 	require.NotContains(t, drained, openAIStreamLines()[0], "the head must never reach the client")
 }
 
-func TestStreamGuard_HeadGateZeroStatusStaysForbidden(t *testing.T) {
+// TestStreamGuard_HeadUninspectableKeepsItsStatus: a guardrail that could not
+// inspect the head and found nothing refuses in a mode that fails closed, but
+// that is the guard's failure, not a verdict on the response, so it stays the
+// 403 it was and writes nothing.
+func TestStreamGuard_HeadUninspectableKeepsItsStatus(t *testing.T) {
 	t.Parallel()
-
 	runner := &scriptedRunner{outcome: &appplugins.SegmentOutcome{
-		Block: true, Type: "guardrail_violation", Message: "nope",
+		Block:   true,
+		Type:    appplugins.TypeGuardrailInputUninspectable,
+		Message: appplugins.DefaultUninspectableMessage,
 	}}
-	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, stageInputFixture(), streamGuardConfig{}, newGuardLogger())
-	_, pe := g.Run(context.Background(), invariantSource(t, g, openAIStreamLines(), nil))
+	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, stageInputFixture(),
+		streamGuardConfig{}, newGuardLogger())
+	out, pe := g.Run(context.Background(), invariantSource(t, g, openAIStreamLines(), nil))
 	require.NotNil(t, pe)
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
-	assert.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
+	assert.Equal(t, appplugins.TypeGuardrailInputUninspectable, pe.Type)
+	assert.False(t, g.cutAtHead())
+	drained, _ := collectGuardOutput(t, g, out)
+	assert.Zero(t, g.releasedIdx, "a refusal writes nothing")
+	assert.NotContains(t, drained, openAIStreamLines()[2], "the head must never reach the client")
+}
+
+// TestStreamGuard_HeadPolicyBlockIsCutInStream pins what a policy block on the
+// head is: a verdict that names no status or names 403 ends the stream the way
+// a block after the head does, and the policy fields of its body ride the
+// blocked event, as they rode the 403 body this replaces.
+func TestStreamGuard_HeadPolicyBlockIsCutInStream(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"status":"block","message":"nope","type":"trustguard_blocked","direction":"output",` +
+		`"reason":"pii","detector_name":"pii_detector","trace_id":"guard-trace","request_id":"guard-request"}`)
+	for _, status := range []int{0, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{outcome: &appplugins.SegmentOutcome{
+				Block: true, Type: "trustguard_blocked", Message: "nope", StatusCode: status, Body: body,
+			}}
+			lines := textStreamLines("secret", "more")
+			g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, stageInputFixture(),
+				streamGuardConfig{}, newGuardLogger())
+			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			require.Nil(t, pe)
+			require.True(t, g.cutAtHead())
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+			assert.Equal(t, []string{
+				`data: {"id":"c1","object":"chat.completion.chunk","choices":` +
+					`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
+				`data: {"error":{"message":"nope","type":"content_filter","direction":"output","reason":"pii",` +
+					`"detector_name":"pii_detector","trace_id":"guard-trace","request_id":"guard-request"}}`, "",
+				"data: [DONE]", "",
+			}, got)
+			assert.Equal(t, 1, runner.calls, "a cut issues no further calls")
+			require.Len(t, runner.closings, 1)
+			assert.Equal(t, 1, runner.closings[0].Report.CutAtEval, "the report records the cut on the head block")
+			assert.Zero(t, runner.closings[0].Report.CutOffsetChars, "none of the text reached the client")
+		})
+	}
 }
 
 // TestStreamGuard_PreludeIsClearedWithoutHoldingTheVerdict pins the fast-path.
@@ -1037,21 +1121,21 @@ func openAICutLines(message string) []string {
 	}
 }
 
-// TestStreamGuard_CutRegimeIsDecidedBySeq is the boundary between the two
-// regimes. The same verdict over the same stream is a real 403 with an empty
-// body while it lands on the head block, and a 200 that ends on a terminator
-// once a byte has been released — because by then the status is on the wire
-// and the only honest ending left is one the dialect can express.
-func TestStreamGuard_CutRegimeIsDecidedBySeq(t *testing.T) {
+// TestStreamGuard_BlockEndsTheSameWayWhereverItLands is the boundary that used
+// to separate two regimes. The same verdict over the same stream ends on the
+// same terminator whether it lands on the head block or on a later one; what
+// the block decides is only how much of the response came before it: nothing
+// at the head, the cleared blocks after it.
+func TestStreamGuard_BlockEndsTheSameWayWhereverItLands(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		blockOn  int
-		wantCut  bool
-		wantHead bool
+		name         string
+		blockOn      int
+		wantReleased int
+		wantHead     bool
 	}{
-		{name: "the head block is a status code", blockOn: 1, wantHead: true},
-		{name: "a later block is a terminator", blockOn: 2, wantCut: true},
+		{name: "on the head block nothing comes before the cut", blockOn: 1, wantReleased: 0, wantHead: true},
+		{name: "on a later block the cleared blocks come before it", blockOn: 2, wantReleased: 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1066,21 +1150,13 @@ func TestStreamGuard_CutRegimeIsDecidedBySeq(t *testing.T) {
 			}
 
 			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			require.Nil(t, pe)
 			got, _ := collectGuardOutput(t, g, out)
 
-			if tc.wantHead {
-				require.NotNil(t, pe)
-				require.Equal(t, http.StatusForbidden, pe.StatusCode)
-				if pe.Type != streamUnverifiableType {
-					require.Equal(t, []string{appplugins.BlockDirectionOutput}, pe.Headers[appplugins.BlockDirectionHeader])
-				}
-				require.Zero(t, g.releasedIdx, "a head-gate block writes nothing at all")
-				return
-			}
-			require.Nil(t, pe)
-			require.True(t, tc.wantCut)
-			require.Equal(t, lines[:2], got[:2])
-			require.Equal(t, openAICutLines("nope"), got[2:])
+			require.Equal(t, tc.wantHead, g.cutAtHead())
+			require.True(t, g.wasCut())
+			require.Equal(t, lines[:tc.wantReleased], got[:tc.wantReleased])
+			require.Equal(t, openAICutLines("nope"), got[tc.wantReleased:])
 			require.Equal(t, tc.blockOn, runner.calls)
 		})
 	}
@@ -1336,7 +1412,9 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			wantReleased: 2,
 			wantTail: []string{
 				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`, "",
-				`data: {"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED"}}`, "",
+				`data: {"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED","details":[{"@type":` +
+					`"type.googleapis.com/google.rpc.ErrorInfo","reason":"CONTENT_FILTER","domain":"trustgate",` +
+					`"metadata":{"direction":"output"}}]}}`, "",
 			},
 		},
 		{
@@ -1403,6 +1481,136 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			_, tail := splitAtCut(t, got, tc.lines, tc.wantReleased)
 			require.Equal(t, tc.wantTail, tail)
 			require.Equal(t, 2, runner.calls, "a cut issues no further calls")
+		})
+	}
+}
+
+// TestStreamGuard_HeadCutOpensWhatItCloses is the head-block half of
+// TestStreamGuard_CutSpeaksTheCallersDialect. A block on the head releases none
+// of the text, but it does release the opaque prelude the head cleared, and the
+// terminator closes what that prelude opened. Without it an Anthropic stream
+// would end on a message_delta with no message_start in front of it, which
+// anthropic-sdk-python's MessageStream rejects, and a Responses stream would
+// close an output item it never announced.
+func TestStreamGuard_HeadCutOpensWhatItCloses(t *testing.T) {
+	t.Parallel()
+	const message = "nope"
+	tests := []struct {
+		name         string
+		format       adapter.Format
+		lines        []string
+		wantReleased int
+		wantTail     []string
+	}{
+		{
+			name:     "openai chat has nothing to open",
+			format:   adapter.FormatOpenAI,
+			lines:    textStreamLines("a1", "b2", "c3"),
+			wantTail: openAICutLines(message),
+		},
+		{
+			name:   "anthropic opens the message and the text block before closing them",
+			format: adapter.FormatAnthropic,
+			lines: []string{
+				"event: message_start",
+				`data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5"}}`, "",
+				"event: content_block_start",
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
+				"event: ping",
+				`data: {"type":"ping"}`, "",
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"secret"}}`, "",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`, "",
+			},
+			wantReleased: 9,
+			wantTail: []string{
+				"event: content_block_stop",
+				`data: {"type":"content_block_stop","index":0}`, "",
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},"usage":{"input_tokens":0,"output_tokens":0}}`, "",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`, "",
+			},
+		},
+		{
+			name:   "responses opens the response and the item before closing them",
+			format: adapter.FormatOpenAIResponses,
+			lines: []string{
+				"event: response.created",
+				`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5","status":"in_progress"}}`, "",
+				"event: response.in_progress",
+				`data: {"type":"response.in_progress","response":{"id":"resp_1","model":"gpt-5","status":"in_progress"}}`, "",
+				"event: response.output_item.added",
+				`data: {"type":"response.output_item.added","output_index":0,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant"}}`, "",
+				"event: response.content_part.added",
+				`data: {"type":"response.content_part.added","output_index":0,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`, "",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"secret"}`, "",
+				"event: response.completed",
+				`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5"}}`, "",
+			},
+			wantReleased: 12,
+			wantTail: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":0,"content_index":0}`, "",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
+					`"part":{"type":"output_text","text":"","annotations":[]}}`, "",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`, "",
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"id":"resp_1","incomplete_details":` +
+					`{"reason":"content_filter"},"model":"gpt-5","object":"response","output":[],"status":"incomplete"}}`, "",
+				"event: error",
+				`data: {"type":"error","code":"content_filter","message":"nope","param":null,"direction":"output"}`, "",
+			},
+		},
+		{
+			name:   "gemini has nothing to open",
+			format: adapter.FormatGemini,
+			lines:  geminiStreamLines(),
+			wantTail: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`, "",
+				`data: {"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED","details":[{"@type":` +
+					`"type.googleapis.com/google.rpc.ErrorInfo","reason":"CONTENT_FILTER","domain":"trustgate",` +
+					`"metadata":{"direction":"output"}}]}}`, "",
+			},
+		},
+		{
+			name:   "cohere ends on message-end alone",
+			format: adapter.FormatCohere,
+			lines:  cohereStreamLines(),
+			wantTail: []string{
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"error":"response blocked by content filter"}}`, "",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := dialectGuard(t, runner, tc.format)
+			blockOnCall(runner, 1, message)
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			require.True(t, g.cutAtHead())
+			released, tail := splitAtCut(t, got, tc.lines, tc.wantReleased)
+			require.NotContains(t, strings.Join(released, "\n"), "secret")
+			require.NotContains(t, strings.Join(released, "\n"), "Hola")
+			require.Equal(t, tc.wantTail, tail)
+			require.Equal(t, 1, runner.calls, "a cut issues no further calls")
 		})
 	}
 }

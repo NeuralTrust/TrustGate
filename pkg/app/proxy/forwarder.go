@@ -887,6 +887,15 @@ func (f *forwarder) finalizeStream(
 		cutBarrier = guard.cutBarrier
 		wasCut = guard.wasCut
 		finalInspected = guard.wasFinalInspected
+		if guard.cutAtHead() {
+			// The block replaced a 403 that carried the direction header,
+			// and the status has not gone out yet, so the header still can.
+			// It is spelled as WithBlockDirection spells it on the 403.
+			headers := cloneResponseHeaders(pluginResp.Headers)
+			deleteResponseHeader(headers, appplugins.BlockDirectionHeader)
+			headers[appplugins.BlockDirectionHeader] = []string{appplugins.BlockDirectionOutput}
+			pluginResp.Headers = headers
+		}
 	}
 	stream = f.refreshModelAtStreamEnd(ctx, dto, stream)
 	out := f.wrapStreamWithPostResponse(

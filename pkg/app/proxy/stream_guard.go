@@ -305,8 +305,14 @@ type streamGuard struct {
 	failures       int
 	silenced       bool
 	stopped        bool
-	handedOff      bool
-	cutMessage     string
+	// headCut marks a block verdict on the head block: the stream is cut
+	// before any of the response's text reached the client.
+	headCut    bool
+	handedOff  bool
+	cutMessage string
+	// cutDetails are the policy fields of the verdict that cut the stream,
+	// carried by the blocked event.
+	cutDetails *adapter.StreamBlockDetails
 	// native marks a Bedrock eventstream: the items are whole frames, and a mask
 	// is patched into them in place.
 	native bool
@@ -401,15 +407,22 @@ func newStreamGuard(
 	return g
 }
 
-// Run evaluates the head of the stream before a single byte reaches the client,
-// which is the only point at which a violation can still be a real HTTP status:
+// Run evaluates the head of the stream before a single byte reaches the client:
 // finalizeStream has not returned, so status and headers are unset.
+//
+// A policy block on the head is not a status. It ends the stream the way a
+// block on any later block does, so a client meets one signal for an output
+// block wherever in the response it falls: the response opens, carries none of
+// the text, and ends on the dialect's content-filter terminator and blocked
+// event (cutAtHead). What stays a status is a refusal that is not a policy
+// block: the guard could not inspect the head, could not apply a mask, or the
+// verdict named a status of its own, such as a guard's plan limit.
 //
 // It returns the sequence the caller must consume. After a clean verdict that
 // is the cleared head replayed byte for byte, followed by the block loop over
-// the rest of the source. On a head-gate block it is only the undrained
-// remainder, which the caller drains and discards: the source has already been
-// pulled from and cannot be ranged a second time.
+// the rest of the source; after a head block it is the cut. On a refusal it is
+// only the undrained remainder, which the caller drains and discards: the
+// source has already been pulled from and cannot be ranged a second time.
 //
 // Run owns the pull coroutine only until it hands it to the sequence it
 // returns, which stops it on a defer. Until that handover a panic would park
@@ -565,7 +578,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 		}
 		g.markCut()
 		if v.outcome != nil && v.outcome.Block {
-			return blockedHeadError(g.source, v.outcome)
+			return g.blockAtHead(v.outcome)
 		}
 		return g.maskedHeadError()
 	}
@@ -575,13 +588,13 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	}
 	if outcome != nil && outcome.Block {
 		g.markCut()
-		return blockedHeadError(g.source, outcome)
+		return g.blockAtHead(outcome)
 	}
 	// Nothing has been released at the head, so the one trigger rewrite cannot
 	// fire here is the released-text one; every other reason it refuses applies
-	// to the head block as it does to any other. Escalating still costs a status
-	// code rather than a truncated body, which is the one advantage the head
-	// has over every block after it.
+	// to the head block as it does to any other. Escalating costs a status code
+	// rather than a truncated body: a mask the stream cannot apply is the
+	// gateway's limit, not a policy block.
 	if outcome != nil && outcome.HasTransform && !g.applyTransform(ctx, outcome) {
 		g.markCut()
 		return g.maskedHeadError()
@@ -616,6 +629,25 @@ func (g *streamGuard) headFailure(ctx context.Context, err error, partial *apppl
 		return g.maskedHeadError()
 	}
 	g.clearedIdx = len(g.produced)
+	return nil
+}
+
+// blockAtHead resolves a block verdict on the head block. A policy block, a 403
+// or a verdict that names no status, stops the stream, and replay cuts it
+// before releasing anything but the opaque prelude, as blockLoop cuts a block
+// after the head. Two refusals keep their status instead, because neither is a
+// verdict on the content: one that names another status (a guard's plan limit
+// is a 429), and a guardrail that could not inspect the text and found nothing
+// (guardrail_input_uninspectable), which is the guard's failure in a mode that
+// fails closed. A failure that carries a finding arrives as the plugin's own
+// block and is cut.
+func (g *streamGuard) blockAtHead(outcome *appplugins.SegmentOutcome) *appplugins.PluginError {
+	if outcome.StatusCode != 0 && outcome.StatusCode != http.StatusForbidden ||
+		outcome.Type == appplugins.TypeGuardrailInputUninspectable {
+		return blockedHeadError(g.source, outcome)
+	}
+	g.headCut = true
+	g.stopStream(outcome)
 	return nil
 }
 
@@ -704,7 +736,17 @@ func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]by
 		// the source, a cut, a retired block loop, or a client that stopped
 		// pulling.
 		defer g.close(streamCtx)
+		// After a head block the flush releases only the opaque prelude the
+		// head cleared (an Anthropic message_start and text block start, a
+		// Responses response.created and output item): no text, but the
+		// structure the cut's terminator closes, which is what keeps an SDK
+		// that assembles the message from failing on a stream that never
+		// opened one.
 		if !g.flush(yield) {
+			return
+		}
+		if g.headCut {
+			g.cut(yield)
 			return
 		}
 		g.blockLoop(streamCtx, yield)
@@ -1379,6 +1421,9 @@ func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 	g.stopped = true
 	g.markCut()
 	g.cutMessage = cutMessage(outcome)
+	if outcome != nil && outcome.Block {
+		g.cutDetails = adapter.StreamBlockDetailsFromBody(outcome.Body)
+	}
 	if g.native && outcome != nil && outcome.Type != "" {
 		g.cutMessage = outcome.Type + ": " + g.cutMessage
 	}
@@ -1389,7 +1434,8 @@ func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 	if outcome != nil {
 		kind = outcome.Type
 	}
-	g.logger.Warn("stream stopped after the head by a block verdict",
+	g.logger.Warn("stream stopped by a block verdict",
+		slog.Bool("head", g.headCut),
 		slog.Int("seq", g.seq),
 		slog.Int("released_events", g.releasedIdx),
 		slog.String("type", kind))
@@ -1471,7 +1517,7 @@ func (g *streamGuard) cutLines() [][]byte {
 		return g.cutDoneLines()
 	}
 	if !adapter.IsSameWireFormat(g.source, adapter.FormatCohere) {
-		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage, appplugins.BlockDirectionOutput)...)
+		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage, appplugins.BlockDirectionOutput, g.cutDetails)...)
 	}
 	return append(lines, g.cutDoneLines()...)
 }
@@ -1567,12 +1613,19 @@ func (g *streamGuard) drainForUsage() {
 }
 
 // wasCut reports whether the guard stopped the stream and ended it on a cut
-// terminator, after the head, so what the client holds is a truncated response.
+// terminator, so what the client holds is a truncated response, or, after a
+// head block, one that carries none of the text.
 // stopped is set only by stopStream, the one place a cut is decided; a degrade,
 // a retired block loop, a client that went away and a stream that ended on its
 // own never set it. It must be read after the returned sequence is exhausted,
 // like cutBarrier.
 func (g *streamGuard) wasCut() bool { return g.stopped }
+
+// cutAtHead reports whether a block verdict on the head block cut the stream.
+// It is known when Run returns, before the status goes out, which is what lets
+// the response carry the block's direction header as the refusal it replaces
+// did.
+func (g *streamGuard) cutAtHead() bool { return g.headCut }
 
 // wasFinalInspected reports whether the stream's final block was evaluated in
 // full by every entry: the call came back, no entry failed, and the text it
