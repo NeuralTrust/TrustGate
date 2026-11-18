@@ -73,6 +73,7 @@ type compilerReaders struct {
 	Grants        storeaccessdomain.Repository
 	StorePolicies storeaccessdomain.PolicyRepository
 	StoreEveryone storeaccessdomain.EveryoneRepository
+	StoreAgents   storeaccessdomain.AgentAccessRepository
 	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
 	// gateways.
 	TenantCaps ratelimitdomain.TenantCapsRepository
@@ -101,6 +102,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStoreGrants(r.Grants),
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithStoreEveryone(r.StoreEveryone),
+			appsnapshot.WithStoreAgentAccess(r.StoreAgents),
 			appsnapshot.WithKeyGroupBudgets(r.KeyGroupBudgets),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 			appsnapshot.WithTenantCaps(r.TenantCaps),

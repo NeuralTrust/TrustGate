@@ -85,8 +85,8 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	// MCP Store access grants and per-principal policies ride the snapshot; the
-	// data plane reads them here.
+	// MCP Store access grants, per-principal policies and agent access ride the
+	// snapshot; the data plane reads them here.
 	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.Reader {
 		return adapters.NewStoreGrantReader(store)
 	}); err != nil {
@@ -94,6 +94,11 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}
 	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.PolicyReader {
 		return adapters.NewStorePolicyReader(store)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.AgentAccessReader {
+		return adapters.NewStoreAgentAccessReader(store)
 	}); err != nil {
 		return err
 	}

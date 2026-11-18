@@ -71,6 +71,10 @@ message Snapshot {
   // as JSON), at most one per gateway. A data plane built before this field
   // ignores it and grants nothing through Everyone until it reads the field.
   repeated StoreEveryone store_everyone = 18;
+  // Which A2A agents each principal of a gateway may call from the Employee
+  // portal (storeaccess.AgentAccess as JSON). A data plane built before this
+  // field ignores it and offers no agent until it reads the field.
+  repeated StoreAgentAccess store_agent_access = 19;
 }
 
 // KeyGroupBudget is one directory group's budget on a gateway
@@ -130,6 +134,13 @@ message StorePolicy {
 // StoreEveryone is one gateway's Everyone Store access (storeaccess.Everyone
 // as JSON): a level, the servers it grants and the excluded groups.
 message StoreEveryone {
+  bytes json = 1;
+}
+
+// StoreAgentAccess is one principal's agent access on a gateway
+// (storeaccess.AgentAccess as JSON): all | selected | none for everyone, a
+// group or a user.
+message StoreAgentAccess {
   bytes json = 1;
 }
 

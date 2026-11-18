@@ -2888,6 +2888,19 @@ definitions:
         example: false
         type: boolean
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess:
+    properties:
+      mode:
+        type: string
+      principal_id:
+        type: string
+      principal_type:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetEveryone:
     properties:
       excluded_groups:
@@ -2924,6 +2937,26 @@ definitions:
         type: string
       principal_type:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess:
+    properties:
+      mode:
+        type: string
+      principal_id:
+        type: string
+      principal_type:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList:
+    properties:
+      rows:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess'
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.DecidedRequest:
     properties:
@@ -8611,6 +8644,83 @@ paths:
       security:
       - BearerAuth: []
       summary: Set an MCP Store access policy
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/agent-access:
+    get:
+      description: 'Returns every agent access row of the gateway: for everyone (principal_type
+        all), a group or a user, the mode (all | selected | none) and the A2A registries
+        picked when selected.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccessList'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the Employee portal's agent access
+      tags:
+      - store
+    put:
+      consumes:
+      - application/json
+      description: 'Sets which A2A agents everyone (principal_type all, empty principal_id),
+        a group or a user may call from the Employee portal: mode all, selected (the
+        agents in registry_ids) or none. An empty mode deletes the row.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: The row
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetAgentAccess'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.AgentAccess'
+        "204":
+          description: Row deleted
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Set one principal's agent access
       tags:
       - store
   /v1/gateways/{gateway_id}/store/everyone:

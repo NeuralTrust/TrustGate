@@ -44,6 +44,7 @@ func TestMapDomainError(t *testing.T) {
 		{name: "nil error → 200 empty", err: nil, wantStatus: fiber.StatusOK, wantCode: "", wantMsgEmpty: true},
 		{name: "invalid uuid → 400", err: ErrInvalidUUIDParam, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_uuid", wantMsgPart: "UUID"},
 		{name: "invalid query → 400", err: ErrInvalidQuery, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_query", wantMsgPart: "query"},
+		{name: "invalid body → 400", err: ErrInvalidBody, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_body", wantMsgPart: "body"},
 		{name: "invalid page → 422", err: ErrInvalidPage, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination", wantMsgPart: "page"},
 		{name: "invalid size → 422", err: ErrInvalidSize, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination", wantMsgPart: "size"},
 		{name: "invalid sort → 422", err: ErrInvalidSort, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_sort", wantMsgPart: "sort"},
