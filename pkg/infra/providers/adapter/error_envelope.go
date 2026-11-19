@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strings"
 )
 
 type anthropicErrorEnvelope struct {
@@ -39,7 +40,26 @@ type geminiErrorBody struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
+	// Details is set only on a guardrail cut, with one google.rpc.ErrorInfo.
+	Details []geminiErrorInfo `json:"details,omitempty"`
 }
+
+// geminiErrorInfo is google.rpc.ErrorInfo, the detail google.rpc.Status keeps
+// for machine-readable context: a reason, the domain that owns it and a flat
+// string map. It is where Gemini's error object can carry what the other
+// dialects carry as members of theirs.
+type geminiErrorInfo struct {
+	Type     string            `json:"@type"`
+	Reason   string            `json:"reason"`
+	Domain   string            `json:"domain"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+const (
+	geminiErrorInfoType = "type.googleapis.com/google.rpc.ErrorInfo"
+	// geminiErrorInfoDomain owns the reasons the gateway puts in an ErrorInfo.
+	geminiErrorInfoDomain = "trustgate"
+)
 
 type cohereErrorEnvelope struct {
 	Message string `json:"message"`
@@ -67,9 +87,11 @@ type openaiStreamErrorEnvelope struct {
 type openaiStreamErrorBody struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
-	// Direction is set only on a guardrail cut. It is an additive member of the
-	// error object, so a client that reads message and type is unaffected.
+	// Direction and the block details are set only on a guardrail cut. They
+	// are additive members of the error object, so a client that reads message
+	// and type is unaffected.
 	Direction string `json:"direction,omitempty"`
+	*StreamBlockDetails
 }
 
 type responsesStreamErrorEvent struct {
@@ -77,8 +99,77 @@ type responsesStreamErrorEvent struct {
 	Code    string  `json:"code"`
 	Message string  `json:"message"`
 	Param   *string `json:"param"`
-	// Direction is set only on a guardrail cut; see openaiStreamErrorBody.
+	// Direction and the block details are set only on a guardrail cut; see
+	// openaiStreamErrorBody.
 	Direction string `json:"direction,omitempty"`
+	*StreamBlockDetails
+}
+
+// StreamBlockDetails are the policy fields a blocked event carries beside its
+// message: the ones a guardrail's refusal body names the finding with. They are
+// what an integrator correlates a block with (the detector, the guard's trace),
+// and a block reaches the client in-stream wherever in the response it falls,
+// so the event is the one place they can travel. Every field is optional, and
+// none of them is a dialect field a client shows to its end user.
+type StreamBlockDetails struct {
+	Reason       string `json:"reason,omitempty"`
+	Plugin       string `json:"plugin,omitempty"`
+	DetectorName string `json:"detector_name,omitempty"`
+	GateName     string `json:"gate_name,omitempty"`
+	TraceID      string `json:"trace_id,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+}
+
+// StreamBlockDetailsFromBody reads the details out of a guardrail's refusal
+// body, the JSON object its buffered leg answers with. Only the fields of
+// StreamBlockDetails are read, each when it is a non-empty string, so nothing
+// else a body carries reaches the stream. It returns nil when there are none.
+func StreamBlockDetailsFromBody(body []byte) *StreamBlockDetails {
+	if len(body) == 0 {
+		return nil
+	}
+	var fields map[string]any
+	if json.Unmarshal(body, &fields) != nil {
+		return nil
+	}
+	str := func(key string) string {
+		v, _ := fields[key].(string)
+		return strings.TrimSpace(v)
+	}
+	d := StreamBlockDetails{
+		Reason:       str("reason"),
+		Plugin:       str("plugin"),
+		DetectorName: str("detector_name"),
+		GateName:     str("gate_name"),
+		TraceID:      str("trace_id"),
+		RequestID:    str("request_id"),
+	}
+	if d == (StreamBlockDetails{}) {
+		return nil
+	}
+	return &d
+}
+
+func (d *StreamBlockDetails) metadata(direction string) map[string]string {
+	m := map[string]string{}
+	add := func(key, value string) {
+		if value != "" {
+			m[key] = value
+		}
+	}
+	add("direction", direction)
+	if d != nil {
+		add("reason", d.Reason)
+		add("plugin", d.Plugin)
+		add("detector_name", d.DetectorName)
+		add("gate_name", d.GateName)
+		add("trace_id", d.TraceID)
+		add("request_id", d.RequestID)
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 const (
@@ -375,12 +466,13 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 // streamBlockedReason allows; the rest carry the block through their own
 // permission-denied taxonomy.
 //
-// direction ("input" or "output"; a stream is only ever cut on output) is added
-// to the error object of the two dialects whose error object is free to carry
-// it, the OpenAI-chat default and Responses. Gemini's error object is the
-// google.rpc.Status shape and is left as it is, and the dialects above carry no
-// event at all.
-func StreamBlockedEvent(source Format, reason, message, direction string) [][]byte {
+// direction ("input" or "output"; a stream is only ever cut on output) and
+// details are added to the error object of the two dialects whose error object
+// is free to carry them, the OpenAI-chat default and Responses. Gemini's error
+// object is the google.rpc.Status shape, so they travel there as the metadata
+// of one google.rpc.ErrorInfo detail, and the dialects above carry no event at
+// all.
+func StreamBlockedEvent(source Format, reason, message, direction string, details *StreamBlockDetails) [][]byte {
 	reason = streamBlockedReason(reason)
 	if message == "" {
 		message = defaultStreamBlockedMessage
@@ -389,21 +481,36 @@ func StreamBlockedEvent(source Format, reason, message, direction string) [][]by
 	case FormatAnthropic:
 		return nil
 	case FormatGemini:
-		return SSEData(EncodeErrorBody(FormatGemini, http.StatusForbidden, message))
+		data, _ := json.Marshal(geminiErrorEnvelope{
+			Error: geminiErrorBody{
+				Code:    http.StatusForbidden,
+				Message: message,
+				Status:  geminiRPCStatus(http.StatusForbidden),
+				Details: []geminiErrorInfo{{
+					Type:     geminiErrorInfoType,
+					Reason:   strings.ToUpper(reason),
+					Domain:   geminiErrorInfoDomain,
+					Metadata: details.metadata(direction),
+				}},
+			},
+		})
+		return SSEData(data)
 	case FormatOpenAIResponses:
 		data, _ := json.Marshal(responsesStreamErrorEvent{
-			Type:      "error",
-			Code:      reason,
-			Message:   message,
-			Direction: direction,
+			Type:               "error",
+			Code:               reason,
+			Message:            message,
+			Direction:          direction,
+			StreamBlockDetails: details,
 		})
 		return SSEEvent("error", data)
 	default:
 		data, _ := json.Marshal(openaiStreamErrorEnvelope{
 			Error: openaiStreamErrorBody{
-				Message:   message,
-				Type:      reason,
-				Direction: direction,
+				Message:            message,
+				Type:               reason,
+				Direction:          direction,
+				StreamBlockDetails: details,
 			},
 		})
 		return SSEData(data)

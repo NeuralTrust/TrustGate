@@ -361,7 +361,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 			name:   "gemini",
 			source: FormatGemini,
 			want: []string{
-				`data: {"error":{"code":403,"message":"blocked","status":"PERMISSION_DENIED"}}`,
+				`data: {"error":{"code":403,"message":"blocked","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"CONTENT_FILTER","domain":"trustgate","metadata":{"direction":"output"}}]}}`,
 				"",
 			},
 		},
@@ -386,7 +386,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := StreamBlockedEvent(tc.source, "content_filter", "blocked", "output")
+			got := StreamBlockedEvent(tc.source, "content_filter", "blocked", "output", nil)
 			var lines []string
 			for _, line := range got {
 				lines = append(lines, string(line))
@@ -407,7 +407,7 @@ func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 	for _, source := range sources {
 		t.Run(string(source), func(t *testing.T) {
 			t.Parallel()
-			got := StreamBlockedEvent(source, "", "", "")
+			got := StreamBlockedEvent(source, "", "", "", nil)
 			require.NotEmpty(t, got)
 			assert.Empty(t, got[len(got)-1])
 			for _, line := range got {
@@ -430,20 +430,96 @@ func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 func TestStreamBlockedEvent_AnthropicEmitsNothing(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"", "content_filter", "some_plugin_name"} {
-		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked", "output"))
+		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked", "output", nil))
 	}
-	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", "", "output"))
+	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", "", "output", nil))
 }
 
 // An empty direction leaves the error object exactly as it was before the
 // field existed.
 func TestStreamBlockedEvent_NoDirectionLeavesTheEnvelopeUnchanged(t *testing.T) {
 	t.Parallel()
-	got := StreamBlockedEvent(FormatOpenAI, "content_filter", "blocked", "")
+	got := StreamBlockedEvent(FormatOpenAI, "content_filter", "blocked", "", nil)
 	assert.Equal(t, [][]byte{
 		[]byte(`data: {"error":{"message":"blocked","type":"content_filter"}}`),
 		[]byte(""),
 	}, got)
+}
+
+// The policy fields of a block travel as members of the error object where the
+// dialect's object is free to carry them, and as ErrorInfo metadata on Gemini's
+// google.rpc.Status, so a client reads the same fields the head refusal's body
+// used to carry.
+func TestStreamBlockedEvent_CarriesBlockDetails(t *testing.T) {
+	t.Parallel()
+	details := &StreamBlockDetails{
+		Reason:       "pii",
+		Plugin:       "pii_plugin",
+		DetectorName: "pii_detector",
+		TraceID:      "guard-trace",
+		RequestID:    "guard-request",
+	}
+	data := func(lines [][]byte) map[string]any {
+		t.Helper()
+		var line []byte
+		for _, l := range lines {
+			if bytes.HasPrefix(l, []byte("data: ")) {
+				line = bytes.TrimPrefix(l, []byte("data: "))
+			}
+		}
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(line, &decoded))
+		return decoded
+	}
+
+	openai := data(StreamBlockedEvent(FormatOpenAI, "content_filter", "blocked", "output", details))
+	assert.Equal(t, map[string]any{
+		"message":       "blocked",
+		"type":          "content_filter",
+		"direction":     "output",
+		"reason":        "pii",
+		"plugin":        "pii_plugin",
+		"detector_name": "pii_detector",
+		"trace_id":      "guard-trace",
+		"request_id":    "guard-request",
+	}, openai["error"])
+
+	responses := data(StreamBlockedEvent(FormatOpenAIResponses, "content_filter", "blocked", "output", details))
+	assert.Equal(t, "content_filter", responses["code"])
+	assert.Equal(t, "output", responses["direction"])
+	assert.Equal(t, "pii_detector", responses["detector_name"])
+	assert.Equal(t, "guard-trace", responses["trace_id"])
+
+	gemini := data(StreamBlockedEvent(FormatGemini, "content_filter", "blocked", "output", details))
+	errObj := gemini["error"].(map[string]any)
+	info := errObj["details"].([]any)[0].(map[string]any)
+	assert.Equal(t, "type.googleapis.com/google.rpc.ErrorInfo", info["@type"])
+	assert.Equal(t, map[string]any{
+		"direction":     "output",
+		"reason":        "pii",
+		"plugin":        "pii_plugin",
+		"detector_name": "pii_detector",
+		"trace_id":      "guard-trace",
+		"request_id":    "guard-request",
+	}, info["metadata"])
+
+	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", "blocked", "output", details))
+}
+
+func TestStreamBlockDetailsFromBody(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"status":"block","message":"m","type":"trustguard_blocked","direction":"output",` +
+		`"reason":"pii","plugin":"p","detector_name":"d","gate_name":"g","trace_id":"t","request_id":"r",` +
+		`"matched":"secret text","score":0.9}`)
+	assert.Equal(t, &StreamBlockDetails{
+		Reason: "pii", Plugin: "p", DetectorName: "d", GateName: "g", TraceID: "t", RequestID: "r",
+	}, StreamBlockDetailsFromBody(body))
+
+	// Only non-empty strings are read; anything else, or no body, is nothing.
+	assert.Nil(t, StreamBlockDetailsFromBody(nil))
+	assert.Nil(t, StreamBlockDetailsFromBody([]byte(`not json`)))
+	assert.Nil(t, StreamBlockDetailsFromBody([]byte(`["a"]`)))
+	assert.Nil(t, StreamBlockDetailsFromBody([]byte(`{"status":"block","trace_id":"  ","detector_name":7}`)))
 }
 
 func TestEncodeErrorBody_VertexPredictEmbedUsesGoogleEnvelope(t *testing.T) {

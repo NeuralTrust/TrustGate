@@ -248,7 +248,10 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		require.NotEmpty(t, headers.Get(traceIDHeader), "the proxy must echo the trace id the guard was called with")
 	})
 
-	t.Run("a blocked head is a 403 carrying none of the response", func(t *testing.T) {
+	// A block on the head ends the stream the way a block after it does, so a
+	// client meets one signal for an output block wherever it lands: the
+	// response opens, carries none of the text, and ends on the cut.
+	t.Run("a blocked head is cut in-stream carrying none of the response", func(t *testing.T) {
 		tg.Reset()
 		tg.SetGuardDelay(trustGuardStreamGuardDelay)
 		tg.BlockOnCall(1)
@@ -257,14 +260,17 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
 		body := string(raw)
 
-		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
-		assert.Equal(t, "application/json", headers.Get("Content-Type"))
-		assert.JSONEq(t, trustGuardBlockedClientBody, body)
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, "text/event-stream", headers.Get("Content-Type"))
+		assert.Equal(t, "output", headers.Get("X-NeuralTrust-Block-Direction"),
+			"the head's headers were unsent when the verdict came, so the direction still rides them")
+		require.Equal(t, trustGuardStreamEventsCovering("")+trustGuardOpenAICut(), body,
+			"the opaque prelude the head cleared, then the cut")
+		assertCutCarriesTheBufferedFields(t, body)
 
 		for _, marker := range trustGuardStreamMarkers {
 			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
 		}
-		assert.NotContains(t, body, "data:", "the client must see an error body, not a stream")
 
 		// InStreamHits, not GuardHits: a stray buffered call from another
 		// request racing in on the shared stub must not fail this assertion,
@@ -336,7 +342,7 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		}, 5*time.Second, 20*time.Millisecond, "expected the request leg")
 	})
 
-	t.Run("a blocked head is refused by the stream guard, not the request leg", func(t *testing.T) {
+	t.Run("a blocked head is cut by the stream guard, not refused by the request leg", func(t *testing.T) {
 		tg.Reset()
 		tg.SetGuardDelay(trustGuardStreamGuardDelay)
 		tg.BlockOnCall(1)
@@ -344,9 +350,9 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
 		body := string(raw)
 
-		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
-		assert.JSONEq(t, trustGuardBlockedClientBody, body,
-			"the head gate returns the same body as a buffered block")
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		require.Equal(t, trustGuardStreamEventsCovering("")+trustGuardOpenAICut(), body,
+			"the stream guard cut the head; a request-leg block would be a 403 that never streamed")
 		for _, marker := range trustGuardStreamMarkers {
 			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
 		}
@@ -362,17 +368,43 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 }
 
 // trustGuardStreamCutBlockMessage is what the stub's block verdict renders as on
-// the error channel of a cut. It is the same sentence the head gate returns as a
-// 403 body: the incident is the same, only the regime differs.
+// the error channel of a cut. It is the same sentence a buffered block returns
+// in its 403 body: the incident is the same, only the channel differs.
 const trustGuardStreamCutBlockMessage = "Request blocked by security policy: " + trustGuardBlockReason + "."
 
+// assertCutCarriesTheBufferedFields reads the blocked event of an OpenAI-chat
+// cut and holds it to the body a buffered block returns: the same message and
+// direction, and the same fields naming the finding, so an integrator
+// correlates a block the same way on both legs. Only type differs: the event's
+// is the dialect's content_filter, the one every cut carries.
+func assertCutCarriesTheBufferedFields(t *testing.T, body string) {
+	t.Helper()
+	var buffered map[string]any
+	require.NoError(t, json.Unmarshal([]byte(trustGuardBlockedClientBody), &buffered))
+	var event struct {
+		Error map[string]any `json:"error"`
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, `data: {"error":`) {
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event))
+		}
+	}
+	require.NotNil(t, event.Error, "the cut carries a blocked event: %s", body)
+	assert.Equal(t, "content_filter", event.Error["type"])
+	for _, field := range []string{"message", "direction", "reason", "plugin", "trace_id", "request_id"} {
+		assert.Equal(t, buffered[field], event.Error[field], field)
+	}
+}
+
 // trustGuardOpenAICut is the whole of a cut on an OpenAI-chat wire: the
-// finish-reason chunk carrying the id of the stream it ends, the blocked event,
-// and the [DONE] sentinel an OpenAI client reads end-of-stream from.
+// finish-reason chunk carrying the id of the stream it ends, the blocked event
+// with the policy fields of the buffered body (trustGuardBlockedClientBody), and
+// the [DONE] sentinel an OpenAI client reads end-of-stream from.
 func trustGuardOpenAICut() string {
 	return `data: {"id":"chatcmpl-tg-stream","object":"chat.completion.chunk",` +
 		`"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}` + "\n\n" +
-		`data: {"error":{"message":"` + trustGuardStreamCutBlockMessage + `","type":"content_filter","direction":"output"}}` + "\n\n" +
+		`data: {"error":{"message":"` + trustGuardStreamCutBlockMessage + `","type":"content_filter","direction":"output",` +
+		`"reason":"` + trustGuardBlockReason + `","plugin":"prompt_guard","trace_id":"tg-trace-1","request_id":"tg-req-1"}}` + "\n\n" +
 		"data: [DONE]\n\n"
 }
 
@@ -536,6 +568,48 @@ func TestPluginE2E_TrustGuard_StreamMidStreamCutAnthropicIngress(t *testing.T) {
 	require.NotEmpty(t, closed, "the cut closed one")
 	assert.Equal(t, opened[len(opened)-1], closed[len(closed)-1],
 		"the terminator must close the block that was open, not whichever one is first")
+}
+
+// TestPluginE2E_TrustGuard_StreamHeadCutAnthropicIngress is the head-block
+// case over an Anthropic-dialect ingress. A block on the head releases none of
+// the text, but the message has to be opened before the cut closes it:
+// anthropic-sdk-python's MessageStream fails on a message_delta that no
+// message_start came before, so a refusal with nothing to land on would reach
+// the caller as an SDK error instead of stop_reason refusal.
+func TestPluginE2E_TrustGuard_StreamHeadCutAnthropicIngress(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamGuardDelay)
+	tg.BlockOnCall(1)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	apiKey, chatPath := setupPolicyRoute(t, up, policyPlugin("trustguard", trustGuardStreamPolicySettings()))
+
+	request := anthropicChatRequest("gpt-4o-mini")
+	request["stream"] = true
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, anthropicMessagesPath(chatPath), nil, mustJSON(t, request))
+	body := string(raw)
+
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "output", headers.Get("X-NeuralTrust-Block-Direction"))
+	streams, _ := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+	require.Len(t, streams, 1, "the head block, and nothing after the cut")
+
+	for _, marker := range trustGuardStreamMarkers {
+		assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
+	}
+	assert.NotContains(t, body, "text_delta", "no text reaches the client")
+	start := strings.Index(body, "event: message_start")
+	refusal := strings.Index(body, `"stop_reason":"refusal"`)
+	require.GreaterOrEqual(t, start, 0, "the message is opened before the cut: %s", body)
+	require.Greater(t, refusal, start, "the refusal lands on the message the stream opened")
+	assert.Contains(t, body, "event: message_stop")
+	assert.NotContains(t, body, "event: error")
+	opened, closed := anthropicBlockIndexes(t, body)
+	assert.Equal(t, opened, closed, "every block the stream opened is closed")
 }
 
 // anthropicBlockIndexes reads the index of every content_block_start and

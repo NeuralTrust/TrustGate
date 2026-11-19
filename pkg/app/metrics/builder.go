@@ -89,6 +89,11 @@ func (b *Builder) Build(
 		Retention:        retention(meta, startTime),
 	}
 
+	// trustgate_call_agent on the Store's MCP server calls an agent in process:
+	// the call is the agent's, as one made on the agent plane is.
+	if meta.Kind == events.KindMCP && callsAgent(requestTrace) {
+		return b.buildA2A(evt, req, resp, requestTrace, startTime, endTime)
+	}
 	if meta.Kind == events.KindMCP {
 		return b.buildMCP(evt, req, resp, requestTrace, startTime, endTime)
 	}
@@ -511,7 +516,16 @@ func (b *Builder) buildA2A(
 	}
 
 	b.fillRequest(evt, req, nil)
+	if a2a != nil {
+		// The agent is what Activity's Provider names for an agent call,
+		// whichever door (application key, playground) it came through.
+		evt.Request.Provider = a2a.AgentName
+		evt.Request.RegistryID = a2a.RegistryID
+	}
 	evt.Request.Preview = a2aMessagePreview(evt.Request.Body)
+	if message, ok := callAgentMessage(evt.Request.Body); ok {
+		evt.Request.Preview = truncatePreview(events.RedactCredentialsInText(message, maxPreviewRunes))
+	}
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
 	if a2a != nil {
@@ -538,6 +552,20 @@ const (
 	a2aOutcomeRefused         = "refused"
 	statusOutcomeBlocked      = "blocked"
 )
+
+// callsAgent reports a trace with an A2A span: an agent call, whatever door
+// it came through.
+func callsAgent(requestTrace *trace.RequestTrace) bool {
+	if requestTrace == nil {
+		return false
+	}
+	for _, span := range requestTrace.Spans() {
+		if _, ok := span.A2AAttrsCopy(); ok {
+			return true
+		}
+	}
+	return false
+}
 
 func foldA2ASpans(requestTrace *trace.RequestTrace) (*events.A2A, int64) {
 	if requestTrace == nil {
