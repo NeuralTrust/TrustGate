@@ -79,6 +79,7 @@ func newAuthzApp(
 	gateways.Delete("/:id", collection, ok)
 
 	app.Get("/v1/models-catalog", authz.RequireInteractiveIdentity(), ok)
+	app.Get("/v1/policies-catalog", authz.RequireInteractiveIdentity(), authz.RequireGatewayQueryAccess(), ok)
 	app.Get("/v1/config-sync/connections", authz.RequireConfigSyncScopeAccess(), ok)
 	return app
 }
@@ -263,4 +264,43 @@ func TestRequireConfigSyncScopeAccess(t *testing.T) {
 		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, path))
 		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
 	})
+}
+
+func TestRequireGatewayQueryAccess_WithoutGatewayIDPasses(t *testing.T) {
+	t.Parallel()
+	finder := appgatewaymocks.NewFinder(t)
+	app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"}, finder)
+
+	require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, "/v1/policies-catalog"))
+	finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+}
+
+func TestRequireGatewayQueryAccess_ForeignGatewayIsNotFound(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.GatewayKind]()
+	finder := appgatewaymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, id).Return(gatewayOwnedBy(id, "acme"), nil).Once()
+	app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "globex"}, finder)
+
+	require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, "/v1/policies-catalog?gateway_id="+id.String()))
+}
+
+func TestRequireGatewayQueryAccess_OwnGatewayPasses(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.GatewayKind]()
+	finder := appgatewaymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, id).Return(gatewayOwnedBy(id, "acme"), nil).Once()
+	app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"}, finder)
+
+	require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, "/v1/policies-catalog?gateway_id="+id.String()))
+}
+
+func TestRequireGatewayQueryAccess_PlatformSkipsLookupAndBadIDRejected(t *testing.T) {
+	t.Parallel()
+	finder := appgatewaymocks.NewFinder(t)
+	app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityPlatform}, finder)
+
+	require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, "/v1/policies-catalog?gateway_id="+ids.New[ids.GatewayKind]().String()))
+	require.Equal(t, fiber.StatusBadRequest, do(t, app, fiber.MethodGet, "/v1/policies-catalog?gateway_id=not-a-uuid"))
+	finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
 }
