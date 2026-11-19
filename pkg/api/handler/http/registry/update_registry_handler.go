@@ -79,6 +79,8 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		HealthChecks:    req.ToHealthChecks(),
 		Pricing:         req.ToPricing(),
 		SetPricing:      req.Pricing != nil,
+		ModelLabels:     req.ToModelLabels(),
+		SetModelLabels:  req.ModelLabels != nil,
 		MCPTarget:       req.ToMCPTarget(),
 		A2ATarget:       req.A2ATarget.ToDomain(),
 	})

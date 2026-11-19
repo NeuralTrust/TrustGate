@@ -227,19 +227,22 @@ type Status struct {
 }
 
 type Request struct {
-	Method         string              `json:"method,omitempty"`
-	Path           string              `json:"path,omitempty"`
-	Provider       string              `json:"provider,omitempty"`
-	RegistryID     string              `json:"registry_id,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	RequestedModel string              `json:"requested_model,omitempty"`
-	ModelLabel     string              `json:"model_label,omitempty"`
-	Temperature    *float64            `json:"temperature,omitempty"`
-	MaxTokens      int                 `json:"max_tokens,omitempty"`
-	Stream         bool                `json:"stream"`
-	PromptTokens   int                 `json:"prompt_tokens,omitempty"`
-	Body           string              `json:"body,omitempty"`
-	Headers        map[string][]string `json:"headers,omitempty"`
+	Method         string `json:"method,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	RegistryID     string `json:"registry_id,omitempty"`
+	Model          string `json:"model,omitempty"`
+	RequestedModel string `json:"requested_model,omitempty"`
+	ModelLabel     string `json:"model_label,omitempty"`
+	// ModelDisplayName is the name the serving registry's model_labels give the
+	// model, such as a readable name for a Bedrock inference profile ARN.
+	ModelDisplayName string              `json:"model_display_name,omitempty"`
+	Temperature      *float64            `json:"temperature,omitempty"`
+	MaxTokens        int                 `json:"max_tokens,omitempty"`
+	Stream           bool                `json:"stream"`
+	PromptTokens     int                 `json:"prompt_tokens,omitempty"`
+	Body             string              `json:"body,omitempty"`
+	Headers          map[string][]string `json:"headers,omitempty"`
 
 	// Preview is the start of the prompt (LLM) or the tool and its first
 	// argument (MCP). It is body content, so like Body it is exported only on

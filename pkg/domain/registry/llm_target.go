@@ -26,6 +26,9 @@ type LLMTarget struct {
 	Auth            *TargetAuth    `json:"auth,omitempty"`
 	HealthChecks    *HealthChecks  `json:"health_checks,omitempty"`
 	Pricing         *Pricing       `json:"pricing,omitempty"`
+	// ModelLabels maps a model id or inference profile ARN to the display
+	// name analytics show for it.
+	ModelLabels map[string]string `json:"model_labels,omitempty"`
 	// UnreadableProviderHeaders names provider_options.headers whose stored
 	// values could not be decrypted. An update that echoes them empty or masked
 	// keeps the stored ciphertext.
@@ -72,6 +75,11 @@ func (t *LLMTarget) validate(requireAuth bool) error {
 			t.Pricing = nil
 		}
 	}
+	labels, err := NormalizeModelLabels(t.ModelLabels)
+	if err != nil {
+		return err
+	}
+	t.ModelLabels = labels
 	return nil
 }
 

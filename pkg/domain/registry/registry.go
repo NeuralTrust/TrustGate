@@ -221,6 +221,16 @@ func (b *Registry) Pricing() *Pricing {
 	return b.LLMTarget.Pricing
 }
 
+// ModelLabels returns the registry's model display names. The map is shared
+// with every in-flight request served from the cached registry: treat it as
+// read-only and maps.Clone it before changing it.
+func (b *Registry) ModelLabels() map[string]string {
+	if b.LLMTarget == nil {
+		return nil
+	}
+	return b.LLMTarget.ModelLabels
+}
+
 type RehydrateParams struct {
 	ID          ids.RegistryID
 	GatewayID   ids.GatewayID
