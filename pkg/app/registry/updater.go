@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -216,6 +217,10 @@ func (u *updater) applyA2ATargetUpdate(ctx context.Context, existing *domain.Reg
 		if err := u.cards.pin(ctx, existing.GatewayID, &next); err != nil {
 			return err
 		}
+	} else if clientCredentialsChanged(prev.Auth, next.Auth) {
+		if err := u.cards.signIn(ctx, existing.GatewayID, &next); err != nil {
+			return err
+		}
 	}
 	existing.A2ATarget = &next
 	return nil
@@ -368,6 +373,21 @@ func storedMCPAuth(r *domain.Registry) *domain.MCPAuth {
 // introduces. Re-sending the stored one, as a client echoing a read does,
 // must not refuse unrelated edits because the identity has since gone; the
 // exchange refuses that at call time.
+// clientCredentialsChanged reports client credentials next mints a token
+// with that prev did not: a new grant, or another client, secret, token URL,
+// scope or audience.
+func clientCredentialsChanged(prev, next *domain.MCPAuth) bool {
+	if next == nil || next.Mode != domain.MCPAuthModeClientCredentials {
+		return false
+	}
+	if prev == nil || prev.Mode != domain.MCPAuthModeClientCredentials {
+		return true
+	}
+	return prev.ClientID != next.ClientID || prev.ClientSecret != next.ClientSecret || prev.TokenURL != next.TokenURL ||
+		!slices.Equal(prev.Scopes, next.Scopes) || prev.Scope != next.Scope || prev.Audience != next.Audience ||
+		prev.Resource != next.Resource || prev.TokenEndpointAuthMethod != next.TokenEndpointAuthMethod
+}
+
 func exchangeIdentityChanged(prev, next *domain.MCPAuth) bool {
 	if next == nil || next.IdentityID == "" || !next.UsesIdPClient() {
 		return false

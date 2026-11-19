@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infraa2a "github.com/NeuralTrust/TrustGate/pkg/infra/a2a"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gofiber/fiber/v2"
@@ -169,6 +170,32 @@ func TestRPCRefusals(t *testing.T) {
 
 	status, _ = do(t, app, httptest.NewRequest(http.MethodPost, "/research-bot/agents/unknown", strings.NewReader(`{}`)))
 	assert.Equal(t, http.StatusNotFound, status)
+}
+
+// A call the gateway turns away before forwarding is still attributed to the
+// application in Activity (ENG-3394).
+func TestRPCRefusalsKeepTheApplicationOnTheTrace(t *testing.T) {
+	app, reg := newApp(t, "https://agent.example/a2a")
+	var traces []*trace.RequestTrace
+	traced := fiber.New()
+	traced.Use(func(c *fiber.Ctx) error {
+		rt := trace.New("t", trace.Metadata{})
+		traces = append(traces, rt)
+		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+		return c.Next()
+	})
+	traced.Mount("/", app)
+	path := "/research-bot/agents/" + reg.ID.String()
+
+	for _, body := range []string{`{`, `{"jsonrpc":"2.0","method":"SendMessage","params":{}}`} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		do(t, traced, req)
+	}
+	require.Len(t, traces, 2)
+	for _, rt := range traces {
+		assert.NotEmpty(t, rt.Metadata().ConsumerID)
+	}
 }
 
 func TestRPCStreamsServerSentEvents(t *testing.T) {

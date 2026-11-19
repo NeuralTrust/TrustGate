@@ -332,8 +332,8 @@ func TestPluginE2E_TrustGuard_BufferedResponseLeg(t *testing.T) {
 		// This is blockError's own body (pkg/infra/plugins/trustguard/reject.go
 		// blockBody), not the generic {"error":"plugin_rejected",...} envelope
 		// pluginErrorResult falls back to: blockError always sets a Body, so
-		// that envelope is never built here. A streamed head-gate block returns
-		// the same body.
+		// that envelope is never built here. A streamed block carries the same
+		// policy fields on its blocked event.
 		assert.Contains(t, body, `"status":"block"`)
 		assert.Contains(t, body, `"message":"Request blocked by security policy: `+trustGuardBlockReason+`."`)
 		assert.Contains(t, body, `"reason":"`+trustGuardBlockReason+`"`)
