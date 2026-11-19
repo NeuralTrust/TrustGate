@@ -67,6 +67,9 @@ type LLMAttrs struct {
 	TierApplied    bool
 	Baseline       *RouteBaseline
 	ServedPricing  *registrydomain.Pricing
+	// ServedModelLabels are the model display names of the registry that served
+	// this attempt.
+	ServedModelLabels map[string]string
 }
 
 type PluginAttrs struct {

@@ -166,6 +166,30 @@ func TestEventToRecord_EmitsTheAuthIDOnlyWhenPresent(t *testing.T) {
 	}
 }
 
+func TestEventToRecord_EmitsTheModelDisplayNameOnlyWhenPresent(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"labelled inference profile": "Claude Sonnet (prod)",
+		"no label":                   "",
+	}
+	for name, displayName := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			evt := fullEvent()
+			evt.Request.ModelDisplayName = displayName
+
+			attrs := attrsOf(eventToRecord(evt))
+			got, present := attrs["trustgate.model_display_name"]
+
+			assert.Equal(t, displayName != "", present)
+			if present {
+				assert.Equal(t, displayName, got.AsString())
+			}
+			assert.Equal(t, "default", attrs["trustgate.model_label"].AsString())
+		})
+	}
+}
+
 func TestEventToRecord_EmitsTheKeyKindAndGroup(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {

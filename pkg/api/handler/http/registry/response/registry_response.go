@@ -119,8 +119,10 @@ type RegistryResponse struct {
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
 	Pricing         *PricingResponse      `json:"pricing,omitempty"`
-	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
-	A2ATarget       *A2ATargetResponse    `json:"a2a_target,omitempty"`
+	// ModelLabels maps a model id or inference profile ARN to its display name.
+	ModelLabels map[string]string  `json:"model_labels,omitempty"`
+	MCPTarget   *MCPTargetResponse `json:"mcp_target,omitempty"`
+	A2ATarget   *A2ATargetResponse `json:"a2a_target,omitempty"`
 	// SharedAccount is set by the flat listing on MCP instances that hold one
 	// account for every caller, so it shows whether that account is connected.
 	SharedAccount *SharedAccountStateResponse `json:"shared_account,omitempty"`
@@ -284,6 +286,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
 		Pricing:         fromPricing(b.Pricing()),
+		ModelLabels:     maps.Clone(b.ModelLabels()),
 		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		A2ATarget:       fromA2ATarget(b.A2ATarget),
 		CreatedAt:       b.CreatedAt,

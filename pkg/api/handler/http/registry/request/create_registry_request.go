@@ -36,8 +36,13 @@ type CreateRegistryRequest struct {
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
-	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
-	A2ATarget       *A2ATargetRequest    `json:"a2a_target,omitempty"`
+	// ModelLabels maps a model id or inference profile ARN to the display
+	// name analytics show for it. LLM registries only. Keys and values are
+	// trimmed and must not be empty; at most 200 entries, keys up to 2048
+	// characters, values up to 128.
+	ModelLabels map[string]string `json:"model_labels,omitempty"`
+	MCPTarget   *MCPTargetRequest `json:"mcp_target,omitempty"`
+	A2ATarget   *A2ATargetRequest `json:"a2a_target,omitempty"`
 	// Managed asks for an LLM registry NeuralTrust supplies the credentials
 	// for. Platform callers only; it takes no auth.
 	Managed bool `json:"managed,omitempty"`
@@ -232,6 +237,9 @@ func (r CreateRegistryRequest) Validate() error {
 	if err := r.Pricing.ToDomain().Validate(); err != nil {
 		return err
 	}
+	if _, err := domain.NormalizeModelLabels(r.ModelLabels); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -243,7 +251,7 @@ func (r CreateRegistryRequest) ToType() domain.Type {
 }
 
 func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
-	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil && r.Pricing == nil {
+	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil && r.Pricing == nil && r.ModelLabels == nil {
 		return nil
 	}
 	return &domain.LLMTarget{
@@ -252,6 +260,7 @@ func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
 		Auth:            r.Auth.ToDomain(),
 		HealthChecks:    r.HealthChecks.ToDomain(),
 		Pricing:         r.Pricing.ToDomain(),
+		ModelLabels:     r.ModelLabels,
 	}
 }
 

@@ -153,29 +153,32 @@ type RequestContext struct {
 	// LLM Store key), and ConsumerSynthetic marks a consumer that is never
 	// persisted, the MCP Store's. TrustGuard v2 inventories neither as an
 	// application.
-	ConsumerAudience   string
-	ConsumerSynthetic  bool
-	AuthID             string
-	OwnerID            string
-	ConsumerType       string
-	RegistryID         string
-	RegistryPricing    *domain.Pricing
-	Headers            map[string][]string
-	Method             string
-	Path               string
-	Query              url.Values
-	Body               []byte
-	Messages           []string
-	Attachments        []Attachment
-	Metadata           map[string]interface{}
-	ProcessAt          *time.Time
-	IP                 string
-	SessionID          string
-	PreviousResponseID string
-	Provider           string
-	SourceFormat       string
-	TargetFormat       string
-	ProxyCapability    string
+	ConsumerAudience  string
+	ConsumerSynthetic bool
+	AuthID            string
+	OwnerID           string
+	ConsumerType      string
+	RegistryID        string
+	RegistryPricing   *domain.Pricing
+	// RegistryModelLabels maps a model id or ARN to the display name of the
+	// registry currently targeted.
+	RegistryModelLabels map[string]string
+	Headers             map[string][]string
+	Method              string
+	Path                string
+	Query               url.Values
+	Body                []byte
+	Messages            []string
+	Attachments         []Attachment
+	Metadata            map[string]interface{}
+	ProcessAt           *time.Time
+	IP                  string
+	SessionID           string
+	PreviousResponseID  string
+	Provider            string
+	SourceFormat        string
+	TargetFormat        string
+	ProxyCapability     string
 	// BedrockNative is set when the client called a Bedrock Runtime operation
 	// directly; the body is then relayed to Bedrock as received.
 	BedrockNative *BedrockNativeTarget

@@ -105,6 +105,7 @@ const (
 	attrIP                   = "trustgate.ip"
 	attrRequestedModel       = "trustgate.requested_model"
 	attrModelLabel           = "trustgate.model_label"
+	attrModelDisplayName     = "trustgate.model_display_name"
 	attrUsageTotalTokens     = "trustgate.usage.total_tokens"
 	attrUsageCachedInput     = "trustgate.usage.cached_input_tokens"
 	attrUsageCacheWrite      = "trustgate.usage.cache_write_input_tokens"
@@ -277,6 +278,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	appendStr(attrIP, evt.IP)
 	appendStr(attrRequestedModel, evt.Request.RequestedModel)
 	appendStr(attrModelLabel, evt.Request.ModelLabel)
+	appendStr(attrModelDisplayName, evt.Request.ModelDisplayName)
 	appendStr(attrStatusOutcome, evt.Status.Outcome)
 	appendStr(attrStatusReason, evt.Status.Reason)
 	if evt.Status.IsTimeout {

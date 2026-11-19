@@ -62,6 +62,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.ip` | `ip` |
 | `trustgate.requested_model` | `request.requested_model` |
 | `trustgate.model_label` | `request.model_label` |
+| `trustgate.model_display_name` | `request.model_display_name`: the display name the serving registry's `model_labels` give the model, looked up by the model sent upstream, then the model the client requested, then the served model (e.g. a readable name for a Bedrock application inference profile ARN). Omitted when no label matches; show the model id then |
 | `trustgate.status.outcome` | `status.outcome` |
 | `trustgate.status.reason` | `status.reason` (when set) |
 | `trustgate.status.is_timeout` | `status.is_timeout` (omitted when false) |
