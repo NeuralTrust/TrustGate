@@ -455,8 +455,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if resp.Status == statusTransform {
-		if a2aMode {
-			return a2aMaskRefused(in, data, resp)
+		if a2aMode && appplugins.Blocks(in.Mode) {
+			// The masks are written into the parts, and the gateway writes
+			// them into the call or the answer; a mask it cannot write blocks.
+			body, ok := tgt.applyPayload(resp.TransformedPayload)
+			if !ok {
+				return a2aMaskRefused(in, data, resp)
+			}
+			return p.transformApplied(in, data, tgt, body)
 		}
 		return p.applyTransform(ctx, in, cfg, data, resp, tgt)
 	}

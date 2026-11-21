@@ -135,14 +135,139 @@ type Content struct {
 	// ReferenceTaskIDs are the other tasks a message points the agent to.
 	ReferenceTaskIDs []string
 	State            string
-	Parts            []Part
+	// Parts are the content the policies read: the parts of the messages and
+	// artifacts, then the text and data the protocol carries beside them (an
+	// artifact's name and description, and every metadata object), as text and
+	// data parts.
+	Parts []Part
+	// Paths places the inspected value of each part in the call's body (for a
+	// request) or in the result, so a mask can be written back; nil for a part
+	// whose value cannot be written (a file).
+	Paths []Path
+	// ArtifactID, Append and LastChunk describe an artifact-update event: the
+	// artifact it adds to, whether its parts append to the ones sent before
+	// (a chunk of a streamed artifact), and whether it is the last chunk.
+	ArtifactID        string
+	Append, LastChunk bool
+}
+
+// Path is where a value sits in a JSON document: object keys (string) and
+// list indexes (int), from the root.
+type Path []any
+
+// to is p with segs appended, in a new slice.
+func (p Path) to(segs ...any) Path {
+	out := make(Path, 0, len(p)+len(segs))
+	return append(append(out, p...), segs...)
+}
+
+// collector reads the parts of a call or a result with their paths. The
+// parts of messages and artifacts come first, in order; the text and data the
+// protocol carries beside them (names, descriptions, metadata) follow, so
+// adding them leaves the place of every part unchanged.
+type collector struct {
+	v          Version
+	parts      []Part
+	paths      []Path
+	extra      []Part
+	extraPaths []Path
+}
+
+func (c *collector) content() ([]Part, []Path) {
+	return append(c.parts, c.extra...), append(c.paths, c.extraPaths...)
+}
+
+// list reads the list of parts under key of o, which sits at at. An absent
+// list has no parts; a list that is not a JSON array, an item that is not an
+// object, or a part of no known kind is malformed. A part's own metadata is
+// read too.
+func (c *collector) list(o object, key string, at Path) error {
+	raw := o[key]
+	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+		return nil
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return errMalformedContent
+	}
+	for i, item := range items {
+		po, ok := decodeObject(item)
+		if !ok {
+			return errMalformedContent
+		}
+		var p Part
+		var err error
+		if c.v == Version03 {
+			p, err = part03(po)
+		} else {
+			p, err = part10(po)
+		}
+		if err != nil {
+			return err
+		}
+		at := at.to(key, i)
+		var path Path
+		switch p.Type {
+		case PartText:
+			path = at.to("text")
+		case PartData:
+			path = at.to("data")
+		}
+		c.parts = append(c.parts, p)
+		c.paths = append(c.paths, path)
+		c.metadata(po, at)
+	}
+	return nil
+}
+
+// message reads a message's parts and metadata. o sits at at.
+func (c *collector) message(o object, at Path) error {
+	if err := c.list(o, "parts", at); err != nil {
+		return err
+	}
+	c.metadata(o, at)
+	return nil
+}
+
+// artifact reads an artifact's parts, name, description and metadata.
+func (c *collector) artifact(o object, at Path) error {
+	if err := c.list(o, "parts", at); err != nil {
+		return err
+	}
+	c.text(o, "name", at)
+	c.text(o, "description", at)
+	c.metadata(o, at)
+	return nil
+}
+
+// text reads the string under key of o as an extra text part. A missing,
+// empty or non-string value adds none.
+func (c *collector) text(o object, key string, at Path) {
+	if s := o.str(key); strings.TrimSpace(s) != "" {
+		c.extra = append(c.extra, Part{Type: PartText, Text: s})
+		c.extraPaths = append(c.extraPaths, at.to(key))
+	}
+}
+
+// metadata reads the metadata of o, the caller's or the agent's own payload
+// the protocol carries beside the parts, as an extra data part. An absent,
+// null or empty one adds none.
+func (c *collector) metadata(o object, at Path) {
+	raw := bytes.TrimSpace(o["metadata"])
+	switch string(raw) {
+	case "", "null", "{}", "[]", `""`:
+		return
+	}
+	c.extra = append(c.extra, Part{Type: PartData, Data: json.RawMessage(raw)})
+	c.extraPaths = append(c.extraPaths, at.to("metadata"))
 }
 
 // RequestContent reads the params of a call of kind k. Send and stream
 // calls name the message's task and context and carry its parts; get,
-// cancel and subscribe name a task. The error is -32602 for params that do
-// not carry what the kind needs, since ownership cannot be checked without it,
-// and for parts the gateway cannot read.
+// cancel and subscribe name a task. The paths of the parts are from the root
+// of the call's body. The error is -32602 for params that do not carry what
+// the kind needs, since ownership cannot be checked without it, and for parts
+// the gateway cannot read.
 func RequestContent(v Version, k Kind, params json.RawMessage) (Content, *RPCError) {
 	switch k {
 	case KindSend, KindStream:
@@ -155,8 +280,13 @@ func RequestContent(v Version, k Kind, params json.RawMessage) (Content, *RPCErr
 		if !ok || len(refs) > maxReferenceTaskIDs {
 			return Content{}, invalidParams()
 		}
-		ps, err := parts(v, m["parts"])
-		if err != nil || !filesCarryContent(ps) {
+		c := collector{v: v}
+		if err := c.message(m, Path{"params", "message"}); err != nil {
+			return Content{}, invalidParams()
+		}
+		c.metadata(p, Path{"params"})
+		ps, paths := c.content()
+		if !filesCarryContent(ps) {
 			return Content{}, invalidParams()
 		}
 		return Content{
@@ -164,6 +294,7 @@ func RequestContent(v Version, k Kind, params json.RawMessage) (Content, *RPCErr
 			ContextID:        m.str("contextId", "context_id"),
 			ReferenceTaskIDs: refs,
 			Parts:            ps,
+			Paths:            paths,
 		}, nil
 	case KindGet, KindCancel, KindSubscribe:
 		p, _ := decodeObject(params)
@@ -179,52 +310,60 @@ func RequestContent(v Version, k Kind, params json.RawMessage) (Content, *RPCErr
 // ResultContent reads a result or a stream event: a task, a message, a
 // status update or an artifact update. The parts of a task are those of its
 // status message, of its artifacts and of the agent's messages in its
-// history.
+// history; the paths of the parts are from the root of the result.
 func ResultContent(v Version, result json.RawMessage) (Content, *RPCError) {
 	o, ok := decodeObject(result)
 	if !ok {
 		return Content{}, GatewayFailure(ReasonInvalidUpstreamResponse)
 	}
-	kind, body := resultKind(v, o)
+	kind, body, at := resultKind(v, o)
 	if body == nil {
 		return Content{}, GatewayFailure(ReasonInvalidUpstreamResponse)
 	}
 	c := Content{TaskID: body.str("taskId", "task_id"), ContextID: body.str("contextId", "context_id")}
+	col := collector{v: v}
 	var err error
 	switch kind {
 	case "task":
 		c.TaskID = body.str("id")
-		c.State, c.Parts, err = status(v, body)
+		c.State, err = col.status(body, at)
 		if err == nil {
-			err = body.eachObject("artifacts", func(art object) error {
-				return appendParts(&c.Parts, v, art["parts"])
+			err = body.eachObject("artifacts", func(i int, art object) error {
+				return col.artifact(art, at.to("artifacts", i))
 			})
 		}
 		if err == nil {
-			err = body.eachObject("history", func(m object) error {
+			err = body.eachObject("history", func(i int, m object) error {
 				if !isAgent(v, m.str("role")) {
 					return nil
 				}
-				return appendParts(&c.Parts, v, m["parts"])
+				return col.message(m, at.to("history", i))
 			})
 		}
+		col.metadata(body, at)
 	case "message":
-		c.Parts, err = parts(v, body["parts"])
+		err = col.message(body, at)
 	case "status-update":
-		c.State, c.Parts, err = status(v, body)
+		c.State, err = col.status(body, at)
+		col.metadata(body, at)
 	case "artifact-update":
 		art, ok := decodeObject(body["artifact"])
 		if !ok && body.has("artifact") {
 			err = errMalformedContent
 		} else {
-			c.Parts, err = parts(v, art["parts"])
+			err = col.artifact(art, at.to("artifact"))
+			c.ArtifactID = art.str("artifactId", "artifact_id")
 		}
+		c.Append = body.flag("append")
+		c.LastChunk = body.flag("lastChunk", "last_chunk")
+		col.metadata(body, at)
 	default:
 		return Content{}, GatewayFailure(ReasonInvalidUpstreamResponse)
 	}
 	if err != nil {
 		return Content{}, GatewayFailure(ReasonInvalidUpstreamResponse)
 	}
+	c.Parts, c.Paths = col.content()
 	return c, nil
 }
 
@@ -254,32 +393,38 @@ func StripTaskContent(v Version, result json.RawMessage) (json.RawMessage, *RPCE
 	return out, nil
 }
 
-func resultKind(v Version, o object) (string, object) {
+// resultKind is the kind of a result, the object that carries it and where
+// that object sits: the result itself in 0.3, under its kind's key in 1.0.
+func resultKind(v Version, o object) (string, object, Path) {
 	if v == Version03 {
-		return o.str("kind"), o
+		return o.str("kind"), o, Path{}
 	}
 	for _, w := range [][2]string{{"task", "task"}, {"message", "message"}, {"statusUpdate", "status-update"}, {"artifactUpdate", "artifact-update"}} {
 		if body, ok := decodeObject(o[w[0]]); ok {
-			return w[1], body
+			return w[1], body, Path{w[0]}
 		}
 	}
 	if _, ok := o["id"]; ok {
-		return "task", o
+		return "task", o, Path{}
 	}
-	return "", nil
+	return "", nil, nil
 }
 
-func status(v Version, o object) (string, []Part, error) {
+// status reads the state of a task or a status update o, which sits at at,
+// and the parts and metadata of its status message.
+func (c *collector) status(o object, at Path) (string, error) {
 	st, ok := decodeObject(o["status"])
 	if !ok && o.has("status") {
-		return "", nil, errMalformedContent
+		return "", errMalformedContent
 	}
 	m, ok := decodeObject(st["message"])
 	if !ok && st.has("message") {
-		return "", nil, errMalformedContent
+		return "", errMalformedContent
 	}
-	ps, err := parts(v, m["parts"])
-	return st.str("state"), ps, err
+	if err := c.message(m, at.to("status", "message")); err != nil {
+		return "", err
+	}
+	return st.str("state"), nil
 }
 
 func isAgent(v Version, role string) bool {
@@ -294,38 +439,6 @@ func isAgent(v Version, role string) bool {
 // so the call fails instead.
 var errMalformedContent = errors.New("a2a: malformed content")
 
-// parts reads a list of parts. An absent list has no parts; a list that is
-// not a JSON array, an item that is not an object, or a part of no known
-// kind is malformed.
-func parts(v Version, raw json.RawMessage) ([]Part, error) {
-	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
-		return nil, nil
-	}
-	var list []json.RawMessage
-	if json.Unmarshal(raw, &list) != nil {
-		return nil, errMalformedContent
-	}
-	out := make([]Part, 0, len(list))
-	for _, item := range list {
-		o, ok := decodeObject(item)
-		if !ok {
-			return nil, errMalformedContent
-		}
-		var p Part
-		var err error
-		if v == Version03 {
-			p, err = part03(o)
-		} else {
-			p, err = part10(o)
-		}
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, nil
-}
-
 // filesCarryContent reports whether every file part of a request is its bytes
 // or its url, one of the two. A file with neither (such as fileWithBytes,
 // Vertex's REST name, not A2A's) would reach the agent and the policies empty.
@@ -336,12 +449,6 @@ func filesCarryContent(ps []Part) bool {
 		}
 	}
 	return true
-}
-
-func appendParts(dst *[]Part, v Version, raw json.RawMessage) error {
-	ps, err := parts(v, raw)
-	*dst = append(*dst, ps...)
-	return err
 }
 
 func part03(o object) (Part, error) {
@@ -521,6 +628,18 @@ func (o object) strings(keys ...string) ([]string, bool) {
 	return nil, true
 }
 
+// flag reads the first of keys that is present as a boolean, false when
+// none is or it is not one.
+func (o object) flag(keys ...string) bool {
+	for _, k := range keys {
+		var b bool
+		if raw, ok := o[k]; ok && json.Unmarshal(raw, &b) == nil {
+			return b
+		}
+	}
+	return false
+}
+
 // text reads key as a string. An absent or null key is the empty string; a
 // value of another type is not text.
 func (o object) text(key string) (string, bool) {
@@ -531,10 +650,10 @@ func (o object) text(key string) (string, bool) {
 	return s, json.Unmarshal(o[key], &s) == nil
 }
 
-// eachObject calls fn with each object of the list under key. An absent list
-// is empty; a list that is not an array, or an item that is not an object, is
-// malformed.
-func (o object) eachObject(key string, fn func(object) error) error {
+// eachObject calls fn with the index and object of each item of the list
+// under key. An absent list is empty; a list that is not an array, or an item
+// that is not an object, is malformed.
+func (o object) eachObject(key string, fn func(int, object) error) error {
 	if !o.has(key) {
 		return nil
 	}
@@ -542,12 +661,12 @@ func (o object) eachObject(key string, fn func(object) error) error {
 	if json.Unmarshal(o[key], &list) != nil {
 		return errMalformedContent
 	}
-	for _, item := range list {
+	for i, item := range list {
 		obj, ok := decodeObject(item)
 		if !ok {
 			return errMalformedContent
 		}
-		if err := fn(obj); err != nil {
+		if err := fn(i, obj); err != nil {
 			return err
 		}
 	}
