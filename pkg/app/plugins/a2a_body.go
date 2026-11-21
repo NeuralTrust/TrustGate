@@ -18,7 +18,9 @@ import "encoding/json"
 
 // A2ABody is the body the A2A plane hands its policies in place of the
 // JSON-RPC call: the same for every protocol version, with the parts the
-// call or its answer carries.
+// call or its answer carries. A policy may mask it: it rewrites the text of
+// text parts and the data of data parts, keeping every part in its place,
+// and the gateway writes the new values back into the call or the answer.
 type A2ABody struct {
 	Method string    `json:"method,omitempty"`
 	Agent  string    `json:"agent,omitempty"`
@@ -34,6 +36,11 @@ type A2APart struct {
 	Raw       string          `json:"raw,omitempty"`
 	MediaType string          `json:"media_type,omitempty"`
 	Filename  string          `json:"filename,omitempty"`
+	// Prior is the text of the same artifact already relayed to the caller,
+	// set on the first text part of a chunk that appends to it (a streamed
+	// artifact): context a policy reads with Text, so a value split across
+	// two chunks is seen whole, but cannot change, since it was sent.
+	Prior string `json:"prior,omitempty"`
 }
 
 // A2APart types.

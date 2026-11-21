@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -55,6 +56,83 @@ type Stream struct {
 	deadline  time.Time
 	task      string
 	recorded  [2]string
+	// released holds, by artifact, the end of the text already relayed for
+	// it (priorBytes at most), read before the next chunk that appends to it.
+	released map[string]string
+}
+
+// priorBytes is how much of an artifact's relayed text is read before each
+// chunk that appends to it. Policies read every chunk on its own, so a value
+// split across two chunks would be seen whole in neither; reading it after
+// the end of the previous chunk shows whole any value that straddles the
+// boundary within this many bytes (an email, a card or account number, a
+// phrase). It is resent with every chunk, so it is kept small.
+const priorBytes = 1024
+
+// withPrior sets, on the first text part of an artifact chunk that appends to
+// what was relayed, the end of that text (Part.Prior).
+func (s *Stream) withPrior(c *Content) {
+	if c.ArtifactID == "" || !c.Append {
+		return
+	}
+	prior := s.released[c.ArtifactID]
+	if prior == "" {
+		return
+	}
+	for i, p := range c.Parts {
+		if p.Type == PartText && inPartList(c.Paths[i]) {
+			c.Parts[i].Prior = prior
+			return
+		}
+	}
+}
+
+// remember keeps the end of the text an artifact chunk relayed, for the next
+// chunk that appends to it, and forgets the artifact on its last chunk.
+func (s *Stream) remember(c Content) {
+	if c.ArtifactID == "" {
+		return
+	}
+	if c.LastChunk {
+		delete(s.released, c.ArtifactID)
+		return
+	}
+	var text strings.Builder
+	if c.Append {
+		text.WriteString(s.released[c.ArtifactID])
+	}
+	for i, p := range c.Parts {
+		if p.Type == PartText && i < len(c.Paths) && inPartList(c.Paths[i]) {
+			text.WriteString(p.Text)
+		}
+	}
+	if s.released == nil {
+		s.released = make(map[string]string)
+	}
+	s.released[c.ArtifactID] = tail(text.String(), priorBytes)
+}
+
+// inPartList reports whether path is a part's value in a list of parts
+// (…, "parts", i, "text"), not a name or a description.
+func inPartList(path Path) bool {
+	n := len(path)
+	if n < 3 {
+		return false
+	}
+	_, isIndex := path[n-2].(int)
+	return isIndex && path[n-3] == "parts"
+}
+
+// tail is the last n bytes of s at most, starting on a rune.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := len(s) - n
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return s[i:]
 }
 
 type sseEvent struct {
@@ -186,10 +264,21 @@ func (s *Stream) relay(ctx context.Context, data []byte) (json.RawMessage, *RPCE
 		s.task = content.TaskID
 	}
 	if len(content.Parts) > 0 {
-		if blocked := s.x.f.runner.PreResponse(ctx, s.x, content.Parts); blocked != nil {
+		s.withPrior(&content)
+		masked, blocked := s.x.f.runner.PreResponse(ctx, s.x, content, result)
+		if blocked != nil {
 			go s.x.cancelTask(ctx, s.task)
 			return nil, blocked
 		}
+		if !bytes.Equal(masked, result) {
+			// What is relayed is the masked event, and it is what later
+			// chunks are read after.
+			result = masked
+			if relayed, rpcErr := ResultContent(s.x.version, result); rpcErr == nil {
+				content.Parts = relayed.Parts
+			}
+		}
+		s.remember(content)
 	}
 	if named := [2]string{content.TaskID, content.ContextID}; named != s.recorded {
 		if rpcErr := s.x.recordOwner(ctx, content); rpcErr != nil {

@@ -15,6 +15,7 @@
 package a2a
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -30,7 +31,9 @@ import (
 
 // PluginRunner runs a consumer's policies over the normalised parts of an A2A
 // call. A block answers -32090, a 429 answers -32091, and any other failure
-// fails open.
+// fails open. A policy that masks the parts has its masks written into the
+// call or the answer (see mask.go); a mask the gateway cannot write blocks
+// (-32090, mask_unsupported).
 type PluginRunner struct {
 	executor appplugins.Executor
 	logger   *slog.Logger
@@ -41,22 +44,73 @@ func NewPluginRunner(executor appplugins.Executor, logger *slog.Logger) *PluginR
 	return &PluginRunner{executor: executor, logger: logger}
 }
 
-// PreRequest runs pre_request over the parts of the call.
+// PreRequest runs pre_request over the parts of the call. The masks a policy
+// writes are written into the call's body, params and parts before anything
+// is sent.
 func (r *PluginRunner) PreRequest(ctx context.Context, x *Exchange) *RPCError {
-	return r.run(ctx, x, policy.StagePreRequest, nil)
+	rewritten, rpcErr := r.run(ctx, x, policy.StagePreRequest, nil)
+	if rpcErr != nil || rewritten == nil {
+		return rpcErr
+	}
+	eds, err := edits(x.content.Parts, x.content.Paths, rewritten)
+	if err != nil {
+		return PolicyBlocked(ReasonMaskUnsupported, "")
+	}
+	if len(eds) == 0 {
+		return nil
+	}
+	body, err := apply(x.call.Body, eds)
+	if err != nil {
+		return PolicyBlocked(ReasonMaskUnsupported, "")
+	}
+	var params struct {
+		Params json.RawMessage `json:"params"`
+	}
+	if json.Unmarshal(body, &params) != nil {
+		return PolicyBlocked(ReasonMaskUnsupported, "")
+	}
+	x.call.Body = body
+	x.call.Request.Params = params.Params
+	var masked appplugins.A2ABody
+	_ = json.Unmarshal(rewritten, &masked)
+	for i := range x.content.Parts {
+		x.content.Parts[i].Text, x.content.Parts[i].Data = masked.Parts[i].Text, masked.Parts[i].Data
+	}
+	return nil
 }
 
-// PreResponse runs pre_response over parts of the agent's answer.
-func (r *PluginRunner) PreResponse(ctx context.Context, x *Exchange, parts []Part) *RPCError {
-	return r.run(ctx, x, policy.StagePreResponse, parts)
+// PreResponse runs pre_response over the parts of the agent's answer, read
+// from result as content. It returns result with the masks a policy wrote,
+// or result as it is.
+func (r *PluginRunner) PreResponse(ctx context.Context, x *Exchange, content Content, result json.RawMessage) (json.RawMessage, *RPCError) {
+	rewritten, rpcErr := r.run(ctx, x, policy.StagePreResponse, content.Parts)
+	if rpcErr != nil || rewritten == nil {
+		return result, rpcErr
+	}
+	eds, err := edits(content.Parts, content.Paths, rewritten)
+	if err != nil {
+		return nil, PolicyBlocked(ReasonMaskUnsupported, "")
+	}
+	if len(eds) == 0 {
+		return result, nil
+	}
+	out, err := apply(result, eds)
+	if err != nil {
+		return nil, PolicyBlocked(ReasonMaskUnsupported, "")
+	}
+	return out, nil
 }
 
-func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage, parts []Part) *RPCError {
+// run runs a stage over the parts. It returns the normalised body a policy
+// rewrote them into, nil when none did: the request body a policy replaced at
+// pre_request, or the body of a 2xx short-circuit at pre_response, which is
+// how a policy rewrites an answer.
+func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage, parts []Part) ([]byte, *RPCError) {
 	rc := x.call.Consumer
 	body, err := json.Marshal(appplugins.A2ABody{Method: x.call.Request.Method, Agent: x.call.Agent.Name, Parts: nonNil(x.content.Parts)})
 	if err != nil {
 		r.logFailOpen(ctx, x, stage, err)
-		return nil
+		return nil, nil
 	}
 	headers := maps.Clone(x.call.Header)
 	if headers == nil {
@@ -88,24 +142,36 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 		out, err := json.Marshal(appplugins.A2ABody{Parts: nonNil(parts)})
 		if err != nil {
 			r.logFailOpen(ctx, x, stage, err)
-			return nil
+			return nil, nil
 		}
 		in.Response = &infracontext.ResponseContext{GatewayID: in.Request.GatewayID, RegistryID: in.Request.RegistryID, Body: out}
 	}
 	outcome, err := r.executor.RunStage(ctx, in)
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return blocked(pe)
+			return nil, blocked(pe)
 		}
 		r.logFailOpen(ctx, x, stage, err)
-		return nil
+		return nil, nil
+	}
+	if stage == policy.StagePreResponse {
+		if outcome == nil || !outcome.ShortCircuit {
+			return nil, nil
+		}
+		if outcome.StatusCode >= 200 && outcome.StatusCode <= 299 && len(outcome.Body) > 0 {
+			return outcome.Body, nil
+		}
+		return nil, blocked(&appplugins.PluginError{StatusCode: outcome.StatusCode, Headers: outcome.Headers})
 	}
 	if outcome != nil && outcome.ShortCircuit {
-		// The gateway cannot rewrite A2A parts, so a short-circuit, even one
-		// carrying a replacement, stops the call.
-		return blocked(&appplugins.PluginError{StatusCode: outcome.StatusCode, Headers: outcome.Headers})
+		// A request short-circuit (an answer in place of the agent's) has no
+		// A2A form, so it stops the call.
+		return nil, blocked(&appplugins.PluginError{StatusCode: outcome.StatusCode, Headers: outcome.Headers})
 	}
-	return nil
+	if !bytes.Equal(in.Request.Body, body) {
+		return in.Request.Body, nil
+	}
+	return nil, nil
 }
 
 func blocked(pe *appplugins.PluginError) *RPCError {

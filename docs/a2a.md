@@ -393,13 +393,22 @@ Only plugins that declare A2A attach to an A2A consumer: `rate_limiter`,
 `request_size_limiter`, `trustguard` and `trustguard_v2`. Global policies of
 other plugins are left out of A2A plans.
 
-TrustGuard evaluates an A2A call with `protocol: "a2a"`, as an LLM chat: the
-text and data parts as a `user` message on input and an `assistant` message on
-output, file parts as `attachments`, the application as `application_id`, and
-the caller's `contextId` as `session_id`, so conversation detectors score the
-turns of one A2A conversation. An A2A call sends no `attributes.model`. A
-masking verdict cannot be applied to A2A parts, so it blocks the call
-(`-32090`, `mask_unsupported`) in a mode that blocks.
+TrustGuard evaluates an A2A call with `protocol: "a2a"`, as an LLM chat: one
+`user` message on input and one `assistant` message on output, with a text
+block per text and data part (the data as its JSON), file parts as
+`attachments`, the application as `application_id`, and the caller's
+`contextId` as `session_id`, so conversation detectors score the turns of one
+A2A conversation. An A2A call sends no `attributes.model`.
+
+A masking verdict (TrustGuard's DLP) is applied: TrustGuard masks each block on
+its own, the plugin writes the masked text into its text part and the masked
+JSON into its data part, and the gateway writes those values back where the
+parts came from, into the call before it is sent or into the answer before it
+is relayed. Every other member of the call or the answer is left as it was. A
+mask the gateway cannot write blocks the call (`-32090`, `mask_unsupported`) in
+a mode that blocks: a data part whose masked JSON is no longer JSON, a mask in
+text the caller already got (see streams below), or a rewrite that does not
+line up with the parts it was given.
 
 Plugins see a normalised body, the same for both versions:
 
@@ -412,7 +421,12 @@ Plugins see a normalised body, the same for both versions:
 
 `pre_request` sees the message parts. `pre_response` sees the parts of a
 Message answer, or of a Task's status message, artifacts and agent messages
-in its history. `request_size_limiter` measures the JSON-RPC body as it is
+in its history. After those parts come, as more parts, what the protocol
+carries beside them: an artifact's `name` and `description` as text parts,
+and every non-empty `metadata` object (of the params, a message, a part, an
+artifact, a task or a stream event) as a data part. A policy may rewrite the
+text of a text part and the data of a data part (a mask); it must keep every
+part, in its place. `request_size_limiter` measures the JSON-RPC body as it is
 sent to the agent, metadata and configuration included.
 
 A part the gateway cannot read fails the call rather than reaching the
@@ -429,13 +443,20 @@ A `tasks/cancel` (`CancelTask`) answer is relayed with the task's state only:
 its artifacts, history and status message are removed. Read them with
 `tasks/get`, where `pre_response` runs.
 
-A block, or a mask verdict (the gateway does not rewrite parts), answers
-`-32090` instead of calling the agent or instead of its answer. In a stream
-each event with content is checked before it is relayed. A blocked event is
-replaced by a `-32090` event, the stream is closed and the gateway sends
-`tasks/cancel` (`CancelTask`) for the task to the agent. Artifact chunks
-sent with `append` are checked one by one, so content split across two chunks
-can pass.
+A block answers `-32090` instead of calling the agent or instead of its
+answer. In a stream each event with content is checked before it is relayed,
+and a mask is written into the event relayed. A blocked event is replaced by a
+`-32090` event, the stream is closed and the gateway sends `tasks/cancel`
+(`CancelTask`) for the task to the agent.
+
+An artifact streamed in chunks (`append: true`) is read chunk by chunk, each
+after the end of the text already relayed for that artifact: the first text
+part of the chunk carries that text, up to its last 1 KiB, as `prior`, and
+TrustGuard reads the two as one block. A value split across two chunks within
+that span (an email, a card or account number, a phrase) is seen whole. A mask
+in the chunk's own text is written to it; a mask that reaches into the prior
+cannot be undone, so the event is blocked and the stream closed. Content split
+across chunks further apart than 1 KiB is not read whole.
 
 ## Limits
 
