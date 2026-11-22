@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -299,4 +300,60 @@ func TestStreamAnsweredWithAJSONBodyThatNeverEnds(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("reading the answer did not time out")
 	}
+}
+
+// A streamed artifact's chunks are read each after the end of what was
+// relayed before (Part.Prior), so a value split across two chunks is seen
+// whole; a mask on a chunk is written into the event the caller gets, and the
+// next chunk is read after the masked text.
+func TestStreamReadsEachChunkAfterTheLastAndRelaysItsMask(t *testing.T) {
+	t.Parallel()
+	chunk := func(text string, appendTo, last bool) []byte {
+		return []byte(`{"jsonrpc":"2.0","id":7,"result":{"kind":"artifact-update","taskId":"t1","contextId":"ctx-1",` +
+			`"append":` + strconv.FormatBool(appendTo) + `,"lastChunk":` + strconv.FormatBool(last) + `,` +
+			`"artifact":{"artifactId":"a1","parts":[{"kind":"text","text":` + strconv.Quote(text) + `}]}}}`)
+	}
+	events := [][]byte{
+		chunk("Contact ana@ac", false, false),
+		chunk("me.com today", true, false),
+		chunk(", thanks", true, true),
+	}
+	ag, _ := sseAgent(t, events, 0)
+	var mu sync.Mutex
+	var priors []string
+	h := newHarness(t, a2a.Version03, ag.URL, func(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+		if in.Stage != policy.StagePreResponse {
+			return &appplugins.StageOutcome{}, nil
+		}
+		var body appplugins.A2ABody
+		require.NoError(t, json.Unmarshal(in.Response.Body, &body))
+		mu.Lock()
+		priors = append(priors, body.Parts[0].Prior)
+		mu.Unlock()
+		read := body.Parts[0].Prior + body.Parts[0].Text
+		if !strings.Contains(read, "ana@acme.com") || strings.Contains(body.Parts[0].Prior, "ana@acme.com") {
+			return &appplugins.StageOutcome{}, nil
+		}
+		// What a mask of the new chunk alone looks like: the prior is left as
+		// it was, and the chunk's own text is rewritten.
+		body.Parts[0].Text = "[MASKED] today"
+		out, _ := json.Marshal(body)
+		return &appplugins.StageOutcome{ShortCircuit: true, StatusCode: http.StatusOK, Body: out}, nil
+	})
+	var got collector
+	openStream(t, h, streamRequest(a2a.Version03)).Run(context.Background(), json.RawMessage(`7`), got.emit)
+
+	responses := got.responses(t)
+	require.Len(t, responses, 3)
+	assert.Equal(t, []string{"", "Contact ana@ac", "Contact ana@ac[MASKED] today"}, priors,
+		"each chunk is read after what was relayed, masked")
+	var relayed struct {
+		Artifact struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"artifact"`
+	}
+	require.NoError(t, json.Unmarshal(responses[1].Result, &relayed))
+	assert.Equal(t, "[MASKED] today", relayed.Artifact.Parts[0].Text)
 }

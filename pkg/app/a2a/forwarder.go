@@ -178,8 +178,8 @@ func (x *Exchange) Send(ctx context.Context) (result json.RawMessage, rpcErr *RP
 			return nil, rpcErr
 		}
 	} else if len(content.Parts) > 0 {
-		if blocked := x.f.runner.PreResponse(ctx, x, content.Parts); blocked != nil {
-			return nil, blocked
+		if result, rpcErr = x.f.runner.PreResponse(ctx, x, content, result); rpcErr != nil {
+			return nil, rpcErr
 		}
 	}
 	if rpcErr := x.recordOwner(ctx, content); rpcErr != nil {

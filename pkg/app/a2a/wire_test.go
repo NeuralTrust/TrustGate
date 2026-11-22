@@ -255,13 +255,14 @@ func TestResultContent_Task(t *testing.T) {
 		assert.Equal(t, ids[v][0], got.TaskID, prefix)
 		assert.Equal(t, ids[v][1], got.ContextID, prefix)
 		assert.Equal(t, states[v], got.State, prefix)
-		require.Len(t, got.Parts, 6, prefix)
+		require.Len(t, got.Parts, 7, prefix)
 		assert.Equal(t, "done", got.Parts[0].Text, "status message first")
 		assert.Equal(t, "itinerary", got.Parts[1].Text)
 		assert.JSONEq(t, `{"flight":"IB3166"}`, string(got.Parts[2].Data))
 		assert.Equal(t, "https://files.example.com/ticket.pdf", got.Parts[3].URL)
 		assert.Equal(t, "JVBERi0xLjc=", got.Parts[4].Raw)
 		assert.Equal(t, "working on it", got.Parts[5].Text, "the agent's history message; the user's is left out")
+		assert.Equal(t, "plan", got.Parts[6].Text, "the artifact's name, after the parts")
 	}
 }
 
@@ -297,7 +298,10 @@ func TestResultContent_StreamEvents(t *testing.T) {
 		assert.NotEmpty(t, events[0].TaskID, prefix)
 		assert.Empty(t, events[0].Parts, "the submitted task has only the user's message")
 		assert.Equal(t, "working on it", events[1].Parts[0].Text, prefix)
-		assert.Len(t, events[2].Parts, 4, prefix)
+		assert.Len(t, events[2].Parts, 5, prefix)
+		assert.Equal(t, "plan", events[2].Parts[4].Text, "the artifact's name, after its parts")
+		assert.NotEmpty(t, events[2].ArtifactID, prefix)
+		assert.False(t, events[2].Append, prefix)
 		assert.Equal(t, "done", events[3].Parts[0].Text, prefix)
 		assert.Contains(t, strings.ToLower(events[3].State), "completed", prefix)
 	}
@@ -395,4 +399,77 @@ func TestRequestContent_RefusesAFileWithoutItsContent(t *testing.T) {
 	require.Nil(t, err)
 	require.Len(t, c.Parts, 1)
 	assert.Equal(t, "JVBERi0=", c.Parts[0].Raw)
+}
+
+// The text and data the protocol carries beside the parts (every metadata
+// object, an artifact's name and description) are read too, after the parts,
+// and each part knows where its value sits so a mask can be written back.
+func TestRequestContent_MetadataAndPaths(t *testing.T) {
+	t.Parallel()
+	params := map[a2a.Version]string{
+		a2a.Version03: `{"metadata":{"note":"call Ana"},"message":{"messageId":"m","role":"user","metadata":{"ref":"X1"},"parts":[` +
+			`{"kind":"text","text":"hi","metadata":{"lang":"es"}},{"kind":"data","data":{"a":1}},{"kind":"file","file":{"uri":"https://x.io/a.pdf"}}]}}`,
+		a2a.Version10: `{"metadata":{"note":"call Ana"},"message":{"messageId":"m","role":"ROLE_USER","metadata":{"ref":"X1"},"parts":[` +
+			`{"text":"hi","metadata":{"lang":"es"}},{"data":{"a":1}},{"url":"https://x.io/a.pdf"}]}}`,
+	}
+	for v, raw := range params {
+		got, err := a2a.RequestContent(v, a2a.KindSend, json.RawMessage(raw))
+		require.Nil(t, err)
+		require.Len(t, got.Parts, 6, v)
+		assert.Equal(t, "hi", got.Parts[0].Text)
+		assert.JSONEq(t, `{"a":1}`, string(got.Parts[1].Data))
+		assert.Equal(t, a2a.PartFile, got.Parts[2].Type)
+		assert.JSONEq(t, `{"lang":"es"}`, string(got.Parts[3].Data))
+		assert.JSONEq(t, `{"ref":"X1"}`, string(got.Parts[4].Data))
+		assert.JSONEq(t, `{"note":"call Ana"}`, string(got.Parts[5].Data))
+		assert.Equal(t, []a2a.Path{
+			{"params", "message", "parts", 0, "text"},
+			{"params", "message", "parts", 1, "data"},
+			nil,
+			{"params", "message", "parts", 0, "metadata"},
+			{"params", "message", "metadata"},
+			{"params", "metadata"},
+		}, got.Paths, v)
+	}
+}
+
+func TestResultContent_ArtifactChunk(t *testing.T) {
+	t.Parallel()
+	results := map[a2a.Version]string{
+		a2a.Version03: `{"kind":"artifact-update","taskId":"t1","contextId":"c1","append":true,"lastChunk":true,"metadata":{"seq":2},` +
+			`"artifact":{"artifactId":"a1","name":"Report for Ana","description":"Ana's numbers","metadata":{"owner":"ana"},"parts":[{"kind":"text","text":"chunk"}]}}`,
+		a2a.Version10: `{"artifactUpdate":{"taskId":"t1","contextId":"c1","append":true,"lastChunk":true,"metadata":{"seq":2},` +
+			`"artifact":{"artifactId":"a1","name":"Report for Ana","description":"Ana's numbers","metadata":{"owner":"ana"},"parts":[{"text":"chunk"}]}}}`,
+	}
+	for v, raw := range results {
+		got, err := a2a.ResultContent(v, json.RawMessage(raw))
+		require.Nil(t, err)
+		assert.Equal(t, "a1", got.ArtifactID, v)
+		assert.True(t, got.Append, v)
+		assert.True(t, got.LastChunk, v)
+		require.Len(t, got.Parts, 5, v)
+		assert.Equal(t, []string{"chunk", "Report for Ana", "Ana's numbers"}, []string{got.Parts[0].Text, got.Parts[1].Text, got.Parts[2].Text})
+		assert.JSONEq(t, `{"owner":"ana"}`, string(got.Parts[3].Data))
+		assert.JSONEq(t, `{"seq":2}`, string(got.Parts[4].Data))
+		root := a2a.Path{}
+		if v == a2a.Version10 {
+			root = a2a.Path{"artifactUpdate"}
+		}
+		at := func(segs ...any) a2a.Path { return append(append(a2a.Path{}, root...), segs...) }
+		assert.Equal(t, []a2a.Path{
+			at("artifact", "parts", 0, "text"),
+			at("artifact", "name"),
+			at("artifact", "description"),
+			at("artifact", "metadata"),
+			at("metadata"),
+		}, got.Paths, v)
+	}
+}
+
+// Empty metadata adds no part.
+func TestResultContent_EmptyMetadataIsNoPart(t *testing.T) {
+	t.Parallel()
+	got, err := a2a.ResultContent(a2a.Version03, json.RawMessage(`{"kind":"message","metadata":{},"parts":[{"kind":"text","text":"hi","metadata":null}]}`))
+	require.Nil(t, err)
+	assert.Len(t, got.Parts, 1)
 }
