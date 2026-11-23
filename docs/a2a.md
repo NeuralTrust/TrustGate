@@ -410,6 +410,13 @@ a mode that blocks: a data part whose masked JSON is no longer JSON, a mask in
 text the caller already got (see streams below), or a rewrite that does not
 line up with the parts it was given.
 
+A stage that fails without a policy's verdict (an internal error of the
+executor, a body the gateway cannot build) refuses the call with `-32092`
+`policy_stage_failed` when a policy in a mode that blocks runs at that stage,
+as the LLM proxy refuses it; beside policies that only observe, the call goes
+on and the failure is logged. A policy's own failure to answer (TrustGuard
+down, a timeout) is the policy's to resolve under its `failure_mode`.
+
 Plugins see a normalised body, the same for both versions:
 
 ```json
@@ -514,7 +521,7 @@ method).
 `stream_idle`, `stream_max_duration`, `ownership_unavailable`,
 `ownership_conflict`, `client_credentials_failed`,
 `identity_exchange_failed`, `signing_key_unavailable`, `plan_unavailable`,
-`cloud_auth_failed` and `upstream_auth_failed` (hosted agents).
+`policy_stage_failed`, `cloud_auth_failed` and `upstream_auth_failed` (hosted agents).
 
 An error the agent itself answers is relayed as it came.
 

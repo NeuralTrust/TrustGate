@@ -125,6 +125,22 @@ type StreamFailureModes interface {
 	StreamFailsClosedOn(settings map[string]any, reason FailureReason, detail string) bool
 }
 
+// StreamFailsClosed is the optional declaration of a guardrail whose policy
+// says failure_mode closed. Such a guardrail resolves its own failed calls
+// with a cut verdict, so its stream options do not carry it; StreamPlan reads
+// it to run the stream guard fail_closed beside the policy, because what the
+// guard cannot hand to the policy (a tool call past the hold) must not reach
+// the client unread either. An on_error a guardrail still stores in its
+// options is not read for this: it is legacy, and ignored as before.
+type StreamFailsClosed interface {
+	StreamFailsClosed(settings map[string]any) bool
+}
+
+func streamFailsClosed(d PluginDescriptor, settings map[string]any) bool {
+	c, ok := d.(StreamFailsClosed)
+	return ok && c.StreamFailsClosed(settings)
+}
+
 func entryFailsClosedOn(entry chainEntry, reason FailureReason, detail string) bool {
 	if modes, ok := entry.plugin.(StreamFailureModes); ok {
 		return modes.StreamFailsClosedOn(entry.config.Settings, reason, detail)

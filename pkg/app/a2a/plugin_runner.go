@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -30,8 +31,11 @@ import (
 )
 
 // PluginRunner runs a consumer's policies over the normalised parts of an A2A
-// call. A block answers -32090, a 429 answers -32091, and any other failure
-// fails open. A policy that masks the parts has its masks written into the
+// call. A block answers -32090 and a 429 answers -32091. A failure of the
+// stage itself (an executor error that is no policy's refusal, a body the
+// runner cannot build) answers -32092 policy_stage_failed when a policy that
+// blocks runs at that stage, as the LLM proxy refuses it, and fails open
+// otherwise: a policy that only observes never stops a call. A policy that masks the parts has its masks written into the
 // call or the answer (see mask.go); a mask the gateway cannot write blocks
 // (-32090, mask_unsupported).
 type PluginRunner struct {
@@ -109,8 +113,7 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 	rc := x.call.Consumer
 	body, err := json.Marshal(appplugins.A2ABody{Method: x.call.Request.Method, Agent: x.call.Agent.Name, Parts: nonNil(x.content.Parts)})
 	if err != nil {
-		r.logFailOpen(ctx, x, stage, err)
-		return nil, nil
+		return nil, r.stageFailed(ctx, x, stage, err)
 	}
 	headers := maps.Clone(x.call.Header)
 	if headers == nil {
@@ -141,8 +144,7 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 	if stage == policy.StagePreResponse {
 		out, err := json.Marshal(appplugins.A2ABody{Parts: nonNil(parts)})
 		if err != nil {
-			r.logFailOpen(ctx, x, stage, err)
-			return nil, nil
+			return nil, r.stageFailed(ctx, x, stage, err)
 		}
 		in.Response = &infracontext.ResponseContext{GatewayID: in.Request.GatewayID, RegistryID: in.Request.RegistryID, Body: out}
 	}
@@ -151,8 +153,7 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blocked(pe)
 		}
-		r.logFailOpen(ctx, x, stage, err)
-		return nil, nil
+		return nil, r.stageFailed(ctx, x, stage, err)
 	}
 	if stage == policy.StagePreResponse {
 		if outcome == nil || !outcome.ShortCircuit {
@@ -184,6 +185,38 @@ func blocked(pe *appplugins.PluginError) *RPCError {
 	default:
 		return PolicyBlocked(ReasonPolicyBlocked, pe.Plugin)
 	}
+}
+
+// stageFailed resolves a stage that failed without a policy's verdict: the
+// call is refused when a policy that blocks runs at the stage, since nothing
+// it would have stopped may pass unread, and goes on otherwise.
+func (r *PluginRunner) stageFailed(ctx context.Context, x *Exchange, stage policy.Stage, err error) *RPCError {
+	if !stageBlocks(x.call.Consumer, stage) {
+		r.logFailOpen(ctx, x, stage, err)
+		return nil
+	}
+	r.logger.WarnContext(ctx, "a2a plugin stage failed, refusing the call",
+		slog.String("stage", string(stage)),
+		slog.String("gateway_id", x.call.Consumer.Consumer.GatewayID.String()),
+		slog.String("registry_id", x.call.Agent.ID.String()),
+		slog.String("error", err.Error()))
+	return GatewayFailure(ReasonPolicyStageFailed)
+}
+
+// stageBlocks reports whether a policy in a mode that blocks runs at stage.
+func stageBlocks(rc *appconsumer.RoutableConsumer, stage policy.Stage) bool {
+	if rc.PolicyPlan != nil {
+		return rc.PolicyPlan.Blocks(stage)
+	}
+	for _, pol := range rc.Policies {
+		if pol == nil || !pol.Enabled || !appplugins.Blocks(pol.Mode.Normalize()) {
+			continue
+		}
+		if len(pol.Stages) == 0 || slices.Contains(pol.Stages, stage) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *PluginRunner) logFailOpen(ctx context.Context, x *Exchange, stage policy.Stage, err error) {

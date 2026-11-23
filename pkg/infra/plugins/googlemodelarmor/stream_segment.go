@@ -48,6 +48,16 @@ func (p *Plugin) StreamFailsClosedOn(settings map[string]any, _ appplugins.Failu
 	return failClosedOf(settings, detail)
 }
 
+// StreamFailsClosed reports whether the policy's failure_mode is closed, so
+// the stream guard does not release unread what it cannot hand to the policy.
+// A closed timeout_failure_mode alone does not count: it is about slow calls,
+// not about content the guard could not send.
+func (p *Plugin) StreamFailsClosed(settings map[string]any) bool {
+	return failClosedOf(settings, "")
+}
+
+var _ appplugins.StreamFailsClosed = (*Plugin)(nil)
+
 // StreamGuardTimeout is the time one piece's call may take: the guard timeout the
 // call itself runs under, so the block's deadline and the slow-call threshold are
 // made of the same time.

@@ -214,15 +214,18 @@ const (
 // participant's explicit choice or run its provider over a payload it cannot
 // take:
 //
-//   - on_error is fail_open whenever an owner takes part. Owners are the
-//     guardrails, whose availability failures fail open and whose content-
-//     dependent failures arrive as a cut verdict rather than an error. A
-//     passive rewriter's own fail_closed is not honoured beside a guardrail: it
-//     inherits the owner's fail_open. The guard applies this one value only to
-//     an error the executor hands it, and RunStreamSegment hands back only the
-//     error of an entry whose own options say fail_closed (a rewriter such as
-//     regex_replace); everything else is absorbed per entry, so the guard cannot
-//     cut on behalf of a guardrail that failed.
+//   - on_error, when an owner takes part, is fail_closed if an owner that
+//     blocks declares failure_mode closed (StreamFailsClosed), and
+//     fail_open otherwise. Owners are the guardrails, whose failures to answer
+//     are resolved per entry (a closed one cuts with a verdict of its own), so
+//     this value decides what the guard does with what it could not hand to
+//     them: a tool call held past nativeToolHold or the held-bytes ceiling, a
+//     tool call larger than an entry's window, and an error the executor hands
+//     back (only an entry whose own options say fail_closed, such as
+//     regex_replace, hands one back). A closed guardrail means nothing reaches
+//     the client unread, so those stop the stream; beside open guardrails they
+//     are released and recorded, and a passive rewriter's own fail_closed
+//     inherits the owners' fail_open.
 //   - max_accumulated_bytes is the largest any participant asks for, passive
 //     ones included, and the executor narrows each entry to its own
 //     (segmentWithin). No provider receives a larger prefix than its policy
@@ -241,6 +244,7 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 		hasPassive   bool
 		owner        StreamOptions
 		hasOwner     bool
+		ownerClosed  bool
 		maxBytes     int
 		readsTools   bool
 		boundReaders bool
@@ -271,12 +275,18 @@ func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
 			}
 			continue
 		}
+		if Blocks(entry.mode) && streamFailsClosed(entry.plugin, entry.config.Settings) {
+			ownerClosed = true
+		}
 		if !hasOwner {
 			owner, hasOwner = opts, true
 		}
 	}
 	if hasOwner {
 		owner.OnError = streamOnErrorFailOpen
+		if ownerClosed {
+			owner.OnError = streamOnErrorFailClosed
+		}
 		if maxBytes > 0 {
 			owner.MaxAccumulatedBytes = maxBytes
 		}

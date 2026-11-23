@@ -562,6 +562,16 @@ func (p *Plugin) StreamSettings(settings map[string]any) (actsOnResponse bool, o
 	return true, cfg.Streaming.OptionsWithin(maxStreamWindowBytes)
 }
 
+// StreamFailsClosed reports whether the policy is in failure_mode closed. Its
+// stream options keep on_error fail_open, since this plugin resolves its own
+// failed calls with a cut verdict, so the stream guard asks here whether what
+// it cannot hand to the policy (a tool call past the hold) may be released.
+func (p *Plugin) StreamFailsClosed(settings map[string]any) bool {
+	return p.failClosedOf(settings)
+}
+
+var _ appplugins.StreamFailsClosed = (*Plugin)(nil)
+
 // streamGuardTimeout is how long one streamed block waits for TrustGuard. The
 // caller holds the client's bytes for that long, so it is the short stream
 // deadline, and the deployment-wide timeout bounds it from above: a deployment

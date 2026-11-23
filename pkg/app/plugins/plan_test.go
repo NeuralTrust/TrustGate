@@ -768,3 +768,35 @@ func TestStagePlan_StreamPlan_MergesFailureDirectionAndPayloadCap(t *testing.T) 
 		assert.Equal(t, "fail_open", opts.OnError)
 	})
 }
+
+// closedStreamPlugin is a guardrail that declares failure_mode closed from
+// its settings, as trustguard and google_model_armor do.
+type closedStreamPlugin struct{ *streamPlugin }
+
+func (closedStreamPlugin) StreamFailsClosed(settings map[string]any) bool {
+	return settings["failure_mode"] == "closed"
+}
+
+// A guardrail in failure_mode closed resolves its own failed calls with a cut,
+// and the guard follows it for what it cannot hand to the policy (a tool call
+// past the hold): fail_closed, but only for an entry that blocks.
+func TestStagePlan_StreamPlan_FollowsAClosedGuardrail(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	open := map[string]any{"enabled": true, "head_chars": 400}
+	closed := map[string]any{"enabled": true, "head_chars": 400, "failure_mode": "closed"}
+	plan := func(t *testing.T, guardSettings map[string]any, guardMode policy.Mode) StreamOptions {
+		t.Helper()
+		reg := newRegistry(t, newStreamPlugin("guard_a", nil), closedStreamPlugin{newStreamPlugin("guard_b", nil)})
+		pols := policies(t,
+			polSpec{slug: "guard_a", enabled: true, priority: 1, stages: pre, mode: policy.ModeEnforce},
+			polSpec{slug: "guard_b", enabled: true, priority: 2, stages: pre, mode: guardMode},
+		)
+		pols[0].Settings, pols[1].Settings = open, guardSettings
+		ok, opts := NewStagePlan(reg, pols, nil).StreamPlan(policy.StagePreResponse)
+		require.True(t, ok)
+		return opts
+	}
+	assert.Equal(t, "fail_closed", plan(t, closed, policy.ModeEnforce).OnError, "a closed guardrail closes the stream, whatever its priority")
+	assert.Equal(t, "fail_open", plan(t, closed, policy.ModeObserve).OnError, "an observing one does not")
+	assert.Equal(t, "fail_open", plan(t, open, policy.ModeEnforce).OnError, "an open one does not")
+}

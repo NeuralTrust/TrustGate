@@ -57,6 +57,9 @@ const (
 	ReasonUpstreamUnreachable     = "upstream_unreachable"
 	ReasonUpstreamError           = "upstream_error"
 	ReasonResponseTooLarge        = "response_too_large"
+	// ReasonPolicyStageFailed is a policy stage that failed without a verdict
+	// while a policy that blocks runs at it (see PluginRunner).
+	ReasonPolicyStageFailed = "policy_stage_failed"
 	// ReasonMethodNotInVersion is a method the agent's pinned version does not
 	// have; ReasonMethodNotAllowed one outside its allowed methods.
 	ReasonMethodNotInVersion = "method_not_in_version"

@@ -399,6 +399,45 @@ func TestForwarderFailsOpenOnAPolicyFailure(t *testing.T) {
 	assert.Equal(t, 1, ag.calls())
 }
 
+// A stage that fails without a verdict refuses the call when a policy that
+// blocks runs at it, as the LLM proxy does, and goes on beside a policy that
+// only observes.
+func TestForwarderRefusesAStageFailureUnderABlockingPolicy(t *testing.T) {
+	t.Parallel()
+	failing := func(stage policy.Stage) executorFunc {
+		return func(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+			if in.Stage == stage {
+				return nil, io.ErrUnexpectedEOF
+			}
+			return &appplugins.StageOutcome{}, nil
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		stage  policy.Stage
+		mode   policy.Mode
+		refuse bool
+		calls  int
+	}{
+		{"request, enforce", policy.StagePreRequest, policy.ModeEnforce, true, 0},
+		{"response, enforce", policy.StagePreResponse, policy.ModeEnforce, true, 1},
+		{"request, observe", policy.StagePreRequest, policy.ModeObserve, false, 1},
+	} {
+		ag := newAgent(t, answer(readFixture(t, "v03.send.response.json")))
+		h := newHarness(t, a2a.Version03, ag.URL, failing(tc.stage))
+		h.consumer.Policies = []*policy.Policy{{Enabled: true, Mode: tc.mode, Stages: []policy.Stage{tc.stage}}}
+		_, rpcErr := h.send(t, readFixture(t, "v03.send.request.json"), nil)
+		if tc.refuse {
+			require.NotNil(t, rpcErr, tc.name)
+			assert.Equal(t, a2a.CodeGatewayFailure, rpcErr.Code, tc.name)
+			assert.Equal(t, a2a.ReasonPolicyStageFailed, reasonOf(t, rpcErr), tc.name)
+		} else {
+			require.Nil(t, rpcErr, tc.name)
+		}
+		assert.Equal(t, tc.calls, ag.calls(), tc.name)
+	}
+}
+
 // Plugins see the normalised parts and the length of the body the caller
 // sent, never the JSON-RPC envelope.
 func TestForwarderPluginInput(t *testing.T) {
