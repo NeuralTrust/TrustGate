@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -419,11 +420,27 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 // http.Client.Timeout does not always wrap context.DeadlineExceeded.
 var errCallTimeout = errors.New("model_armor: call timed out")
 
+// timedOut marks err as a timeout when the call ran out of time.
+// http.Client.Timeout is the same per-call limit as the context's deadline, and
+// whichever fires first ends the call: when the client's fires a moment before
+// the context has passed its deadline, the error says so (a net.Error whose
+// Timeout is true) while ctx.Err() is still nil, and the call is a timeout all
+// the same. A cancelled context is never read as one.
 func timedOut(ctx context.Context, err error) error {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || (ctx.Err() == nil && isClientTimeout(err)) {
 		return fmt.Errorf("%w: %w", errCallTimeout, err)
 	}
 	return err
+}
+
+// isClientTimeout reports whether err is an http.Client that gave up on its
+// own Timeout (or a dial or read deadline), not a cancellation.
+func isClientTimeout(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // failureOfError maps a sanitize error to the shared failure vocabulary. A call
