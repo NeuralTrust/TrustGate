@@ -362,6 +362,16 @@ Only `tools/call` against a real upstream selects a plan by scope. `tools/list`,
 prompts, resources and the gateway's `trustgate_*` meta-tools run the unscoped
 policies only.
 
+`prompts/get` and `resources/read` run the request and response stages with
+those policies, shown to the plugins in the shape of a `tools/call`: a prompt
+as `{name, arguments}` and its description and messages as the content blocks
+of a result; a resource read as `{name: "resources/read", arguments: {uri}}` and
+its text contents as embedded resource blocks. A mask of a prompt's arguments is
+sent to the server masked; a mask of the URI is dropped (it is an address the
+server listed). A mask of the result is written back block by block, and one
+that cannot be is refused, as is a request stage that answers in place of the
+server. The listings (`prompts/list`, `resources/list`) run no stage.
+
 ```
 tools/call
   1. rate limit

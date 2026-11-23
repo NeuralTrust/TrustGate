@@ -516,7 +516,20 @@ func (d *RPCDispatcher) readResource(ctx context.Context, req dispatchRequest) (
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
-	return d.composer.ReadResource(ctx, req.consumer, params.URI)
+	args, err := json.Marshal(map[string]string{"uri": params.URI})
+	if err != nil {
+		return nil, err
+	}
+	call := ToolCall{Exposed: resourcesReadName, Arguments: args}
+	// A mask of the URI is dropped (see surface_guard.go): it is an address.
+	if _, err := d.guardSurfaceRequest(ctx, req.consumer, call); err != nil {
+		return nil, err
+	}
+	result, err := d.composer.ReadResource(ctx, req.consumer, params.URI)
+	if err != nil {
+		return nil, err
+	}
+	return d.guardSurfaceResult(ctx, req.consumer, call, result, surfaceResource)
 }
 
 func (d *RPCDispatcher) listPrompts(ctx context.Context, req dispatchRequest) (any, error) {
@@ -547,7 +560,33 @@ func (d *RPCDispatcher) getPrompt(ctx context.Context, req dispatchRequest) (any
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
-	return d.composer.GetPrompt(ctx, req.consumer, params.Name, params.Arguments)
+	var args json.RawMessage
+	if len(params.Arguments) > 0 {
+		encoded, err := json.Marshal(params.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		args = encoded
+	}
+	call := ToolCall{Exposed: params.Name, Arguments: args}
+	rewritten, err := d.guardSurfaceRequest(ctx, req.consumer, call)
+	if err != nil {
+		return nil, err
+	}
+	arguments := params.Arguments
+	if rewritten != nil {
+		// A prompt's arguments are strings; a mask keeps them strings.
+		var masked map[string]string
+		if err := json.Unmarshal(rewritten, &masked); err != nil {
+			return nil, errSurfaceMask("a policy rewrote the prompt's arguments into something other than strings")
+		}
+		arguments = masked
+	}
+	result, err := d.composer.GetPrompt(ctx, req.consumer, params.Name, arguments)
+	if err != nil {
+		return nil, err
+	}
+	return d.guardSurfaceResult(ctx, req.consumer, call, result, surfacePrompt)
 }
 
 func (d *RPCDispatcher) checkRateLimit(ctx context.Context, consumer *appconsumer.RoutableConsumer) error {

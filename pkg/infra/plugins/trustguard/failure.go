@@ -55,6 +55,8 @@ func sharedFailure(reason, transformReason string) (appplugins.FailureReason, st
 		return appplugins.FailureVerdictIncomplete, maskDetailOf(transformReason)
 	case failureReasonVerdictIncomplete:
 		return appplugins.FailureVerdictIncomplete, appplugins.DetailAttachmentNotFetched
+	case failureReasonContentUninspectable:
+		return appplugins.FailureVerdictIncomplete, appplugins.DetailCoveragePartial
 	default:
 		return appplugins.FailureTransport, ""
 	}

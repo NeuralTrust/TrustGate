@@ -37,6 +37,7 @@ type fakeUpstream struct {
 	listErr    error
 	lastCall   string
 	lastPrompt string
+	lastArgs   map[string]string
 	lastRead   string
 	result     json.RawMessage
 	callErr    error
@@ -79,11 +80,12 @@ func (f *fakeUpstream) ListPrompts(context.Context) ([]Prompt, error) {
 	return f.prompts, f.listErr
 }
 
-func (f *fakeUpstream) GetPrompt(_ context.Context, name string, _ map[string]string) (json.RawMessage, error) {
+func (f *fakeUpstream) GetPrompt(_ context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
 	if !f.SupportsPrompts() {
 		return nil, ErrNotSupported
 	}
 	f.lastPrompt = name
+	f.lastArgs = arguments
 	return f.result, nil
 }
 

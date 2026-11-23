@@ -331,6 +331,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if halt != nil {
 		return halt.result, halt.err
 	}
+	if halt := p.uninspectedHalt(ctx, in, tgt, direction); halt != nil {
+		return halt.result, halt.err
+	}
 
 	if tgt.textBytes > maxBufferedTextBytes {
 		return p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted, failureReasonPayloadTooLarge,
@@ -649,6 +652,10 @@ func (p *Plugin) llmInspectionPayload(
 	if err != nil {
 		return p.skipInspection(ctx, in, tgt, direction, skipReasonUnsupportedFormat)
 	}
+	nonChat := !adapter.IsChatRequest(in.Request.ProxyCapability, format)
+	if nonChat && (direction == directionInput || isNonChatOutput(in.Request.ProxyCapability)) {
+		return p.nonChatInspectionPayload(ctx, in, direction)
+	}
 	if direction == directionInput {
 		if len(in.Request.Body) == 0 {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
@@ -752,6 +759,9 @@ func (p *Plugin) skipInspection(
 	tgt transformTarget,
 	direction, reason string,
 ) (json.RawMessage, transformTarget, *inspectionHalt) {
+	if halt := p.uninspectedHalt(ctx, in, tgt, direction); halt != nil {
+		return nil, tgt, halt
+	}
 	p.debug(ctx, "trustguard leg not inspected, skipping",
 		slog.String("plugin", p.Name()),
 		slog.String("stage", string(in.Stage)),
@@ -760,6 +770,26 @@ func (p *Plugin) skipInspection(
 	)
 	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason, AttachmentsNotInspected: tgt.attachmentsOmitted})
 	return nil, tgt, &inspectionHalt{result: passThrough()}
+}
+
+// uninspectedHalt refuses a leg that carries content TrustGuard is not sent
+// (an attachment by reference such as a file_id or a gs:// URI, a file or an
+// image upload, token ids) when the policy is in failure_mode closed and the
+// mode blocks: closed means nothing goes through unread. In open mode the leg
+// goes on, and the event counts what was left out (attachments_not_inspected).
+func (p *Plugin) uninspectedHalt(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	tgt transformTarget,
+	direction string,
+) *inspectionHalt {
+	if tgt.attachmentsOmitted == 0 || !appplugins.Blocks(in.Mode) || !p.failClosed(in) {
+		return nil
+	}
+	result, refusal := p.guardFailureOmitting(ctx, in, direction, tgt.attachmentsOmitted,
+		failureReasonContentUninspectable,
+		fmt.Errorf("trustguard: %d part(s) of the content cannot be inspected and failure_mode is closed", tgt.attachmentsOmitted))
+	return &inspectionHalt{result: result, err: refusal}
 }
 
 // inspectionHalt is what the payload builders return when there is nothing to

@@ -313,7 +313,7 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `streaming_stage_mismatch` | `skip_reason` | The leg does not handle this response mode: a streamed `pre_response` whose policy does not inspect the response per block (and every MCP streamed leg), or a buffered `post_response`. Another leg handles the response |
 | `no_inspectable_output` | `skip_reason` | A buffered `pre_response` leg whose upstream answered with a non-2xx status (an error envelope, an error page from a proxy in front of it, a throttle): it carries no completion. Emitted by `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. Not a coverage gap: there was no model output to inspect. These two tokens are the ones the console already labels for every plugin; no route- or status-specific token exists |
 | `undecodable_response` | `skip_reason` | A 2xx buffered response whose body no adapter reads as a completion, such as the audio bytes of a speech route. Emitted by `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. A coverage gap only when the body was a completion in a shape no adapter reads; binary media is not |
-| `no_inspectable_input` | `skip_reason` | A request with no text for the guardrail to judge: an empty body, or a route that carries no chat (image generation, audio and file routes), whose body is not chat JSON. Emitted by `azure_content_safety`, `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. Not a failure and not counted as one; the route is outside what these plugins inspect. A malformed body on a chat route is still `decode_failed` |
+| `no_inspectable_input` | `skip_reason` | A request with no text for the guardrail to judge: an empty body, or a route that carries no chat (image generation, audio and file routes), whose body is not chat JSON. Emitted by `azure_content_safety`, `bedrock_guardrail`, `google_model_armor`, `openai_moderation` and `trustguard` with `skipped: true`. Not a failure and not counted as one; the route is outside what these plugins inspect. A malformed body on a chat route is still `decode_failed`. `trustguard` reads the text of the non-chat routes itself (see *Non-chat routes* below), so for it this is a body with no text at all: a file upload, the audio of a transcription |
 | `empty_response_body` | `skip_reason` | A buffered response leg that arrived with no body, so there was nothing to send to the guard |
 | `stream_cut` | `skip_reason` | The `post_response` leg of a stream the stream guard cut mid-way. What was delivered ends on the cut terminator and nothing after the cut reached the client; the guard's own entry already reports `blocked`, so the truncated body is not inspected again. Emitted with `skipped: true`, but it is not a coverage gap. A stream that degrades or whose client disconnects without a cut keeps its `post_response` audit unless its final block was inspected in full (`stream_final_inspected`) |
 | `stream_final_inspected` | `skip_reason` | The `post_response` leg of a stream whose final block the stream guard already evaluated in full under the same policy entry: every entry answered and the call carried the whole accumulated text. The drained body is that text, so it is not evaluated again (a second pass only duplicated the output row). Emitted with `skipped: true`, but it is not a coverage gap. A stream whose final block was not evaluated in full (degraded, failed call, accumulation cap) keeps its `post_response` audit |
@@ -436,7 +436,7 @@ the provider exceeded its deadline, no longer applies, because each streamed eva
 most a bounded tail window (see the streaming window defaults in the MCP policy scope notes).
 A response the upstream answered with a non-2xx status, and a 2xx body no adapter reads as a
 completion (the audio bytes of a speech route), are not failures: the leg is recorded as skipped
-(`skip_reason` `no_inspectable_output` or `undecodable_response`) and passes. So is a request to a route that carries no chat (image, audio and file routes): it is recorded as skipped with `skip_reason` `no_inspectable_input`, the same for every external guardrail and for `trustguard`, and never as a failure.
+(`skip_reason` `no_inspectable_output` or `undecodable_response`) and passes. So is a request to a route that carries no chat (image, audio and file routes): it is recorded as skipped with `skip_reason` `no_inspectable_input`, the same for every external guardrail, and never as a failure. `trustguard` reads the text these routes carry instead (*Non-chat routes* below).
 
 The classification is made in one place, from the `failure_reason` and `failure_detail`
 below. A pair it does not name is `availability`, so a reason added later cannot start refusing
@@ -769,6 +769,31 @@ and a part with no content are left out. The text beside them is still inspected
 `extras.attachments_not_inspected` (additive, absent when nothing was left out) counts the
 attachments that were not. A request whose only content is such an attachment is recorded as
 skipped (`skip_reason: no_inspectable_input`) with the same count.
+
+Under `failure_mode: closed`, in a mode that blocks, a leg that carries content TrustGuard is not
+sent (such an attachment, a file or an image upload, embeddings sent as token ids) is refused before
+any call: `403 guardrail_input_uninspectable`, recorded `failed_closed` with `failure_reason:
+content_uninspectable`, `failure_detail: coverage_partial` and the count in
+`extras.attachments_not_inspected`. Closed means nothing goes through unread. In open mode the leg
+goes on as above.
+
+### Non-chat routes
+
+`trustguard` sends the text a non-chat route carries, as one message with a text block each, and
+writes a mask back where its text came from:
+
+| Route | Request text | Response text |
+|---|---|---|
+| `images` | `prompt` (JSON, or the field of a multipart edit) | — |
+| `audio_speech` | `input`, `instructions` | — (audio) |
+| `embeddings` | `input` (string or list), Cohere `texts` and `inputs[].content[].text`, Titan `inputText`, Gemini `content.parts[].text` and `requests[].content.parts[].text`, Vertex `instances[].content` and `title` | — (vectors) |
+| `rerank` | `query`, `documents[]` (strings or `{text}`) | — |
+| `audio_transcription` | the `prompt` field | the transcript: `text`, `segments[].text`, `words[].word`, or the whole body for `text`, `srt` and `vtt` |
+| `files` | — (a file is content not inspected) | — |
+
+A text read from a multipart form has nowhere to be written, so a mask of it is refused in a mode
+that blocks. The audio of a transcription is not counted as content left out: what it says is
+inspected as the transcript, on the response leg.
 
 An attachment sent as a URL is fetched by TrustGuard, and TrustGuard answers 400 `invalid attachment`
 for every attachment it cannot resolve, a failed fetch included (a CDN that is down, a URL behind

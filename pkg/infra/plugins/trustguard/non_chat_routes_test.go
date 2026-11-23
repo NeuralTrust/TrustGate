@@ -28,11 +28,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-// The image, audio and file routes carry no chat, so TrustGuard records the same
-// skip the other external guardrails do and sends nothing.
+// The routes with no text to read (an audio upload, a file upload) record the
+// same skip the other external guardrails do and send nothing; the image prompt
+// and the text of a voice are read (nonchat_test.go).
 func TestNonChatRoutesAreSkippedWithTheSharedReason(t *testing.T) {
 	t.Parallel()
 	for _, tc := range pluginutiltest.NonChatRoutes(t) {
+		if tc.Capability == "images" || tc.Capability == "audio_speech" {
+			continue
+		}
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 			p := newTestPlugin(t, adapter.NewRegistry(), "")

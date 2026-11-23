@@ -65,6 +65,10 @@ const (
 	// not fetch. The shared reason of the same name, with the detail
 	// attachment_not_fetched; availability.
 	failureReasonVerdictIncomplete = "verdict_incomplete"
+	// failureReasonContentUninspectable is a leg that carries content
+	// TrustGuard is not sent (an attachment by reference, a file, an image
+	// upload) under failure_mode closed: refused before any call.
+	failureReasonContentUninspectable = "content_uninspectable"
 )
 
 var (

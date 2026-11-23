@@ -2291,7 +2291,6 @@ func TestExecuteEmbeddingsRequestsPassThroughWithoutWarning(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
 		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
-		`{"model":"m","input":[1,"a"]}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			t.Parallel()
