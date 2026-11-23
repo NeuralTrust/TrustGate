@@ -22,7 +22,8 @@ import (
 )
 
 // Deleting a gateway soft-deletes its consumers, so the consumers row must be
-// able to outlive the gateway row: the gateway_id foreign key is dropped.
+// able to outlive the gateway row: the gateway_id foreign key is dropped. The
+// consumer repository checks the gateway on insert instead.
 func init() {
 	database.RegisterMigration(database.Migration{
 		ID:   "20261123120000_consumers_survive_gateway_delete",
@@ -34,7 +35,16 @@ func init() {
 
 func upConsumersSurviveGatewayDelete(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, consumersLockTimeout+`
-		ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_gateway_id_fkey;`)
+		DO $$
+		DECLARE fk RECORD;
+		BEGIN
+			FOR fk IN SELECT conname FROM pg_constraint
+			           WHERE conrelid = 'consumers'::regclass
+			             AND confrelid = 'gateways'::regclass
+			             AND contype = 'f' LOOP
+				EXECUTE format('ALTER TABLE consumers DROP CONSTRAINT %I', fk.conname);
+			END LOOP;
+		END $$;`)
 	return err
 }
 
