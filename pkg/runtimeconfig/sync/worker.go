@@ -263,10 +263,16 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		started := time.Now()
 		_, err := w.transport.Watch(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			// A stream that stayed up at least maxBackoff was healthy: its
+			// break starts a fresh backoff, not the old streak.
+			if time.Since(started) >= w.maxBackoff {
+				backoff = w.minBackoff
 			}
 			// A refused token stays refused until it is replaced: report the
 			// streak once, retry at the slowest pace, and skip the catch-up
@@ -322,6 +328,18 @@ func (w *Worker[T]) logWatchError(err error) {
 		slog.String("component", component), slog.String("error", err.Error()))
 }
 
+// logBackstopError logs a transient transport failure at WARN, like
+// logWatchError; the next poll retries it.
+func (w *Worker[T]) logBackstopError(err error) {
+	if errors.Is(err, ErrTransportUnavailable) {
+		w.logger.Warn("backstop converge failed; retrying at the next poll",
+			slog.String("component", component), slog.String("error", err.Error()))
+		return
+	}
+	w.logger.Error("backstop converge failed",
+		slog.String("component", component), slog.String("error", err.Error()))
+}
+
 func (w *Worker[T]) backstopLoop(ctx context.Context) {
 	timer := time.NewTimer(jittered(w.pollInterval))
 	defer timer.Stop()
@@ -331,8 +349,7 @@ func (w *Worker[T]) backstopLoop(ctx context.Context) {
 			return
 		case <-timer.C:
 			if err := w.Converge(ctx); err != nil && ctx.Err() == nil {
-				w.logger.Error("backstop converge failed",
-					slog.String("component", component), slog.String("error", err.Error()))
+				w.logBackstopError(err)
 			}
 			timer.Reset(jittered(w.pollInterval))
 		}
