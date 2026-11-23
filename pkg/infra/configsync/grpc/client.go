@@ -181,10 +181,18 @@ func (c *Client) Close() error {
 // it, and as one blob via GetSnapshot otherwise.
 func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	started := time.Now()
+	var (
+		raw         []byte
+		version     string
+		notModified bool
+		err         error
+	)
 	if c.layered {
-		return c.fetchLayeredOrSnapshot(ctx, etag, started)
+		raw, version, notModified, err = c.fetchLayeredOrSnapshot(ctx, etag, started)
+	} else {
+		raw, version, notModified, err = c.fetchSnapshotLogged(ctx, etag, started, "")
 	}
-	return c.fetchSnapshotLogged(ctx, etag, started, "")
+	return raw, version, notModified, fetchErr(err)
 }
 
 // fetchSnapshotLogged pulls the single blob and logs the pull; fallbackReason
@@ -422,6 +430,15 @@ func streamErr(op string, err error) error {
 		return fmt.Errorf("configsync: %s: %w: %w", op, configsync.ErrTransportUnauthenticated, err)
 	}
 	return fmt.Errorf("configsync: %s: %w", op, err)
+}
+
+// fetchErr marks a transient transport failure of a pull as
+// ErrTransportUnavailable, as streamErr does for the stream.
+func fetchErr(err error) error {
+	if err == nil || errors.Is(err, configsync.ErrTransportUnavailable) || !recoverableStreamErr(err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", configsync.ErrTransportUnavailable, err)
 }
 
 // recoverableStreamErr reports whether a Sync-stream error is an expected,

@@ -600,3 +600,109 @@ func TestWorker_RunRefusedTokenLogsOnceAndSkipsCatchUp(t *testing.T) {
 	assert.Equal(t, 0, h.count("catch-up converge after stream break failed"))
 	assert.Equal(t, 1, fetcher.callCount(), "no catch-up converge runs while the token is refused")
 }
+
+// scriptedTransport fails the first fastFails watches at once, then holds one stream for healthy before it breaks, and
+// records when each watch started.
+type scriptedTransport struct {
+	fastFails int
+	healthy   time.Duration
+	mu        sync.Mutex
+	starts    []time.Time
+	brokeAt   time.Time
+}
+
+func (t *scriptedTransport) Watch(ctx context.Context) (string, error) {
+	t.mu.Lock()
+	n := len(t.starts)
+	t.starts = append(t.starts, time.Now())
+	t.mu.Unlock()
+	switch {
+	case n < t.fastFails:
+		return "", ErrTransportUnavailable
+	case n == t.fastFails:
+		if !sleep(ctx, t.healthy) {
+			return "", ctx.Err()
+		}
+		t.mu.Lock()
+		t.brokeAt = time.Now()
+		t.mu.Unlock()
+		return "", ErrTransportUnavailable
+	default:
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+}
+
+func (t *scriptedTransport) Ack(context.Context, string) error { return nil }
+
+func (t *scriptedTransport) snapshot() ([]time.Time, time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]time.Time(nil), t.starts...), t.brokeAt
+}
+
+func TestWorker_RunResetsBackoffAfterAHealthyStream(t *testing.T) {
+	t.Parallel()
+
+	const (
+		minBackoff = time.Millisecond
+		maxBackoff = 200 * time.Millisecond
+		fastFails  = 10 // 1, 2, 4 ... 128, then 200ms: the streak reaches maxBackoff
+	)
+	transport := &scriptedTransport{fastFails: fastFails, healthy: maxBackoff + 50*time.Millisecond}
+	worker := NewWorker[string](&fakeFetcher{}, NewMemoryStore[string](), transport, nil, stringCodec{}, nil, WorkerConfig{
+		PollInterval: time.Hour,
+		MinBackoff:   minBackoff,
+		MaxBackoff:   maxBackoff,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		starts, _ := transport.snapshot()
+		return len(starts) > fastFails+1
+	}, 5*time.Second, 5*time.Millisecond)
+
+	starts, brokeAt := transport.snapshot()
+	// Repeated fast failures still back off to maxBackoff.
+	assert.GreaterOrEqual(t, starts[fastFails].Sub(starts[fastFails-1]), maxBackoff*3/4)
+	// The break of a stream that outlived maxBackoff reconnects after minBackoff, not after the old streak.
+	assert.Less(t, starts[fastFails+1].Sub(brokeAt), maxBackoff*3/4)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after cancel")
+	}
+}
+
+func TestWorker_LogBackstopErrorDemotesTransportUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := &recordingHandler{}
+	worker := NewWorker[string](&fakeFetcher{}, NewMemoryStore[string](), &fakeTransport{}, nil, stringCodec{}, slog.New(h), WorkerConfig{})
+
+	worker.logBackstopError(fmt.Errorf("configsync: fetch snapshot: %w: read snapshot header: connection reset by peer", ErrTransportUnavailable))
+
+	level, ok := h.levelFor("backstop converge failed; retrying at the next poll")
+	require.True(t, ok, "expected a transient backstop failure to be logged")
+	assert.Equal(t, slog.LevelWarn, level)
+	assert.Zero(t, h.count("backstop converge failed"), "a transient backstop failure must not log an ERROR alarm")
+}
+
+func TestWorker_LogBackstopErrorKeepsIntegrityAtError(t *testing.T) {
+	t.Parallel()
+
+	h := &recordingHandler{}
+	worker := NewWorker[string](&fakeFetcher{}, NewMemoryStore[string](), &fakeTransport{}, nil, stringCodec{}, slog.New(h), WorkerConfig{})
+
+	worker.logBackstopError(fmt.Errorf("configsync: %w", ErrIntegrity))
+
+	level, ok := h.levelFor("backstop converge failed")
+	require.True(t, ok, "expected an integrity failure to be logged")
+	assert.Equal(t, slog.LevelError, level)
+}
