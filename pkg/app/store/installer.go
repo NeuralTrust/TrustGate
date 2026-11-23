@@ -1102,7 +1102,7 @@ func (i *installer) Uninstall(
 		}
 		switch len(active) {
 		case 0:
-			// Nothing active; fall back to clearing any inactive row for the code.
+			// Nothing active; fall back to revoking any non-revoked row for the code.
 			// A missing row is "nothing was installed", which the caller answers
 			// idempotently. Any other delete failure still fails the call.
 			err := i.installs.Delete(ctx, gatewayID, principalSub, code)

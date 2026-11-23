@@ -296,3 +296,23 @@ func TestRepositoryDeleteByCodeRevokesInPlace(t *testing.T) {
 		t.Fatalf("second Delete = %v, want ErrNotFound", err)
 	}
 }
+
+func TestRepositoryDeleteByCodeRevokesAPendingRequestWithoutDecidingIt(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	req := pendingRow(t, gatewayID, "alice", "com.notion/mcp", ids.RegistryID{})
+	if err := repo.Upsert(ctx, req); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if err := repo.Delete(ctx, gatewayID, "alice", "com.notion/mcp"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	pending, err := repo.ListPendingByGateway(ctx, gatewayID)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending = %v / %v, want none", pending, err)
+	}
+	history, err := repo.ListDecidedByGateway(ctx, gatewayID, 10)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("history = %v / %v, want none: a revoked request was never decided", history, err)
+	}
+}
