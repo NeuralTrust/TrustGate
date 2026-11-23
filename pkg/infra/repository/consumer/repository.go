@@ -171,6 +171,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
 	return r.withGatewayMarkedTx(ctx, c.GatewayID, func(tx pgx.Tx) error {
+		if err := lockGatewayRow(ctx, tx, c.GatewayID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt, labelSetsBytes,
@@ -185,6 +188,21 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		}
 		return nil
 	})
+}
+
+// lockGatewayRow takes a key-share lock on the gateway, so a gateway delete
+// waits for the insert and an insert after it finds the gateway gone. Consumers
+// carry no foreign key to gateways, so this is the only existence check.
+func lockGatewayRow(ctx context.Context, tx pgx.Tx, gatewayID ids.GatewayID) error {
+	var one int
+	err := tx.QueryRow(ctx, `SELECT 1 FROM gateways WHERE id = $1 FOR KEY SHARE`, gatewayID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrInvalidGatewayID
+	}
+	if err != nil {
+		return fmt.Errorf("consumer repository: lock gateway: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) Update(

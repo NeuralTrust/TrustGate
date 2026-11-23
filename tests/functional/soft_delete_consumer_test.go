@@ -125,6 +125,34 @@ func TestSoftDeleteConsumer_GatewayDeleteSoftDeletesItsConsumers(t *testing.T) {
 	require.Zero(t, live, "and none of them stays live")
 }
 
+func TestSoftDeleteConsumer_GatewayDeleteRefusesItsKeyAndUnlinksTheConsumer(t *testing.T) {
+	defer Track(t, "SoftDeleteConsumer")()
+	upstream := newJSONUpstream(t, "gw-delete-marker")
+	route := setupSoftDeleteRoute(t, upstream.URL())
+
+	status, _, body := proxyPost(t, route.apiKey, route.path, chatRequest(false))
+	require.Equal(t, http.StatusOK, status, "the live consumer must serve: %s", body)
+	hits := upstream.Hits()
+
+	status, delBody := sendRequest(t, http.MethodDelete, fmt.Sprintf("%s/v1/gateways/%s", AdminURL, route.gatewayID), nil, nil)
+	require.Equal(t, http.StatusNoContent, status, "body=%v", delBody)
+
+	status, _, body = proxyPost(t, route.apiKey, route.path, chatRequest(false))
+	assert.NotEqual(t, http.StatusOK, status, "a deleted gateway's key must not serve: %s", body)
+	assert.Equal(t, hits, upstream.Hits(), "nothing may reach the upstream through a deleted gateway")
+
+	conn := connectFunctionalDB(t)
+	var live, links int
+	require.NoError(t, conn.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM consumers WHERE id = $1 AND deleted_at IS NULL`, route.consumerID).Scan(&live))
+	require.Zero(t, live, "the consumer is no longer live")
+	require.NoError(t, conn.QueryRow(context.Background(),
+		`SELECT (SELECT COUNT(*) FROM consumer_auth WHERE consumer_id = $1)
+		      + (SELECT COUNT(*) FROM consumer_registry WHERE consumer_id = $1)
+		      + (SELECT COUNT(*) FROM consumer_policy WHERE consumer_id = $1)`, route.consumerID).Scan(&links))
+	require.Zero(t, links, "its key, registry and policy links are gone")
+}
+
 // TestSoftDeleteConsumer_RequestInFlightFinishesAndTheNextIsRefused deletes the
 // consumer while a request it admitted is still waiting on the upstream: the
 // delete does not wait for it, the request still completes, and the key is

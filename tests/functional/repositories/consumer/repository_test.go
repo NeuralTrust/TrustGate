@@ -445,6 +445,46 @@ func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	}
 }
 
+func TestRepository_Save_InvalidGatewayIDWithoutRegistries(t *testing.T) {
+	f := setupRepo(t)
+	c := validConsumer(t, ids.New[ids.GatewayKind](), "orphan-bare")
+	if err := f.repo.Save(context.Background(), c); !errors.Is(err, domain.ErrInvalidGatewayID) {
+		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
+	}
+}
+
+func TestRepository_Save_AfterGatewayDeleteIsInvalidGatewayID(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gone-gw")
+	if err := f.gw.Delete(ctx, gwID); err != nil {
+		t.Fatalf("gateway Delete: %v", err)
+	}
+	if err := f.repo.Save(ctx, validConsumer(t, gwID, "late")); !errors.Is(err, domain.ErrInvalidGatewayID) {
+		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
+	}
+}
+
+func TestRepository_GatewayDeleteSoftDeletesConsumers(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "soft-gw")
+	c := validConsumer(t, gwID, "kept")
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := f.gw.Delete(ctx, gwID); err != nil {
+		t.Fatalf("gateway Delete: %v", err)
+	}
+	if _, err := f.repo.FindByID(ctx, c.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("FindByID = %v, want ErrNotFound", err)
+	}
+	list, err := f.repo.ListByGateway(ctx, gwID)
+	if err != nil || len(list) != 0 {
+		t.Fatalf("ListByGateway = %v / %v, want empty", list, err)
+	}
+}
+
 func TestRepository_AttachRegistry_InvalidRegistryID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
