@@ -275,3 +275,24 @@ func TestRepositoryDenyPendingDeniesOnlyThatCodesPendingRows(t *testing.T) {
 		t.Fatalf("an installed row is not a request and stays installed, got %+v / %v", found, err)
 	}
 }
+
+func TestRepositoryDeleteByCodeRevokesInPlace(t *testing.T) {
+	ctx, pool, gatewayID := openTestSchema(t)
+	repo := NewRepository(&database.Connection{Pool: pool})
+	row := pendingRow(t, gatewayID, "alice", "com.notion/mcp", ids.RegistryID{})
+	row.Status = domain.StatusInstalled
+	if err := repo.Upsert(ctx, row); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	if err := repo.Delete(ctx, gatewayID, "alice", "com.notion/mcp"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	found, err := repo.FindByID(ctx, gatewayID, "alice", row.ID)
+	if err != nil || found.Status != domain.StatusRevoked {
+		t.Fatalf("row after Delete = %+v / %v, want kept as revoked", found, err)
+	}
+	if err := repo.Delete(ctx, gatewayID, "alice", "com.notion/mcp"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("second Delete = %v, want ErrNotFound", err)
+	}
+}

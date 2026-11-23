@@ -325,11 +325,14 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 // cascadeDeleteStatements removes every resource that belongs to the gateway
 // before the gateway row itself. The order respects the ON DELETE RESTRICT
 // foreign keys on the junction tables (consumer_auth.auth_id,
-// consumer_policy.policy_id, consumer_registry.registry_id): consumers are
-// deleted first so their junction rows cascade away, leaving auths, policies
-// and registries free to be removed.
+// consumer_policy.policy_id, consumer_registry.registry_id): the consumers'
+// links go first, leaving auths, policies and registries free to be removed.
+// Consumers are soft-deleted, not removed, so their rows stay as history.
 var cascadeDeleteStatements = []string{
-	`DELETE FROM consumers  WHERE gateway_id = $1`,
+	`DELETE FROM consumer_auth     WHERE consumer_id IN (SELECT id FROM consumers WHERE gateway_id = $1)`,
+	`DELETE FROM consumer_registry WHERE consumer_id IN (SELECT id FROM consumers WHERE gateway_id = $1)`,
+	`DELETE FROM consumer_policy   WHERE consumer_id IN (SELECT id FROM consumers WHERE gateway_id = $1)`,
+	`UPDATE consumers SET deleted_at = NOW(), updated_at = NOW() WHERE gateway_id = $1 AND deleted_at IS NULL`,
 	`DELETE FROM policies   WHERE gateway_id = $1`,
 	`DELETE FROM auths      WHERE gateway_id = $1`,
 	`DELETE FROM registries WHERE gateway_id = $1`,
@@ -340,7 +343,7 @@ var cascadeDeleteStatements = []string{
 // the policy repository documents (RUN-1746). A DELETE alone locks rows in scan
 // order, and an update that moves a tuple makes that disagree with id order.
 var cascadeLockStatements = []string{
-	`SELECT 1 FROM consumers WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
+	`SELECT 1 FROM consumers WHERE gateway_id = $1 AND deleted_at IS NULL ORDER BY id FOR UPDATE`,
 	`SELECT 1 FROM policies  WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
 }
 

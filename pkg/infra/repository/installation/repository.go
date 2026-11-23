@@ -207,15 +207,20 @@ func (r *Repository) ListDecidedByGateway(
 
 var _ domain.DecisionHistory = (*Repository)(nil)
 
+// Delete revokes every non-revoked row of the code in place, like DeleteByID:
+// the row stays as history. A code with nothing left to revoke is ErrNotFound.
 func (r *Repository) Delete(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
 ) error {
 	const query = `
-		DELETE FROM store_installations
-		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3`
-	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, catalogCode)
+		UPDATE store_installations
+		   SET status = $4, updated_at = $5
+		 WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
+		   AND status <> $4`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, catalogCode,
+		string(domain.StatusRevoked), time.Now().UTC())
 	if err != nil {
 		return mapPgError(err)
 	}
@@ -229,8 +234,7 @@ func (r *Repository) Delete(
 // deleting the row: the row is retained for audit, IsActive() drops it from the
 // Store surface, and a later re-install of the same config reactivates it. This
 // mirrors the data-plane client's implementation exactly, so an uninstall
-// behaves identically whichever plane serves it. Delete (by code) stays a hard
-// delete for clearing inactive leftovers.
+// behaves identically whichever plane serves it.
 func (r *Repository) DeleteByID(
 	ctx context.Context,
 	gatewayID ids.GatewayID,

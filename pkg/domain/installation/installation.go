@@ -419,7 +419,7 @@ type AdminReader interface {
 type Writer interface {
 	// Upsert creates or updates the installation for (gateway, principal, code).
 	Upsert(ctx context.Context, in *Installation) error
-	// Delete hard-deletes every instance for (gateway, principal, code).
+	// Delete revokes every non-revoked instance for (gateway, principal, code).
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) error
 	// DeleteByID revokes one instance by its id, scoped to the owning principal:
 	// the row is kept (StatusRevoked) for audit and drops off the Store surface.

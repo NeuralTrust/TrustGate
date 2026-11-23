@@ -106,21 +106,23 @@ func TestSoftDeleteConsumer_NameCanBeReused(t *testing.T) {
 	require.Equal(t, []string{second}, listedConsumerIDs(t, gatewayID))
 }
 
-func TestSoftDeleteConsumer_GatewayDeleteRemovesDeletedConsumers(t *testing.T) {
+func TestSoftDeleteConsumer_GatewayDeleteSoftDeletesItsConsumers(t *testing.T) {
 	defer Track(t, "SoftDeleteConsumer")()
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("soft-del-gw-cascade")})
 	deleted := CreateConsumer(t, gatewayID, validConsumerPayload(uniqueName("soft-del-gone")))
-	live := CreateConsumer(t, gatewayID, validConsumerPayload(uniqueName("soft-del-live")))
+	liveID := CreateConsumer(t, gatewayID, validConsumerPayload(uniqueName("soft-del-live")))
 	deleteConsumer(t, gatewayID, deleted)
 
 	status, body := sendRequest(t, http.MethodDelete, fmt.Sprintf("%s/v1/gateways/%s", AdminURL, gatewayID), nil, nil)
 	require.Equal(t, http.StatusNoContent, status, "body=%v", body)
 
 	conn := connectFunctionalDB(t)
-	var remaining int
+	var kept, live int
 	require.NoError(t, conn.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM consumers WHERE id = ANY($1::uuid[])`, []string{deleted, live}).Scan(&remaining))
-	require.Zero(t, remaining, "a gateway delete removes its consumers, deleted ones included")
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE deleted_at IS NULL) FROM consumers WHERE id = ANY($1::uuid[])`,
+		[]string{deleted, liveID}).Scan(&kept, &live))
+	require.Equal(t, 2, kept, "a gateway delete keeps its consumers as history")
+	require.Zero(t, live, "and none of them stays live")
 }
 
 // TestSoftDeleteConsumer_RequestInFlightFinishesAndTheNextIsRefused deletes the
