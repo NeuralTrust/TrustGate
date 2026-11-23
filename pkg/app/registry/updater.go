@@ -48,6 +48,8 @@ type UpdateInput struct {
 	HealthChecks    *domain.HealthChecks
 	Pricing         *domain.Pricing
 	SetPricing      bool
+	ModelLabels     map[string]string
+	SetModelLabels  bool
 	MCPTarget       *domain.MCPTarget
 	A2ATarget       *domain.A2ATarget
 }
@@ -328,7 +330,7 @@ func normalizedMCPSource(source domain.MCPSource) domain.MCPSource {
 }
 
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
-	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil && !in.SetPricing {
+	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil && !in.SetPricing && !in.SetModelLabels {
 		return
 	}
 	if existing.LLMTarget == nil {
@@ -353,6 +355,9 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	}
 	if in.SetPricing {
 		target.Pricing = in.Pricing
+	}
+	if in.SetModelLabels {
+		target.ModelLabels = maps.Clone(in.ModelLabels)
 	}
 }
 

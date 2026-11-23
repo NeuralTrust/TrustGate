@@ -153,6 +153,7 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 		time.Now().UTC(),
 		[]byte(nil),
 		false,
+		[]byte(nil),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
@@ -193,6 +194,7 @@ func TestRepository_ScanPricing(t *testing.T) {
 		time.Now().UTC(),
 		[]byte(nil),
 		false,
+		[]byte(nil),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)
@@ -202,6 +204,60 @@ func TestRepository_ScanPricing(t *testing.T) {
 	}
 	if got := reg.Pricing().Overrides["gpt-4o"].Input; got != 0.0000015 {
 		t.Fatalf("override input = %v", got)
+	}
+}
+
+func TestRepository_ScanModelLabels(t *testing.T) {
+	t.Parallel()
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	r := &Repository{cipher: cipher}
+
+	arn := "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc123"
+	provider := "bedrock"
+	reg, err := r.scanRegistry(context.Background(), fakeRow{values: []any{
+		ids.New[ids.RegistryKind](),
+		ids.New[ids.GatewayKind](),
+		"bedrock-pool",
+		string(domain.TypeLLM),
+		true,
+		&provider,
+		[]byte(nil),
+		[]byte(nil),
+		"",
+		[]byte(nil),
+		[]byte(nil),
+		[]byte(nil),
+		time.Now().UTC(),
+		time.Now().UTC(),
+		[]byte(nil),
+		false,
+		[]byte(`{"` + arn + `":"Claude Sonnet (prod)"}`),
+	}})
+	if err != nil {
+		t.Fatalf("scanRegistry: %v", err)
+	}
+	if got := reg.ModelLabels()[arn]; got != "Claude Sonnet (prod)" {
+		t.Fatalf("model label = %q, want Claude Sonnet (prod)", got)
+	}
+}
+
+func TestMarshalModelLabels(t *testing.T) {
+	t.Parallel()
+
+	empty, err := marshalModelLabels(map[string]string{})
+	if err != nil || empty != nil {
+		t.Fatalf("marshalModelLabels(empty) = %s, %v; want nil, nil", empty, err)
+	}
+	raw, err := marshalModelLabels(map[string]string{"gpt-4o": "GPT-4o"})
+	if err != nil {
+		t.Fatalf("marshalModelLabels: %v", err)
+	}
+	if string(raw) != `{"gpt-4o":"GPT-4o"}` {
+		t.Fatalf("marshalModelLabels = %s", raw)
 	}
 }
 
@@ -250,6 +306,7 @@ func TestRepository_ScanManaged(t *testing.T) {
 		time.Now().UTC(),
 		[]byte(nil),
 		true,
+		[]byte(nil),
 	}})
 	if err != nil {
 		t.Fatalf("scanRegistry: %v", err)

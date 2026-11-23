@@ -1155,6 +1155,8 @@ func TestForward_StampsServedAndBaselinePricingOnSpan(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	low := pricedBackendFor(gatewayID, "openai", 0.2)
 	high := pricedBackendFor(gatewayID, "anthropic", 0.4)
+	low.LLMTarget.ModelLabels = map[string]string{"model-low": "Low tier"}
+	high.LLMTarget.ModelLabels = map[string]string{"model-high": "High tier"}
 	rc := smartRoutedConsumer(gatewayID, low, high)
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -1178,6 +1180,8 @@ func TestForward_StampsServedAndBaselinePricingOnSpan(t *testing.T) {
 	served := servedLLMAttrs(t, rt)
 	require.NotNil(t, served.ServedPricing, "the served registry's overlay must ride the span")
 	assert.InDelta(t, 0.2, served.ServedPricing.Discount, 1e-12)
+	assert.Equal(t, map[string]string{"model-low": "Low tier"}, served.ServedModelLabels,
+		"the served registry's model labels must ride the span")
 	require.NotNil(t, served.Baseline)
 	require.NotNil(t, served.Baseline.Pricing,
 		"the baseline is priced with its own registry's overlay, not the served one")

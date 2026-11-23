@@ -24,6 +24,7 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -137,6 +138,7 @@ func (b *Builder) Build(
 	}
 
 	b.fillRequest(evt, req, served)
+	evt.Request.ModelDisplayName = modelDisplayName(evt, req, served)
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
 	b.fillUsageAndCost(ctx, evt, served, req)
@@ -641,6 +643,35 @@ func servedModelName(served *trace.LLMAttrs) string {
 		}
 	}
 	return ""
+}
+
+// modelDisplayName looks the model up in the labels of the registry that
+// served it, or of the targeted registry when no attempt was recorded. The
+// literal model sent upstream wins, so an inference profile ARN keeps its
+// label after the provider resolves it to a foundation model. When a
+// pre-request plugin rewrote the model (a cost downgrade, an allowlist
+// substitute), the requested model is not consulted: its label would name
+// traffic another model served.
+func modelDisplayName(evt *events.Event, req *infracontext.RequestContext, served *trace.LLMAttrs) string {
+	var labels map[string]string
+	var sent string
+	switch {
+	case served != nil:
+		labels = served.ServedModelLabels
+		sent = served.SentModel
+	case req != nil:
+		labels = req.RegistryModelLabels
+		sent = req.SentModel
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	requested := requestedModelRef(evt, served)
+	intent, _ := routingdomain.ParseModelRef(requested)
+	if sent != "" && sent != requested && sent != intent.Model {
+		return registrydomain.ModelDisplayName(labels, sent, evt.Request.Model)
+	}
+	return registrydomain.ModelDisplayName(labels, sent, requested, intent.Model, evt.Request.Model)
 }
 
 func (b *Builder) decodeRequest(req *infracontext.RequestContext) *adapter.CanonicalRequest {

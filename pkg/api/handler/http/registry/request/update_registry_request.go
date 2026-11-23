@@ -31,8 +31,12 @@ type UpdateRegistryRequest struct {
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	Pricing         *PricingRequest      `json:"pricing,omitempty"`
-	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
-	A2ATarget       *A2ATargetRequest    `json:"a2a_target,omitempty"`
+	// ModelLabels replaces the stored model labels when present; an empty
+	// object clears them and an absent field keeps them. Same limits as on
+	// create.
+	ModelLabels *map[string]string `json:"model_labels,omitempty"`
+	MCPTarget   *MCPTargetRequest  `json:"mcp_target,omitempty"`
+	A2ATarget   *A2ATargetRequest  `json:"a2a_target,omitempty"`
 }
 
 func (r *UpdateRegistryRequest) Normalize() {
@@ -62,6 +66,9 @@ func (r UpdateRegistryRequest) Validate() error {
 	if err := r.Pricing.ToDomain().Validate(); err != nil {
 		return err
 	}
+	if _, err := domain.NormalizeModelLabels(r.ToModelLabels()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -75,6 +82,13 @@ func (r UpdateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
 
 func (r UpdateRegistryRequest) ToPricing() *domain.Pricing {
 	return r.Pricing.ToDomain()
+}
+
+func (r UpdateRegistryRequest) ToModelLabels() map[string]string {
+	if r.ModelLabels == nil {
+		return nil
+	}
+	return *r.ModelLabels
 }
 
 func (r UpdateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
