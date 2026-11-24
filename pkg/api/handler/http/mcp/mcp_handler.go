@@ -15,7 +15,6 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -357,63 +356,46 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
-		"instructions": surfaceInstructions(c.UserContext(), rc),
+		"instructions": serverInstructions(rc),
 	}))
 }
 
 const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."
 
-const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
+// storeServerInstructions sends a Store client to the catalog and the
+// install, through the gateway's own tools.
+const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, find it with " + appmcp.SearchToolName + " {\"kind\": \"catalog\", \"query\": …} and install it yourself with " + appmcp.AccessToolName + " {\"action\": \"install\", \"target\": <code>} — do not ask the user to install it manually or to add it in their client. If an answer carries a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
 
 // storeAgentInstructions points a client at the organization's agents, which
 // no tool list names.
-const storeAgentInstructions = " The user may also have the organization's A2A agents: " + appmcp.ListAgentsToolName + " lists the ones they can call, and " + appmcp.CallAgentToolName + " sends one a message and returns its answer — reuse the context_id it returns to continue the conversation."
+const storeAgentInstructions = " The user may also have the organization's A2A agents: " + appmcp.SearchToolName + " {\"kind\": \"agent\"} lists the ones they can call, and " + appmcp.GatewayCallToolName + " {\"agent\": <id>, \"message\": …} sends one a message and returns its answer — reuse the context_id it returns to continue the conversation."
 
-// callThroughInstructions tells a client whose tool list went stale how to
-// reach what is missing from it. Claude's hosted connectors keep the list they
-// fetched when the connector was added, so a server the user connects later is
-// only reachable through the call-through until they reconnect.
-const callThroughInstructions = " Your client may keep the tool list it had when this connector was added. At the start of every conversation, before answering, call " + appmcp.InventoryToolName + " once with {\"brief\": true} to learn which tools the user has now. Call a tool from that answer that is missing from your own list with " + appmcp.CallToolName + " — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
+// searchInstructions tells a client how to learn what the user has and reach
+// a tool missing from its own list. Claude's hosted connectors keep the list
+// they fetched when the connector was added, so a server the user connects
+// later is only reachable through trustgate_call until they reconnect.
+const searchInstructions = " At the start of every conversation, before answering, call " + appmcp.SearchToolName + " once with no arguments to learn which servers the user has now and which need attention. Find a tool by what it does with " + appmcp.SearchToolName + " {\"query\": …}, and call one that is missing from your own list with " + appmcp.GatewayCallToolName + " {\"tool\": <name>, \"arguments\": {…}} — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
 
-// consolidatedStoreInstructions is storeServerInstructions for the
-// consolidated tools.
-const consolidatedStoreInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, find it with " + appmcp.SearchToolName + " {\"kind\": \"catalog\", \"query\": …} and install it yourself with " + appmcp.AccessToolName + " {\"action\": \"install\", \"target\": <code>} — do not ask the user to install it manually or to add it in their client. If an answer carries a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
-
-// consolidatedAgentInstructions is storeAgentInstructions for the
-// consolidated tools.
-const consolidatedAgentInstructions = " The user may also have the organization's A2A agents: " + appmcp.SearchToolName + " {\"kind\": \"agent\"} lists the ones they can call, and " + appmcp.GatewayCallToolName + " {\"agent\": <id>, \"message\": …} sends one a message and returns its answer — reuse the context_id it returns to continue the conversation."
-
-// consolidatedSearchInstructions is callThroughInstructions for the
-// consolidated tools.
-const consolidatedSearchInstructions = " At the start of every conversation, before answering, call " + appmcp.SearchToolName + " once with no arguments to learn which servers the user has now and which need attention. Find a tool by what it does with " + appmcp.SearchToolName + " {\"query\": …}, and call one that is missing from your own list with " + appmcp.GatewayCallToolName + " {\"tool\": <name>, \"arguments\": {…}} — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
-
-// surfaceInstructions are the instructions for the gateway tools this
-// request is offered (see appmcp.SurfaceFor).
-func surfaceInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
-	if appmcp.SurfaceFor(ctx) == appmcp.SurfaceConsolidated {
-		return consolidatedServerInstructions(rc)
+// earlierToolsInstructions covers a client that kept the tool list it fetched
+// before the gateway consolidated its tools: those tools still answer, and the
+// instructions it reads now must not send it to tools it does not have. It
+// names the earlier tools this consumer had.
+func earlierToolsInstructions(store bool) string {
+	earlier := appmcp.InventoryToolName + ", " + appmcp.CallToolName + ", trustgate_connect_*"
+	if store {
+		earlier = appmcp.InventoryToolName + ", " + appmcp.CallToolName + ", trustgate_store_*, " + appmcp.ListAgentsToolName + ", " + appmcp.CallAgentToolName
 	}
-	return serverInstructions(rc)
+	return " If your tool list shows this gateway's earlier tools instead (" + earlier + "), use them for the same purposes: they still work."
 }
 
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	instructions := baseServerInstructions
-	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+	store := rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
+	if store {
 		instructions += storeServerInstructions + storeAgentInstructions
 	}
 	if appmcp.MetaToolsPermitted(rc) {
-		instructions += callThroughInstructions
-	}
-	return instructions
-}
-
-func consolidatedServerInstructions(rc *appconsumer.RoutableConsumer) string {
-	instructions := baseServerInstructions
-	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
-		instructions += consolidatedStoreInstructions + consolidatedAgentInstructions
-	}
-	if appmcp.MetaToolsPermitted(rc) {
-		instructions += consolidatedSearchInstructions
+		instructions += searchInstructions + earlierToolsInstructions(store)
 	}
 	return instructions
 }

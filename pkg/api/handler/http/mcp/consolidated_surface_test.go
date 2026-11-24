@@ -19,16 +19,13 @@ import (
 	"encoding/json"
 	"sort"
 	"testing"
-	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -38,32 +35,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The gateway turned the consolidated tools on at toolsOnAt.
-var toolsOnAt = time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
-
-// surfaceCtx is a request from a client connected through the gateway's own
-// sign-in at connected, on a gateway that turned the consolidated tools on at
-// toolsOnAt.
-func surfaceCtx(connected time.Time) context.Context {
-	gw := &gatewaydomain.Gateway{Metadata: map[string]string{
-		gatewaydomain.MetadataMCPGatewayToolsSinceKey: toolsOnAt.Format(time.RFC3339),
-	}}
-	ctx := appgateway.WithGateway(context.Background(), gw)
-	return identity.WithPrincipal(ctx, &identity.Principal{
-		Subject: "alice",
-		Method:  identity.MethodOAuth,
-		Claims: map[string]any{
-			identity.ClaimTokenUse:        identity.TokenUseMCPSession,
-			identity.ClaimMCPSessionStart: float64(connected.Unix()),
-		},
-	})
+// newClientCtx is a request from a person signed in through the gateway.
+func newClientCtx() context.Context {
+	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice", Method: identity.MethodOAuth})
 }
-
-// A client that connected after the gateway turned the tools on.
-func newClientCtx() context.Context { return surfaceCtx(toolsOnAt.Add(time.Hour)) }
-
-// A hosted connector that connected before, and keeps the list it fetched.
-func oldClientCtx() context.Context { return surfaceCtx(toolsOnAt.Add(-24 * time.Hour)) }
 
 func appConsumer() *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
@@ -154,10 +129,10 @@ func call(name, arguments string) json.RawMessage {
 	return json.RawMessage(`{"name":"` + name + `","arguments":` + arguments + `}`)
 }
 
-// A client that connected after the switch is offered the user's tools and
-// the three consolidated ones — never the per-provider connect tools, the
-// inventory or the call-through.
-func TestConsolidated_NewClientIsOfferedTheThreeTools(t *testing.T) {
+// Every connection is offered the user's tools and the three consolidated
+// ones — never the per-provider connect tools, the inventory or the
+// call-through.
+func TestConsolidated_ListOffersTheThreeTools(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(linearUpstreamTools(t), nil).Once()
@@ -171,37 +146,23 @@ func TestConsolidated_NewClientIsOfferedTheThreeTools(t *testing.T) {
 	}, listedNames(t, listed))
 }
 
-// A hosted connector that connected before the switch keeps the list it
-// fetched: nothing about it changes.
-func TestConsolidated_OldClientKeepsItsList(t *testing.T) {
+// The earlier tools are no longer listed but still answer: a client that kept
+// the list it fetched before — Claude's hosted connectors keep theirs until
+// the person reconnects — keeps working.
+func TestConsolidated_EarlierToolsStillAnswer(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(linearUpstreamTools(t), nil).Once()
+	composer.EXPECT().ToolInventory(mock.Anything, mock.Anything).Return(linearSurface(), nil).Once()
 	g := appGateway(t, composer, []appoauth.ProviderStatus{{Provider: "github"}})
+	ctx := newClientCtx()
 
-	listed, err := g.Dispatch(oldClientCtx(), appConsumer(), "tools/list", nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"linear_list_issues", "linear_save_comment",
-		"trustgate_connect_github", appmcp.InventoryToolName, appmcp.CallToolName,
-	}, listedNames(t, listed))
-}
-
-// Every name answers on every connection: a client holding either list keeps
-// working whichever way the gateway moves.
-func TestConsolidated_EveryNameAnswersOnEveryConnection(t *testing.T) {
-	t.Parallel()
-	composer := mocks.NewComposer(t)
-	composer.EXPECT().ToolInventory(mock.Anything, mock.Anything).Return(linearSurface(), nil).Times(2)
-	g := appGateway(t, composer, nil)
-
-	_, structured, isError := resultOf(t, mustDispatch(t, g, newClientCtx(), appConsumer(), call(appmcp.InventoryToolName, `{"brief":true}`)))
+	_, structured, isError := resultOf(t, mustDispatch(t, g, ctx, appConsumer(), call(appmcp.InventoryToolName, `{"brief":true}`)))
 	require.False(t, isError)
-	assert.EqualValues(t, 2, structured["callable_tools"], "the earlier inventory answers a new client")
+	assert.EqualValues(t, 2, structured["callable_tools"])
 
-	_, structured, isError = resultOf(t, mustDispatch(t, g, oldClientCtx(), appConsumer(), call(appmcp.SearchToolName, `{}`)))
+	_, structured, isError = resultOf(t, mustDispatch(t, g, ctx, appConsumer(), call("trustgate_connect_github", `{}`)))
 	require.False(t, isError)
-	assert.Equal(t, appmcp.SearchKindOverview, structured["kind"], "search answers an old client")
+	assert.Contains(t, structured["connect_url"], "/connect?ticket=tk")
 }
 
 func mustDispatch(t *testing.T, g *mcphttp.RPCGateway, ctx context.Context, rc *appconsumer.RoutableConsumer, params json.RawMessage) any {

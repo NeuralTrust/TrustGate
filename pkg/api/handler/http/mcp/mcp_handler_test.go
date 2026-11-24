@@ -313,7 +313,7 @@ func TestHandler_Initialize_InstructionsPointPastAStaleToolList(t *testing.T) {
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
 	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
 	instructions, _ := body["result"].(map[string]any)["instructions"].(string)
-	for _, want := range []string{appmcp.InventoryToolName, `{"brief": true}`, appmcp.CallToolName} {
+	for _, want := range []string{appmcp.SearchToolName, "with no arguments", appmcp.GatewayCallToolName} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("instructions %q do not mention %s", instructions, want)
 		}

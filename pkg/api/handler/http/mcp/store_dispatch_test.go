@@ -69,11 +69,20 @@ func toolNames(tools []appmcp.Tool) []string {
 	return names
 }
 
+// storeGatewayForDispatch wires the Store tool and the inventory, as the
+// container does.
+func storeGatewayForDispatch(t *testing.T, composer *mocks.Composer) *mcphttp.RPCGateway {
+	t.Helper()
+	inventory, err := appmcp.NewInventoryTool(composer, nil)
+	require.NoError(t, err)
+	return mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t)).WithInventoryTool(inventory)
+}
+
 func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, nil).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := storeGatewayForDispatch(t, composer)
 
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
@@ -87,9 +96,21 @@ func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	listed, err := g.Dispatch(ctx, rc, "tools/list", nil)
 	require.NoError(t, err)
 	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
-	require.Contains(t, toolNames(tools), appmcp.StoreSearchToolName)
+	// This Store can search but not install, so trustgate_access has nothing
+	// to offer and is not listed.
+	require.Equal(t, []string{appmcp.SearchToolName, appmcp.GatewayCallToolName}, toolNames(tools))
 
 	called, err := g.Dispatch(
+		ctx,
+		rc,
+		"tools/call",
+		json.RawMessage(`{"name":"`+appmcp.SearchToolName+`","arguments":{"kind":"catalog","query":"git"}}`),
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(called.(json.RawMessage)), `"github"`)
+
+	// The earlier Store search is no longer listed but still answers.
+	called, err = g.Dispatch(
 		ctx,
 		rc,
 		"tools/call",
@@ -108,14 +129,14 @@ func TestRPCGateway_Store_ConsentPendingStillListsMetaTools(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return(nil, &appmcp.ConsentRequiredError{Provider: "com.notion/mcp", Ticket: "abc", Path: "/store/mcp"}).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := storeGatewayForDispatch(t, composer)
 
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err) // the consent error must not fail the whole listing
 	names := toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool))
-	require.Contains(t, names, appmcp.StoreSearchToolName)
+	require.Contains(t, names, appmcp.SearchToolName)
 }
 
 func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
@@ -133,7 +154,7 @@ func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
 		})).
 		Return([]appmcp.Tool{{Name: "github_create_issue"}}, nil).Once()
 
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t)).
+	g := storeGatewayForDispatch(t, composer).
 		WithStoreScoper(stubScoper{regs: []*registrydomain.Registry{installedReg}})
 
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
@@ -141,8 +162,8 @@ func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
 	names := toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool))
-	require.Contains(t, names, "github_create_issue")      // an installed upstream tool
-	require.Contains(t, names, appmcp.StoreSearchToolName) // and the Store meta-tools alongside
+	require.Contains(t, names, "github_create_issue") // an installed upstream tool
+	require.Contains(t, names, appmcp.SearchToolName) // and the gateway's tools alongside
 }
 
 func TestRPCGateway_Store_NotOfferedOnRegularConsumer(t *testing.T) {
@@ -184,7 +205,7 @@ func TestRPCGateway_Store_ToleratesNoRegistries(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return(nil, appmcp.ErrNoMCPRegistries).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := storeGatewayForDispatch(t, composer)
 
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
@@ -193,7 +214,7 @@ func TestRPCGateway_Store_ToleratesNoRegistries(t *testing.T) {
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
 	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
-	require.Contains(t, toolNames(tools), appmcp.StoreSearchToolName)
+	require.Contains(t, toolNames(tools), appmcp.SearchToolName)
 }
 
 // An application with nothing bound lists an empty tool surface. The Store's

@@ -11571,10 +11571,6 @@
                             }
                         ]
                     },
-                    "mcp_gateway_tools": {
-                        "description": "MCPGatewayTools turns the consolidated MCP gateway tools\n(trustgate_search, trustgate_call, trustgate_access) on or off. A client\nconnected through the gateway's own sign-in before they were turned on\nkeeps the earlier tools until it reconnects. Omitted leaves it unchanged.",
-                        "type": "boolean"
-                    },
                     "metadata": {
                         "type": "object",
                         "additionalProperties": {
@@ -11644,10 +11640,6 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts"
                     },
                     "id": {
-                        "type": "string"
-                    },
-                    "mcp_gateway_tools_since": {
-                        "description": "MCPGatewayToolsSince is when the gateway started serving its consolidated\nMCP tools, absent while it serves the earlier ones.",
                         "type": "string"
                     },
                     "metadata": {

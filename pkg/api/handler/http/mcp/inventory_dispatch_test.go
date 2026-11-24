@@ -61,8 +61,10 @@ func TestRPCGateway_ListsAndCallsTheInventoryMetaTool(t *testing.T) {
 	rc := inventoryConsumer(t)
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
-	require.Contains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.InventoryToolName)
+	require.Contains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.SearchToolName)
 
+	// The inventory is no longer listed, but a client that kept the earlier
+	// list still reaches it.
 	called, err := g.Dispatch(context.Background(), rc, "tools/call",
 		json.RawMessage(`{"name":"`+appmcp.InventoryToolName+`"}`))
 	require.NoError(t, err)
@@ -83,7 +85,7 @@ func TestRPCGateway_ConsentPendingStillListsTheInventoryMetaTool(t *testing.T) {
 
 	listed, err := g.Dispatch(context.Background(), inventoryConsumer(t), "tools/list", nil)
 	require.NoError(t, err)
-	require.Contains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.InventoryToolName)
+	require.Contains(t, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)), appmcp.SearchToolName)
 }
 
 // ENG-1787: an application whose every server keeps one account per user,
@@ -104,7 +106,7 @@ func TestRPCGateway_NoAccountForTheApplicationStillListsTheInventoryMetaTool(t *
 	rc := inventoryConsumer(t)
 	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{appmcp.InventoryToolName, appmcp.CallToolName}, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)))
+	require.Equal(t, []string{appmcp.SearchToolName, appmcp.GatewayCallToolName}, toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool)))
 
 	_, err = g.Dispatch(context.Background(), rc, "tools/call", json.RawMessage(`{"name":"google_drive__search"}`))
 	var notConnected *appmcp.ApplicationNotConnectedError

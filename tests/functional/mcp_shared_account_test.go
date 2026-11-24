@@ -538,7 +538,7 @@ func TestMCPUserInstance_ListsTheRestOfTheSurfaceToTheApplication(t *testing.T) 
 		consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 		names := listedNames(t, rpcResult(t, status, body), "tools")
-		require.Contains(t, names, "trustgate_list_tools")
+		require.Contains(t, names, "trustgate_search")
 		require.NotContains(t, names, exposedToolName(fx.registryID, "echo"))
 
 		for _, method := range []string{"prompts/list", "resources/list"} {
@@ -557,7 +557,7 @@ func TestMCPUserInstance_ListsTheRestOfTheSurfaceToTheApplication(t *testing.T) 
 		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 		names := listedNames(t, rpcResult(t, status, body), "tools")
 		require.Contains(t, names, exposedToolName(plainID, "ping"))
-		require.Contains(t, names, "trustgate_list_tools")
+		require.Contains(t, names, "trustgate_search")
 		require.NotContains(t, names, exposedToolName(fx.registryID, "echo"))
 
 		ping := map[string]any{"name": exposedToolName(plainID, "ping"), "arguments": map[string]any{"message": "hola"}}

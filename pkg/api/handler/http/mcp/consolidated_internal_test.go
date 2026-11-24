@@ -15,18 +15,13 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -65,35 +60,24 @@ func TestMCPRequestAttrs_GatewayCallNamesWhatItCalled(t *testing.T) {
 	}
 }
 
-// The instructions a client reads at initialize name the tools it is offered.
-func TestSurfaceInstructions(t *testing.T) {
+// The instructions a client reads at initialize name the tools it is offered,
+// and tell a client still holding the earlier list that those tools work.
+func TestServerInstructions_NameTheConsolidatedTools(t *testing.T) {
 	t.Parallel()
-	since := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
-	gw := &gatewaydomain.Gateway{Metadata: map[string]string{gatewaydomain.MetadataMCPGatewayToolsSinceKey: since.Format(time.RFC3339)}}
-	session := func(connected time.Time) context.Context {
-		return identity.WithPrincipal(appgateway.WithGateway(context.Background(), gw), &identity.Principal{
-			Subject: "alice",
-			Method:  identity.MethodOAuth,
-			Claims: map[string]any{
-				identity.ClaimTokenUse:        identity.TokenUseMCPSession,
-				identity.ClaimMCPSessionStart: float64(connected.Unix()),
-			},
-		})
-	}
 	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
-
-	consolidated := surfaceInstructions(session(since.Add(time.Hour)), store)
+	instructions := serverInstructions(store)
 	for _, name := range []string{appmcp.SearchToolName, appmcp.GatewayCallToolName, appmcp.AccessToolName} {
-		if !strings.Contains(consolidated, name) {
-			t.Fatalf("consolidated instructions do not name %s", name)
+		if !strings.Contains(instructions, name) {
+			t.Fatalf("instructions do not name %s", name)
 		}
+	}
+	main, fallback, found := strings.Cut(instructions, earlierToolsInstructions(true))
+	if !found || fallback != "" {
+		t.Fatal("the earlier tools are named once, in the closing fallback")
 	}
 	for _, name := range []string{appmcp.InventoryToolName, appmcp.CallToolName, appmcp.StoreSearchToolName, appmcp.StoreInstallToolName, appmcp.ListAgentsToolName} {
-		if strings.Contains(consolidated, name) {
-			t.Fatalf("consolidated instructions name the earlier %s", name)
+		if strings.Contains(main, name) {
+			t.Fatalf("instructions send a client to the earlier %s", name)
 		}
-	}
-	if got, want := surfaceInstructions(session(since.Add(-time.Hour)), store), serverInstructions(store); got != want {
-		t.Fatal("a client connected before the switch must read the instructions it always did")
 	}
 }

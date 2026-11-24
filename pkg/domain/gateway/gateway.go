@@ -111,53 +111,6 @@ func WithStoreMode(metadata map[string]string, mode string) map[string]string {
 	return metadata
 }
 
-// MetadataMCPGatewayToolsSinceKey holds when the gateway started serving its
-// consolidated MCP tools (trustgate_search, trustgate_call, trustgate_access)
-// in place of the earlier ones, as an RFC 3339 time. It is stamped by the
-// server when an admin turns the tools on, never written by a client, so it
-// cannot be set in the past: a client connected before it keeps the tool list
-// it fetched, and the earlier tools keep answering it.
-const MetadataMCPGatewayToolsSinceKey = "mcp_gateway_tools_since"
-
-// MCPGatewayToolsSince returns when the gateway started serving its
-// consolidated MCP tools. ok is false while it serves the earlier ones.
-func (g *Gateway) MCPGatewayToolsSince() (time.Time, bool) {
-	if g == nil || g.Metadata == nil {
-		return time.Time{}, false
-	}
-	raw := strings.TrimSpace(g.Metadata[MetadataMCPGatewayToolsSinceKey])
-	if raw == "" {
-		return time.Time{}, false
-	}
-	since, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return since.UTC(), true
-}
-
-// WithMCPGatewayTools turns the consolidated MCP tools on or off in gateway
-// metadata. Turning them on keeps an earlier start, so a repeated "on" never
-// moves clients connected in between back to the earlier tools; a fresh start
-// is now. Turning them off removes the key.
-func WithMCPGatewayTools(metadata map[string]string, enabled bool, previous string, now time.Time) map[string]string {
-	if !enabled {
-		if metadata != nil {
-			delete(metadata, MetadataMCPGatewayToolsSinceKey)
-		}
-		return metadata
-	}
-	if metadata == nil {
-		metadata = make(map[string]string, 1)
-	}
-	since := strings.TrimSpace(previous)
-	if _, err := time.Parse(time.RFC3339, since); err != nil || since == "" {
-		since = now.UTC().Truncate(time.Second).Format(time.RFC3339)
-	}
-	metadata[MetadataMCPGatewayToolsSinceKey] = since
-	return metadata
-}
-
 // RetentionWindow is the stamped trace-retention window for this gateway, and
 // whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
 // runs on requests where the gateway never resolved.
@@ -189,7 +142,7 @@ func (g *Gateway) ServedByOwnDataPlane() bool {
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataMCPGatewayToolsSinceKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {
