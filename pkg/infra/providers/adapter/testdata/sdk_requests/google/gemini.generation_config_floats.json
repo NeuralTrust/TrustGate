@@ -1,0 +1,1 @@
+{"contents": [{"parts": [{"text": "Resume el contrato adjunto en tres puntos."}], "role": "user"}], "systemInstruction": {"parts": [{"text": "Eres un asistente legal."}], "role": "user"}, "safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}], "generationConfig": {"temperature": 0.0, "topP": 1.0, "topK": 1.0, "maxOutputTokens": 65536}}

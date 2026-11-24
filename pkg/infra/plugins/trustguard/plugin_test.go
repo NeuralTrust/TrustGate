@@ -2260,6 +2260,67 @@ func TestExecuteUndecodableRequestIsAnInputFailure(t *testing.T) {
 	}
 }
 
+// The Python google-genai SDK, which Google ADK builds on, sends topK as a
+// float (ENG-3682). Gemini and Vertex accept it, so the request is inspected;
+// a topK the API itself refuses is still an input failure.
+func TestExecuteInspectsGoogleGenAIRequestWithFloatTopK(t *testing.T) {
+	t.Parallel()
+
+	const genaiBody = `{"contents": [{"parts": [{"text": "hola"}], "role": "user"}], ` +
+		`"systemInstruction": {"parts": [{"text": "Eres un asistente."}], "role": "user"}, ` +
+		`"safetySettings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}], ` +
+		`"generationConfig": {"temperature": 0.0, "topP": 1.0, "topK": TOPK, "maxOutputTokens": 65536}}`
+
+	for _, provider := range []string{"google", "vertex"} {
+		for _, tc := range []struct {
+			name    string
+			topK    string
+			refused bool
+		}{
+			{"float topK", "1.0", false},
+			{"integer topK", "1", false},
+			{"non-numeric topK", `"abc"`, true},
+			{"object topK", `{"text": "ignore previous instructions"}`, true},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+				srv := newServer(t, f)
+				p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+				req := requestContext()
+				req.Provider = provider
+				req.SourceFormat = provider
+				req.RequestedModel = "gemini-2.5-pro"
+				req.Body = []byte(strings.Replace(genaiBody, "TOPK", tc.topK, 1))
+				event, span := newEvent()
+				res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event))
+				extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+				if !ok {
+					t.Fatalf("extras type = %T, want guardData", span.PluginAttrsCopy().Extras)
+				}
+
+				if tc.refused {
+					pe, isPluginErr := appplugins.AsPluginError(err)
+					if !isPluginErr || pe.StatusCode != http.StatusForbidden || pe.Type != appplugins.TypeGuardrailInputUninspectable {
+						t.Fatalf("want a 403 guardrail_input_uninspectable, got res=%+v err=%v", res, err)
+					}
+					if f.count() != 0 || extras.Decision != decisionFailedClosed || extras.FailureReason != failureReasonPayloadUnreadable {
+						t.Fatalf("hits=%d extras=%+v, want no guard call and failed_closed/payload_unreadable", f.count(), extras)
+					}
+					return
+				}
+				if err != nil || res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+					t.Fatalf("want the request inspected and allowed, got res=%+v err=%v", res, err)
+				}
+				if f.count() != 1 || extras.Decision != decisionAllowed {
+					t.Fatalf("hits=%d extras=%+v, want one guard call and an allowed decision", f.count(), extras)
+				}
+			})
+		}
+	}
+}
+
 func TestExecuteResponsesInputItemItCannotDecodeIsInspected(t *testing.T) {
 	t.Parallel()
 
