@@ -306,7 +306,7 @@ func (d *RPCDispatcher) accessConnect(ctx context.Context, req dispatchRequest, 
 		case server.State == InventoryStateReady || server.State == InventoryStateNoTools:
 			return marshalToolResult(
 				fmt.Sprintf("%s is already connected: its tools can be called now.", server.Name),
-				map[string]any{"action": args.Action, "status": "connected", "server": server.Name},
+				map[string]any{"status": "connected", "server": server.Name},
 			)
 		case server.State == InventoryStateUnavailable:
 			return toolErrorResult(
@@ -382,14 +382,16 @@ func findInventoryServer(inventory *ToolInventory, target string) *InventoryServ
 	return nil
 }
 
-// accessResult adds the action and what came of it to an access answer, and
-// rewrites the earlier tools' names in its text.
+// accessResult adds what an access call came to as `status`, and rewrites
+// the earlier tools' names in its text. Every field the earlier tool answered
+// with is kept as it was: a link's `action: "user_confirmation_required"` is
+// how a client knows to put it in front of the person.
 func accessResult(action string, result json.RawMessage) json.RawMessage {
 	isError, structured, ok := structuredOf(result)
 	if !ok {
 		return withConsolidatedText(result)
 	}
-	add := map[string]any{"action": action, "status": accessStatus(action, isError, structured)}
+	add := map[string]any{"status": accessStatus(action, isError, structured)}
 	return withConsolidatedText(withStructuredFields(result, add))
 }
 

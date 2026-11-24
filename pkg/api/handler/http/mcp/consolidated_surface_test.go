@@ -465,7 +465,6 @@ func TestConsolidated_AccessInstallUsesTheStoreInstall(t *testing.T) {
 	assert.Equal(t, appmcp.StoreInstallToolName, store.calls[0].name)
 	assert.Equal(t, map[string]any{"code": "com.notion/mcp", "instance": "reg-1", "config": map[string]any{"instance": "acme"}}, store.calls[0].args)
 	assert.Equal(t, "installed", structured["status"])
-	assert.Equal(t, "install", structured["action"])
 	assert.Contains(t, text, appmcp.SearchToolName)
 	assert.NotContains(t, text, appmcp.InventoryToolName)
 	assert.NotContains(t, text, appmcp.CallToolName)
@@ -504,16 +503,39 @@ func TestConsolidated_AccessUninstallAndRequestMapTheirArguments(t *testing.T) {
 	assert.Equal(t, map[string]any{"provider": "openai"}, store.calls[1].args)
 }
 
+// The personal key that calls the user's models: connect personal_key hands
+// the page where they create, rotate or revoke it. The key is shown to them
+// there and never to the model, and the link keeps the field that tells a
+// client to put it in front of the person.
 func TestConsolidated_AccessConnectPersonalKey(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
-	store.answers[appmcp.StorePersonalKeyToolName] = json.RawMessage(`{"content":[{"type":"text","text":"Open the link."}],"structuredContent":{"personal_key_url":"https://gw.example.com/store/mcp/personal-key?ticket=t"}}`)
+	store.answers[appmcp.StorePersonalKeyToolName] = json.RawMessage(`{"content":[{"type":"text","text":"Open the link."}],"structuredContent":{"personal_key_url":"https://gw.example.com/store/mcp/personal-key?ticket=t","personal_key_label":"Personal key","action":"user_confirmation_required"}}`)
 	g := storeGateway(t, mocks.NewComposer(t), store)
 
 	_, structured, _ := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
 		call(appmcp.AccessToolName, `{"action":"connect","target":"personal_key"}`)))
 	assert.Equal(t, "link", structured["status"])
+	assert.Equal(t, "user_confirmation_required", structured["action"])
 	assert.Equal(t, appmcp.StorePersonalKeyToolName, store.calls[0].name)
+}
+
+// The models the user's personal key reaches come from the Store's model
+// listing; with no key yet, its answer sends the caller to the consolidated
+// tool that gets one, not to a tool missing from its list.
+func TestConsolidated_SearchModelsPointsAtTheKeyPage(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.answers[appmcp.StoreModelsToolName] = json.RawMessage(`{"content":[{"type":"text","text":"The user has no personal key on this gateway yet, and their models are called with it. Offer trustgate_store_personal_key to get one; then call this again."}],"structuredContent":{"available":true,"has_key":false,"providers":[]}}`)
+	g := storeGateway(t, mocks.NewComposer(t), store)
+
+	text, structured, isError := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
+		call(appmcp.SearchToolName, `{"kind":"model"}`)))
+	require.False(t, isError)
+	assert.Equal(t, appmcp.StoreModelsToolName, store.calls[0].name)
+	assert.Equal(t, false, structured["has_key"])
+	assert.Contains(t, text, `trustgate_access (action "connect", target "personal_key")`)
+	assert.NotContains(t, text, appmcp.StorePersonalKeyToolName)
 }
 
 // Searching the catalog lands on the Store's own search, with its text

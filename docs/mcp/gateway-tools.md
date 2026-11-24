@@ -137,8 +137,8 @@ an agent, as `trustgate_call_agent` did.
 | `connect` | `personal_key` | the Store's personal-key page |
 | `request` | LLM provider | the Store's model request; `registry_id` for the registry |
 
-The answer keeps the fields the earlier tools answered with and adds `action`
-and `status` (`installed`, `already_installed`, `requires_config`,
+The answer keeps every field the earlier tools answered with (a link keeps its
+`action: "user_confirmation_required"`) and adds `status` (`installed`, `already_installed`, `requires_config`,
 `requires_admin_setup`, `choose_instance`, `requires_request`, `disabled`,
 `uninstalled`, `not_installed`, `choose_installation`, `link`, `connected`,
 `has_access`, `already_requested`, `unknown_provider`, `choose_registry`,
