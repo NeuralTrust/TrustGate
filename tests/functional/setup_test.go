@@ -97,7 +97,7 @@ func getEnv(key, fallback string) string {
 
 // buildCmdEnv returns the env the gateway binary will see, pinning
 // ENV_FILE so it loads the same .env.functional as TestMain.
-func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelRequestsURL, modelsDevBaseURL string) []string {
+func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelRequestsURL string) []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
@@ -108,8 +108,6 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelReque
 	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	// Upstream stubs in the functional suite listen on loopback.
 	env = append(env, "OUTBOUND_ALLOW_PRIVATE_NETWORKS=true")
-	// The boot catalog sync reads the fixture, not the live models.dev.
-	env = append(env, "MODELS_DEV_BASE_URL="+modelsDevBaseURL)
 	// Hybrid data planes started by the tests present gateway-scoped signed
 	// tokens; the in-cluster planes keep the shared token.
 	env = append(env, "CONFIG_SYNC_AUTH_MODE=composite")
@@ -173,6 +171,9 @@ func setupTestEnvironment() {
 	redisDB = redis.NewClient(&redis.Options{Addr: net.JoinHostPort(cfg.Redis.Host, strconv.Itoa(cfg.Redis.Port)), DB: cfg.Redis.DB, Username: cfg.Redis.Username, Password: cfg.Redis.Password})
 	_ = redisDB.FlushDB(context.Background()).Err()
 
+	// Set on the test process so every plane any test spawns from os.Environ()
+	// (throwaway admins, store proxies) syncs the fixture, never live models.dev.
+	_ = os.Setenv("MODELS_DEV_BASE_URL", StartModelsDevStub())
 	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
 	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
 	_ = os.Setenv("CONFIG_SYNC_GRPC_LISTEN_ADDR", fmt.Sprintf(":%d", serverConfigSyncGRPCPort))
@@ -185,7 +186,7 @@ func setupTestEnvironment() {
 	}
 	firewallComplexityStubURL := StartFirewallComplexityStub()
 	consoleModelRequestsURL := StartConsoleModelRequestsStub()
-	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL, StartModelsDevStub())
+	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL)
 	serverEnv = cmdEnv
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 

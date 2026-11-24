@@ -307,7 +307,7 @@ func TestSecretStoresHybridE2E(t *testing.T) {
 
 	t.Run("the pre-deploy scan finds the reference and prints no value", func(t *testing.T) {
 		cmd := exec.Command(gatewayBinaryPath, "secret-refs-scan") //nolint:gosec // controlled binary path
-		cmd.Env = buildCmdEnv("", "", "", StartModelsDevStub())
+		cmd.Env = buildCmdEnv("", "", "")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err := cmd.Run()
@@ -332,7 +332,7 @@ func startRunPlane(t *testing.T, adminPort, proxyPort, grpcPort int, overrides [
 	requireFreePorts([]int{adminPort, proxyPort, grpcPort})
 	logs = &syncBuffer{}
 	cmd := exec.Command(gatewayBinaryPath, "run") //nolint:gosec // controlled binary path
-	cmd.Env = append(buildCmdEnv("", "", "", StartModelsDevStub()),
+	cmd.Env = append(buildCmdEnv("", "", ""),
 		fmt.Sprintf("SERVER_ADMIN_PORT=%d", adminPort),
 		fmt.Sprintf("SERVER_PROXY_PORT=%d", proxyPort),
 		fmt.Sprintf("CONFIG_SYNC_GRPC_LISTEN_ADDR=:%d", grpcPort),

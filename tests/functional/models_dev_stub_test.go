@@ -10,7 +10,7 @@ import (
 
 // ModelsDevStub serves the models.dev catalog the gateway syncs at boot, so the
 // catalog the suite sees never depends on the live site. The gateway reads it
-// through MODELS_DEV_BASE_URL.
+// through MODELS_DEV_BASE_URL, which TestMain sets on the process.
 var ModelsDevStub *httptest.Server
 
 // modelsDevFixture is the api.json the stub serves. gpt-4 keeps the 8192-token
@@ -18,6 +18,7 @@ var ModelsDevStub *httptest.Server
 var modelsDevFixture = map[string]any{
 	"openai": map[string]any{"models": map[string]any{
 		"gpt-4":       modelsDevModel("GPT-4", 8192, 8192),
+		"gpt-4.1":     modelsDevModel("GPT-4.1", 1047576, 32768),
 		"gpt-4o":      modelsDevModel("GPT-4o", 128000, 16384),
 		"gpt-4o-mini": modelsDevModel("GPT-4o mini", 128000, 16384),
 	}},
