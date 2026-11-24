@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,5 +131,32 @@ func TestModerateContextDeadline(t *testing.T) {
 	c := newClient(50 * time.Millisecond)
 	_, err := c.Moderate(context.Background(), srv.URL, "k", sampleModerationRequest())
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded))
+}
+
+// http.Client.Timeout can fire before the call context's deadline, leaving
+// ctx.Err() nil. The error must still read as a timeout, which is how
+// textchunk marks a chunk TimedOut.
+func TestModerateClientTimeoutReadsAsTimeout(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := newClient(10 * time.Second)
+	c.http.Timeout = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err := c.Moderate(ctx, srv.URL, "k", sampleModerationRequest())
+	require.Error(t, err)
+	require.NoError(t, ctx.Err())
+	var ne net.Error
+	assert.True(t, errors.As(err, &ne) && ne.Timeout())
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
 }
