@@ -330,11 +330,11 @@ func (p geminiPendingCalls) resolve(fr *geminiFuncResponse) string {
 }
 
 type geminiGenConfig struct {
-	MaxOutputTokens  *int     `json:"maxOutputTokens,omitempty"`
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"topP,omitempty"`
-	TopK             *int     `json:"topK,omitempty"`
-	ResponseMimeType string   `json:"responseMimeType,omitempty"`
+	MaxOutputTokens  *geminiInt   `json:"maxOutputTokens,omitempty"`
+	Temperature      *geminiFloat `json:"temperature,omitempty"`
+	TopP             *geminiFloat `json:"topP,omitempty"`
+	TopK             *geminiFloat `json:"topK,omitempty"`
+	ResponseMimeType string       `json:"responseMimeType,omitempty"`
 
 	carried map[string]json.RawMessage `json:"-"`
 }
@@ -354,10 +354,10 @@ func (c *geminiGenConfig) UnmarshalJSON(b []byte) error {
 	type plain geminiGenConfig
 	var in struct {
 		plain
-		MaxOutputTokens  *int     `json:"max_output_tokens"`
-		TopP             *float64 `json:"top_p"`
-		TopK             *int     `json:"top_k"`
-		ResponseMimeType string   `json:"response_mime_type"`
+		MaxOutputTokens  *geminiInt   `json:"max_output_tokens"`
+		TopP             *geminiFloat `json:"top_p"`
+		TopK             *geminiFloat `json:"top_k"`
+		ResponseMimeType string       `json:"response_mime_type"`
 	}
 	if err := json.Unmarshal(b, &in); err != nil {
 		return err
@@ -548,11 +548,11 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 
 	if gc := req.GenerationConfig; gc != nil {
 		if gc.MaxOutputTokens != nil {
-			cr.MaxTokens = *gc.MaxOutputTokens
+			cr.MaxTokens = int(*gc.MaxOutputTokens)
 		}
-		cr.Temperature = gc.Temperature
-		cr.TopP = gc.TopP
-		cr.TopK = gc.TopK
+		cr.Temperature = gc.Temperature.value()
+		cr.TopP = gc.TopP.value()
+		cr.TopK = geminiTopK(gc.TopK)
 		if gc.ResponseMimeType == "application/json" {
 			cr.ResponseFormat = &CanonicalRespFormat{Type: "json_object"}
 		}
@@ -726,19 +726,21 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	var gc geminiGenConfig
 	hasGC := false
 	if req.MaxTokens > 0 {
-		gc.MaxOutputTokens = &req.MaxTokens
+		maxTokens := geminiInt(req.MaxTokens)
+		gc.MaxOutputTokens = &maxTokens
 		hasGC = true
 	}
 	if req.Temperature != nil {
-		gc.Temperature = req.Temperature
+		gc.Temperature = newGeminiFloat(req.Temperature)
 		hasGC = true
 	}
 	if req.TopP != nil {
-		gc.TopP = req.TopP
+		gc.TopP = newGeminiFloat(req.TopP)
 		hasGC = true
 	}
 	if req.TopK != nil {
-		gc.TopK = req.TopK
+		topK := float64(*req.TopK)
+		gc.TopK = newGeminiFloat(&topK)
 		hasGC = true
 	}
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {
