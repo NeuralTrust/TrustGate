@@ -91,6 +91,10 @@ type InventoryServer struct {
 	// lists its catalog preview under that prefix; an empty slug lists none,
 	// because a raw upstream name is not a name the caller can call.
 	slug string
+	// serverSlug is that prefix for every server, whatever its state:
+	// trustgate_search names a pending server's tools the way tools/call will
+	// once the server serves them.
+	serverSlug string
 }
 
 // Permits reports whether this consumer's toolkit lets it use the server's own
@@ -113,6 +117,11 @@ type InventoryEntry struct {
 	// Only a tool the server served has one. It is what a caller needs to call
 	// a tool its client never listed, through CallToolName.
 	InputSchema json.RawMessage
+	// OutputSchema is the tool's outputSchema, when the server declares one.
+	OutputSchema json.RawMessage
+	// Risk is the class the server's annotations put the tool in (ToolRisk*),
+	// empty for a tool that declares none.
+	Risk string
 }
 
 // ToolInventory reports every bound MCP server's contribution to this
@@ -141,10 +150,11 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			code = registrydomain.StoreCode(surface.registry)
 		}
 		server := InventoryServer{
-			Name:   inventoryServerName(surface.registry),
-			Code:   code,
-			Denied: surface.denied,
-			policy: surface.policy,
+			Name:       inventoryServerName(surface.registry),
+			Code:       code,
+			Denied:     surface.denied,
+			policy:     surface.policy,
+			serverSlug: serverSlug(surface.registry),
 		}
 		switch {
 		case surface.consent != nil:
@@ -172,12 +182,15 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			for cursor < len(resolved) && resolved[cursor].registry == surface.registry {
 				b := resolved[cursor]
 				cursor++
+				risk, _ := b.tool.Risk()
 				server.Tools = append(server.Tools, InventoryEntry{
-					Name:        b.exposed,
-					Title:       stringField(b.tool.payload, "title"),
-					Description: stringField(b.tool.payload, "description"),
-					Callable:    true,
-					InputSchema: b.tool.payload["inputSchema"],
+					Name:         b.exposed,
+					Title:        stringField(b.tool.payload, "title"),
+					Description:  stringField(b.tool.payload, "description"),
+					Callable:     true,
+					InputSchema:  b.tool.payload["inputSchema"],
+					OutputSchema: b.tool.payload["outputSchema"],
+					Risk:         risk,
 				})
 			}
 			server.State = InventoryStateReady

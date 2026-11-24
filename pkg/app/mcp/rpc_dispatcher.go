@@ -62,9 +62,12 @@ type RPCDispatcher struct {
 	connections ConnectionTool
 	store       StoreTool
 	inventory   InventoryTool
-	agents      AgentTools
-	storeScoper appstore.Scoper
-	handlers    map[string]rpcHandler
+	// inventoryImpl is the inventory the consolidated tools read the surface
+	// and the catalog through; nil when the inventory is not this package's.
+	inventoryImpl *inventoryTool
+	agents        AgentTools
+	storeScoper   appstore.Scoper
+	handlers      map[string]rpcHandler
 }
 
 func NewRPCDispatcher(
@@ -95,6 +98,7 @@ func NewRPCDispatcher(
 
 func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatcher {
 	d.inventory = inventory
+	d.inventoryImpl, _ = inventory.(*inventoryTool)
 	return d
 }
 
@@ -196,6 +200,10 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.plugins.PreResponseDiscovery(ctx, req.consumer, raw); err != nil {
 		return nil, err
 	}
+	if SurfaceFor(ctx) == SurfaceConsolidated {
+		result["tools"] = appendGatewayTools(tools, d.consolidatedDefinitions(ctx, req.consumer))
+		return result, nil
+	}
 	if d.connections != nil && metaToolsPermitted(req.consumer) {
 		tools = appendGatewayTools(tools, d.connections.Definitions(ctx, req.consumer))
 	}
@@ -218,6 +226,34 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	return result, nil
 }
 
+// consolidatedDefinitions are the gateway's own tools on the consolidated
+// surface: the same three for every consumer, with the kinds and actions this
+// consumer can use. A toolkit that names no tool gets none, as on the earlier
+// surface.
+func (d *RPCDispatcher) consolidatedDefinitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool {
+	if !metaToolsPermitted(rc) {
+		return nil
+	}
+	var defs []Tool
+	store := isStore(rc)
+	if d.inventoryImpl != nil {
+		if def, err := searchDefinition(d.searchKinds(ctx, rc), store); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	if d.inventory != nil {
+		if def, err := gatewayCallDefinition(store && d.agents != nil); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	if actions := d.accessActions(ctx, rc); len(actions) > 0 {
+		if def, err := accessDefinition(actions, store); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	return defs
+}
+
 func markMetaTool(ctx context.Context) {
 	if rt := trace.FromContext(ctx); rt != nil {
 		rt.MarkMetaTool()
@@ -235,6 +271,17 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	}
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
+	}
+	// The consolidated tools answer on every connection, whichever surface it
+	// was offered: a client that fetched its list under one keeps working
+	// when the gateway moves to the other.
+	switch params.Name {
+	case SearchToolName:
+		return d.search(ctx, req, params.Arguments)
+	case GatewayCallToolName:
+		return d.gatewayCall(ctx, req, params.Arguments, params.Meta)
+	case AccessToolName:
+		return d.access(ctx, req, params.Arguments)
 	}
 	if params.Name == CallToolName && d.inventory != nil {
 		return d.callThrough(ctx, req, params.Arguments, params.Meta)

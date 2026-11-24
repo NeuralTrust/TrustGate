@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,7 +357,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
-		"instructions": serverInstructions(rc),
+		"instructions": surfaceInstructions(c.UserContext(), rc),
 	}))
 }
 
@@ -374,6 +375,27 @@ const storeAgentInstructions = " The user may also have the organization's A2A a
 // only reachable through the call-through until they reconnect.
 const callThroughInstructions = " Your client may keep the tool list it had when this connector was added. At the start of every conversation, before answering, call " + appmcp.InventoryToolName + " once with {\"brief\": true} to learn which tools the user has now. Call a tool from that answer that is missing from your own list with " + appmcp.CallToolName + " — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
 
+// consolidatedStoreInstructions is storeServerInstructions for the
+// consolidated tools.
+const consolidatedStoreInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, find it with " + appmcp.SearchToolName + " {\"kind\": \"catalog\", \"query\": …} and install it yourself with " + appmcp.AccessToolName + " {\"action\": \"install\", \"target\": <code>} — do not ask the user to install it manually or to add it in their client. If an answer carries a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
+
+// consolidatedAgentInstructions is storeAgentInstructions for the
+// consolidated tools.
+const consolidatedAgentInstructions = " The user may also have the organization's A2A agents: " + appmcp.SearchToolName + " {\"kind\": \"agent\"} lists the ones they can call, and " + appmcp.GatewayCallToolName + " {\"agent\": <id>, \"message\": …} sends one a message and returns its answer — reuse the context_id it returns to continue the conversation."
+
+// consolidatedSearchInstructions is callThroughInstructions for the
+// consolidated tools.
+const consolidatedSearchInstructions = " At the start of every conversation, before answering, call " + appmcp.SearchToolName + " once with no arguments to learn which servers the user has now and which need attention. Find a tool by what it does with " + appmcp.SearchToolName + " {\"query\": …}, and call one that is missing from your own list with " + appmcp.GatewayCallToolName + " {\"tool\": <name>, \"arguments\": {…}} — if it refuses the arguments, the answer carries its input schema. Do not ask the user to reconnect the connector for that."
+
+// surfaceInstructions are the instructions for the gateway tools this
+// request is offered (see appmcp.SurfaceFor).
+func surfaceInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
+	if appmcp.SurfaceFor(ctx) == appmcp.SurfaceConsolidated {
+		return consolidatedServerInstructions(rc)
+	}
+	return serverInstructions(rc)
+}
+
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	instructions := baseServerInstructions
 	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
@@ -381,6 +403,17 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	}
 	if appmcp.MetaToolsPermitted(rc) {
 		instructions += callThroughInstructions
+	}
+	return instructions
+}
+
+func consolidatedServerInstructions(rc *appconsumer.RoutableConsumer) string {
+	instructions := baseServerInstructions
+	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+		instructions += consolidatedStoreInstructions + consolidatedAgentInstructions
+	}
+	if appmcp.MetaToolsPermitted(rc) {
+		instructions += consolidatedSearchInstructions
 	}
 	return instructions
 }

@@ -41,14 +41,17 @@ type GatewayResponse struct {
 	// for readers to dig out of metadata: a reader that missed it there read a
 	// gateway as open — the domain default — and showed a curated Store as
 	// wide open.
-	StoreMode       string                 `json:"store_mode"`
-	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
-	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
-	Entitlements    domain.Entitlements    `json:"entitlements"`
-	TrafficLabeling *trafficlabel.Config   `json:"traffic_labeling,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	StoreMode string `json:"store_mode"`
+	// MCPGatewayToolsSince is when the gateway started serving its consolidated
+	// MCP tools, absent while it serves the earlier ones.
+	MCPGatewayToolsSince *time.Time             `json:"mcp_gateway_tools_since,omitempty"`
+	Telemetry            *telemetry.Telemetry   `json:"telemetry,omitempty"`
+	ClientTLSConfig      domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig        *domain.SessionConfig  `json:"session_config,omitempty"`
+	Entitlements         domain.Entitlements    `json:"entitlements"`
+	TrafficLabeling      *trafficlabel.Config   `json:"traffic_labeling,omitempty"`
+	CreatedAt            time.Time              `json:"created_at"`
+	UpdatedAt            time.Time              `json:"updated_at"`
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
@@ -87,6 +90,9 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDoma
 	}
 	if resp.Hosts.Agent != "" {
 		resp.AgentTokenIssuer = agentTokenIssuer
+	}
+	if since, ok := g.MCPGatewayToolsSince(); ok {
+		resp.MCPGatewayToolsSince = &since
 	}
 	return resp
 }

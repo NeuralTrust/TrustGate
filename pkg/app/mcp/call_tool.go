@@ -73,25 +73,35 @@ func decodeCallToolArgs(raw json.RawMessage) (callToolArgs, error) {
 		return callToolArgs{}, err
 	}
 	args.Name = strings.TrimSpace(args.Name)
-	inner := bytes.TrimSpace(args.Arguments)
+	normalized, err := normalizeCallArguments(args.Arguments)
+	if err != nil {
+		return callToolArgs{}, err
+	}
+	args.Arguments = normalized
+	return args, nil
+}
+
+// normalizeCallArguments reads the arguments a caller passed for the tool it
+// calls by name: an object, nothing, or an object written as a JSON string.
+func normalizeCallArguments(raw json.RawMessage) (json.RawMessage, error) {
+	inner := bytes.TrimSpace(raw)
 	if len(inner) > 0 && inner[0] == '"' {
 		// A model that writes the arguments as a JSON-encoded string means the
 		// object inside it; the tool would refuse the string.
 		var encoded string
 		if err := json.Unmarshal(inner, &encoded); err != nil {
-			return callToolArgs{}, err
+			return nil, err
 		}
 		inner = bytes.TrimSpace([]byte(encoded))
 	}
 	switch {
 	case len(inner) == 0 || bytes.Equal(inner, []byte("null")):
-		args.Arguments = nil
+		return nil, nil
 	case inner[0] == '{' && json.Valid(inner):
-		args.Arguments = json.RawMessage(inner)
+		return json.RawMessage(inner), nil
 	default:
-		return callToolArgs{}, errCallToolArgumentsNotObject
+		return nil, errCallToolArgumentsNotObject
 	}
-	return args, nil
 }
 
 var errCallToolArgumentsNotObject = errors.New("mcp: call-through arguments are not an object")
@@ -101,7 +111,8 @@ var errCallToolArgumentsNotObject = errors.New("mcp: call-through arguments are 
 // CallToolName adds nothing but a second way to reach it, and a call-through of
 // the call-through is a loop with no end.
 func isGatewayToolName(name string) bool {
-	return name == CallToolName ||
+	return IsConsolidatedToolName(name) ||
+		name == CallToolName ||
 		name == InventoryToolName ||
 		name == ListAgentsToolName ||
 		name == CallAgentToolName ||
@@ -167,6 +178,12 @@ func callToolDefinition() (Tool, error) {
 // answered in its place said nothing about the arguments, and pointing at the
 // schema there sends the caller to fix what was not broken.
 func withSchemaOnFailure(name string, reached toolInvocation, result any, err error) (any, error) {
+	return withSchemaOnFailureVia(CallToolName, name, reached, result, err)
+}
+
+// withSchemaOnFailureVia is withSchemaOnFailure for a call made through the
+// named tool, which the refusal tells the caller to call again.
+func withSchemaOnFailureVia(via, name string, reached toolInvocation, result any, err error) (any, error) {
 	if !reached.upstream || reached.target == nil {
 		return result, err
 	}
@@ -183,7 +200,7 @@ func withSchemaOnFailure(name string, reached toolInvocation, result any, err er
 		// message is what clients hand the model, so the schema rides in it.
 		enriched := *rpcErr
 		enriched.Message = fmt.Sprintf("%s The input schema of %s is %s — fix the arguments and call it again through %s.",
-			strings.TrimSpace(rpcErr.Message), name, schema, CallToolName)
+			strings.TrimSpace(rpcErr.Message), name, schema, via)
 		return nil, &enriched
 	}
 	if !isToolErrorResult(result) {

@@ -797,7 +797,9 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		if err := p.refuseIfLoginRevoked(ctx, grant.AuthID, grant.GatewayID, grant.Org, grant.Subject, grant.IssuedAt); err != nil {
 			return nil, err
 		}
-		resp, err := p.mintSession(*grant)
+		minted := *grant
+		minted.IssuedAt = loginAt
+		resp, err := p.mintSession(minted)
 		if err != nil {
 			return nil, err
 		}
@@ -855,7 +857,13 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 		"sub":       grant.Subject,
 		"scope":     strings.Join(grant.Scopes, " "),
 		"authid":    grant.AuthID,
-		"token_use": "mcp_session",
+		"token_use": identity.TokenUseMCPSession,
+	}
+	// When the client was connected: the login that opened the session, the
+	// same on every token refreshed from it. The MCP plane reads it to keep
+	// serving a client the tool list it fetched when it connected.
+	if !grant.IssuedAt.IsZero() {
+		claims[identity.ClaimMCPSessionStart] = grant.IssuedAt.Unix()
 	}
 	// gwid binds the session to the gateway the login was brokered for. It is
 	// authoritative for the built-in default identity provider, whose synthetic
@@ -1013,6 +1021,9 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 		Groups:      rec.Groups,
 		StoreAccess: rec.StoreAccess,
 		Audiences:   rec.Audiences,
+		// The session's login, not this refresh: a refresh renews the token,
+		// never the connection the client's tool list belongs to.
+		IssuedAt: rec.LoginAt,
 	})
 	if err != nil {
 		return nil, err
