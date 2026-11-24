@@ -17,6 +17,7 @@ package regexreplace
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -79,6 +80,40 @@ func TestGeminiRequestRewritePreservesAttachments(t *testing.T) {
 	}
 	if d := extras(t, span); d.Decision != decisionRewritten || !d.Changed {
 		t.Fatalf("extras = %+v, want rewritten+changed", d)
+	}
+}
+
+// The full re-encode of a redaction keeps the Gemini config that holds no
+// prompt text and still drops labels, which may hold personal data
+// (ENG-3682).
+func TestGeminiRequestRewriteKeepsSafetySettings(t *testing.T) {
+	t.Parallel()
+	body := `{"contents":[{"role":"user","parts":[{"text":"my secret code"}]}],` +
+		`"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}],` +
+		`"labels":{"note":"my secret code"},"generationConfig":{"thinkingConfig":{"thinkingBudget":0}}}`
+	p := New(adapter.NewRegistry(), nil)
+	set := settings(targetRequest, maskRule("secret", "[REDACTED]"))
+	event, _ := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set,
+		reqCtx(googleProvider, googleProvider, []byte(body)), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil || res == nil || len(res.RequestBody) == 0 {
+		t.Fatalf("expected a rewritten request, got res=%+v err=%v", res, err)
+	}
+
+	out := string(res.RequestBody)
+	if strings.Contains(out, "secret") || strings.Contains(out, `"labels"`) {
+		t.Fatalf("the redaction left the secret or the labels in the body: %s", out)
+	}
+	for _, kept := range []string{
+		`"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}]`,
+		`"thinkingConfig":{"thinkingBudget":0}`,
+		`"text":"my [REDACTED] code"`,
+	} {
+		if !strings.Contains(out, kept) {
+			t.Fatalf("rewritten body lost %s: %s", kept, out)
+		}
 	}
 }
 
