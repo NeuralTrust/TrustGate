@@ -45,6 +45,11 @@ type UpdateGatewayRequest struct {
 	// "curated" (only shelf servers) or "none" (self-install disabled). Omitted
 	// leaves the current mode unchanged.
 	StoreMode *string `json:"store_mode,omitempty"`
+	// MCPGatewayTools turns the consolidated MCP gateway tools
+	// (trustgate_search, trustgate_call, trustgate_access) on or off. A client
+	// connected through the gateway's own sign-in before they were turned on
+	// keeps the earlier tools until it reconnects. Omitted leaves it unchanged.
+	MCPGatewayTools *bool `json:"mcp_gateway_tools,omitempty"`
 
 	// ClearTrafficLabeling is set by DetectClears when the body sends
 	// "traffic_labeling": null.

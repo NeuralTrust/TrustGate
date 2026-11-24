@@ -56,6 +56,10 @@ type UpdateInput struct {
 	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
 	// a reserved metadata key server-side, so it survives client metadata replacement.
 	StoreMode *string
+	// MCPGatewayTools, when set, turns the consolidated MCP gateway tools on or
+	// off. Turning them on stamps the time server-side (keeping an earlier one),
+	// so a client connected before it keeps the tool list it fetched.
+	MCPGatewayTools *bool
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -164,6 +168,18 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	} else if g.Metadata != nil {
 		delete(g.Metadata, domain.MetadataStoreModeKey)
 	}
+	// mcp_gateway_tools_since is reserved too, and stripped from client
+	// metadata: re-stamp the stored start unless the tools are being turned
+	// on or off.
+	_, toolsOn := old.MCPGatewayToolsSince()
+	var previousSince string
+	if old.Metadata != nil {
+		previousSince = old.Metadata[domain.MetadataMCPGatewayToolsSinceKey]
+	}
+	if in.MCPGatewayTools != nil {
+		toolsOn = *in.MCPGatewayTools
+	}
+	g.Metadata = domain.WithMCPGatewayTools(g.Metadata, toolsOn, previousSince, time.Now())
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
 	}

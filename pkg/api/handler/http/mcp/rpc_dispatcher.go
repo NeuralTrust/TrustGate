@@ -154,6 +154,12 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		if inner, _, ok := appmcp.CallThroughTarget(params); ok {
 			return "tool", inner, "", ""
 		}
+		if inner, _, ok := appmcp.GatewayCallTarget(params); ok {
+			return "tool", inner, "", ""
+		}
+		if agent, _, ok := appmcp.GatewayCallAgentTarget(params); ok {
+			return "tool", agent, "", ""
+		}
 		// A call to an agent is recorded as the agent it called; the agent
 		// tool puts the agent's name in place of an id once it resolves it.
 		if agent, _, ok := appmcp.CallAgentTarget(params); ok && agent != "" {
