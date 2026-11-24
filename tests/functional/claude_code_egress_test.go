@@ -28,8 +28,8 @@ func TestIngressErrorShape_AnthropicFromOpenAIUpstream(t *testing.T) {
 
 func TestContextWindowPreflight_RefusesOversizedToolset(t *testing.T) {
 	defer Track(t, "ContextWindowPreflight")()
-	if !openaiCatalogListsModel(t, "gpt-4") {
-		t.Skip("openai catalog does not list gpt-4")
+	if w := openaiCatalogContextWindow(t, "gpt-4"); w != 8192 {
+		t.Skipf("openai catalog gives gpt-4 context window %d, test needs 8192", w)
 	}
 
 	up := newJSONUpstream(t, "must-not-serve")

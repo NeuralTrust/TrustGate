@@ -307,3 +307,33 @@ func TestInspectSegmentKeepsItsLimitBelowTimeoutSeconds(t *testing.T) {
 	require.NotNil(t, got)
 	assert.False(t, got.Block, "a 1.5 s answer fits the 2 s per-block limit")
 }
+
+// http.Client.Timeout can fire before the call context's own deadline. The
+// context here outlives the client on purpose, so the client always wins.
+func TestSanitizeClassifiesAnHTTPClientTimeoutAsATimeout(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	c := newClientWithTokenSource(srv.URL, time.Minute, staticTokenSource("t", nil))
+	c.http.Timeout = 50 * time.Millisecond
+
+	_, err := c.sanitize(context.Background(), "proj", "us-central1", "tmpl-1", "sanitizeUserPrompt", map[string]any{})
+	require.Error(t, err)
+	require.ErrorIs(t, err, errCallTimeout)
+	reason, detail := failureOfError(err)
+	assert.Equal(t, appplugins.FailureTransport, reason)
+	assert.Equal(t, appplugins.DetailTimeout, detail)
+
+	// timeout_failure_mode, not failure_mode, now decides the outcome.
+	closedOnTimeout := settingsOf(map[string]any{"failure_mode": "open", "timeout_failure_mode": "closed"})
+	openOnTimeout := settingsOf(map[string]any{"failure_mode": "closed", "timeout_failure_mode": "open"})
+	assert.True(t, (&Plugin{}).StreamFailsClosedOn(closedOnTimeout, reason, detail))
+	assert.False(t, (&Plugin{}).StreamFailsClosedOn(openOnTimeout, reason, detail))
+}
