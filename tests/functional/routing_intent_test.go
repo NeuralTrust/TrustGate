@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -395,14 +394,46 @@ func newModelNotFoundUpstream(t *testing.T) *fakeUpstream {
 
 func openaiCatalogListsModel(t *testing.T, slug string) bool {
 	t.Helper()
+	return openaiCatalogContextWindow(t, slug) > 0
+}
+
+// openaiCatalogContextWindow returns the context window the live catalog holds
+// for the exact openai model slug, or 0 when the model is absent or has none.
+func openaiCatalogContextWindow(t *testing.T, slug string) int {
+	t.Helper()
 	url := fmt.Sprintf("%s/v1/models-catalog?provider=openai", AdminURL)
 	status, body := sendRequest(t, http.MethodGet, url, nil, nil)
 	if status != http.StatusOK {
-		return false
+		return 0
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	return strings.Contains(string(raw), slug)
+	var doc any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	return findModelContextWindow(doc, slug)
+}
+
+func findModelContextWindow(node any, slug string) int {
+	switch v := node.(type) {
+	case map[string]any:
+		if s, ok := v["slug"].(string); ok && s == slug {
+			if w, ok := v["context_window"].(float64); ok && w > 0 {
+				return int(w)
+			}
+		}
+		for _, child := range v {
+			if w := findModelContextWindow(child, slug); w > 0 {
+				return w
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if w := findModelContextWindow(child, slug); w > 0 {
+				return w
+			}
+		}
+	}
+	return 0
 }
 
 func TestRoutingIntent_SequentialChain(t *testing.T) {
