@@ -35,8 +35,8 @@ func getDiagnosticsRegistryModels(t *testing.T, gatewayID, registryID, token str
 // so a provider endpoint reachable only from the serving network still narrows
 // the catalog.
 //
-// How much the listing narrows depends on the model catalog, which this suite
-// does not seed (it is synced from models.dev at boot), so these cases assert
+// How much the listing narrows depends on the model catalog, which the boot
+// sync fills from the models.dev fixture (models_dev_stub_test.go), so these cases assert
 // the route's contract and authorization. The narrowing itself is covered by
 // the handler and availability unit tests.
 func TestDiagnosticsRegistryModelsE2E(t *testing.T) {
