@@ -50,11 +50,14 @@ const (
 	AccessActionInstall   = "install"
 	AccessActionUninstall = "uninstall"
 	AccessActionConnect   = "connect"
-	AccessActionRequest   = "request"
+	// AccessActionKey hands the user the page where they create, rotate or
+	// revoke their personal key, the key their LLM models are called with.
+	AccessActionKey     = "key"
+	AccessActionRequest = "request"
 )
 
-// AccessTargetPersonalKey is the target of a connect that opens the page where
-// the user creates, rotates or revokes their personal key.
+// AccessTargetPersonalKey is the target that made a connect open the personal
+// key page before AccessActionKey existed. It is still accepted.
 const AccessTargetPersonalKey = "personal_key"
 
 // consolidatedToolDisclaimer is GatewayToolDisclaimer for the consolidated
@@ -194,8 +197,25 @@ func gatewayCallDefinition(agents bool) (Tool, error) {
 func accessDefinition(actions []string, store bool) (Tool, error) {
 	description := "Change what the user has through this gateway."
 	if store {
-		description += " install adds a server from the Store (target: its catalog code, from " + SearchToolName + "), uninstall removes one, connect gives the user a link to connect the account a server is waiting on (target: the server's code) or, with target \"personal_key\", the page where they create or rotate their personal key, and request asks an administrator for access to an LLM provider's models (target: the provider)."
-		description += " Install it yourself when the user needs a server: do not ask them to add an MCP server in their client or to connect to an upstream URL directly, which bypasses the gateway."
+		var does []string
+		for _, action := range actions {
+			switch action {
+			case AccessActionInstall:
+				does = append(does, "install adds a server from the Store (target: its catalog code, from "+SearchToolName+")")
+			case AccessActionUninstall:
+				does = append(does, "uninstall removes one (target: its code)")
+			case AccessActionConnect:
+				does = append(does, "connect gives the user a link to connect the account a server is waiting on (target: the server's code)")
+			case AccessActionKey:
+				does = append(does, "key gives the user the page where they create, rotate or revoke their personal key, the key their LLM models are called with (no target): the key is shown to them there and never to you, so do not ask them for it")
+			case AccessActionRequest:
+				does = append(does, "request asks an administrator for access to an LLM provider's models (target: the provider)")
+			}
+		}
+		description += " " + strings.Join(does, "; ") + "."
+		if containsString(actions, AccessActionInstall) {
+			description += " Install it yourself when the user needs a server: do not ask them to add an MCP server in their client or to connect to an upstream URL directly, which bypasses the gateway."
+		}
 	} else {
 		description += " connect gives the user a link to connect the account one of their servers is waiting on (target: the server's name or provider, as " + SearchToolName + " names it)."
 	}
@@ -208,7 +228,7 @@ func accessDefinition(actions []string, store bool) (Tool, error) {
 		},
 		"target": map[string]any{
 			"type":        "string",
-			"description": "What the action applies to.",
+			"description": "What the action applies to. Every action but key needs one.",
 		},
 	}
 	if store {
@@ -233,7 +253,7 @@ func accessDefinition(actions []string, store bool) (Tool, error) {
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"properties":           properties,
-			"required":             []string{"action", "target"},
+			"required":             []string{"action"},
 			"additionalProperties": false,
 		},
 		// uninstall removes what the user had, so a client that asks before a
@@ -265,7 +285,7 @@ func toolFromDefinition(definition map[string]any) (Tool, error) {
 // earlier tools in its list, so text that sends it to one sends it nowhere.
 var legacyToolNames = strings.NewReplacer(
 	StoreRequestModelsToolName, AccessToolName+` (action "request")`,
-	StorePersonalKeyToolName, AccessToolName+` (action "connect", target "personal_key")`,
+	StorePersonalKeyToolName, AccessToolName+` (action "key")`,
 	StoreUninstallToolName, AccessToolName+` (action "uninstall")`,
 	StoreInstallToolName, AccessToolName+` (action "install")`,
 	StoreModelsToolName, SearchToolName+` (kind "model")`,

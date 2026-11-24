@@ -127,14 +127,14 @@ an agent, as `trustgate_call_agent` did.
 
 ## trustgate_access
 
-`{"action", "target"}`:
+`{"action", "target"}`; every action but `key` needs a target:
 
 | Action | Target | Lands on |
 |---|---|---|
 | `install` | catalog code | the Store's install; `config`, and `registry_id` for the instance |
 | `uninstall` | catalog code | the Store's uninstall; `installation_id` for the installation |
 | `connect` | server name, code or provider | an application's connection tool for the provider; on the Store, the server's install, which answers its connect link |
-| `connect` | `personal_key` | the Store's personal-key page |
+| `key` | none | the Store's personal-key page, where the user creates, rotates or revokes the key their LLM models are called with. The key is shown to them there and never to the model. `connect` with target `personal_key`, the earlier spelling, still opens it |
 | `request` | LLM provider | the Store's model request; `registry_id` for the registry |
 
 The answer keeps every field the earlier tools answered with (a link keeps its

@@ -192,12 +192,12 @@ func (d *RPCDispatcher) accessActions(ctx context.Context, rc *appconsumer.Routa
 		return nil
 	}
 	var actions []string
-	installs := d.storeOffers(ctx, rc, StoreInstallToolName)
-	if installs {
-		actions = append(actions, AccessActionInstall, AccessActionUninstall)
+	if d.storeOffers(ctx, rc, StoreInstallToolName) {
+		// On the Store a server's connect link is its install's answer.
+		actions = append(actions, AccessActionInstall, AccessActionUninstall, AccessActionConnect)
 	}
-	if installs || d.storeOffers(ctx, rc, StorePersonalKeyToolName) {
-		actions = append(actions, AccessActionConnect)
+	if d.storeOffers(ctx, rc, StorePersonalKeyToolName) {
+		actions = append(actions, AccessActionKey)
 	}
 	if d.storeOffers(ctx, rc, StoreRequestModelsToolName) {
 		actions = append(actions, AccessActionRequest)
@@ -222,13 +222,17 @@ func (d *RPCDispatcher) access(ctx context.Context, req dispatchRequest, argumen
 	}
 	args.Action = strings.ToLower(strings.TrimSpace(args.Action))
 	args.Target = strings.TrimSpace(args.Target)
+	if args.Action == AccessActionConnect && strings.EqualFold(args.Target, AccessTargetPersonalKey) && containsString(actions, AccessActionKey) {
+		// The spelling before key existed: it still opens the key page.
+		args.Action, args.Target = AccessActionKey, ""
+	}
 	if !containsString(actions, args.Action) {
 		return toolErrorResult(
 			fmt.Sprintf("%s cannot %q here. It can: %s.", AccessToolName, args.Action, strings.Join(actions, ", ")),
 			map[string]any{"error": "invalid_arguments", "actions": actions},
 		)
 	}
-	if args.Target == "" {
+	if args.Target == "" && args.Action != AccessActionKey {
 		return toolErrorResult(
 			AccessToolName+" needs `target`: what the "+args.Action+" applies to.",
 			map[string]any{"error": "missing_target"},
@@ -252,6 +256,8 @@ func (d *RPCDispatcher) access(ctx context.Context, req dispatchRequest, argumen
 		result, err = d.storeCall(ctx, req, StoreRequestModelsToolName, map[string]any{
 			"provider": args.Target, "registry_id": args.RegistryID,
 		})
+	case AccessActionKey:
+		result, err = d.storeCall(ctx, req, StorePersonalKeyToolName, map[string]any{})
 	case AccessActionConnect:
 		return d.accessConnect(ctx, req, args)
 	}
@@ -286,13 +292,6 @@ func (d *RPCDispatcher) storeCall(ctx context.Context, req dispatchRequest, tool
 // (installing an installed server again only answers its link); on an
 // application it is the connection tool for the server's provider.
 func (d *RPCDispatcher) accessConnect(ctx context.Context, req dispatchRequest, args accessArgs) (any, error) {
-	if isStore(req.consumer) && strings.EqualFold(args.Target, AccessTargetPersonalKey) {
-		result, err := d.storeCall(ctx, req, StorePersonalKeyToolName, map[string]any{})
-		if err != nil {
-			return consolidatedToolError(err)
-		}
-		return accessResult(args.Action, result), nil
-	}
 	var server *InventoryServer
 	if d.inventoryImpl != nil {
 		inventory, err := d.inventoryImpl.surface.ToolInventory(ctx, req.consumer)
@@ -440,6 +439,10 @@ func accessStatus(action string, isError bool, s map[string]any) string {
 			return "uninstalled"
 		}
 		return "not_installed"
+	case AccessActionKey:
+		if has("personal_key_url") {
+			return "link"
+		}
 	case AccessActionConnect:
 		if has("connect_url") || has("personal_key_url") {
 			return "link"

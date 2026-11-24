@@ -446,7 +446,7 @@ func TestConsolidated_StoreIsOfferedTheSameThreeTools(t *testing.T) {
 	assert.Equal(t, []string{appmcp.SearchToolName, appmcp.GatewayCallToolName, appmcp.AccessToolName}, toolNames(tools))
 	raw, err := json.Marshal(tools[2])
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"enum":["install","uninstall","connect","request"]`)
+	assert.Contains(t, string(raw), `"enum":["install","uninstall","connect","key","request"]`)
 }
 
 // install lands on the Store's own install with the arguments renamed, and
@@ -503,22 +503,63 @@ func TestConsolidated_AccessUninstallAndRequestMapTheirArguments(t *testing.T) {
 	assert.Equal(t, map[string]any{"provider": "openai"}, store.calls[1].args)
 }
 
-// The personal key that calls the user's models: connect personal_key hands
-// the page where they create, rotate or revoke it. The key is shown to them
-// there and never to the model, and the link keeps the field that tells a
+// The personal key that calls the user's models: key hands the page where
+// they create, rotate or revoke it, and takes no target. The key is shown to
+// them there and never to the model, and the link keeps the field that tells a
 // client to put it in front of the person.
-func TestConsolidated_AccessConnectPersonalKey(t *testing.T) {
+func TestConsolidated_AccessKeyGivesThePersonalKeyPage(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
-	store.answers[appmcp.StorePersonalKeyToolName] = json.RawMessage(`{"content":[{"type":"text","text":"Open the link."}],"structuredContent":{"personal_key_url":"https://gw.example.com/store/mcp/personal-key?ticket=t","personal_key_label":"Personal key","action":"user_confirmation_required"}}`)
+	store.answers[appmcp.StorePersonalKeyToolName] = personalKeyAnswer
 	g := storeGateway(t, mocks.NewComposer(t), store)
 
-	_, structured, _ := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
-		call(appmcp.AccessToolName, `{"action":"connect","target":"personal_key"}`)))
+	_, structured, isError := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
+		call(appmcp.AccessToolName, `{"action":"key"}`)))
+	require.False(t, isError)
 	assert.Equal(t, "link", structured["status"])
 	assert.Equal(t, "user_confirmation_required", structured["action"])
+	assert.Equal(t, "https://gw.example.com/store/mcp/personal-key?ticket=t", structured["personal_key_url"])
+	require.Len(t, store.calls, 1)
+	assert.Equal(t, appmcp.StorePersonalKeyToolName, store.calls[0].name)
+	assert.Empty(t, store.calls[0].args)
+}
+
+// connect with target personal_key, the spelling before key existed, still
+// opens the same page.
+func TestConsolidated_AccessConnectPersonalKeyStillWorks(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.answers[appmcp.StorePersonalKeyToolName] = personalKeyAnswer
+	g := storeGateway(t, mocks.NewComposer(t), store)
+
+	_, structured, isError := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
+		call(appmcp.AccessToolName, `{"action":"connect","target":"personal_key"}`)))
+	require.False(t, isError)
+	assert.Equal(t, "link", structured["status"])
 	assert.Equal(t, appmcp.StorePersonalKeyToolName, store.calls[0].name)
 }
+
+// A Store without personal keys does not offer key, and an application never
+// does: personal keys belong to the Store.
+func TestConsolidated_AccessKeyIsOnlyWhereKeysAre(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.names = []string{appmcp.StoreSearchToolName, appmcp.StoreInstallToolName, appmcp.StoreUninstallToolName}
+	g := storeGateway(t, mocks.NewComposer(t), store)
+	_, structured, isError := resultOf(t, mustDispatch(t, g, newClientCtx(), storeConsumer(),
+		call(appmcp.AccessToolName, `{"action":"key"}`)))
+	assert.True(t, isError)
+	assert.Equal(t, []any{"install", "uninstall", "connect"}, structured["actions"])
+	assert.Empty(t, store.calls)
+
+	app := appGateway(t, mocks.NewComposer(t), nil)
+	_, structured, isError = resultOf(t, mustDispatch(t, app, newClientCtx(), appConsumer(),
+		call(appmcp.AccessToolName, `{"action":"key"}`)))
+	assert.True(t, isError)
+	assert.Equal(t, []any{"connect"}, structured["actions"])
+}
+
+var personalKeyAnswer = json.RawMessage(`{"content":[{"type":"text","text":"Open the link."}],"structuredContent":{"personal_key_url":"https://gw.example.com/store/mcp/personal-key?ticket=t","personal_key_label":"Personal key","action":"user_confirmation_required"}}`)
 
 // The models the user's personal key reaches come from the Store's model
 // listing; with no key yet, its answer sends the caller to the consolidated
@@ -534,7 +575,7 @@ func TestConsolidated_SearchModelsPointsAtTheKeyPage(t *testing.T) {
 	require.False(t, isError)
 	assert.Equal(t, appmcp.StoreModelsToolName, store.calls[0].name)
 	assert.Equal(t, false, structured["has_key"])
-	assert.Contains(t, text, `trustgate_access (action "connect", target "personal_key")`)
+	assert.Contains(t, text, `trustgate_access (action "key")`)
 	assert.NotContains(t, text, appmcp.StorePersonalKeyToolName)
 }
 
