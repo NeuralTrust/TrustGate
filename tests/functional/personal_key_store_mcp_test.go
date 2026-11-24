@@ -142,7 +142,7 @@ func TestPersonalKey_StoreConnectsAnInstalledServerThroughInstall(t *testing.T) 
 	rawKey := fmt.Sprint(issued["api_key"])
 
 	names := storeToolNames(t, gwID, rawKey)
-	assert.Contains(t, names, "trustgate_store_install")
+	assert.Contains(t, names, "trustgate_access")
 	for _, name := range names {
 		assert.False(t, strings.HasPrefix(name, "trustgate_connect_"), "the Store lists no connect tool: %v", names)
 	}
@@ -209,7 +209,7 @@ func TestPersonalKey_StoreLinksThePersonalKeyPage(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, "body=%v", issued)
 	rawKey := fmt.Sprint(issued["api_key"])
 
-	assert.Contains(t, storeToolNames(t, gwID, rawKey), "trustgate_store_personal_key")
+	assert.Contains(t, storeToolNames(t, gwID, rawKey), "trustgate_access")
 
 	status, called := storeMCPWith(t, gwID, rawKey, "tools/call", map[string]any{
 		"name": "trustgate_store_personal_key", "arguments": map[string]any{},

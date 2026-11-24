@@ -41,13 +41,15 @@ func TestStoreInstructionsMentionTheAgentTools(t *testing.T) {
 	t.Parallel()
 	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 	instructions := serverInstructions(store)
-	for _, want := range []string{appmcp.ListAgentsToolName, appmcp.CallAgentToolName, "context_id"} {
+	for _, want := range []string{`{"kind": "agent"}`, `{"agent": <id>, "message": …}`, "context_id"} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("Store instructions %q do not mention %s", instructions, want)
 		}
 	}
 	app := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP}}
-	if strings.Contains(serverInstructions(app), appmcp.CallAgentToolName) {
-		t.Fatal("an application's instructions do not mention the agent tools")
+	for _, unwanted := range []string{`"kind": "agent"`, appmcp.CallAgentToolName, appmcp.ListAgentsToolName} {
+		if strings.Contains(serverInstructions(app), unwanted) {
+			t.Fatalf("an application's instructions do not mention the agent tools (%s)", unwanted)
+		}
 	}
 }

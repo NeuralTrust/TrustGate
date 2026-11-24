@@ -200,30 +200,30 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.plugins.PreResponseDiscovery(ctx, req.consumer, raw); err != nil {
 		return nil, err
 	}
-	if SurfaceFor(ctx) == SurfaceConsolidated {
-		result["tools"] = appendGatewayTools(tools, d.consolidatedDefinitions(ctx, req.consumer))
-		return result, nil
-	}
-	if d.connections != nil && metaToolsPermitted(req.consumer) {
-		tools = appendGatewayTools(tools, d.connections.Definitions(ctx, req.consumer))
-	}
-	if d.store != nil && req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
-		tools = appendGatewayTools(tools, d.store.Definitions(ctx, req.consumer))
-	}
-	if d.agents != nil && req.consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
-		tools = appendGatewayTools(tools, d.agents.Definitions())
-	}
-	if d.inventory != nil && metaToolsPermitted(req.consumer) {
-		tools = appendGatewayTools(tools, d.inventory.Definitions(ctx, req.consumer))
-		// The call-through rides with the inventory: the inventory is how a
-		// caller learns a tool's name and schema, the call-through is how it
-		// calls one its client never listed.
-		if def, err := callToolDefinition(); err == nil {
-			tools = appendGatewayTools(tools, []Tool{def})
-		}
-	}
+	// The gateway's own tools are the consolidated three. The earlier ones
+	// (the inventory, the call-through, the connect tools, the Store's and the
+	// agents') are no longer listed, but every one of them still answers
+	// tools/call: a client that kept the list it fetched before — Claude's
+	// hosted connectors keep theirs until the person reconnects — keeps
+	// working.
+	tools = appendGatewayTools(withoutGatewayNames(tools), d.consolidatedDefinitions(ctx, req.consumer))
 	result["tools"] = tools
 	return result, nil
+}
+
+// withoutGatewayNames drops an upstream tool named like one of the gateway's
+// own. A call to that name reaches the gateway, never the upstream, so listing
+// the upstream's definition would only put words it chose in front of the
+// model under a name the gateway answers.
+func withoutGatewayNames(tools []Tool) []Tool {
+	out := tools[:0:0]
+	for _, tool := range tools {
+		if isGatewayToolName(tool.Name) {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
 }
 
 // consolidatedDefinitions are the gateway's own tools on the consolidated
@@ -272,9 +272,6 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
-	// The consolidated tools answer on every connection, whichever surface it
-	// was offered: a client that fetched its list under one keeps working
-	// when the gateway moves to the other.
 	switch params.Name {
 	case SearchToolName:
 		return d.search(ctx, req, params.Arguments)

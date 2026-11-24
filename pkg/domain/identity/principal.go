@@ -16,11 +16,9 @@ package identity
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 )
 
 type Method string
@@ -109,18 +107,6 @@ const (
 	// of the same tenant: the callback refuses a token whose gateway claim names
 	// a different gateway.
 	ClaimGateway = "gateway"
-	// ClaimMCPSessionStart is when the person connected the client a gateway
-	// session belongs to (the login that opened it), in Unix seconds. Every
-	// token refreshed from the same session carries the same value, and only a
-	// new connection changes it. It is what tells the MCP plane which tool list
-	// that client fetched: a hosted connector keeps the list it got when it was
-	// connected until the person reconnects it.
-	ClaimMCPSessionStart = "mcp_session_start"
-	// ClaimTokenUse names what a gateway-issued token is for.
-	ClaimTokenUse = "token_use"
-	// TokenUseMCPSession is the ClaimTokenUse of a session the gateway's own
-	// authorization server issued to an MCP client.
-	TokenUseMCPSession = "mcp_session"
 )
 
 type Principal struct {
@@ -217,47 +203,6 @@ func (p *Principal) StoreAccess() string {
 		return ""
 	}
 	return StringClaim(p.Claims, ClaimStoreAccess)
-}
-
-// IsGatewaySession reports whether the principal was established from a
-// session the gateway's own authorization server issued to an MCP client, as
-// opposed to an api key, a personal key, a certificate or a token a customer
-// identity provider minted.
-func (p *Principal) IsGatewaySession() bool {
-	if p == nil || p.Method != MethodOAuth {
-		return false
-	}
-	return StringClaim(p.Claims, ClaimTokenUse) == TokenUseMCPSession
-}
-
-// MCPSessionStart returns when the client behind a gateway session was
-// connected. ok is false for any other principal, and for a session issued
-// before the claim existed.
-func (p *Principal) MCPSessionStart() (time.Time, bool) {
-	if !p.IsGatewaySession() {
-		return time.Time{}, false
-	}
-	var seconds int64
-	switch v := p.Claims[ClaimMCPSessionStart].(type) {
-	case float64:
-		seconds = int64(v)
-	case int64:
-		seconds = v
-	case int:
-		seconds = int64(v)
-	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
-			return time.Time{}, false
-		}
-		seconds = n
-	default:
-		return time.Time{}, false
-	}
-	if seconds <= 0 {
-		return time.Time{}, false
-	}
-	return time.Unix(seconds, 0).UTC(), true
 }
 
 // Groups returns the principal's normalized group memberships.

@@ -2,8 +2,8 @@
 
 This page is for engineers working on the MCP plane. It describes the
 gateway's own MCP tools, `trustgate_search`, `trustgate_call` and
-`trustgate_access`, how a gateway switches to them, and how clients connected
-before the switch keep working.
+`trustgate_access`, and how clients that fetched the earlier tools keep
+working.
 
 ## Why
 
@@ -23,67 +23,37 @@ without a tool. On an application, `trustgate_search` offers the `overview`
 and `tool` kinds and `trustgate_access` only `connect`; on the Store they offer
 everything their dependencies are wired for.
 
-Code is in `pkg/app/mcp`: `surface.go` (which surface a request gets),
-`gateway_tools.go` (definitions), `search_tool.go`, `search_rank.go` and
-`ts_signature.go` (`trustgate_search`), and `gateway_call_access.go`
-(`trustgate_call`, `trustgate_access`).
-
-## Turning them on
-
-A gateway serves the earlier tools until an admin turns the consolidated ones
-on:
-
-```http
-PUT /v1/gateways/{id}
-{"mcp_gateway_tools": true}
-```
-
-The server stamps the time in the reserved metadata key
-`mcp_gateway_tools_since` and returns it as `mcp_gateway_tools_since`. A
-client cannot write the key, so the start can never be set in the past.
-Turning the tools on again keeps the first start. `false` removes it and
-returns every client to the earlier tools: that is the kill switch. The surface
-fingerprint does not include the switch, so a client is not sent
-`tools/list_changed` when it flips; it needs none, because every name keeps
-answering on every connection.
-
-## Who gets which tools
-
-`appmcp.SurfaceFor` decides per request:
-
-| Caller | Tools off | Tools on |
-|---|---|---|
-| Gateway session (`token_use: mcp_session`) opened after the start | earlier | consolidated |
-| Gateway session opened before the start, or before sessions carried their start | earlier | earlier |
-| Api key, personal key, certificate, a customer identity provider's token | earlier | consolidated |
-
-A gateway session carries `mcp_session_start`: the login that opened it, in
-Unix seconds, the same on every token refreshed from it
-(`pkg/app/oauth/proxy.go`, `mintSession`). Claude's hosted connectors fetch the
-tool list when the person connects them, which is that login, and keep it
-until the person reconnects, which opens a new session. So a connector that
-fetched the earlier list keeps being offered it.
-
-Credentials without a connection time belong to clients that re-list on start.
+Code is in `pkg/app/mcp`: `gateway_tools.go` (definitions),
+`search_tool.go`, `search_rank.go` and `ts_signature.go` (`trustgate_search`),
+and `gateway_call_access.go` (`trustgate_call`, `trustgate_access`).
 
 ## Compatibility
 
-- **Every name answers on every connection.** `tools/call` accepts the earlier
-  names and the consolidated ones whatever surface the connection was
-  offered, so a client holding either list keeps working, including across a
-  kill switch.
-- **The earlier tools answer exactly as before.** They run unchanged; the
-  consolidated tools call into the same implementations.
-- **Text rewritten for the consolidated surface.** An answer the consolidated
+Every connection is offered the three consolidated tools. The earlier tools
+are not listed any more, and nothing switches them back on.
+
+- **The earlier names still answer.** `tools/call` accepts
+  `trustgate_list_tools`, `trustgate_call_tool`, `trustgate_connect_*`, the
+  `trustgate_store_*` tools, `trustgate_list_agents` and `trustgate_call_agent`,
+  and they answer exactly as before. Claude's hosted connectors keep the tool
+  list they fetched when the person connected them, whatever the gateway
+  announces, until the person reconnects; a connector that fetched the earlier
+  list keeps working.
+- **Instructions for both.** The `initialize` instructions name the
+  consolidated tools, and close with a sentence for a client whose list still
+  shows the earlier ones: those still work.
+- **Text rewritten for the consolidated tools.** An answer the consolidated
   tools build on an earlier tool has the earlier tools' names in its text
-  rewritten to the consolidated tool that does the same, because a client on
-  the consolidated surface does not have the earlier tools in its list.
+  rewritten to the consolidated tool that does the same, because a client with
+  the consolidated list does not have the earlier tools.
 - **Readable faults.** A fault the earlier tools return as an internal error
   (-32603), such as a closed Store or a missing dependency, comes back from the
   consolidated tools as a tool error with a stable `error` code. Policy
   refusals (-32001), pending consent (-32003) and rate limits (-32004) stay
   protocol errors, as on a direct call.
-- **`initialize` instructions** name the tools the connection is offered.
+- **Reserved names.** An upstream tool named like one of the gateway's tools
+  (`trustgate_search`, `trustgate_connect_*`, `trustgate_store_*`…) is not
+  listed: a call to that name reaches the gateway, never the upstream.
 
 ## trustgate_search
 
@@ -147,7 +117,5 @@ The answer keeps every field the earlier tools answered with (a link keeps its
 
 ## Not done yet
 
-- Shadow comparison of the ranking on real traffic before switching a gateway.
-- A console control for the switch: it is set through the admin API.
-- A per-connection choice of surface (for example a URL parameter).
+- Shadow comparison of the ranking on real traffic.
 - Code Mode (`trustgate_query`, `trustgate_execute`).

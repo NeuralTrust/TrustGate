@@ -1193,13 +1193,6 @@ definitions:
           Entitlements is optional; only platform admins may set it (tenant callers get 422).
           When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
           has more gateways than the new MaxInstances returns 409 — delete excess first.
-      mcp_gateway_tools:
-        description: |-
-          MCPGatewayTools turns the consolidated MCP gateway tools
-          (trustgate_search, trustgate_call, trustgate_access) on or off. A client
-          connected through the gateway's own sign-in before they were turned on
-          keeps the earlier tools until it reconnects. Omitted leaves it unchanged.
-        type: boolean
       metadata:
         additionalProperties:
           type: string
@@ -1252,11 +1245,6 @@ definitions:
       hosts:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts'
       id:
-        type: string
-      mcp_gateway_tools_since:
-        description: |-
-          MCPGatewayToolsSince is when the gateway started serving its consolidated
-          MCP tools, absent while it serves the earlier ones.
         type: string
       metadata:
         additionalProperties:
