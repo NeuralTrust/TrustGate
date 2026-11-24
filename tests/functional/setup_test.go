@@ -97,7 +97,7 @@ func getEnv(key, fallback string) string {
 
 // buildCmdEnv returns the env the gateway binary will see, pinning
 // ENV_FILE so it loads the same .env.functional as TestMain.
-func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelRequestsURL string) []string {
+func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelRequestsURL, modelsDevBaseURL string) []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
@@ -108,6 +108,8 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL, consoleModelReque
 	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	// Upstream stubs in the functional suite listen on loopback.
 	env = append(env, "OUTBOUND_ALLOW_PRIVATE_NETWORKS=true")
+	// The boot catalog sync reads the fixture, not the live models.dev.
+	env = append(env, "MODELS_DEV_BASE_URL="+modelsDevBaseURL)
 	// Hybrid data planes started by the tests present gateway-scoped signed
 	// tokens; the in-cluster planes keep the shared token.
 	env = append(env, "CONFIG_SYNC_AUTH_MODE=composite")
@@ -183,7 +185,7 @@ func setupTestEnvironment() {
 	}
 	firewallComplexityStubURL := StartFirewallComplexityStub()
 	consoleModelRequestsURL := StartConsoleModelRequestsStub()
-	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL)
+	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL, consoleModelRequestsURL, StartModelsDevStub())
 	serverEnv = cmdEnv
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
@@ -211,6 +213,7 @@ func teardownTestEnvironment() {
 	StopTrustGuardFunctionalStub()
 	StopFirewallComplexityStub()
 	StopConsoleModelRequestsStub()
+	StopModelsDevStub()
 	if agentCmd != nil && agentCmd.Process != nil {
 		if err := syscall.Kill(-agentCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing agent server: %v", err)
