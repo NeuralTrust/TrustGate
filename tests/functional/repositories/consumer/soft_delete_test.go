@@ -143,7 +143,7 @@ func TestRepository_SoftDelete_FreesTheNameAndSlug(t *testing.T) {
 	require.Equal(t, replacement.ID, routed.ID, "the slug routes to the live consumer")
 }
 
-func TestRepository_SoftDelete_GatewayDeleteRemovesDeletedConsumers(t *testing.T) {
+func TestRepository_SoftDelete_GatewayDeleteKeepsConsumersSoftDeleted(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "soft-delete-gateway-gw")
@@ -153,12 +153,16 @@ func TestRepository_SoftDelete_GatewayDeleteRemovesDeletedConsumers(t *testing.T
 
 	require.NoError(t, f.gw.Delete(ctx, gwID))
 
-	var remaining int
+	all := ids.ToUUIDs([]ids.ConsumerID{deleted.consumer.ID, live.consumer.ID})
+	var rows, liveRows int
 	require.NoError(t, f.conn.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM consumers WHERE id = ANY($1)`,
-		ids.ToUUIDs([]ids.ConsumerID{deleted.consumer.ID, live.consumer.ID}),
-	).Scan(&remaining))
-	require.Zero(t, remaining, "a gateway delete removes its consumers, deleted ones included")
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE deleted_at IS NULL) FROM consumers WHERE id = ANY($1)`,
+		all,
+	).Scan(&rows, &liveRows))
+	require.Equal(t, 2, rows, "a gateway delete keeps its consumer rows")
+	require.Zero(t, liveRows, "none of them stays live")
+	require.Zero(t, linkCount(t, f, deleted.consumer.ID))
+	require.Zero(t, linkCount(t, f, live.consumer.ID))
 }
 
 // TestRepository_SoftDelete_RacingLinkWritesLeaveNoLinks covers the race a hard
