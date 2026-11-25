@@ -1054,7 +1054,7 @@ func principalUser(ctx context.Context) *GuardUser {
 	if id == "" && email == "" {
 		return nil
 	}
-	return &GuardUser{ID: id, Email: email}
+	return &GuardUser{ID: id, Email: email, AuthMethod: strings.TrimSpace(meta.PrincipalMethod)}
 }
 
 func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {

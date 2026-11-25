@@ -45,10 +45,25 @@ type v2Request struct {
 type v2Attributes struct {
 	ContentType string         `json:"content_type"`
 	Model       *v2Model       `json:"model,omitempty"`
-	User        *GuardUser     `json:"user,omitempty"`
+	User        *v2User        `json:"user,omitempty"`
 	Application *v2Application `json:"application,omitempty"`
 	MCPServer   *v2MCPServer   `json:"mcp_server,omitempty"`
 	Stream      *GuardStream   `json:"stream,omitempty"`
+}
+
+// v2User is the end user. AuthMethod is the gateway's principal method (jwt, oauth, personal_key, api_key...): how it
+// authenticated the user, which TrustGuard v2 reads to decide whether the email is vouched for.
+type v2User struct {
+	ID         string `json:"id,omitempty"`
+	Email      string `json:"email,omitempty"`
+	AuthMethod string `json:"auth_method,omitempty"`
+}
+
+func v2UserOf(u *GuardUser) *v2User {
+	if u == nil {
+		return nil
+	}
+	return &v2User{ID: u.ID, Email: u.Email, AuthMethod: u.AuthMethod}
 }
 
 type v2Application struct {
@@ -84,7 +99,7 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 		ApplicationID:   strings.TrimSpace(body.ConsumerID),
 		Attributes: v2Attributes{
 			ContentType: body.Attributes.ContentType,
-			User:        body.Attributes.User,
+			User:        v2UserOf(body.Attributes.User),
 			MCPServer:   v2MCPServerOf(body.Attributes.MCPServer),
 			Stream:      body.Attributes.Stream,
 		},
