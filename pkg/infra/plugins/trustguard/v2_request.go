@@ -49,6 +49,7 @@ type v2Attributes struct {
 	Application *v2Application `json:"application,omitempty"`
 	MCPServer   *v2MCPServer   `json:"mcp_server,omitempty"`
 	Stream      *GuardStream   `json:"stream,omitempty"`
+	ToolCall    *GuardToolCall `json:"tool,omitempty"`
 }
 
 type v2Application struct {
@@ -99,6 +100,7 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 				server.Tool = &v2Tool{Name: tool}
 			}
 		}
+		req.Attributes.ToolCall = toolCallOf(request)
 	}
 	if c := body.Attributes.Consumer; c != nil && c.Name != "" {
 		req.Attributes.Application = &v2Application{Name: c.Name}
@@ -130,6 +132,7 @@ func withInventory(body GuardRequest) GuardRequest {
 		}
 		body.Attributes.MCPServer = &server
 	}
+	body.Attributes.ToolCall = toolCallOf(req)
 	return body
 }
 

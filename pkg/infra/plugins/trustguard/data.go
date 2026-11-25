@@ -67,6 +67,25 @@ type GuardAttributes struct {
 	Consumer    *GuardConsumer  `json:"consumer,omitempty"`
 	MCPServer   *GuardMCPServer `json:"mcp_server,omitempty"`
 	Stream      *GuardStream    `json:"stream,omitempty"`
+	ToolCall    *GuardToolCall  `json:"tool,omitempty"`
+}
+
+// GuardToolCall identifies the agent's tool call a tools/call executes: the
+// correlation id read from params._meta (toolCallID), the gateway's own key
+// when the caller sent one, else the id the agent sent under its own key, which
+// is the one its hook reports. TrustGuard reads it as attributes.tool.call_id to
+// count a call checked by both the hook and the gateway once. Absent when the
+// caller sent no usable id.
+type GuardToolCall struct {
+	CallID string `json:"call_id"`
+}
+
+// toolCallOf is the tool call attribute of an MCP request, nil without an id.
+func toolCallOf(req *infracontext.RequestContext) *GuardToolCall {
+	if req == nil || !req.MCP || req.MCPToolCallID == "" {
+		return nil
+	}
+	return &GuardToolCall{CallID: req.MCPToolCallID}
 }
 
 // GuardMCPServer names the MCP server a tools/call goes to: the registry id,
