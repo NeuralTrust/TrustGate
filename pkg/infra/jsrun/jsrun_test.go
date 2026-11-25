@@ -149,7 +149,7 @@ func TestRun_AFailedCallIsAnErrorTheProgramCanCatch(t *testing.T) {
 	}
 	_, err := run(t, Limits{}, `await tools.read_secrets({});`, caller)
 	msg := wantKind(t, err, KindThrown)
-	if !strings.Contains(msg, "PolicyError: blocked by policy") || !strings.Contains(msg, "query.js:1") {
+	if !strings.Contains(msg, "PolicyError: blocked by policy") || !strings.Contains(msg, "program.js:1") {
 		t.Fatalf("message = %q", msg)
 	}
 }
