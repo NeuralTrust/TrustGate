@@ -42,8 +42,8 @@ type GatewayResponse struct {
 	// gateway as open — the domain default — and showed a curated Store as
 	// wide open.
 	StoreMode string `json:"store_mode"`
-	// MCPCodeMode is the gateway's MCP Code Mode: off, read_only or full.
-	MCPCodeMode string `json:"mcp_code_mode" enums:"off,read_only,full"`
+	// MCPCodeMode is the gateway's MCP Code Mode: off or on.
+	MCPCodeMode string `json:"mcp_code_mode" enums:"off,on"`
 	// MCPToolListing is which tools MCP clients are listed: all or gateway.
 	MCPToolListing  string                 `json:"mcp_tool_listing" enums:"all,gateway"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`

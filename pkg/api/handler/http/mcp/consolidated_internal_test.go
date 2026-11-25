@@ -91,12 +91,12 @@ func TestInitializeInstructions_SettingsComeFirst(t *testing.T) {
 	t.Parallel()
 	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithMCPToolListing(
-		gatewaydomain.WithMCPCodeMode(nil, gatewaydomain.MCPCodeModeReadOnly), gatewaydomain.MCPToolListingGateway)}
+		gatewaydomain.WithMCPCodeMode(nil, gatewaydomain.MCPCodeModeOn), gatewaydomain.MCPToolListingGateway)}
 	got := initializeInstructions(appgateway.WithGateway(context.Background(), gw), store)
 	if !strings.HasPrefix(got, baseServerInstructions+" The user's tools are not in your tool list") {
 		t.Fatalf("the listing sentence does not follow the opening one: %q", got[:min(len(got), 400)])
 	}
-	if i := strings.Index(got, appmcp.QueryToolName); i < 0 || i > len(baseServerInstructions)+700 {
+	if i := strings.Index(got, appmcp.ExecuteToolName); i < 0 || i > len(baseServerInstructions)+700 {
 		t.Fatalf("the Code Mode sentence is not near the start (at %d)", i)
 	}
 	if plain := initializeInstructions(context.Background(), store); plain != serverInstructions(store) {

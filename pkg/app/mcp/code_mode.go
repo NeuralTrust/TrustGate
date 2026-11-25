@@ -43,21 +43,23 @@ import (
 // policies, rate limit and audit as a direct call. A program can do nothing a
 // direct call could not.
 //
-// trustgate_query runs programs that only read: they may call a tool its
-// server annotates readOnlyHint, or one the server's admin lists in
-// read_only_tools, and not one that declares it reaches an open world (a web
-// search or a fetch could carry what the program read elsewhere) unless the
-// admin listed it. trustgate_execute runs programs that may call any tool the
-// user can call; clients ask the user before running it. A gateway offers
-// neither, the first, or both (gateway mcp_code_mode).
+// One tool runs programs, trustgate_execute, offered when the gateway's Code
+// Mode is on (gateway mcp_code_mode). A program may call any tool the user
+// can call; what keeps a user's agent from writing is what keeps a direct
+// call from it: the application's tool restrictions and the gateway's
+// policies. The tool is marked destructive, so clients that confirm such tools
+// show the person the program first.
 //
 // See docs/mcp/code-mode.md.
 
 const (
-	// QueryToolName runs a program that calls the user's read-only tools.
-	QueryToolName = "trustgate_query"
 	// ExecuteToolName runs a program that may call any of the user's tools.
 	ExecuteToolName = "trustgate_execute"
+	// QueryToolName is retired. It ran programs that could call only tools
+	// their servers marked read-only; a client that kept it in its tool list
+	// is told to send the program to ExecuteToolName instead. It is not run:
+	// that client listed it as read-only and may run it without asking.
+	QueryToolName = "trustgate_query"
 )
 
 // IsCodeModeToolName reports whether name is one of the Code Mode tools.
@@ -77,13 +79,7 @@ func codeModeOf(ctx context.Context) string {
 
 // codeModeOffers reports whether the gateway's Code Mode offers the tool.
 func codeModeOffers(mode, tool string) bool {
-	switch tool {
-	case QueryToolName:
-		return mode == gatewaydomain.MCPCodeModeReadOnly || mode == gatewaydomain.MCPCodeModeFull
-	case ExecuteToolName:
-		return mode == gatewaydomain.MCPCodeModeFull
-	}
-	return false
+	return tool == ExecuteToolName && mode == gatewaydomain.MCPCodeModeOn
 }
 
 // gatewayToolsOnly reports whether the request's gateway lists only its own
@@ -102,91 +98,63 @@ func ToolListingInstructions(ctx context.Context, rc *appconsumer.RoutableConsum
 	return " The user's tools are not in your tool list: find them with " + SearchToolName + ` {"query": …} and call one with ` + GatewayCallToolName + ` {"tool": <name>, "arguments": {…}}.`
 }
 
-// CodeModeOffered reports which Code Mode tools the request's gateway offers.
-func CodeModeOffered(ctx context.Context) (query, execute bool) {
-	mode := codeModeOf(ctx)
-	return codeModeOffers(mode, QueryToolName), codeModeOffers(mode, ExecuteToolName)
+// CodeModeOffered reports whether the request's gateway offers
+// ExecuteToolName.
+func CodeModeOffered(ctx context.Context) bool {
+	return codeModeOffers(codeModeOf(ctx), ExecuteToolName)
 }
 
 // CodeModeInstructions is the sentence the initialize instructions close with
 // on a gateway with Code Mode on: when to write a program instead of calling
-// tools one at a time. The tools' own descriptions say the same, for a client
+// tools one at a time. The tool's own description says the same, for a client
 // that does not pass instructions on.
 func CodeModeInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
-	if !metaToolsPermitted(rc) {
+	if !metaToolsPermitted(rc) || !CodeModeOffered(ctx) {
 		return ""
 	}
-	query, execute := CodeModeOffered(ctx)
-	switch {
-	case execute:
-		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you." + programFallback
-	case query:
-		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you." + programFallback
-	}
-	return ""
+	return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + ExecuteToolName + " program: only what it returns comes back to you." + programFallback
 }
 
 // programFallback tells a client whose tool list predates Code Mode how to
 // run a program anyway.
-const programFallback = " If " + QueryToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + QueryToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": …}}.`
+const programFallback = " If " + ExecuteToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + ExecuteToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + ExecuteToolName + `", "arguments": {"code": …}}.`
 
 // ProgramHintForEarlierTools closes the earlier inventory tool's answer when
 // the gateway runs Code Mode programs. A client that still uses the earlier
 // tools fetched its list before Code Mode: this answer is the one place it
 // learns that programs exist and how to run one.
 func ProgramHintForEarlierTools(ctx context.Context) string {
-	query, execute := CodeModeOffered(ctx)
-	if !query {
+	if !CodeModeOffered(ctx) {
 		return ""
 	}
-	hint := "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
-		CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
-		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer. Only tools that read can be called from it."
-	if execute {
-		hint += " For a program that also writes, use " + ExecuteToolName + " the same way."
-	}
-	return hint
+	return "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
+		CallToolName + ` {"name": "` + ExecuteToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
+		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer."
 }
 
 // codeModeDefinitions are the Code Mode tools the gateway offers this
-// request, none when Code Mode is off.
+// request: ExecuteToolName when Code Mode is on, none when it is off.
 func (d *RPCDispatcher) codeModeDefinitions(ctx context.Context) []Tool {
-	if d.inventoryImpl == nil || d.inventory == nil {
+	if d.inventoryImpl == nil || d.inventory == nil || !CodeModeOffered(ctx) {
 		return nil
 	}
-	mode := codeModeOf(ctx)
-	limits := d.programs.Limits()
-	var defs []Tool
-	if codeModeOffers(mode, QueryToolName) {
-		if def, err := programDefinition(QueryToolName, limits); err == nil {
-			defs = append(defs, def)
-		}
+	def, err := programDefinition(d.programs.Limits())
+	if err != nil {
+		return nil
 	}
-	if codeModeOffers(mode, ExecuteToolName) {
-		if def, err := programDefinition(ExecuteToolName, limits); err == nil {
-			defs = append(defs, def)
-		}
-	}
-	return defs
+	return []Tool{def}
 }
 
-func programDefinition(name string, limits jsrun.Limits) (Tool, error) {
-	var description, title string
-	annotations := map[string]any{"idempotentHint": false, "openWorldHint": true}
-	if name == QueryToolName {
-		title = "Run a program that reads the user's tools"
-		description = "Run a short JavaScript program on the gateway that calls the user's read-only tools and returns one result. " +
-			"Use it instead of several " + GatewayCallToolName + " calls when a task needs more than one call, a loop over results, or filtering, joining or counting before you answer: only what the program returns comes back to you. "
-		annotations["readOnlyHint"] = true
-		annotations["destructiveHint"] = false
-	} else {
-		title = "Run a program that uses the user's tools"
-		description = "Run a short JavaScript program on the gateway that calls any of the user's tools, including ones that create, change or delete, and returns one result. " +
-			"Use it for a task of several steps that writes, such as updating every item a search finds. For a task that only reads, use " + QueryToolName + ". "
-		annotations["readOnlyHint"] = false
-		annotations["destructiveHint"] = true
-	}
-	description += "In the program, call a tool as `await tools.<name>(args)` with its exact name and the arguments its signature in " + SearchToolName + " gives (search first if you do not have them); calls run in parallel with Promise.all. " +
+// programDefinition is ExecuteToolName as clients list it. It is marked
+// destructive: a program may call tools that write, and clients that confirm
+// such tools show the person the program before it runs.
+func programDefinition(limits jsrun.Limits) (Tool, error) {
+	name := ExecuteToolName
+	annotations := map[string]any{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
+	title := "Run a program that uses the user's tools"
+	description := "Run a short JavaScript program on the gateway that calls the user's tools and returns one result. " +
+		"Use it instead of several " + GatewayCallToolName + " calls when a task needs more than one call, a loop over results, or filtering, joining or counting before you answer: only what the program returns comes back to you. " +
+		"In the program, call a tool as `await tools.<name>(args)` with its exact name and the arguments its signature in " + SearchToolName + " gives (search first if you do not have them); calls run in parallel with Promise.all. " +
 		"A call returns the tool's structured result, or its JSON text parsed, or its text; a failed call throws a ToolError you can catch. " +
 		"`return` the smallest value that answers the task. console.log lines come back too. " +
 		"There is no network, file or timer access, and no import of modules. " +
@@ -225,7 +193,7 @@ type programCall struct {
 	bytes int64
 }
 
-// runProgram serves QueryToolName and ExecuteToolName.
+// runProgram serves ExecuteToolName, and answers the retired QueryToolName.
 func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, tool string, arguments json.RawMessage) (any, error) {
 	// The program's own request is the gateway's; each tool it calls is
 	// counted as that tool's call (see usage and the event builder).
@@ -234,13 +202,13 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		return nil, &ToolNotPermittedError{Tool: tool}
 	}
 	mode := codeModeOf(ctx)
+	if tool == QueryToolName && codeModeOffers(mode, ExecuteToolName) {
+		d.programStats.ran(ctx, req.consumer, tool, programResultNotOffered, 0)
+		return toolErrorResult(QueryToolName+" was replaced by "+ExecuteToolName+". Send the same code to "+ExecuteToolName+".", map[string]any{"error": "replaced", "use": ExecuteToolName})
+	}
 	if !codeModeOffers(mode, tool) {
 		d.programStats.ran(ctx, req.consumer, tool, programResultNotOffered, 0)
-		text := tool + " is not turned on for this gateway."
-		if tool == ExecuteToolName && codeModeOffers(mode, QueryToolName) {
-			text = tool + " is not turned on for this gateway; " + QueryToolName + " is, for programs that only read."
-		}
-		return toolErrorResult(text+" Call the tools one at a time with "+GatewayCallToolName+".", map[string]any{"error": "not_enabled", "code_mode": mode})
+		return toolErrorResult("Code Mode is not turned on for this gateway. Call the tools one at a time with "+GatewayCallToolName+".", map[string]any{"error": "not_enabled", "code_mode": mode})
 	}
 	var args struct {
 		Code string `json:"code"`
@@ -365,47 +333,12 @@ func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchReque
 		return resolveFailure(err, call.Name, d.closestToolNames(ctx, req.consumer, call.Name))
 	}
 	*reg = target.Registry
-	if program == QueryToolName {
-		if refusal := readOnlyRefusal(target, call.Name, codeModeOf(ctx)); refusal != nil {
-			if span := trace.SpanFromContext(ctx); span != nil {
-				annotateRegistry(span, target.Registry, target.Tool.Name)
-				span.SetMCPToolRisk(target.Tool.Risk())
-			}
-			return jsrun.CallResult{Err: refusal}, nil
-		}
-	}
 	d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{target: target}, nil)
 	result, _, err := d.invokeResolved(ctx, req, target, call.Arguments, nil)
 	if err != nil {
 		return invokeFailure(err)
 	}
 	return programValue(result), nil
-}
-
-// readOnlyRefusal is why a read-only program may not call the tool, nil when
-// it may.
-func readOnlyRefusal(target *ResolvedTool, name, mode string) *jsrun.CallError {
-	listed := target.Registry != nil && target.Registry.MCPTarget.IsReadOnlyTool(target.Tool.Name)
-	if listed {
-		return nil
-	}
-	risk, _ := target.Tool.Risk()
-	elsewhere := " Call it on its own with " + GatewayCallToolName
-	if mode == gatewaydomain.MCPCodeModeFull {
-		elsewhere += ", or from " + ExecuteToolName
-	}
-	elsewhere += "."
-	switch {
-	case risk != ToolRiskReadOnly:
-		why := "may change something"
-		if risk == "" {
-			why = "does not say it only reads (its server does not annotate it)"
-		}
-		return &jsrun.CallError{Name: "NotAllowedError", Message: name + " " + why + ", so " + QueryToolName + " cannot call it." + elsewhere}
-	case target.Tool.DeclaresOpenWorld():
-		return &jsrun.CallError{Name: "NotAllowedError", Message: name + " reaches outside the user's own data (its server marks it open-world), so a read-only program cannot call it: what the program read could leave in its arguments." + elsewhere}
-	}
-	return nil
 }
 
 func callError(name, message string) jsrun.CallResult {
