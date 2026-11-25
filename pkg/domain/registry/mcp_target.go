@@ -17,7 +17,6 @@ package registry
 import (
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
@@ -188,13 +187,6 @@ type MCPTarget struct {
 	// own, read from the vault per request (see MCPUserHeader). Headers stays
 	// the shared map: one admin-set value for every caller.
 	UserHeaders []MCPUserHeader `json:"user_headers,omitempty"`
-	// ReadOnlyTools are the server's tools its admin vouches only read, by the
-	// name the server gives them (not the name the gateway exposes). MCP Code
-	// Mode's trustgate_query calls a tool only when its server annotates it
-	// readOnlyHint or it is listed here, so an admin can open a server that
-	// does not annotate its tools to read-only programs. It changes nothing
-	// else: a listed tool is called and guarded like any other.
-	ReadOnlyTools []string `json:"read_only_tools,omitempty"`
 	// InstanceConfig carries one instance's resolved plain URL-variable values when
 	// the Store scoper exposes several instances of the same catalog code for a
 	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
@@ -341,7 +333,6 @@ func (t *MCPTarget) Normalize() {
 	if t == nil {
 		return
 	}
-	t.ReadOnlyTools = normalizeToolNames(t.ReadOnlyTools)
 	if t.Source == "" {
 		t.Source = MCPSourceRemote
 	}
@@ -351,49 +342,6 @@ func (t *MCPTarget) Normalize() {
 	if t.Auth == nil {
 		t.Auth = &MCPAuth{Mode: MCPAuthModeNone}
 	}
-}
-
-// maxReadOnlyTools bounds ReadOnlyTools; maxToolNameLength each name.
-const (
-	maxReadOnlyTools  = 500
-	maxToolNameLength = 256
-)
-
-// normalizeToolNames trims, drops blanks and duplicates and sorts. A nil list
-// stays nil (on update it keeps the stored list); an empty one stays empty.
-func normalizeToolNames(names []string) []string {
-	if names == nil {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(names))
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if _, dup := seen[name]; dup {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// IsReadOnlyTool reports whether the admin vouched the named upstream tool
-// only reads.
-func (t *MCPTarget) IsReadOnlyTool(name string) bool {
-	if t == nil {
-		return false
-	}
-	for _, listed := range t.ReadOnlyTools {
-		if listed == name {
-			return true
-		}
-	}
-	return false
 }
 
 // targetURLValid reports whether the target URL is a valid http(s) URL, treating
@@ -413,14 +361,6 @@ func (t *MCPTarget) targetURLValid() bool {
 func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
-	}
-	if len(t.ReadOnlyTools) > maxReadOnlyTools {
-		return fmt.Errorf("%w: read_only_tools lists more than %d tools", ErrInvalidMCPTarget, maxReadOnlyTools)
-	}
-	for _, name := range t.ReadOnlyTools {
-		if len(name) > maxToolNameLength {
-			return fmt.Errorf("%w: read_only_tools has a name longer than %d characters", ErrInvalidMCPTarget, maxToolNameLength)
-		}
 	}
 	source := t.Source
 	if source == "" {

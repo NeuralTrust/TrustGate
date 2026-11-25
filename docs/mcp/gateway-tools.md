@@ -17,8 +17,8 @@ something up and three ways to call:
 | Change what the user has | `trustgate_connect_<provider>`, `trustgate_store_install`, `trustgate_store_uninstall`, `trustgate_store_personal_key`, `trustgate_store_request_models` | `trustgate_access` |
 
 The consolidated tools are the same three on applications and on the Store.
-A gateway with [Code Mode](code-mode.md) on also offers `trustgate_query`, and
-`trustgate_execute`, which run a program that calls the user's tools. A gateway can also list only these tools and not the user's
+A gateway with [Code Mode](code-mode.md) on also offers `trustgate_execute`,
+which runs a program that calls the user's tools. A gateway can also list only these tools and not the user's
 (`mcp_tool_listing: "gateway"`, see [Code Mode](code-mode.md#listing-only-the-gateways-tools)).
 Their list never changes with what the user installs or connects, so a client
 that keeps the list it fetched (Claude's hosted connectors do) is never left
@@ -55,7 +55,7 @@ are not listed any more, and nothing switches them back on.
   refusals (-32001), pending consent (-32003) and rate limits (-32004) stay
   protocol errors, as on a direct call.
 - **Reserved names.** An upstream tool named like one of the gateway's tools
-  (`trustgate_search`, `trustgate_query`, `trustgate_connect_*`,
+  (`trustgate_search`, `trustgate_execute`, `trustgate_connect_*`,
   `trustgate_store_*`…) is not listed: a call to that name reaches the
   gateway, never the upstream.
 

@@ -66,10 +66,13 @@ func TestUpdater_MCPCodeMode(t *testing.T) {
 		keyKept bool
 	}{
 		{name: "off by default", want: domain.MCPCodeModeOff},
-		{name: "turned on read only", set: ptr(domain.MCPCodeModeReadOnly), want: domain.MCPCodeModeReadOnly, keyKept: true},
-		{name: "turned to full", stored: domain.MCPCodeModeReadOnly, set: ptr(domain.MCPCodeModeFull), want: domain.MCPCodeModeFull, keyKept: true},
-		{name: "turned off removes the key", stored: domain.MCPCodeModeFull, set: ptr(domain.MCPCodeModeOff), want: domain.MCPCodeModeOff},
-		{name: "kept when not set", stored: domain.MCPCodeModeReadOnly, want: domain.MCPCodeModeReadOnly, keyKept: true},
+		{name: "turned on", set: ptr(domain.MCPCodeModeOn), want: domain.MCPCodeModeOn, keyKept: true},
+		{name: "the earlier read_only turns it on", set: ptr("read_only"), want: domain.MCPCodeModeOn, keyKept: true},
+		{name: "the earlier full turns it on", set: ptr("full"), want: domain.MCPCodeModeOn, keyKept: true},
+		{name: "turned off removes the key", stored: domain.MCPCodeModeOn, set: ptr(domain.MCPCodeModeOff), want: domain.MCPCodeModeOff},
+		{name: "kept when not set", stored: domain.MCPCodeModeOn, want: domain.MCPCodeModeOn, keyKept: true},
+		{name: "a gateway that stored read_only is on", stored: "read_only", want: domain.MCPCodeModeOn, keyKept: true},
+		{name: "a gateway that stored full is on", stored: "full", want: domain.MCPCodeModeOn, keyKept: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -88,14 +91,14 @@ func TestUpdater_MCPCodeMode(t *testing.T) {
 // nor lets a client turn Code Mode on through metadata.
 func TestUpdater_MCPCodeModeSurvivesMetadataReplacement(t *testing.T) {
 	t.Parallel()
-	got := updateCodeMode(t, gatewayWithCodeMode(domain.MCPCodeModeReadOnly), appgateway.UpdateInput{
-		Metadata: map[string]string{"owner": "platform", domain.MetadataMCPCodeModeKey: domain.MCPCodeModeFull},
+	got := updateCodeMode(t, gatewayWithCodeMode(domain.MCPCodeModeOn), appgateway.UpdateInput{
+		Metadata: map[string]string{"owner": "platform", domain.MetadataMCPCodeModeKey: domain.MCPCodeModeOff},
 	})
-	if got.MCPCodeMode() != domain.MCPCodeModeReadOnly || got.Metadata["owner"] != "platform" {
+	if got.MCPCodeMode() != domain.MCPCodeModeOn || got.Metadata["owner"] != "platform" {
 		t.Fatalf("metadata = %v", got.Metadata)
 	}
 	got = updateCodeMode(t, gatewayWithCodeMode(""), appgateway.UpdateInput{
-		Metadata: map[string]string{domain.MetadataMCPCodeModeKey: domain.MCPCodeModeFull},
+		Metadata: map[string]string{domain.MetadataMCPCodeModeKey: domain.MCPCodeModeOn},
 	})
 	if got.MCPCodeMode() != domain.MCPCodeModeOff {
 		t.Fatalf("a client turned Code Mode on through metadata: %v", got.Metadata)
@@ -108,9 +111,9 @@ func TestUpdater_MCPToolListing(t *testing.T) {
 	if got.MCPToolListing() != domain.MCPToolListingGateway {
 		t.Fatalf("listing = %s", got.MCPToolListing())
 	}
-	got.Metadata[domain.MetadataMCPCodeModeKey] = domain.MCPCodeModeReadOnly
+	got.Metadata[domain.MetadataMCPCodeModeKey] = domain.MCPCodeModeOn
 	kept := updateCodeMode(t, got, appgateway.UpdateInput{Metadata: map[string]string{"owner": "x"}})
-	if kept.MCPToolListing() != domain.MCPToolListingGateway || kept.MCPCodeMode() != domain.MCPCodeModeReadOnly {
+	if kept.MCPToolListing() != domain.MCPToolListingGateway || kept.MCPCodeMode() != domain.MCPCodeModeOn {
 		t.Fatalf("a metadata replacement dropped a setting: %v", kept.Metadata)
 	}
 	back := updateCodeMode(t, kept, appgateway.UpdateInput{MCPToolListing: ptr(domain.MCPToolListingAll)})
