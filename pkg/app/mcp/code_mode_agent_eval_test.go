@@ -29,11 +29,11 @@ package mcp
 //
 // The Anthropic client takes its credentials as usual (ANTHROPIC_API_KEY or
 // a profile). EVAL_MODES picks the gateway modes to compare (default
-// "off,read_only"), EVAL_TASKS a comma-separated subset of task names, and
+// "off,on"), EVAL_TASKS a comma-separated subset of task names, and
 // EVAL_REPORT a file to write the results to as JSON.
 //
 // Each task runs against the real dispatcher (tools/list, the instructions'
-// Code Mode sentence, trustgate_search, trustgate_query, the sandbox) over
+// Code Mode sentence, trustgate_search, trustgate_execute, the sandbox) over
 // fake Linear, GitHub and Calendar servers with fixed data, and is graded by
 // the substrings the right answer must contain.
 
@@ -77,7 +77,7 @@ func TestCodeModeAgentEval(t *testing.T) {
 	if model == "" {
 		t.Skip("set EVAL_MODEL to the model to evaluate")
 	}
-	modes := strings.Split(envOr("EVAL_MODES", gatewaydomain.MCPCodeModeOff+","+gatewaydomain.MCPCodeModeReadOnly), ",")
+	modes := strings.Split(envOr("EVAL_MODES", gatewaydomain.MCPCodeModeOff+","+gatewaydomain.MCPCodeModeOn), ",")
 	only := map[string]bool{}
 	for _, name := range strings.Split(os.Getenv("EVAL_TASKS"), ",") {
 		if name = strings.TrimSpace(name); name != "" {

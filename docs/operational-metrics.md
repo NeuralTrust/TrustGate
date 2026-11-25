@@ -78,7 +78,8 @@ are bounded: never a query, a tool name, a gateway, a consumer or a person.
   the 10 minutes before).
 
 MCP Code Mode (see [Code Mode](mcp/code-mode.md)) reports its programs, with
-the same bounded labels plus `tool` (`trustgate_query` or `trustgate_execute`).
+the same bounded labels plus `tool` (`trustgate_execute`; `trustgate_query`
+for a call to the retired tool).
 A program's calls also count in `trustgate.mcp.search.follow_ups`, with `via`
 naming the program's tool.
 

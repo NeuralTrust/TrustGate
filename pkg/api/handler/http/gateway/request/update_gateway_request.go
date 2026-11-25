@@ -45,11 +45,10 @@ type UpdateGatewayRequest struct {
 	// "curated" (only shelf servers) or "none" (self-install disabled). Omitted
 	// leaves the current mode unchanged.
 	StoreMode *string `json:"store_mode,omitempty"`
-	// MCPCodeMode sets MCP Code Mode: "off" (the default), "read_only"
-	// (trustgate_query: programs that call the user's read-only tools) or
-	// "full" (also trustgate_execute: programs that call any of their tools).
-	// Omitted leaves it unchanged.
-	MCPCodeMode *string `json:"mcp_code_mode,omitempty" enums:"off,read_only,full"`
+	// MCPCodeMode sets MCP Code Mode: "off" (the default) or "on"
+	// (trustgate_execute: programs that call the user's tools). The earlier
+	// "read_only" and "full" are taken as "on". Omitted leaves it unchanged.
+	MCPCodeMode *string `json:"mcp_code_mode,omitempty" enums:"off,on"`
 	// MCPToolListing sets which tools MCP clients are listed: "all" (the
 	// default: the user's tools and the gateway's own) or "gateway" (only the
 	// gateway's own; the user's are found with trustgate_search). Omitted
@@ -102,8 +101,9 @@ func (r *UpdateGatewayRequest) Validate() error {
 	if r.MCPCodeMode != nil {
 		mode := strings.ToLower(strings.TrimSpace(*r.MCPCodeMode))
 		if !domain.IsMCPCodeMode(mode) {
-			return fmt.Errorf("mcp_code_mode must be %q, %q or %q: %w", domain.MCPCodeModeOff, domain.MCPCodeModeReadOnly, domain.MCPCodeModeFull, commonerrors.ErrValidation)
+			return fmt.Errorf("mcp_code_mode must be %q or %q: %w", domain.MCPCodeModeOff, domain.MCPCodeModeOn, commonerrors.ErrValidation)
 		}
+		mode = domain.NormalizeMCPCodeMode(mode)
 		r.MCPCodeMode = &mode
 	}
 	if r.MCPToolListing != nil {

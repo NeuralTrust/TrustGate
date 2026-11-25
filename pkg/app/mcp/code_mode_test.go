@@ -97,7 +97,6 @@ type codeWorld struct {
 func newCodeWorld(t *testing.T, executor appplugins.Executor) codeWorld {
 	t.Helper()
 	reg := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
-	reg.MCPTarget.ReadOnlyTools = []string{"get_secret_metadata"}
 	readOnly := map[string]any{"readOnlyHint": true}
 	up := &scriptedUpstream{
 		fakeUpstream: &fakeUpstream{tools: []Tool{
@@ -192,32 +191,25 @@ func TestCodeMode_ListedPerGatewayMode(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
 	has := func(names []string, name string) bool { return containsString(names, name) }
-	if names := w.listed(t, gatewaydomain.MCPCodeModeOff); has(names, QueryToolName) || has(names, ExecuteToolName) {
+	if names := w.listed(t, gatewaydomain.MCPCodeModeOff); has(names, ExecuteToolName) || has(names, QueryToolName) {
 		t.Fatalf("off lists %v", names)
 	}
-	if names := w.listed(t, gatewaydomain.MCPCodeModeReadOnly); !has(names, QueryToolName) || has(names, ExecuteToolName) {
-		t.Fatalf("read_only lists %v", names)
+	if names := w.listed(t, gatewaydomain.MCPCodeModeOn); !has(names, ExecuteToolName) || has(names, QueryToolName) {
+		t.Fatalf("on lists %v, want trustgate_execute and never the retired trustgate_query", names)
 	}
-	if names := w.listed(t, gatewaydomain.MCPCodeModeFull); !has(names, QueryToolName) || !has(names, ExecuteToolName) {
-		t.Fatalf("full lists %v", names)
-	}
-	query, err := programDefinition(QueryToolName, jsrun.DefaultLimits)
+	execute, err := programDefinition(jsrun.DefaultLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if risk, _ := query.Risk(); risk != ToolRiskReadOnly {
-		t.Fatalf("trustgate_query risk = %q, want read_only so clients can treat it as such", risk)
-	}
-	execute, _ := programDefinition(ExecuteToolName, jsrun.DefaultLimits)
 	if risk, _ := execute.Risk(); risk != ToolRiskDestructive {
 		t.Fatalf("trustgate_execute risk = %q, want destructive so clients ask first", risk)
 	}
 }
 
-func TestCodeMode_QueryCallsReadOnlyToolsAndReturnsOneResult(t *testing.T) {
+func TestCodeMode_ProgramCallsToolsAndReturnsOneResult(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `
+	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
 		const { issues } = await tools.`+w.n("list_issues")+`({ state: "started" });
 		const comments = await Promise.all(issues.map(i => tools.`+w.n("list_comments")+`({ issueId: i.id })));
 		console.log("issues", issues.length);
@@ -239,7 +231,7 @@ func TestCodeMode_QueryCallsReadOnlyToolsAndReturnsOneResult(t *testing.T) {
 	// One span per call, marked as the program's, with its server.
 	var programSpans []trace.MCPAttrs
 	for _, span := range w.rt.Spans() {
-		if attrs, ok := span.MCPAttrsCopy(); ok && attrs.Program == QueryToolName {
+		if attrs, ok := span.MCPAttrsCopy(); ok && attrs.Program == ExecuteToolName {
 			programSpans = append(programSpans, attrs)
 		}
 	}
@@ -256,65 +248,56 @@ func TestCodeMode_QueryCallsReadOnlyToolsAndReturnsOneResult(t *testing.T) {
 	}
 }
 
-// A read-only program cannot call a tool that may write, one its server does
-// not annotate (unless the admin vouched for it), or one that declares it
-// reaches an open world. The refusal is an error the program can catch, and
-// the tool is never called.
-func TestCodeMode_QueryCallsOnlyToolsThatRead(t *testing.T) {
+// A program may call any tool the user can call, whatever its server says of
+// it: one that writes, one that reaches an open world, one that says nothing.
+// A tool's own failure is an error the program can catch.
+func TestCodeMode_ProgramsCallAnyToolTheUserCan(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `
+	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
 		const out = {};
-		for (const name of ["save_comment", "web_search", "export_everything", "get_secret_metadata"]) {
+		for (const name of ["save_comment", "web_search", "get_secret_metadata", "export_everything"]) {
 			try { await tools["`+w.n("")+`" + name]({}); out[name] = "called"; }
-			catch (e) { out[name] = e.name; }
+			catch (e) { out[name] = e.name + ": " + e.message; }
 		}
 		return out;
 	`)
 	if isError {
 		t.Fatalf("error: %s", text)
 	}
-	want := `{"export_everything":"NotAllowedError","get_secret_metadata":"called","save_comment":"NotAllowedError","web_search":"NotAllowedError"}`
+	want := `{"export_everything":"ToolError: denied upstream","get_secret_metadata":"called","save_comment":"called","web_search":"called"}`
 	if got := programResultJSON(t, structured); got != want {
 		t.Fatalf("result = %s, want %s", got, want)
 	}
-	if calls := w.up.calls(); len(calls) != 1 || calls[0] != "get_secret_metadata" {
-		t.Fatalf("upstream calls = %v, want only the vouched-for tool", calls)
+	if calls := w.up.calls(); strings.Join(calls, ",") != "save_comment,web_search,get_secret_metadata,export_everything" {
+		t.Fatalf("upstream calls = %v", calls)
 	}
 }
 
-func TestCodeMode_ExecuteCallsAnyToolAndOnlyWhenFull(t *testing.T) {
+// Off, the gateway runs no program. trustgate_query, which ran programs that
+// could only read, is retired: a client that kept it is told to use
+// trustgate_execute, and its program is not run, since that client listed it
+// as read-only.
+func TestCodeMode_RunsOnlyWhenOnAndNeverTheRetiredQueryTool(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	_, text, isError := w.program(t, gatewaydomain.MCPCodeModeReadOnly, ExecuteToolName, `return 1;`)
-	if !isError || !strings.Contains(text, QueryToolName) {
-		t.Fatalf("execute on a read-only gateway: %q (error %v)", text, isError)
-	}
-	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeFull, ExecuteToolName, `
-		const saved = await tools.`+w.n("save_comment")+`({ issueId: "ENG-1", body: "done" });
-		let failed = null;
-		try { await tools.`+w.n("export_everything")+`({}); } catch (e) { failed = e.name + ": " + e.message; }
-		return { saved, failed };
-	`)
-	if isError {
-		t.Fatalf("error: %s", text)
-	}
-	if got := programResultJSON(t, structured); got != `{"failed":"ToolError: denied upstream","saved":"saved"}` {
-		t.Fatalf("result = %s", got)
-	}
-	if calls := w.up.calls(); strings.Join(calls, ",") != "save_comment,export_everything" {
-		t.Fatalf("upstream calls = %v", calls)
-	}
-	_, text, isError = w.program(t, gatewaydomain.MCPCodeModeOff, QueryToolName, `return 1;`)
+	_, text, isError := w.program(t, gatewaydomain.MCPCodeModeOff, ExecuteToolName, `return 1;`)
 	if !isError || !strings.Contains(text, "not turned on") {
-		t.Fatalf("query with Code Mode off: %q", text)
+		t.Fatalf("execute with Code Mode off: %q (error %v)", text, isError)
+	}
+	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, QueryToolName, `await tools.`+w.n("save_comment")+`({}); return 1;`)
+	if !isError || !strings.Contains(text, "replaced by "+ExecuteToolName) || structured["use"] != ExecuteToolName {
+		t.Fatalf("the retired query tool: %q (error %v) %v", text, isError, structured)
+	}
+	if calls := w.up.calls(); len(calls) != 0 {
+		t.Fatalf("the retired query tool ran its program: upstream calls = %v", calls)
 	}
 }
 
 func TestCodeMode_AnUnknownToolNamesTheClosest(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	structured, _, _ := w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `
+	structured, _, _ := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
 		try { await tools.linear_list_issue({}); } catch (e) { return e.name + " " + e.message; }
 	`)
 	got := programResultJSON(t, structured)
@@ -326,7 +309,7 @@ func TestCodeMode_AnUnknownToolNamesTheClosest(t *testing.T) {
 func TestCodeMode_AFailedProgramSaysWhyAndWhatItCalled(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `
+	structured, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
 		await tools.`+w.n("list_issues")+`({});
 		console.log("about to fail");
 		throw new Error("no issue is blocked");
@@ -342,7 +325,7 @@ func TestCodeMode_AFailedProgramSaysWhyAndWhatItCalled(t *testing.T) {
 	if structured["error"] != string(jsrun.KindThrown) {
 		t.Fatalf("structured = %v", structured)
 	}
-	_, text, isError = w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `return [1, 2`)
+	_, text, isError = w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `return [1, 2`)
 	if !isError || !strings.Contains(text, "SyntaxError") {
 		t.Fatalf("syntax error: %q", text)
 	}
@@ -369,7 +352,7 @@ func TestCodeMode_TheProgramsAnswerPassesTheResponsePolicies(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, guardExecutor{})
 	w.rc.Policies = []*policy.Policy{{Enabled: true, Mode: policy.ModeEnforce, Stages: []policy.Stage{policy.StagePreResponse}}}
-	_, text, isError := w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `
+	_, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
 		await tools.`+w.n("list_issues")+`({});
 		return "SEC" + "RET";
 	`)
@@ -383,9 +366,9 @@ func TestCodeMode_TheProgramsAnswerPassesTheResponsePolicies(t *testing.T) {
 func TestCodeMode_ProgramCallsFollowASearch(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	key := callerKey(w.ctx(gatewaydomain.MCPCodeModeReadOnly), w.rc)
+	key := callerKey(w.ctx(gatewaydomain.MCPCodeModeOn), w.rc)
 	w.d.searchStats.recent.remember(key, []string{w.n("list_issues")}, 0)
-	w.program(t, gatewaydomain.MCPCodeModeReadOnly, QueryToolName, `return await tools.`+w.n("list_issues")+`({});`)
+	w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `return await tools.`+w.n("list_issues")+`({});`)
 	if _, pending := w.d.searchStats.recent.take(key); pending {
 		t.Fatal("the program's call did not count as the search's follow-up")
 	}
@@ -472,10 +455,10 @@ func TestCodeMode_ProgramsRunThroughTheCallThroughs(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{CallToolName, map[string]any{"name": QueryToolName, "arguments": code}},
-		{GatewayCallToolName, map[string]any{"tool": QueryToolName, "arguments": code}},
+		{CallToolName, map[string]any{"name": ExecuteToolName, "arguments": code}},
+		{GatewayCallToolName, map[string]any{"tool": ExecuteToolName, "arguments": code}},
 	} {
-		text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, via.name, via.args)
+		text, isError := w.callTool(t, gatewaydomain.MCPCodeModeOn, via.name, via.args)
 		if isError || !strings.HasPrefix(text, "2") {
 			t.Fatalf("through %s: %q (error %v), want the program's result", via.name, text, isError)
 		}
@@ -486,7 +469,7 @@ func TestCodeMode_ProgramsRunThroughTheCallThroughs(t *testing.T) {
 	}
 	// Other gateway tools are still refused through a call-through, without
 	// claiming the client has them.
-	text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, CallToolName, map[string]any{"name": SearchToolName})
+	text, isError := w.callTool(t, gatewaydomain.MCPCodeModeOn, CallToolName, map[string]any{"name": SearchToolName})
 	if !isError || strings.Contains(text, "already in your tool list") {
 		t.Fatalf("gateway tool through %s: %q", CallToolName, text)
 	}
@@ -497,16 +480,12 @@ func TestCodeMode_ProgramsRunThroughTheCallThroughs(t *testing.T) {
 func TestCodeMode_TheEarlierInventoryTellsHowToRunAProgram(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
-	text, _ := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, InventoryToolName, map[string]any{"brief": true})
-	if !strings.Contains(text, `"name": "`+QueryToolName+`"`) || !strings.Contains(text, CallToolName) || strings.Contains(text, ExecuteToolName) {
-		t.Fatalf("read_only inventory: %q", text)
-	}
-	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeFull, InventoryToolName, map[string]any{})
-	if !strings.Contains(text, ExecuteToolName) {
-		t.Fatalf("full inventory: %q", text)
+	text, _ := w.callTool(t, gatewaydomain.MCPCodeModeOn, InventoryToolName, map[string]any{"brief": true})
+	if !strings.Contains(text, `"name": "`+ExecuteToolName+`"`) || !strings.Contains(text, CallToolName) || strings.Contains(text, QueryToolName) {
+		t.Fatalf("inventory with Code Mode on: %q", text)
 	}
 	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeOff, InventoryToolName, map[string]any{})
-	if strings.Contains(text, QueryToolName) {
+	if strings.Contains(text, ExecuteToolName) {
 		t.Fatalf("off inventory mentions programs: %q", text)
 	}
 }
@@ -523,7 +502,7 @@ func TestToolListing_GatewayToolsOnly(t *testing.T) {
 		gw.Metadata = gatewaydomain.WithMCPToolListing(gw.Metadata, gatewaydomain.MCPToolListingGateway)
 		return ctx
 	}
-	result, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeReadOnly), w.rc, "", "tools/list", nil)
+	result, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeOn), w.rc, "", "tools/list", nil)
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
@@ -532,7 +511,7 @@ func TestToolListing_GatewayToolsOnly(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	var want []string
-	for _, name := range w.listed(t, gatewaydomain.MCPCodeModeReadOnly) {
+	for _, name := range w.listed(t, gatewaydomain.MCPCodeModeOn) {
 		if strings.HasPrefix(name, "trustgate_") {
 			want = append(want, name)
 		}
@@ -567,10 +546,10 @@ func TestCodeMode_TheProgramsRequestRecordsWhatItReadAndReturned(t *testing.T) {
 		t.Helper()
 		w := newCodeWorld(t, nil)
 		outer := w.rt.StartSpan(trace.SpanMCP, "tools/call")
-		ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeReadOnly), outer)
+		ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeOn), outer)
 		args, _ := json.Marshal(map[string]string{"code": strings.NewReplacer(
 			"ISSUES", w.n("list_issues"), "COMMENTS", w.n("list_comments")).Replace(code)})
-		params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+		params, _ := json.Marshal(map[string]any{"name": ExecuteToolName, "arguments": json.RawMessage(args)})
 		if _, err := w.d.Dispatch(ctx, w.rc, "", "tools/call", params); err != nil {
 			t.Fatalf("program: %v", err)
 		}
@@ -609,12 +588,12 @@ func TestCodeMode_MetricsCountWhatProgramsReadAndReturned(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	w.d.WithSearchMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
 	args, _ := json.Marshal(map[string]string{"code": `const a = await tools.` + w.n("list_issues") + `({}); return a.issues.length;`})
-	params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
-	if _, err := w.d.Dispatch(w.ctx(gatewaydomain.MCPCodeModeReadOnly), w.rc, "", "tools/call", params); err != nil {
+	params, _ := json.Marshal(map[string]any{"name": ExecuteToolName, "arguments": json.RawMessage(args)})
+	if _, err := w.d.Dispatch(w.ctx(gatewaydomain.MCPCodeModeOn), w.rc, "", "tools/call", params); err != nil {
 		t.Fatalf("program: %v", err)
 	}
 	metrics := searchMetricsWorld{reader: reader}
-	key := "surface=application,tool=" + QueryToolName
+	key := "surface=application,tool=" + ExecuteToolName
 	if got, want := metrics.counts(t, programReadMetric)[key], int64(len(`{"issues":[{"id":"ENG-1"},{"id":"ENG-2"}]}`)); got != want {
 		t.Fatalf("%s = %d, want %d", programReadMetric, got, want)
 	}
@@ -627,9 +606,9 @@ func TestCodeMode_TheProgramsRequestNamesItsServer(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)
 	outer := w.rt.StartSpan(trace.SpanMCP, "tools/call")
-	ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeReadOnly), outer)
+	ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeOn), outer)
 	args, _ := json.Marshal(map[string]string{"code": `await tools.` + w.n("list_issues") + `({}); return 1;`})
-	params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+	params, _ := json.Marshal(map[string]any{"name": ExecuteToolName, "arguments": json.RawMessage(args)})
 	if _, err := w.d.Dispatch(ctx, w.rc, "", "tools/call", params); err != nil {
 		t.Fatalf("program: %v", err)
 	}

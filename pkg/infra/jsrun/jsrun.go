@@ -334,7 +334,7 @@ func (p *program) run(code string) (result Result, err error) {
 }
 
 func (p *program) eval(code string) error {
-	v, err := p.rt.Eval("query.js", qjs.Code(code))
+	v, err := p.rt.Eval("program.js", qjs.Code(code))
 	if err != nil {
 		return err
 	}
@@ -472,7 +472,7 @@ func (p *program) thrownError(t *thrown) error {
 func programStack(stack string) string {
 	var lines []string
 	for _, line := range strings.Split(stack, "\n") {
-		if strings.Contains(line, "query.js") {
+		if strings.Contains(line, "program.js") {
 			lines = append(lines, strings.TrimSpace(line))
 		}
 	}
@@ -520,7 +520,7 @@ func cleanEngineError(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || (strings.HasPrefix(line, "at ") && !strings.Contains(line, "query.js")) {
+		if line == "" || (strings.HasPrefix(line, "at ") && !strings.Contains(line, "program.js")) {
 			continue
 		}
 		lines = append(lines, line)

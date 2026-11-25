@@ -112,26 +112,45 @@ func WithStoreMode(metadata map[string]string, mode string) map[string]string {
 }
 
 // MetadataMCPCodeModeKey holds the gateway's MCP Code Mode: whether its MCP
-// connections are offered tools that run a program calling the user's tools
-// in a sandbox (see docs/mcp/code-mode.md). Stamped by the server from
-// UpdateGatewayRequest.MCPCodeMode; never taken from client metadata.
+// connections are offered trustgate_execute, which runs a program calling the
+// user's tools in a sandbox (see docs/mcp/code-mode.md). Stamped by the server
+// from UpdateGatewayRequest.MCPCodeMode; never taken from client metadata.
 const MetadataMCPCodeModeKey = "mcp_code_mode"
 
 // MCP Code Mode values.
 const (
 	// MCPCodeModeOff offers no program-running tool. The default.
 	MCPCodeModeOff = "off"
-	// MCPCodeModeReadOnly offers trustgate_query, whose programs may call only
-	// tools that read.
-	MCPCodeModeReadOnly = "read_only"
-	// MCPCodeModeFull also offers trustgate_execute, whose programs may call
-	// any tool the user can call.
-	MCPCodeModeFull = "full"
+	// MCPCodeModeOn offers trustgate_execute, whose programs may call any tool
+	// the user can call, each under the same checks as a direct call.
+	MCPCodeModeOn = "on"
 )
 
-// IsMCPCodeMode reports whether mode is one of the MCP Code Mode values.
+// Values Code Mode had while it offered a read-only program tool apart. Both
+// mean on: a gateway that stored one keeps Code Mode, and an older console
+// that sends one still turns it on.
+const (
+	mcpCodeModeLegacyReadOnly = "read_only"
+	mcpCodeModeLegacyFull     = "full"
+)
+
+// IsMCPCodeMode reports whether mode is an MCP Code Mode value: off, on, or
+// one of the earlier read_only and full, which mean on.
 func IsMCPCodeMode(mode string) bool {
-	return mode == MCPCodeModeOff || mode == MCPCodeModeReadOnly || mode == MCPCodeModeFull
+	switch mode {
+	case MCPCodeModeOff, MCPCodeModeOn, mcpCodeModeLegacyReadOnly, mcpCodeModeLegacyFull:
+		return true
+	}
+	return false
+}
+
+// NormalizeMCPCodeMode maps an MCP Code Mode value to off or on.
+func NormalizeMCPCodeMode(mode string) string {
+	switch mode {
+	case MCPCodeModeOn, mcpCodeModeLegacyReadOnly, mcpCodeModeLegacyFull:
+		return MCPCodeModeOn
+	}
+	return MCPCodeModeOff
 }
 
 // MCPCodeMode returns the gateway's MCP Code Mode, off unless its admin turned
@@ -140,20 +159,13 @@ func (g *Gateway) MCPCodeMode() string {
 	if g == nil || g.Metadata == nil {
 		return MCPCodeModeOff
 	}
-	switch g.Metadata[MetadataMCPCodeModeKey] {
-	case MCPCodeModeReadOnly:
-		return MCPCodeModeReadOnly
-	case MCPCodeModeFull:
-		return MCPCodeModeFull
-	default:
-		return MCPCodeModeOff
-	}
+	return NormalizeMCPCodeMode(g.Metadata[MetadataMCPCodeModeKey])
 }
 
 // WithMCPCodeMode stamps the MCP Code Mode into gateway metadata. Off, the
 // default, is the key's absence.
 func WithMCPCodeMode(metadata map[string]string, mode string) map[string]string {
-	if mode != MCPCodeModeReadOnly && mode != MCPCodeModeFull {
+	if NormalizeMCPCodeMode(mode) != MCPCodeModeOn {
 		if metadata != nil {
 			delete(metadata, MetadataMCPCodeModeKey)
 		}
@@ -162,7 +174,7 @@ func WithMCPCodeMode(metadata map[string]string, mode string) map[string]string 
 	if metadata == nil {
 		metadata = make(map[string]string, 1)
 	}
-	metadata[MetadataMCPCodeModeKey] = mode
+	metadata[MetadataMCPCodeModeKey] = MCPCodeModeOn
 	return metadata
 }
 

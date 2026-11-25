@@ -142,10 +142,8 @@ type MCPTargetResponse struct {
 	// UserHeaders are the upstream headers each caller fills with their own
 	// value. Only the declarations: values live per person in the vault.
 	UserHeaders []MCPUserHeaderResponse `json:"user_headers,omitempty"`
-	// ReadOnlyTools are the tools an admin vouches only read (MCP Code Mode).
-	ReadOnlyTools []string               `json:"read_only_tools,omitempty"`
-	Auth          *MCPAuthResponse       `json:"auth,omitempty"`
-	OpenAPI       *OpenAPITargetResponse `json:"openapi,omitempty"`
+	Auth        *MCPAuthResponse        `json:"auth,omitempty"`
+	OpenAPI     *OpenAPITargetResponse  `json:"openapi,omitempty"`
 }
 
 // MCPUserHeaderResponse is one declared per-user upstream header.
@@ -320,13 +318,12 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 		return nil
 	}
 	out := &MCPTargetResponse{
-		Code:          t.Code,
-		Origin:        string(t.Origin),
-		Source:        string(t.Source),
-		URL:           maskSecretURLVariables(t),
-		Transport:     string(t.Transport),
-		Headers:       maskHeaders(t.Headers),
-		ReadOnlyTools: t.ReadOnlyTools,
+		Code:      t.Code,
+		Origin:    string(t.Origin),
+		Source:    string(t.Source),
+		URL:       maskSecretURLVariables(t),
+		Transport: string(t.Transport),
+		Headers:   maskHeaders(t.Headers),
 	}
 	for _, h := range t.UserHeaders {
 		out.UserHeaders = append(out.UserHeaders, MCPUserHeaderResponse{
