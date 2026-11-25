@@ -208,6 +208,14 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
+	if gatewayToolsOnly(ctx) && d.inventoryImpl != nil && metaToolsPermitted(req.consumer) {
+		// The gateway lists only its own tools: the user's are found with
+		// trustgate_search and called with trustgate_call or from a program,
+		// so the upstreams are not even asked for their lists here.
+		tools := appendGatewayTools([]Tool{}, d.consolidatedDefinitions(ctx, req.consumer))
+		tools = appendGatewayTools(tools, d.codeModeDefinitions(ctx))
+		return map[string]any{"tools": tools}, nil
+	}
 	tools, err := d.composer.ListTools(ctx, req.consumer)
 	if err != nil {
 		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {

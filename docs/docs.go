@@ -9486,6 +9486,14 @@ const docTemplate = `{
                         "full"
                     ]
                 },
+                "mcp_tool_listing": {
+                    "description": "MCPToolListing sets which tools MCP clients are listed: \"all\" (the\ndefault: the user's tools and the gateway's own) or \"gateway\" (only the\ngateway's own; the user's are found with trustgate_search). Omitted\nleaves it unchanged.",
+                    "type": "string",
+                    "enum": [
+                        "all",
+                        "gateway"
+                    ]
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {
@@ -9564,6 +9572,14 @@ const docTemplate = `{
                         "off",
                         "read_only",
                         "full"
+                    ]
+                },
+                "mcp_tool_listing": {
+                    "description": "MCPToolListing is which tools MCP clients are listed: all or gateway.",
+                    "type": "string",
+                    "enum": [
+                        "all",
+                        "gateway"
                     ]
                 },
                 "metadata": {

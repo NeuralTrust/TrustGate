@@ -166,6 +166,51 @@ func WithMCPCodeMode(metadata map[string]string, mode string) map[string]string 
 	return metadata
 }
 
+// MetadataMCPToolListingKey holds which tools the gateway's MCP tools/list
+// offers. Stamped by the server from UpdateGatewayRequest.MCPToolListing;
+// never taken from client metadata.
+const MetadataMCPToolListingKey = "mcp_tool_listing"
+
+// MCP tool listings.
+const (
+	// MCPToolListingAll lists the user's tools and the gateway's own. The default.
+	MCPToolListingAll = "all"
+	// MCPToolListingGateway lists only the gateway's own tools: the user's are
+	// found with trustgate_search and called with trustgate_call or from a
+	// Code Mode program. A direct call to one still works.
+	MCPToolListingGateway = "gateway"
+)
+
+// IsMCPToolListing reports whether listing is one of the MCP tool listings.
+func IsMCPToolListing(listing string) bool {
+	return listing == MCPToolListingAll || listing == MCPToolListingGateway
+}
+
+// MCPToolListing returns which tools the gateway lists, all unless its admin
+// chose the gateway's own only.
+func (g *Gateway) MCPToolListing() string {
+	if g != nil && g.Metadata != nil && g.Metadata[MetadataMCPToolListingKey] == MCPToolListingGateway {
+		return MCPToolListingGateway
+	}
+	return MCPToolListingAll
+}
+
+// WithMCPToolListing stamps the tool listing into gateway metadata. All, the
+// default, is the key's absence.
+func WithMCPToolListing(metadata map[string]string, listing string) map[string]string {
+	if listing != MCPToolListingGateway {
+		if metadata != nil {
+			delete(metadata, MetadataMCPToolListingKey)
+		}
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataMCPToolListingKey] = listing
+	return metadata
+}
+
 // RetentionWindow is the stamped trace-retention window for this gateway, and
 // whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
 // runs on requests where the gateway never resolved.
@@ -197,7 +242,8 @@ func (g *Gateway) ServedByOwnDataPlane() bool {
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataMCPCodeModeKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataMCPCodeModeKey ||
+		key == MetadataMCPToolListingKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {

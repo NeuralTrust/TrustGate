@@ -45,6 +45,30 @@ Clients see the tools in `tools/list` on their next listing. Claude's hosted
 connectors keep the list they fetched until the person reconnects. A call to a
 tool the gateway does not offer answers a readable tool error (`not_enabled`).
 
+### Listing only the gateway's tools
+
+With the user's tools in its list, a model takes the obvious path and calls
+them one at a time, even when a program would do the task in one call. A gateway
+can list only its own tools instead:
+
+```http
+PUT /v1/gateways/{id}
+{"mcp_tool_listing": "gateway"}
+```
+
+`tools/list` then answers with `trustgate_search`, `trustgate_call`,
+`trustgate_access` and the Code Mode tools, without asking the upstreams for
+their lists. The model finds the user's tools with `trustgate_search` and calls
+one with `trustgate_call`, or several from a program. A direct call to a tool
+the client already knows still works. The default, `all`, lists both.
+
+The trade-offs:
+- **A single call costs a search first.**
+- **Client permissions get coarser.** A client approves `trustgate_call` once
+  instead of each tool. The gateway's policies still apply to every call.
+- **Per-tool toggles disappear.** Clients that let the user switch tools on and
+  off one by one only see the gateway's.
+
 ## How the model knows to write a program
 
 The client does not need anything new: for it, a Code Mode tool is an MCP tool
@@ -55,8 +79,9 @@ places:
    when to use the tool (several calls, loops, filtering, joining, counting),
    how to call a tool (`await tools.<name>(args)`), what a call returns, and the
    limits.
-2. **The `initialize` instructions**, which close with a sentence on when to
-   write a program instead of calling tools one at a time.
+2. **The `initialize` instructions.** The sentences that depend on the
+   gateway's settings (where the user's tools are, when to write a program)
+   come right after the opening one, since clients cut long instructions.
 3. **`trustgate_search` answers**, which give each tool's TypeScript signature
    and, with Code Mode on, close with a line saying those signatures are the
    API a program calls.
@@ -218,6 +243,10 @@ A program that does not finish returns a tool error. The answer carries:
 ```
 
 ## Activity, usage and metrics
+
+The program's own request names the servers its calls went to: one server as
+a direct call names it, several by their names joined. That is what Activity's
+Provider shows for it.
 
 - **Activity.** The program's request is one event, `mcp.tool` =
   `trustgate_query` or `trustgate_execute`. Each call the program made is in

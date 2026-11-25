@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -506,5 +507,67 @@ func TestCodeMode_TheEarlierInventoryTellsHowToRunAProgram(t *testing.T) {
 	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeOff, InventoryToolName, map[string]any{})
 	if strings.Contains(text, QueryToolName) {
 		t.Fatalf("off inventory mentions programs: %q", text)
+	}
+}
+
+// A gateway that lists only its own tools lists no upstream tool; the user's
+// are still found by search and reached by a direct call, trustgate_call or a
+// program.
+func TestToolListing_GatewayToolsOnly(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	listingCtx := func(mode string) context.Context {
+		ctx := w.ctx(mode)
+		gw, _ := appgateway.FromContext(ctx)
+		gw.Metadata = gatewaydomain.WithMCPToolListing(gw.Metadata, gatewaydomain.MCPToolListingGateway)
+		return ctx
+	}
+	result, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeReadOnly), w.rc, "", "tools/list", nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var names []string
+	for _, tool := range result.(map[string]any)["tools"].([]Tool) {
+		names = append(names, tool.Name)
+	}
+	var want []string
+	for _, name := range w.listed(t, gatewaydomain.MCPCodeModeReadOnly) {
+		if strings.HasPrefix(name, "trustgate_") {
+			want = append(want, name)
+		}
+	}
+	sort.Strings(names)
+	sort.Strings(want)
+	if len(want) == 0 || strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("listed %v, want only the gateway's tools %v", names, want)
+	}
+	// A direct call to a tool the client knows still reaches it.
+	params, _ := json.Marshal(map[string]any{"name": w.n("list_issues"), "arguments": map[string]any{}})
+	if _, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeOff), w.rc, "", "tools/call", params); err != nil {
+		t.Fatalf("direct call: %v", err)
+	}
+	if got := ToolListingInstructions(listingCtx(gatewaydomain.MCPCodeModeOff), w.rc); !strings.Contains(got, SearchToolName) {
+		t.Fatalf("instructions = %q", got)
+	}
+	if got := ToolListingInstructions(w.ctx(gatewaydomain.MCPCodeModeOff), w.rc); got != "" {
+		t.Fatalf("a gateway that lists everything says %q", got)
+	}
+}
+
+// A program's request is attributed, in Activity, to the server its calls
+// went to.
+func TestCodeMode_TheProgramsRequestNamesItsServer(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	outer := w.rt.StartSpan(trace.SpanMCP, "tools/call")
+	ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeReadOnly), outer)
+	args, _ := json.Marshal(map[string]string{"code": `await tools.` + w.n("list_issues") + `({}); return 1;`})
+	params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+	if _, err := w.d.Dispatch(ctx, w.rc, "", "tools/call", params); err != nil {
+		t.Fatalf("program: %v", err)
+	}
+	attrs, _ := outer.MCPAttrsCopy()
+	if attrs.ServerName != "linear" || attrs.RegistryID == "" {
+		t.Fatalf("program span = %+v, want the linear server", attrs)
 	}
 }
