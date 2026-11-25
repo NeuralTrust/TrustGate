@@ -17,10 +17,13 @@ package azurecontentsafety
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func sampleRequest() analyzeRequest {
@@ -144,5 +147,40 @@ func TestAnalyzeContextCanceled(t *testing.T) {
 	c := newClient()
 	if _, err := c.Analyze(ctx, srv.URL, "k", sampleRequest()); err == nil {
 		t.Fatal("expected context error, got nil")
+	}
+}
+
+// http.Client.Timeout can fire before the call context's deadline, leaving
+// ctx.Err() nil. The error must still read as a timeout, which is how
+// textchunk marks a chunk TimedOut.
+func TestAnalyzeClientTimeoutReadsAsTimeout(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := newClient()
+	c.http.Timeout = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err := c.Analyze(ctx, srv.URL, "k", sampleRequest())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("call context ended first: %v", ctx.Err())
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Errorf("want a net timeout error, got %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("want DeadlineExceeded, got %v", err)
 	}
 }

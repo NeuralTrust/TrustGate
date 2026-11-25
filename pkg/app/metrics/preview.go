@@ -34,6 +34,10 @@ const (
 	// mcpCallAgentTool is appmcp.CallAgentToolName. Its span names the agent,
 	// and its preview is the message sent to it.
 	mcpCallAgentTool = "trustgate_call_agent"
+	// mcpGatewayCallTool is appmcp.GatewayCallToolName, which calls either a
+	// tool (its arguments wrap the tool's own, as the call-through's do) or an
+	// agent (its preview is the message, as for mcpCallAgentTool).
+	mcpGatewayCallTool = "trustgate_call"
 )
 
 // promptPreview is the start of the last user turn: in a multi-turn request
@@ -155,14 +159,25 @@ func callAgentMessage(body string) (message string, ok bool) {
 		Params struct {
 			Name      string `json:"name"`
 			Arguments struct {
+				Agent   string `json:"agent"`
 				Message string `json:"message"`
 			} `json:"arguments"`
 		} `json:"params"`
 	}
-	if json.Unmarshal([]byte(body), &envelope) != nil || envelope.Params.Name != mcpCallAgentTool {
+	if json.Unmarshal([]byte(body), &envelope) != nil {
 		return "", false
 	}
-	return strings.TrimSpace(envelope.Params.Arguments.Message), true
+	switch envelope.Params.Name {
+	case mcpCallAgentTool:
+		return strings.TrimSpace(envelope.Params.Arguments.Message), true
+	case mcpGatewayCallTool:
+		if strings.TrimSpace(envelope.Params.Arguments.Agent) == "" {
+			return "", false
+		}
+		return strings.TrimSpace(envelope.Params.Arguments.Message), true
+	default:
+		return "", false
+	}
 }
 
 // firstStringArgument walks params.arguments as a token stream because a Go
@@ -179,7 +194,7 @@ func firstStringArgument(body string) string {
 		return ""
 	}
 	arguments := envelope.Params.Arguments
-	if envelope.Params.Name == mcpCallThroughTool {
+	if envelope.Params.Name == mcpCallThroughTool || envelope.Params.Name == mcpGatewayCallTool {
 		// The span names the tool the call-through called, so the preview
 		// reads that tool's arguments, not the wrapper's (whose first string
 		// is the tool's own name).

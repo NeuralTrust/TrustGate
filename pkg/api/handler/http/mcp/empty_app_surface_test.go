@@ -100,20 +100,20 @@ func TestHandler_AppWithNoRegistries_InitializeListsEmptyAndUnknownCall(t *testi
 		t.Fatalf("tools/list error = %v, want an empty surface", body["error"])
 	}
 	names := toolNamesFromResult(t, body)
-	if len(names) != 2 || names[0] != appmcp.InventoryToolName || names[1] != appmcp.CallToolName {
-		t.Fatalf("tools = %v, want only the gateway's %s and %s", names, appmcp.InventoryToolName, appmcp.CallToolName)
+	if len(names) != 2 || names[0] != appmcp.SearchToolName || names[1] != appmcp.GatewayCallToolName {
+		t.Fatalf("tools = %v, want only the gateway's %s and %s", names, appmcp.SearchToolName, appmcp.GatewayCallToolName)
 	}
 
-	status, body = rpcCall(t, app, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+appmcp.InventoryToolName+`"}}`)
+	status, body = rpcCall(t, app, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+appmcp.SearchToolName+`"}}`)
 	if status != fiber.StatusOK || body["error"] != nil {
-		t.Fatalf("inventory call status = %d error = %v", status, body["error"])
+		t.Fatalf("search call status = %d error = %v", status, body["error"])
 	}
 	listed, err := json.Marshal(body["result"])
 	if err != nil {
-		t.Fatalf("encode inventory result: %v", err)
+		t.Fatalf("encode search result: %v", err)
 	}
-	if !strings.Contains(string(listed), "You have no MCP servers on your surface.") {
-		t.Fatalf("inventory = %s, want an empty server list", listed)
+	if !strings.Contains(string(listed), "The user has no MCP servers on their surface.") {
+		t.Fatalf("search = %s, want an empty server list", listed)
 	}
 
 	status, body = rpcCall(t, app, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ghost"}}`)

@@ -432,3 +432,33 @@ func TestGuardWithoutDeadlineSendsNoTimeout(t *testing.T) {
 		t.Fatalf("%s = %q, want none for a call without a deadline", evaluateTimeoutHeader, header)
 	}
 }
+
+// http.Client.Timeout can fire before the call context's deadline, leaving
+// ctx.Err() nil. The failure must still be recorded as a timeout.
+func TestGuardClientTimeoutIsATimeoutFailure(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := newTestClient(t, 10*time.Second)
+	c.http.Timeout = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err := c.Guard(ctx, srv.URL, "tok", "", sampleRequest(), false)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("call context ended first: %v", ctx.Err())
+	}
+	if got := reasonOfError(ctx, err); got != failureReasonTimeout {
+		t.Errorf("reason = %q, want %q", got, failureReasonTimeout)
+	}
+}

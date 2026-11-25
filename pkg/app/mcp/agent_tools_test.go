@@ -335,32 +335,49 @@ func TestAgentToolsNeedGatewayData(t *testing.T) {
 
 func TestDispatcherOffersAgentToolsOnTheStoreOnly(t *testing.T) {
 	w := newAgentWorld(t)
-	d := NewRPCDispatcher(newTestComposer(&fakeDialer{}), NewPluginRunner(nil, nil), nil, nil, nil).
+	composer := newTestComposer(&fakeDialer{})
+	inventory, err := NewInventoryTool(composer.(SurfaceInventory), nil)
+	require.NoError(t, err)
+	d := NewRPCDispatcher(composer, NewPluginRunner(nil, nil), nil, nil, nil).
+		WithInventoryTool(inventory).
 		WithAgentTools(w.tools(t, stageExecutor{}, 0))
 	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(w.gw)}
 	app := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: w.gw, Type: consumerdomain.TypeMCP, Active: true}}
 	ctx := w.ctx("ana")
 
-	names := func(rc *appconsumer.RoutableConsumer) []string {
+	// trustgate_call reaches agents on the Store, and its definition says so;
+	// an application's does not.
+	callDefinition := func(rc *appconsumer.RoutableConsumer) string {
 		result, err := d.Dispatch(ctx, rc, "", "tools/list", nil)
 		require.NoError(t, err)
-		var out []string
 		for _, tool := range result.(map[string]any)["tools"].([]Tool) {
-			out = append(out, tool.Name)
+			if tool.Name == GatewayCallToolName {
+				raw, err := json.Marshal(tool)
+				require.NoError(t, err)
+				return string(raw)
+			}
 		}
-		return out
+		t.Fatalf("%s is not listed", GatewayCallToolName)
+		return ""
 	}
-	assert.Subset(t, names(store), []string{ListAgentsToolName, CallAgentToolName})
-	assert.NotContains(t, names(app), ListAgentsToolName)
-	assert.NotContains(t, names(app), CallAgentToolName)
+	assert.Contains(t, callDefinition(store), `"agent"`)
+	assert.NotContains(t, callDefinition(app), `"agent"`)
 
-	result, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_call_agent","arguments":{"agent":"Research","message":"hi"}}`))
+	result, err := d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_call","arguments":{"agent":"Research","message":"hi"}}`))
+	require.NoError(t, err)
+	assert.Contains(t, string(result.(json.RawMessage)), "Hello from the agent")
+
+	// The earlier agent tools still answer on the Store.
+	result, err = d.Dispatch(ctx, store, "", "tools/call", json.RawMessage(`{"name":"trustgate_call_agent","arguments":{"agent":"Research","message":"hi"}}`))
 	require.NoError(t, err)
 	assert.Contains(t, string(result.(json.RawMessage)), "Hello from the agent")
 
 	_, err = d.Dispatch(ctx, app, "", "tools/call", json.RawMessage(`{"name":"trustgate_list_agents"}`))
 	var notPermitted *ToolNotPermittedError
 	assert.True(t, errors.As(err, &notPermitted), "an application does not reach the agent tools")
+	result, err = d.Dispatch(ctx, app, "", "tools/call", json.RawMessage(`{"name":"trustgate_call","arguments":{"agent":"Research","message":"hi"}}`))
+	require.NoError(t, err)
+	assert.Contains(t, string(result.(json.RawMessage)), "not_available")
 }
 
 func TestAgentToolDefinitionsCarryTheDisclaimer(t *testing.T) {

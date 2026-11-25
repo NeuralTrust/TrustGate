@@ -171,6 +171,9 @@ func setupTestEnvironment() {
 	redisDB = redis.NewClient(&redis.Options{Addr: net.JoinHostPort(cfg.Redis.Host, strconv.Itoa(cfg.Redis.Port)), DB: cfg.Redis.DB, Username: cfg.Redis.Username, Password: cfg.Redis.Password})
 	_ = redisDB.FlushDB(context.Background()).Err()
 
+	// Set on the test process so every plane any test spawns from os.Environ()
+	// (throwaway admins, store proxies) syncs the fixture, never live models.dev.
+	_ = os.Setenv("MODELS_DEV_BASE_URL", StartModelsDevStub())
 	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
 	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
 	_ = os.Setenv("CONFIG_SYNC_GRPC_LISTEN_ADDR", fmt.Sprintf(":%d", serverConfigSyncGRPCPort))
@@ -211,6 +214,7 @@ func teardownTestEnvironment() {
 	StopTrustGuardFunctionalStub()
 	StopFirewallComplexityStub()
 	StopConsoleModelRequestsStub()
+	StopModelsDevStub()
 	if agentCmd != nil && agentCmd.Process != nil {
 		if err := syscall.Kill(-agentCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing agent server: %v", err)

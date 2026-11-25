@@ -170,7 +170,10 @@ func changesTheSurface(method string, params json.RawMessage, result any) bool {
 		return false
 	}
 	var call struct {
-		Name string `json:"name"`
+		Name      string `json:"name"`
+		Arguments struct {
+			Action string `json:"action"`
+		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
 		return false
@@ -180,6 +183,18 @@ func changesTheSurface(method string, params json.RawMessage, result any) bool {
 		return installChangesTheSurface(result)
 	case appmcp.StoreUninstallToolName:
 		return uninstallChangesTheSurface(result)
+	case appmcp.AccessToolName:
+		// trustgate_access answers with the fields the Store tools do, so an
+		// install or an uninstall through it changes the surface on the same
+		// terms. Connecting an account does not: the server's tools appear
+		// once the connection completes, which the watch picks up.
+		switch strings.ToLower(strings.TrimSpace(call.Arguments.Action)) {
+		case appmcp.AccessActionInstall:
+			return installChangesTheSurface(result)
+		case appmcp.AccessActionUninstall:
+			return uninstallChangesTheSurface(result)
+		}
+		return false
 	default:
 		return false
 	}

@@ -27,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
@@ -62,9 +63,13 @@ type RPCDispatcher struct {
 	connections ConnectionTool
 	store       StoreTool
 	inventory   InventoryTool
-	agents      AgentTools
-	storeScoper appstore.Scoper
-	handlers    map[string]rpcHandler
+	// inventoryImpl is the inventory the consolidated tools read the surface
+	// and the catalog through; nil when the inventory is not this package's.
+	inventoryImpl *inventoryTool
+	agents        AgentTools
+	storeScoper   appstore.Scoper
+	searchStats   *searchMetrics
+	handlers      map[string]rpcHandler
 }
 
 func NewRPCDispatcher(
@@ -80,6 +85,7 @@ func NewRPCDispatcher(
 	d := &RPCDispatcher{
 		composer: composer, plugins: plugins, limiter: limiter,
 		connections: connections, store: store,
+		searchStats: newSearchMetrics(nil),
 	}
 	d.handlers = map[string]rpcHandler{
 		"tools/list":               d.listTools,
@@ -95,12 +101,20 @@ func NewRPCDispatcher(
 
 func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatcher {
 	d.inventory = inventory
+	d.inventoryImpl, _ = inventory.(*inventoryTool)
 	return d
 }
 
 // WithAgentTools wires the Store's agent meta-tools (see AgentTools).
 func (d *RPCDispatcher) WithAgentTools(agents AgentTools) *RPCDispatcher {
 	d.agents = agents
+	return d
+}
+
+// WithSearchMeter records trustgate_search's metrics on meter instead of the
+// global meter provider's.
+func (d *RPCDispatcher) WithSearchMeter(meter metric.Meter) *RPCDispatcher {
+	d.searchStats = newSearchMetrics(meter)
 	return d
 }
 
@@ -196,26 +210,58 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.plugins.PreResponseDiscovery(ctx, req.consumer, raw); err != nil {
 		return nil, err
 	}
-	if d.connections != nil && metaToolsPermitted(req.consumer) {
-		tools = appendGatewayTools(tools, d.connections.Definitions(ctx, req.consumer))
-	}
-	if d.store != nil && req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
-		tools = appendGatewayTools(tools, d.store.Definitions(ctx, req.consumer))
-	}
-	if d.agents != nil && req.consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
-		tools = appendGatewayTools(tools, d.agents.Definitions())
-	}
-	if d.inventory != nil && metaToolsPermitted(req.consumer) {
-		tools = appendGatewayTools(tools, d.inventory.Definitions(ctx, req.consumer))
-		// The call-through rides with the inventory: the inventory is how a
-		// caller learns a tool's name and schema, the call-through is how it
-		// calls one its client never listed.
-		if def, err := callToolDefinition(); err == nil {
-			tools = appendGatewayTools(tools, []Tool{def})
-		}
-	}
+	// The gateway's own tools are the consolidated three. The earlier ones
+	// (the inventory, the call-through, the connect tools, the Store's and the
+	// agents') are no longer listed, but every one of them still answers
+	// tools/call: a client that kept the list it fetched before — Claude's
+	// hosted connectors keep theirs until the person reconnects — keeps
+	// working.
+	tools = appendGatewayTools(withoutGatewayNames(tools), d.consolidatedDefinitions(ctx, req.consumer))
 	result["tools"] = tools
 	return result, nil
+}
+
+// withoutGatewayNames drops an upstream tool named like one of the gateway's
+// own. A call to that name reaches the gateway, never the upstream, so listing
+// the upstream's definition would only put words it chose in front of the
+// model under a name the gateway answers.
+func withoutGatewayNames(tools []Tool) []Tool {
+	out := tools[:0:0]
+	for _, tool := range tools {
+		if isGatewayToolName(tool.Name) {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+// consolidatedDefinitions are the gateway's own tools on the consolidated
+// surface: the same three for every consumer, with the kinds and actions this
+// consumer can use. A toolkit that names no tool gets none, as on the earlier
+// surface.
+func (d *RPCDispatcher) consolidatedDefinitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool {
+	if !metaToolsPermitted(rc) {
+		return nil
+	}
+	var defs []Tool
+	store := isStore(rc)
+	if d.inventoryImpl != nil {
+		if def, err := searchDefinition(d.searchKinds(ctx, rc), store); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	if d.inventory != nil {
+		if def, err := gatewayCallDefinition(store && d.agents != nil); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	if actions := d.accessActions(ctx, rc); len(actions) > 0 {
+		if def, err := accessDefinition(actions, store); err == nil {
+			defs = append(defs, def)
+		}
+	}
+	return defs
 }
 
 func markMetaTool(ctx context.Context) {
@@ -235,6 +281,14 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	}
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
+	}
+	switch params.Name {
+	case SearchToolName:
+		return d.search(ctx, req, params.Arguments)
+	case GatewayCallToolName:
+		return d.gatewayCall(ctx, req, params.Arguments, params.Meta)
+	case AccessToolName:
+		return d.access(ctx, req, params.Arguments)
 	}
 	if params.Name == CallToolName && d.inventory != nil {
 		return d.callThrough(ctx, req, params.Arguments, params.Meta)
@@ -271,7 +325,8 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
-	result, _, err := d.invokeTool(ctx, req, params.Name, params.Arguments, params.Meta)
+	result, reached, err := d.invokeTool(ctx, req, params.Name, params.Arguments, params.Meta)
+	d.searchStats.called(ctx, req.consumer, callViaDirect, params.Name, reached, err)
 	return result, err
 }
 
@@ -315,6 +370,7 @@ func (d *RPCDispatcher) callThrough(
 		)
 	}
 	result, reached, err := d.invokeTool(ctx, req, args.Name, args.Arguments, meta)
+	d.searchStats.called(ctx, req.consumer, callViaCallThrough, args.Name, reached, err)
 	return withSchemaOnFailure(args.Name, reached, result, err)
 }
 

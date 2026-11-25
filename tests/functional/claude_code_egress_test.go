@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,9 +29,10 @@ func TestIngressErrorShape_AnthropicFromOpenAIUpstream(t *testing.T) {
 
 func TestContextWindowPreflight_RefusesOversizedToolset(t *testing.T) {
 	defer Track(t, "ContextWindowPreflight")()
-	if !openaiCatalogListsModel(t, "gpt-4") {
-		t.Skip("openai catalog does not list gpt-4")
-	}
+	// The boot sync reads the models.dev fixture asynchronously.
+	require.Eventually(t, func() bool {
+		return openaiCatalogContextWindow(t, "gpt-4") == 8192
+	}, 30*time.Second, 250*time.Millisecond, "the fixture catalog must give gpt-4 a window of 8192")
 
 	up := newJSONUpstream(t, "must-not-serve")
 	apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4"}, "")

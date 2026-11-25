@@ -365,9 +365,11 @@ policies only.
 ```
 tools/call
   1. rate limit
-  2. gateway meta-tools (trustgate_connect_*, trustgate_list_tools, Store)   → short-circuit
-     trustgate_call_tool unwraps {name, arguments} and continues at 3 with
-     the named tool, so steps 3–7 apply to it exactly as to a direct call
+  2. gateway meta-tools (trustgate_connect_*, trustgate_list_tools, Store,
+     trustgate_search, trustgate_access)                                    → short-circuit
+     trustgate_call_tool unwraps {name, arguments}, and trustgate_call
+     {tool, arguments}, and continue at 3 with the named tool, so steps 3–7
+     apply to it exactly as to a direct call
   3. resolve the exposed name → (registry, native tool)
      unknown tool, toolkit denial, pending consent fail HERE, before any policy
   4. select the plan for (registry, native tool, caller)

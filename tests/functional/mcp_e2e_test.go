@@ -237,7 +237,7 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(registryID, "echo"), exposedToolName(registryID, "search"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "echo"), exposedToolName(registryID, "search"), appmcp.SearchToolName, appmcp.GatewayCallToolName, appmcp.AccessToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "hola"}})
@@ -247,7 +247,10 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 	require.Contains(t, string(raw), "echo:hola")
 }
 
-func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
+// A server waiting on an account is connected through trustgate_access; the
+// per-provider connect tools are no longer listed but still answer a client
+// that kept the earlier list.
+func TestMCPServer_ConnectsPendingProvidersThroughAccess(t *testing.T) {
 	live := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
 	pending := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "list_issues") })
 	idp := newOAuthProviderStub(t)
@@ -260,8 +263,17 @@ func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
 	require.Contains(t, names, exposedToolName(liveID, "echo"))
-	require.Contains(t, names, appmcp.ConnectToolName("linear"))
+	require.Contains(t, names, appmcp.AccessToolName)
+	require.NotContains(t, names, appmcp.ConnectToolName("linear"))
 	require.NotContains(t, names, exposedToolName(pendingID, "list_issues"))
+
+	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": appmcp.AccessToolName, "arguments": map[string]any{"action": "connect", "target": "linear"}})
+	// The application's own key names no person, and this server keeps one
+	// account per person: the answer says so instead of handing a link.
+	refused := rpcResult(t, status, body)
+	require.Equal(t, true, refused["isError"])
+	require.Equal(t, "end_user_not_named", refused["structuredContent"].(map[string]any)["cause"])
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": appmcp.ConnectToolName("linear"), "arguments": map[string]any{}})
@@ -283,7 +295,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(registryID, "alias-echo"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "alias-echo"), appmcp.SearchToolName, appmcp.GatewayCallToolName, appmcp.AccessToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(registryID, "alias-echo"), "arguments": map[string]any{"message": "hola"}})
@@ -389,7 +401,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{exposedToolName(liveRegistry, "echo"), appmcp.InventoryToolName, appmcp.CallToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(liveRegistry, "echo"), appmcp.SearchToolName, appmcp.GatewayCallToolName, appmcp.AccessToolName}, names)
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": exposedToolName(liveRegistry, "echo"), "arguments": map[string]any{"message": "hola"}})
 	result := rpcResult(t, status, body)

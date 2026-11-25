@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -421,6 +422,12 @@ var errCallTimeout = errors.New("model_armor: call timed out")
 
 func timedOut(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", errCallTimeout, err)
+	}
+	// http.Client.Timeout shares the context's duration and can fire first,
+	// before ctx.Err() is set; it surfaces as a net timeout error.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return fmt.Errorf("%w: %w", errCallTimeout, err)
 	}
 	return err

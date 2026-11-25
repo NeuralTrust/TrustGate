@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -438,5 +439,34 @@ func TestStreamErr_MarksRefusedTokens(t *testing.T) {
 	}
 	if !errors.Is(got, refused) {
 		t.Fatal("streamErr must wrap the original error")
+	}
+}
+
+func TestFetchErr_MarksTransientPullFailures(t *testing.T) {
+	reset := status.Error(codes.Unavailable, "error reading from server: read tcp: connection reset by peer")
+	tests := []struct {
+		name      string
+		err       error
+		transient bool
+	}{
+		{name: "header read reset", err: fmt.Errorf("configsync: read snapshot header: %w", reset), transient: true},
+		{name: "already marked", err: fmt.Errorf("configsync: get manifest: %w: %w", configsync.ErrTransportUnavailable, reset), transient: true},
+		{name: "internal fault", err: fmt.Errorf("configsync: get snapshot: %w", status.Error(codes.Internal, "boom")), transient: false},
+		{name: "refused token", err: status.Error(codes.Unauthenticated, "bad token"), transient: false},
+		{name: "integrity", err: configsync.ErrIntegrity, transient: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fetchErr(tc.err)
+			if errors.Is(got, configsync.ErrTransportUnavailable) != tc.transient {
+				t.Fatalf("fetchErr(%v) transient = %v, want %v", tc.err, !tc.transient, tc.transient)
+			}
+			if !errors.Is(got, tc.err) {
+				t.Fatalf("fetchErr must wrap the original error %v", tc.err)
+			}
+		})
+	}
+	if fetchErr(nil) != nil {
+		t.Fatal("fetchErr(nil) must be nil")
 	}
 }

@@ -91,7 +91,7 @@ func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	}
 }
 
-func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T) {
+func TestRPCGateway_ConnectionToolIsCalledWithoutUpstream(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
@@ -115,10 +115,9 @@ func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T)
 	listed, err := g.Dispatch(ctx, rc, "tools/list", nil)
 	require.NoError(t, err)
 	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
-	require.Equal(t, []string{"search", "trustgate_connect_linear"}, []string{tools[0].Name, tools[1].Name})
-	rawList, err := json.Marshal(tools[1])
-	require.NoError(t, err)
-	require.Contains(t, string(rawList), "linear is not connected")
+	// The per-provider connect tools are no longer listed: trustgate_access
+	// connects. They still answer a client that kept the earlier list.
+	require.Equal(t, []string{"search", appmcp.AccessToolName}, toolNames(tools))
 
 	called, err := g.DispatchWithBaseURL(
 		ctx,
@@ -133,7 +132,7 @@ func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T)
 	require.Equal(t, gatewayID, creator.gatewayID)
 }
 
-func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
+func TestRPCGateway_UpstreamToolNamedLikeAGatewayToolIsNotListed(t *testing.T) {
 	t.Parallel()
 	var colliding appmcp.Tool
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -157,12 +156,13 @@ func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	// A call to that name reaches the gateway, never the upstream, so the
+	// upstream's definition is not listed under it.
 	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
-	require.Len(t, tools, 1)
-	raw, err := json.Marshal(tools[0])
+	require.Equal(t, []string{appmcp.AccessToolName}, toolNames(tools))
+	raw, err := json.Marshal(tools)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "untrusted upstream definition")
-	require.Contains(t, string(raw), "linear is not connected")
 }
 
 func TestRPCGateway_ConnectionToolRespectsEmptyToolkit(t *testing.T) {
