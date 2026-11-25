@@ -598,9 +598,8 @@ func TestConfigurePage_OpenVariableStaysATextBox(t *testing.T) {
 }
 
 // Connecting is the end of the page but not of the task: the tools the user
-// came for are somewhere else, and whether they show up depends on a client
-// this page cannot see. Saying nothing left people staring at a green badge,
-// unsure whether it had worked.
+// came for are somewhere else. The panel says where to go in one line and
+// nothing more.
 func TestSingleConnectPage_ConnectedStateSaysWhatToDoNext(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {
@@ -618,15 +617,13 @@ func TestSingleConnectPage_ConnectedStateSaysWhatToDoNext(t *testing.T) {
 		"All set",
 		// With nowhere to send them, they go back to where they came from.
 		"go back to your assistant",
-		"Linear is ready to use there",
-		// A client that does not act on tools/list_changed is why the badge
-		// alone is not enough, and the user can act on that.
-		"refresh the connector's tools",
-		"start a new conversation",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the connected card must say %q, body:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "done-body") {
+		t.Fatalf("the connected panel is a single line, body:\n%s", body)
 	}
 }
 
@@ -649,9 +646,6 @@ func TestSingleConnectPage_ResumeLinkReplacesTheCloseInstruction(t *testing.T) {
 	}
 	if !strings.Contains(body, "head back to your app") {
 		t.Fatalf("a page offering a way back must point at it, body:\n%s", body)
-	}
-	if !strings.Contains(body, "refresh the connector's tools") {
-		t.Fatalf("the tools guidance holds either way, body:\n%s", body)
 	}
 }
 
@@ -872,9 +866,8 @@ func TestSingleConnectPage_ClosesItselfOnlyRightAfterConnecting(t *testing.T) {
 }
 
 // Once connected, the page offers the way back by name: the app the link came
-// from, from the OAuth client its Store session was issued to. A browser that
-// will not close the tab gets told to switch back, and the button says how to
-// close it by hand.
+// from, from the OAuth client its Store session was issued to. In a browser
+// that will not close the tab, the button says how to close it by hand.
 func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 	t.Parallel()
 	render := func(app, resume string) string {
@@ -891,7 +884,7 @@ func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 		})
 	}
 	body := render("Claude", "")
-	for _, want := range []string{`id="close-tab"`, "Close and go back to Claude", "All set — go back to Claude", `id="close-hint"`, "switch back to Claude", "to close this tab"} {
+	for _, want := range []string{`id="close-tab"`, "Close and go back to Claude", "All set — go back to Claude", "to close this tab"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the connected page must say %q, body:\n%s", want, body)
 		}
@@ -901,45 +894,5 @@ func TestSingleConnectPage_OffersTheWayBackToTheApp(t *testing.T) {
 	}
 	if body := render("Claude", "https://app.example.com/back"); strings.Contains(body, `id="close-tab"`) {
 		t.Fatalf("a page with a resume link sends the user there instead, body:\n%s", body)
-	}
-}
-
-// The hint a browser that keeps the tab open gets sits in the connected panel
-// with its space already taken, so showing it leaves the close and Disconnect
-// buttons where the user aimed.
-func TestSingleConnectPage_CloseHintKeepsTheButtonsInPlace(t *testing.T) {
-	t.Parallel()
-	render := func(resume string) string {
-		return renderToString(t, func(c *fiber.Ctx) error {
-			return renderConnectPage(c, &appoauth.ConnectPage{
-				ConsumerPath: "/store/mcp",
-				Code:         "app.linear/mcp",
-				ResumeURL:    resume,
-				ClientName:   "Claude",
-				Providers: []appoauth.ProviderStatus{{
-					Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
-				}},
-			}, "tk", "", mustMCPCatalog(t))
-		})
-	}
-	body := render("")
-	const hintTag = `<span class="done-body" id="close-hint">`
-	hint := strings.Index(body, hintTag)
-	if hint < 0 {
-		t.Fatalf("the hint must render without the hidden attribute, body:\n%s", body)
-	}
-	if done, foot := strings.Index(body, `<div class="done">`), strings.Index(body, `<div class="card-foot">`); done < 0 || foot < 0 || hint < done || hint > foot {
-		t.Fatalf("the hint must sit in the connected panel, above the footer, body:\n%s", body)
-	}
-	for _, want := range []string{"#close-hint{display:block;margin-top:6px;visibility:hidden}", "#close-hint.shown{visibility:visible}", "h.classList.add('shown')"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the hint must reserve its space and be revealed in place with %q, body:\n%s", want, body)
-		}
-	}
-	if strings.Contains(body, "h.hidden=false") {
-		t.Fatalf("revealing the hint must not toggle hidden, which reflows the card, body:\n%s", body)
-	}
-	if body := render("https://app.example.com/back"); strings.Contains(body, `id="close-hint"`) {
-		t.Fatalf("a page with a resume link has no close hint, body:\n%s", body)
 	}
 }
