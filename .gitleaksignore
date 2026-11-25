@@ -28,3 +28,17 @@ bb4c66398bdc2315629232d10de4ea81f6dd1e34:pkg/domain/registry/mcp_user_headers_te
 13952d0a1beecc05f3684ce827918584fed4c5e4:pkg/app/policy/connection_tester_test.go:generic-api-key:40
 13952d0a1beecc05f3684ce827918584fed4c5e4:pkg/app/policy/connection_tester_test.go:generic-api-key:300
 edd668b58be4ab65554e906807cd6ec56127d7d5:pkg/api/handler/http/diagnostics/test_policy_connection_handler_test.go:generic-api-key:36
+# The same fixtures as above under new commit hashes: their commits were rewritten and CI scans every ref.
+b265db2ea081ef7506baf44492a5ef18a092e463:pkg/common/secret/settings_test.go:generic-api-key:257
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/api/handler/http/registry/response/registry_response_test.go:generic-api-key:109
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/app/registry/updater_test.go:generic-api-key:656
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/app/registry/updater_test.go:generic-api-key:679
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/domain/registry/headers_test.go:generic-api-key:27
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/domain/registry/headers_test.go:generic-api-key:47
+069d5e2c4dad7f2a4856c7c629d769c5f48a9e89:pkg/domain/registry/headers_test.go:generic-api-key:78
+ec2e8648ce53945d9357e43769a6d5147de61cad:pkg/app/oauth/connect_admin_row_test.go:generic-api-key:147
+a64a0890e82a7dd66cb852742b5ed2129a8ed561:pkg/infra/providers/credentials_test.go:generic-api-key:194
+d743eae6a1e2d0aa8b2a6fba67d67ae9d89eaaaf:pkg/domain/registry/mcp_user_headers_test.go:generic-api-key:108
+fda321347b436c0f0ef313f8bb09c5477279314e:pkg/app/policy/connection_tester_test.go:generic-api-key:40
+fda321347b436c0f0ef313f8bb09c5477279314e:pkg/app/policy/connection_tester_test.go:generic-api-key:300
+04ffcca5107e0527708ea85a1fe378dcb30826ba:pkg/api/handler/http/diagnostics/test_policy_connection_handler_test.go:generic-api-key:36
