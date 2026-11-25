@@ -221,6 +221,8 @@ type programCall struct {
 	Error  string `json:"error,omitempty"`
 	// registry is where the call went, for attributing the program's request.
 	registry *registrydomain.Registry
+	// bytes is what the call handed the program: its result, or its error.
+	bytes int64
 }
 
 // runProgram serves QueryToolName and ExecuteToolName.
@@ -268,7 +270,9 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 	case errors.As(err, &failed):
 		d.programStats.ran(ctx, req.consumer, tool, string(failed.Kind), len(calls))
 		d.programStats.took(ctx, req.consumer, tool, elapsed)
-		return toolErrorResult(programFailureText(tool, failed, calls), map[string]any{
+		text := programFailureText(tool, failed, calls)
+		d.recordProgramBytes(ctx, req, tool, calls, len(text))
+		return toolErrorResult(text, map[string]any{
 			"error":   failed.Kind,
 			"message": failed.Message,
 			"calls":   callsOrEmpty(calls),
@@ -296,6 +300,7 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		structured["logs_dropped"] = result.LogsDropped
 		text += fmt.Sprintf("\n(%d more log lines dropped)", result.LogsDropped)
 	}
+	d.recordProgramBytes(ctx, req, tool, calls, len(text))
 	raw, err := marshalToolResult(text, structured)
 	if err != nil {
 		return nil, err
@@ -325,12 +330,13 @@ func (d *RPCDispatcher) programCall(
 	started := time.Now()
 	var reg *registrydomain.Registry
 	done := func(res jsrun.CallResult, err error) (jsrun.CallResult, error) {
-		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), registry: reg}
+		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), registry: reg, bytes: int64(len(res.Value))}
 		if reg != nil {
 			c.Server = reg.Name
 		}
 		if res.Err != nil {
 			c.Error = res.Err.Name
+			c.bytes += int64(len(res.Err.Message) + len(res.Err.Data))
 		}
 		record(c)
 		return res, err
@@ -542,6 +548,20 @@ func (d *RPCDispatcher) closestToolNames(ctx context.Context, rc *appconsumer.Ro
 // server is named as a direct call would name it; several by their names,
 // with no registry, host or catalog code, since none of those is the
 // program's.
+// recordProgramBytes puts on the program's request, and on Code Mode's
+// metrics, what its calls handed it and what it handed back to the client
+// (returned): the model read the second instead of the first.
+func (d *RPCDispatcher) recordProgramBytes(ctx context.Context, req dispatchRequest, tool string, calls []programCall, returned int) {
+	var read int64
+	for _, c := range calls {
+		read += c.bytes
+	}
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPProgramBytes(read, int64(returned))
+	}
+	d.programStats.moved(ctx, req.consumer, tool, read, int64(returned))
+}
+
 func attributeProgram(ctx context.Context, calls []programCall) {
 	span := trace.SpanFromContext(ctx)
 	if span == nil {

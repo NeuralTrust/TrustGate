@@ -65,6 +65,8 @@ const (
 	attrMCPToolOpenWorld     = "trustgate.mcp.tool_open_world"
 	attrMCPProgramCalls      = "trustgate.mcp.program_calls"
 	attrMCPProgramTools      = "trustgate.mcp.program_tools"
+	attrMCPProgramBytesRead  = "trustgate.mcp.program_bytes_read"
+	attrMCPProgramBytesRet   = "trustgate.mcp.program_bytes_returned"
 
 	attrA2AMethod              = "trustgate.a2a.method"
 	attrA2ARegistryID          = "trustgate.a2a.registry_id"
@@ -235,6 +237,11 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs,
 				attribute.Int(attrMCPProgramCalls, len(evt.MCP.Calls)),
 				attribute.StringSlice(attrMCPProgramTools, programTools(evt.MCP.Calls)))
+		}
+		if evt.MCP.ProgramBytesReturned > 0 {
+			attrs = append(attrs,
+				attribute.Int64(attrMCPProgramBytesRead, evt.MCP.ProgramBytesRead),
+				attribute.Int64(attrMCPProgramBytesRet, evt.MCP.ProgramBytesReturned))
 		}
 	}
 	if evt.A2A != nil {

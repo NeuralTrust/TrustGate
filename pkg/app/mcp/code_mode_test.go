@@ -34,6 +34,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 func TestMain(m *testing.M) {
@@ -556,6 +557,72 @@ func TestToolListing_GatewayToolsOnly(t *testing.T) {
 
 // A program's request is attributed, in Activity, to the server its calls
 // went to.
+// The program's request records what its calls handed it and what it handed
+// back: the model read the second instead of the first.
+func TestCodeMode_TheProgramsRequestRecordsWhatItReadAndReturned(t *testing.T) {
+	t.Parallel()
+	issues := `{"issues":[{"id":"ENG-1"},{"id":"ENG-2"}]}`
+	comments := `{"comments":["first","second"]}`
+	run := func(t *testing.T, code string) trace.MCPAttrs {
+		t.Helper()
+		w := newCodeWorld(t, nil)
+		outer := w.rt.StartSpan(trace.SpanMCP, "tools/call")
+		ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeReadOnly), outer)
+		args, _ := json.Marshal(map[string]string{"code": strings.NewReplacer(
+			"ISSUES", w.n("list_issues"), "COMMENTS", w.n("list_comments")).Replace(code)})
+		params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+		if _, err := w.d.Dispatch(ctx, w.rc, "", "tools/call", params); err != nil {
+			t.Fatalf("program: %v", err)
+		}
+		attrs, _ := outer.MCPAttrsCopy()
+		return attrs
+	}
+
+	t.Run("a program that returns", func(t *testing.T) {
+		t.Parallel()
+		attrs := run(t, `const a = await tools.ISSUES({});
+			const b = await tools.COMMENTS({ issueId: a.issues[0].id });
+			return a.issues.length + b.comments.length;`)
+		if want := int64(len(issues) + len(comments)); attrs.ProgramBytesRead != want {
+			t.Fatalf("read = %d, want %d: what each call handed the program", attrs.ProgramBytesRead, want)
+		}
+		if attrs.ProgramBytesReturned != int64(len("4")) {
+			t.Fatalf("returned = %d, want the 1 byte of its answer", attrs.ProgramBytesReturned)
+		}
+	})
+	t.Run("a program that fails", func(t *testing.T) {
+		t.Parallel()
+		attrs := run(t, `await tools.ISSUES({}); throw new Error("no");`)
+		if attrs.ProgramBytesRead != int64(len(issues)) {
+			t.Fatalf("read = %d, want %d", attrs.ProgramBytesRead, len(issues))
+		}
+		if attrs.ProgramBytesReturned == 0 {
+			t.Fatal("returned = 0, want the size of the failure the client got")
+		}
+	})
+}
+
+// Code Mode's metrics add up what programs read and what they returned.
+func TestCodeMode_MetricsCountWhatProgramsReadAndReturned(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	reader := sdkmetric.NewManualReader()
+	w.d.WithSearchMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	args, _ := json.Marshal(map[string]string{"code": `const a = await tools.` + w.n("list_issues") + `({}); return a.issues.length;`})
+	params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+	if _, err := w.d.Dispatch(w.ctx(gatewaydomain.MCPCodeModeReadOnly), w.rc, "", "tools/call", params); err != nil {
+		t.Fatalf("program: %v", err)
+	}
+	metrics := searchMetricsWorld{reader: reader}
+	key := "surface=application,tool=" + QueryToolName
+	if got, want := metrics.counts(t, programReadMetric)[key], int64(len(`{"issues":[{"id":"ENG-1"},{"id":"ENG-2"}]}`)); got != want {
+		t.Fatalf("%s = %d, want %d", programReadMetric, got, want)
+	}
+	if got := metrics.counts(t, programReturnedMetric)[key]; got != 1 {
+		t.Fatalf("%s = %d, want 1", programReturnedMetric, got)
+	}
+}
+
 func TestCodeMode_TheProgramsRequestNamesItsServer(t *testing.T) {
 	t.Parallel()
 	w := newCodeWorld(t, nil)

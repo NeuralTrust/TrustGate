@@ -500,6 +500,9 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			Decision:       attrs.Decision,
 			ToolRisk:       attrs.ToolRisk,
 			ToolOpenWorld:  attrs.ToolOpenWorld,
+
+			ProgramBytesRead:     attrs.ProgramBytesRead,
+			ProgramBytesReturned: attrs.ProgramBytesReturned,
 		}
 	}
 	if mcp != nil && len(calls) > 0 {
