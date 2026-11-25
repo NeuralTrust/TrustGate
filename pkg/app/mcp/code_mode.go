@@ -102,11 +102,33 @@ func CodeModeInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer)
 	query, execute := CodeModeOffered(ctx)
 	switch {
 	case execute:
-		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you."
+		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you." + programFallback
 	case query:
-		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you."
+		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you." + programFallback
 	}
 	return ""
+}
+
+// programFallback tells a client whose tool list predates Code Mode how to
+// run a program anyway.
+const programFallback = " If " + QueryToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + QueryToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": …}}.`
+
+// ProgramHintForEarlierTools closes the earlier inventory tool's answer when
+// the gateway runs Code Mode programs. A client that still uses the earlier
+// tools fetched its list before Code Mode: this answer is the one place it
+// learns that programs exist and how to run one.
+func ProgramHintForEarlierTools(ctx context.Context) string {
+	query, execute := CodeModeOffered(ctx)
+	if !query {
+		return ""
+	}
+	hint := "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
+		CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
+		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer. Only tools that read can be called from it."
+	if execute {
+		hint += " For a program that also writes, use " + ExecuteToolName + " the same way."
+	}
+	return hint
 }
 
 // codeModeDefinitions are the Code Mode tools the gateway offers this

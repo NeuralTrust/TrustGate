@@ -61,6 +61,19 @@ places:
    and, with Code Mode on, close with a line saying those signatures are the
    API a program calls.
 
+### Clients that kept an earlier tool list
+
+A client that fetched its tool list before Code Mode was turned on has no
+`trustgate_query` in it. Claude's hosted connectors keep theirs until the
+person reconnects. Both call-throughs run a program for it:
+`trustgate_call {"tool": "trustgate_query", "arguments": {"code": …}}` and the
+earlier `trustgate_call_tool {"name": "trustgate_query", …}`. The gateway's
+mode applies the same way.
+
+Such a client learns this from two places it still reads live: the
+`initialize` instructions, and the answer of the earlier `trustgate_list_tools`,
+which closes with how to run a program.
+
 ## What a program can do
 
 - **Call a tool.** `tools.<name>(args)` calls the user's tool `<name>` (its

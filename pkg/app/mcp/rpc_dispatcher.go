@@ -383,10 +383,16 @@ func (d *RPCDispatcher) callThrough(
 			map[string]any{"error": "missing_name"},
 		)
 	}
+	if IsCodeModeToolName(args.Name) {
+		// A client that kept the tool list it fetched before Code Mode was
+		// turned on has no trustgate_query of its own: the call-through is its
+		// way to one.
+		return d.runProgram(ctx, req, args.Name, args.Arguments)
+	}
 	if isGatewayToolName(args.Name) {
 		markMetaTool(ctx)
 		return toolErrorResult(
-			args.Name+" is one of the gateway's own tools and is already in your tool list: call it directly, not through "+CallToolName+".",
+			args.Name+" is one of the gateway's own tools: call it directly, not through "+CallToolName+".",
 			map[string]any{"error": "gateway_tool", "name": args.Name},
 		)
 	}

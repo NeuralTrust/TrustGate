@@ -432,3 +432,79 @@ func TestProgramValue(t *testing.T) {
 		t.Fatalf("isError = %+v", res)
 	}
 }
+
+// callTool makes one tools/call and returns the result's text and whether it
+// is an error.
+func (w codeWorld) callTool(t *testing.T, mode, name string, arguments any) (string, bool) {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{"name": name, "arguments": arguments})
+	result, err := w.d.Dispatch(w.ctx(mode), w.rc, "", "tools/call", params)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	raw, _ := json.Marshal(result)
+	var envelope struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	var text string
+	for _, block := range envelope.Content {
+		text += block.Text
+	}
+	return text, envelope.IsError
+}
+
+// A client that kept the tool list it fetched before Code Mode was turned on
+// has no trustgate_query of its own; both call-throughs run one for it, under
+// the gateway's mode like a direct call.
+func TestCodeMode_ProgramsRunThroughTheCallThroughs(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	code := map[string]any{"code": `return (await tools.` + w.n("list_issues") + `({})).issues.length;`}
+	for _, via := range []struct {
+		name string
+		args map[string]any
+	}{
+		{CallToolName, map[string]any{"name": QueryToolName, "arguments": code}},
+		{GatewayCallToolName, map[string]any{"tool": QueryToolName, "arguments": code}},
+	} {
+		text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, via.name, via.args)
+		if isError || !strings.HasPrefix(text, "2") {
+			t.Fatalf("through %s: %q (error %v), want the program's result", via.name, text, isError)
+		}
+		text, isError = w.callTool(t, gatewaydomain.MCPCodeModeOff, via.name, via.args)
+		if !isError || !strings.Contains(text, "not turned on") {
+			t.Fatalf("through %s with Code Mode off: %q", via.name, text)
+		}
+	}
+	// Other gateway tools are still refused through a call-through, without
+	// claiming the client has them.
+	text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, CallToolName, map[string]any{"name": SearchToolName})
+	if !isError || strings.Contains(text, "already in your tool list") {
+		t.Fatalf("gateway tool through %s: %q", CallToolName, text)
+	}
+}
+
+// The earlier inventory tool's answer is where a client on the earlier tools
+// learns that programs exist and how to run one.
+func TestCodeMode_TheEarlierInventoryTellsHowToRunAProgram(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	text, _ := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, InventoryToolName, map[string]any{"brief": true})
+	if !strings.Contains(text, `"name": "`+QueryToolName+`"`) || !strings.Contains(text, CallToolName) || strings.Contains(text, ExecuteToolName) {
+		t.Fatalf("read_only inventory: %q", text)
+	}
+	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeFull, InventoryToolName, map[string]any{})
+	if !strings.Contains(text, ExecuteToolName) {
+		t.Fatalf("full inventory: %q", text)
+	}
+	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeOff, InventoryToolName, map[string]any{})
+	if strings.Contains(text, QueryToolName) {
+		t.Fatalf("off inventory mentions programs: %q", text)
+	}
+}
