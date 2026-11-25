@@ -26,6 +26,7 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -69,7 +70,10 @@ type RPCDispatcher struct {
 	agents        AgentTools
 	storeScoper   appstore.Scoper
 	searchStats   *searchMetrics
-	handlers      map[string]rpcHandler
+	// programs runs Code Mode programs; programStats counts them.
+	programs     *jsrun.Runner
+	programStats *programMetrics
+	handlers     map[string]rpcHandler
 }
 
 func NewRPCDispatcher(
@@ -85,7 +89,9 @@ func NewRPCDispatcher(
 	d := &RPCDispatcher{
 		composer: composer, plugins: plugins, limiter: limiter,
 		connections: connections, store: store,
-		searchStats: newSearchMetrics(nil),
+		searchStats:  newSearchMetrics(nil),
+		programs:     jsrun.New(jsrun.Limits{}, 0),
+		programStats: newProgramMetrics(nil),
 	}
 	d.handlers = map[string]rpcHandler{
 		"tools/list":               d.listTools,
@@ -115,6 +121,16 @@ func (d *RPCDispatcher) WithAgentTools(agents AgentTools) *RPCDispatcher {
 // global meter provider's.
 func (d *RPCDispatcher) WithSearchMeter(meter metric.Meter) *RPCDispatcher {
 	d.searchStats = newSearchMetrics(meter)
+	d.programStats = newProgramMetrics(meter)
+	return d
+}
+
+// WithPrograms runs Code Mode programs with runner instead of one with the
+// default limits.
+func (d *RPCDispatcher) WithPrograms(runner *jsrun.Runner) *RPCDispatcher {
+	if runner != nil {
+		d.programs = runner
+	}
 	return d
 }
 
@@ -217,6 +233,9 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	// hosted connectors keep theirs until the person reconnects — keeps
 	// working.
 	tools = appendGatewayTools(withoutGatewayNames(tools), d.consolidatedDefinitions(ctx, req.consumer))
+	if metaToolsPermitted(req.consumer) {
+		tools = appendGatewayTools(tools, d.codeModeDefinitions(ctx))
+	}
 	result["tools"] = tools
 	return result, nil
 }
@@ -289,6 +308,8 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		return d.gatewayCall(ctx, req, params.Arguments, params.Meta)
 	case AccessToolName:
 		return d.access(ctx, req, params.Arguments)
+	case QueryToolName, ExecuteToolName:
+		return d.runProgram(ctx, req, params.Name, params.Arguments)
 	}
 	if params.Name == CallToolName && d.inventory != nil {
 		return d.callThrough(ctx, req, params.Arguments, params.Meta)
@@ -398,6 +419,17 @@ func (d *RPCDispatcher) invokeTool(
 	if err != nil {
 		return nil, toolInvocation{}, err
 	}
+	return d.invokeResolved(ctx, req, target, arguments, meta)
+}
+
+// invokeResolved calls a tool already resolved: the request stages, the
+// upstream, the response stages.
+func (d *RPCDispatcher) invokeResolved(
+	ctx context.Context,
+	req dispatchRequest,
+	target *ResolvedTool,
+	arguments, meta json.RawMessage,
+) (any, toolInvocation, error) {
 	reached := toolInvocation{target: target}
 	if span := trace.SpanFromContext(ctx); span != nil {
 		annotateRegistry(span, target.Registry, target.Tool.Name)

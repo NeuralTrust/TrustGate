@@ -56,6 +56,9 @@ type UpdateInput struct {
 	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
 	// a reserved metadata key server-side, so it survives client metadata replacement.
 	StoreMode *string
+	// MCPCodeMode, when set, sets the MCP Code Mode (off|read_only|full). It is
+	// a reserved metadata key stamped server-side, like StoreMode.
+	MCPCodeMode *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -164,6 +167,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	} else if g.Metadata != nil {
 		delete(g.Metadata, domain.MetadataStoreModeKey)
 	}
+	// mcp_code_mode is reserved and stripped from client metadata: re-stamp the
+	// stored mode unless it is being set.
+	codeMode := old.MCPCodeMode()
+	if in.MCPCodeMode != nil {
+		codeMode = *in.MCPCodeMode
+	}
+	g.Metadata = domain.WithMCPCodeMode(g.Metadata, codeMode)
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
 	}

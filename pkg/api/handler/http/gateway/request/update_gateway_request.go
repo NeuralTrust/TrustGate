@@ -45,6 +45,11 @@ type UpdateGatewayRequest struct {
 	// "curated" (only shelf servers) or "none" (self-install disabled). Omitted
 	// leaves the current mode unchanged.
 	StoreMode *string `json:"store_mode,omitempty"`
+	// MCPCodeMode sets MCP Code Mode: "off" (the default), "read_only"
+	// (trustgate_query: programs that call the user's read-only tools) or
+	// "full" (also trustgate_execute: programs that call any of their tools).
+	// Omitted leaves it unchanged.
+	MCPCodeMode *string `json:"mcp_code_mode,omitempty" enums:"off,read_only,full"`
 
 	// ClearTrafficLabeling is set by DetectClears when the body sends
 	// "traffic_labeling": null.
@@ -88,6 +93,13 @@ func (r *UpdateGatewayRequest) Validate() error {
 			return fmt.Errorf("store_mode must be %q, %q or %q: %w", domain.StoreModeOpen, domain.StoreModeCurated, domain.StoreModeNone, commonerrors.ErrValidation)
 		}
 		r.StoreMode = &mode
+	}
+	if r.MCPCodeMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*r.MCPCodeMode))
+		if !domain.IsMCPCodeMode(mode) {
+			return fmt.Errorf("mcp_code_mode must be %q, %q or %q: %w", domain.MCPCodeModeOff, domain.MCPCodeModeReadOnly, domain.MCPCodeModeFull, commonerrors.ErrValidation)
+		}
+		r.MCPCodeMode = &mode
 	}
 	return nil
 }

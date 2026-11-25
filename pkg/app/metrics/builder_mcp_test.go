@@ -318,3 +318,37 @@ func TestBuilder_MCPDiscoveryCarriesNoPolicyScope(t *testing.T) {
 	assert.Nil(t, evt.MCP.PolicyScope)
 	assert.Empty(t, evt.PolicyChain)
 }
+
+// A Code Mode program's request is one event: its own span describes the
+// program, and each call the program made is listed under it.
+func TestBuilder_MCPListsAProgramsCalls(t *testing.T) {
+	rt := trace.New("trace-program", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method: "tools/call", Operation: "tool", Tool: "trustgate_query", UpstreamStatus: http.StatusOK,
+	}, 300*time.Millisecond))
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method: "tools/call", Operation: "tool", Tool: "linear_list_issues", UpstreamTool: "list_issues",
+		ServerName: "linear", RegistryID: "reg-1", UpstreamStatus: http.StatusOK, ToolRisk: "read_only", Program: "trustgate_query",
+	}, 80*time.Millisecond))
+	refused := mcpSpan("tools/call", &trace.MCPAttrs{
+		Method: "tools/call", Operation: "tool", Tool: "linear_save_comment", RegistryID: "reg-1",
+		UpstreamStatus: http.StatusForbidden, RPCErrorCode: -32001, Program: "trustgate_query",
+	}, time.Millisecond)
+	refused.SetError("NotAllowedError: linear_save_comment may change something, the issue ENG-9 is private")
+	_ = rt.AddSpan(refused)
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp", Body: []byte(`{}`)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{}`)}
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(400*time.Millisecond))
+
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, "trustgate_query", evt.MCP.Tool, "the event is the program's request")
+	assert.Equal(t, int64(300), evt.MCP.UpstreamLatencyMs, "the calls' time is inside the program's")
+	require.Len(t, evt.MCP.Calls, 2)
+	assert.Equal(t, events.MCPCall{
+		Tool: "linear_list_issues", UpstreamTool: "list_issues", ServerName: "linear", RegistryID: "reg-1",
+		UpstreamStatus: http.StatusOK, LatencyMs: 80, ToolRisk: "read_only",
+	}, evt.MCP.Calls[0])
+	assert.Equal(t, "NotAllowedError", evt.MCP.Calls[1].Error, "only the error's name, never what its message quoted")
+}
