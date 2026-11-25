@@ -101,3 +101,26 @@ func TestUpdater_MCPCodeModeSurvivesMetadataReplacement(t *testing.T) {
 		t.Fatalf("a client turned Code Mode on through metadata: %v", got.Metadata)
 	}
 }
+
+func TestUpdater_MCPToolListing(t *testing.T) {
+	t.Parallel()
+	got := updateCodeMode(t, gatewayWithCodeMode(""), appgateway.UpdateInput{MCPToolListing: ptr(domain.MCPToolListingGateway)})
+	if got.MCPToolListing() != domain.MCPToolListingGateway {
+		t.Fatalf("listing = %s", got.MCPToolListing())
+	}
+	got.Metadata[domain.MetadataMCPCodeModeKey] = domain.MCPCodeModeReadOnly
+	kept := updateCodeMode(t, got, appgateway.UpdateInput{Metadata: map[string]string{"owner": "x"}})
+	if kept.MCPToolListing() != domain.MCPToolListingGateway || kept.MCPCodeMode() != domain.MCPCodeModeReadOnly {
+		t.Fatalf("a metadata replacement dropped a setting: %v", kept.Metadata)
+	}
+	back := updateCodeMode(t, kept, appgateway.UpdateInput{MCPToolListing: ptr(domain.MCPToolListingAll)})
+	if _, ok := back.Metadata[domain.MetadataMCPToolListingKey]; ok || back.MCPToolListing() != domain.MCPToolListingAll {
+		t.Fatalf("all is the key's absence: %v", back.Metadata)
+	}
+	sneaked := updateCodeMode(t, gatewayWithCodeMode(""), appgateway.UpdateInput{
+		Metadata: map[string]string{domain.MetadataMCPToolListingKey: domain.MCPToolListingGateway},
+	})
+	if sneaked.MCPToolListing() != domain.MCPToolListingAll {
+		t.Fatal("a client set the listing through metadata")
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -430,5 +431,143 @@ func TestProgramValue(t *testing.T) {
 	res := programValue(json.RawMessage(`{"content":[{"type":"text","text":"nope"}],"isError":true}`))
 	if res.Err == nil || res.Err.Message != "nope" {
 		t.Fatalf("isError = %+v", res)
+	}
+}
+
+// callTool makes one tools/call and returns the result's text and whether it
+// is an error.
+func (w codeWorld) callTool(t *testing.T, mode, name string, arguments any) (string, bool) {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{"name": name, "arguments": arguments})
+	result, err := w.d.Dispatch(w.ctx(mode), w.rc, "", "tools/call", params)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	raw, _ := json.Marshal(result)
+	var envelope struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	var text string
+	for _, block := range envelope.Content {
+		text += block.Text
+	}
+	return text, envelope.IsError
+}
+
+// A client that kept the tool list it fetched before Code Mode was turned on
+// has no trustgate_query of its own; both call-throughs run one for it, under
+// the gateway's mode like a direct call.
+func TestCodeMode_ProgramsRunThroughTheCallThroughs(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	code := map[string]any{"code": `return (await tools.` + w.n("list_issues") + `({})).issues.length;`}
+	for _, via := range []struct {
+		name string
+		args map[string]any
+	}{
+		{CallToolName, map[string]any{"name": QueryToolName, "arguments": code}},
+		{GatewayCallToolName, map[string]any{"tool": QueryToolName, "arguments": code}},
+	} {
+		text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, via.name, via.args)
+		if isError || !strings.HasPrefix(text, "2") {
+			t.Fatalf("through %s: %q (error %v), want the program's result", via.name, text, isError)
+		}
+		text, isError = w.callTool(t, gatewaydomain.MCPCodeModeOff, via.name, via.args)
+		if !isError || !strings.Contains(text, "not turned on") {
+			t.Fatalf("through %s with Code Mode off: %q", via.name, text)
+		}
+	}
+	// Other gateway tools are still refused through a call-through, without
+	// claiming the client has them.
+	text, isError := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, CallToolName, map[string]any{"name": SearchToolName})
+	if !isError || strings.Contains(text, "already in your tool list") {
+		t.Fatalf("gateway tool through %s: %q", CallToolName, text)
+	}
+}
+
+// The earlier inventory tool's answer is where a client on the earlier tools
+// learns that programs exist and how to run one.
+func TestCodeMode_TheEarlierInventoryTellsHowToRunAProgram(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	text, _ := w.callTool(t, gatewaydomain.MCPCodeModeReadOnly, InventoryToolName, map[string]any{"brief": true})
+	if !strings.Contains(text, `"name": "`+QueryToolName+`"`) || !strings.Contains(text, CallToolName) || strings.Contains(text, ExecuteToolName) {
+		t.Fatalf("read_only inventory: %q", text)
+	}
+	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeFull, InventoryToolName, map[string]any{})
+	if !strings.Contains(text, ExecuteToolName) {
+		t.Fatalf("full inventory: %q", text)
+	}
+	text, _ = w.callTool(t, gatewaydomain.MCPCodeModeOff, InventoryToolName, map[string]any{})
+	if strings.Contains(text, QueryToolName) {
+		t.Fatalf("off inventory mentions programs: %q", text)
+	}
+}
+
+// A gateway that lists only its own tools lists no upstream tool; the user's
+// are still found by search and reached by a direct call, trustgate_call or a
+// program.
+func TestToolListing_GatewayToolsOnly(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	listingCtx := func(mode string) context.Context {
+		ctx := w.ctx(mode)
+		gw, _ := appgateway.FromContext(ctx)
+		gw.Metadata = gatewaydomain.WithMCPToolListing(gw.Metadata, gatewaydomain.MCPToolListingGateway)
+		return ctx
+	}
+	result, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeReadOnly), w.rc, "", "tools/list", nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var names []string
+	for _, tool := range result.(map[string]any)["tools"].([]Tool) {
+		names = append(names, tool.Name)
+	}
+	var want []string
+	for _, name := range w.listed(t, gatewaydomain.MCPCodeModeReadOnly) {
+		if strings.HasPrefix(name, "trustgate_") {
+			want = append(want, name)
+		}
+	}
+	sort.Strings(names)
+	sort.Strings(want)
+	if len(want) == 0 || strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("listed %v, want only the gateway's tools %v", names, want)
+	}
+	// A direct call to a tool the client knows still reaches it.
+	params, _ := json.Marshal(map[string]any{"name": w.n("list_issues"), "arguments": map[string]any{}})
+	if _, err := w.d.Dispatch(listingCtx(gatewaydomain.MCPCodeModeOff), w.rc, "", "tools/call", params); err != nil {
+		t.Fatalf("direct call: %v", err)
+	}
+	if got := ToolListingInstructions(listingCtx(gatewaydomain.MCPCodeModeOff), w.rc); !strings.Contains(got, SearchToolName) {
+		t.Fatalf("instructions = %q", got)
+	}
+	if got := ToolListingInstructions(w.ctx(gatewaydomain.MCPCodeModeOff), w.rc); got != "" {
+		t.Fatalf("a gateway that lists everything says %q", got)
+	}
+}
+
+// A program's request is attributed, in Activity, to the server its calls
+// went to.
+func TestCodeMode_TheProgramsRequestNamesItsServer(t *testing.T) {
+	t.Parallel()
+	w := newCodeWorld(t, nil)
+	outer := w.rt.StartSpan(trace.SpanMCP, "tools/call")
+	ctx := trace.NewSpanContext(w.ctx(gatewaydomain.MCPCodeModeReadOnly), outer)
+	args, _ := json.Marshal(map[string]string{"code": `await tools.` + w.n("list_issues") + `({}); return 1;`})
+	params, _ := json.Marshal(map[string]any{"name": QueryToolName, "arguments": json.RawMessage(args)})
+	if _, err := w.d.Dispatch(ctx, w.rc, "", "tools/call", params); err != nil {
+		t.Fatalf("program: %v", err)
+	}
+	attrs, _ := outer.MCPAttrsCopy()
+	if attrs.ServerName != "linear" || attrs.RegistryID == "" {
+		t.Fatalf("program span = %+v, want the linear server", attrs)
 	}
 }

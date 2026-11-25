@@ -264,6 +264,7 @@ func (t *inventoryTool) Call(
 		structured["brief"] = true
 		text += inventoryBriefNote
 	}
+	text += ProgramHintForEarlierTools(ctx)
 	return marshalToolResult(text, structured)
 }
 

@@ -50,6 +50,11 @@ type UpdateGatewayRequest struct {
 	// "full" (also trustgate_execute: programs that call any of their tools).
 	// Omitted leaves it unchanged.
 	MCPCodeMode *string `json:"mcp_code_mode,omitempty" enums:"off,read_only,full"`
+	// MCPToolListing sets which tools MCP clients are listed: "all" (the
+	// default: the user's tools and the gateway's own) or "gateway" (only the
+	// gateway's own; the user's are found with trustgate_search). Omitted
+	// leaves it unchanged.
+	MCPToolListing *string `json:"mcp_tool_listing,omitempty" enums:"all,gateway"`
 
 	// ClearTrafficLabeling is set by DetectClears when the body sends
 	// "traffic_labeling": null.
@@ -100,6 +105,13 @@ func (r *UpdateGatewayRequest) Validate() error {
 			return fmt.Errorf("mcp_code_mode must be %q, %q or %q: %w", domain.MCPCodeModeOff, domain.MCPCodeModeReadOnly, domain.MCPCodeModeFull, commonerrors.ErrValidation)
 		}
 		r.MCPCodeMode = &mode
+	}
+	if r.MCPToolListing != nil {
+		listing := strings.ToLower(strings.TrimSpace(*r.MCPToolListing))
+		if !domain.IsMCPToolListing(listing) {
+			return fmt.Errorf("mcp_tool_listing must be %q or %q: %w", domain.MCPToolListingAll, domain.MCPToolListingGateway, commonerrors.ErrValidation)
+		}
+		r.MCPToolListing = &listing
 	}
 	return nil
 }
