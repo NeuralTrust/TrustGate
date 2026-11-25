@@ -345,7 +345,7 @@ func (d *RPCDispatcher) searchTools(ctx context.Context, req dispatchRequest, in
 		// the user does have, so the caller can look there instead.
 		structured["servers"] = overviewServers(inventory, isStore(req.consumer))
 	}
-	return marshalToolResult(searchToolsText(args, results, total, end < total, catalog, agents, inventory), structured)
+	return marshalToolResult(searchToolsText(ctx, args, results, total, end < total, catalog, agents, inventory), structured)
 }
 
 func searchResultJSON(c toolCandidate, brief bool) map[string]any {
@@ -457,6 +457,7 @@ func (d *RPCDispatcher) agentMatches(ctx context.Context, query string) []map[st
 }
 
 func searchToolsText(
+	ctx context.Context,
 	args searchArgs,
 	results []map[string]any,
 	total int,
@@ -535,8 +536,24 @@ func searchToolsText(
 	} else if total > 0 {
 		b.WriteString("\n\nCall a tool directly if it is in your tool list, otherwise with " + GatewayCallToolName + " {\"tool\": <name>, \"arguments\": {…}}. " +
 			SearchToolName + " {\"name\": <name>} gives one tool's full description and input schema.")
+		if hint := programHint(ctx); hint != "" {
+			b.WriteString(" " + hint)
+		}
 	}
 	return b.String()
+}
+
+// programHint is the sentence a search answer closes with when the gateway
+// runs Code Mode programs: the signatures above are the API a program calls.
+func programHint(ctx context.Context) string {
+	query, execute := CodeModeOffered(ctx)
+	switch {
+	case execute:
+		return "To do several calls at once, write them in one " + QueryToolName + " (reads only) or " + ExecuteToolName + " program, calling each as await tools.<name>({…}) with the signatures above."
+	case query:
+		return "To do several read calls at once, write them in one " + QueryToolName + " program, calling each as await tools.<name>({…}) with the signatures above."
+	}
+	return ""
 }
 
 // overviewServers are the caller's servers as the overview lists them:

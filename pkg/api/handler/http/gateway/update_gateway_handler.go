@@ -98,6 +98,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		ClearTrafficLabeling: req.ClearTrafficLabeling,
 		Entitlements:         req.Entitlements,
 		StoreMode:            req.StoreMode,
+		MCPCodeMode:          req.MCPCodeMode,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

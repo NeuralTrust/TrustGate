@@ -24,6 +24,7 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -68,6 +69,12 @@ func (g *RPCGateway) WithInventoryTool(inventory appmcp.InventoryTool) *RPCGatew
 // WithAgentTools wires the Store's agent meta-tools (see appmcp.AgentTools).
 func (g *RPCGateway) WithAgentTools(agents appmcp.AgentTools) *RPCGateway {
 	g.dispatcher.WithAgentTools(agents)
+	return g
+}
+
+// WithPrograms runs Code Mode programs with runner.
+func (g *RPCGateway) WithPrograms(runner *jsrun.Runner) *RPCGateway {
+	g.dispatcher.WithPrograms(runner)
 	return g
 }
 

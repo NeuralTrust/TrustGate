@@ -77,6 +77,22 @@ are bounded: never a query, a tool name, a gateway, a consumer or a person.
   nobody serves, by `via` and `after_search` (whether the caller searched in
   the 10 minutes before).
 
+MCP Code Mode (see [Code Mode](mcp/code-mode.md)) reports its programs, with
+the same bounded labels plus `tool` (`trustgate_query` or `trustgate_execute`).
+A program's calls also count in `trustgate.mcp.search.follow_ups`, with `via`
+naming the program's tool.
+
+- `trustgate.mcp.code.programs` (`{program}`): programs, by how they ended.
+  `result` is `ok`, `thrown`, `timeout`, `memory`, `call_limit`,
+  `output_limit`, `code_limit`, `stalled`, `crashed`, `busy` (no slot on the
+  replica before the request ended), `aborted` (a consent or a rate limit
+  stopped it), `invalid` (no code) or `not_offered` (the gateway's Code Mode
+  does not offer the tool).
+- `trustgate.mcp.code.program_duration` (seconds): how long a program ran,
+  its tool calls included.
+- `trustgate.mcp.code.program_calls` (`{call}`): how many tool calls one
+  program made.
+
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.
 

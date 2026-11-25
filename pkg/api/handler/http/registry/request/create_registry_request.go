@@ -71,8 +71,13 @@ type MCPTargetRequest struct {
 	// own value. Omitted on update, the stored declarations are kept; an empty
 	// list removes them all.
 	UserHeaders *[]MCPUserHeaderRequest `json:"user_headers,omitempty"`
-	Auth        *MCPAuthRequest         `json:"auth,omitempty"`
-	OpenAPI     *OpenAPITargetRequest   `json:"openapi,omitempty"`
+	// ReadOnlyTools are the server's tools, by the name the server gives
+	// them, that an admin vouches only read: MCP Code Mode's trustgate_query
+	// may call them even when the server does not annotate them. Omitted on
+	// update, the stored list is kept; an empty list clears it.
+	ReadOnlyTools *[]string             `json:"read_only_tools,omitempty"`
+	Auth          *MCPAuthRequest       `json:"auth,omitempty"`
+	OpenAPI       *OpenAPITargetRequest `json:"openapi,omitempty"`
 }
 
 // MCPUserHeaderRequest declares one per-user upstream header.
@@ -307,6 +312,9 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 				Name: h.Name, Description: h.Description, Required: h.Required, Secret: h.Secret, Scheme: h.Scheme,
 			})
 		}
+	}
+	if t.ReadOnlyTools != nil {
+		out.ReadOnlyTools = append([]string{}, (*t.ReadOnlyTools)...)
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}

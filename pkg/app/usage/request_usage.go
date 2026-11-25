@@ -58,11 +58,18 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 	}
 	meta := rt.Metadata()
 	var smartRouting, managed int64
+	requests := int64(1)
 	if meta.Kind == events.KindMCP {
 		if rt.IsMetaTool() {
-			return
-		}
-		if mcp, ok := lastMCPAttrs(rt); ok {
+			// The gateway's own tools are not billed. A Code Mode program's
+			// request is one of them, and the calls it made are: each one that
+			// reached its tool counts as a request.
+			calls := programToolCalls(rt)
+			if calls == 0 {
+				return
+			}
+			requests = calls
+		} else if mcp, ok := lastMCPAttrs(rt); ok {
 			if int64(mcp.RPCErrorCode) == appmcp.CodeRateLimited {
 				return
 			}
@@ -91,7 +98,7 @@ func (r *requestRecorder) Record(ctx context.Context, rt *trace.RequestTrace, st
 		TraceID:                rt.TraceID(),
 		GatewayID:              meta.GatewayID,
 		ConsumerID:             meta.ConsumerID,
-		Requests:               1,
+		Requests:               requests,
 		SmartRoutingExecutions: smartRouting,
 		ManagedRequests:        managed,
 	})
@@ -149,9 +156,30 @@ func lastMCPAttrs(rt *trace.RequestTrace) (trace.MCPAttrs, bool) {
 		if span.Type != trace.SpanMCP {
 			continue
 		}
-		if attrs, ok := span.MCPAttrsCopy(); ok {
+		if attrs, ok := span.MCPAttrsCopy(); ok && attrs.Program == "" {
 			last, found = attrs, true
 		}
 	}
 	return last, found
+}
+
+// programToolCalls counts the calls a Code Mode program made that reached
+// their tool: resolved to a server and answered by it, with a result or a
+// tool error. A call refused before it reached the tool — by a policy, by
+// the read-only rule, for a name nobody serves — is not counted.
+func programToolCalls(rt *trace.RequestTrace) int64 {
+	var n int64
+	for _, span := range rt.Spans() {
+		if span.Type != trace.SpanMCP {
+			continue
+		}
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok || attrs.Program == "" || attrs.RegistryID == "" {
+			continue
+		}
+		if attrs.UpstreamStatus >= 200 && attrs.UpstreamStatus < 300 {
+			n++
+		}
+	}
+	return n
 }

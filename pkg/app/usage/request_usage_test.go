@@ -170,3 +170,53 @@ func TestRequestRecorder_Disabled(t *testing.T) {
 	assert.Empty(t, emitter.records)
 	assert.False(t, appusage.NewRequestRecorder(true, nil, nil).Enabled())
 }
+
+// A Code Mode program's request is the gateway's own; each call it made that
+// reached its tool is a request.
+func TestRequestRecorder_CodeModeProgramCountsItsCalls(t *testing.T) {
+	t.Parallel()
+	program := func(calls ...trace.MCPAttrs) *trace.RequestTrace {
+		rt := mcpTrace(200, 0)
+		rt.MarkMetaTool()
+		for _, attrs := range calls {
+			span := rt.StartSpan(trace.SpanMCP, "tools/call")
+			span.SetMCPRequest("tools/call", "tool", attrs.Tool, "", "")
+			span.SetMCPProgram("trustgate_query")
+			if attrs.RegistryID != "" {
+				span.SetMCPUpstream("linear", attrs.RegistryID, "", "", "", attrs.Tool)
+			}
+			span.SetMCPStatus(attrs.UpstreamStatus, attrs.RPCErrorCode)
+		}
+		return rt
+	}
+	for _, tc := range []struct {
+		name string
+		rt   *trace.RequestTrace
+		want int64
+	}{
+		{name: "no call", rt: program(), want: 0},
+		{name: "calls that reached their tools", rt: program(
+			trace.MCPAttrs{Tool: "a", RegistryID: "r", UpstreamStatus: 200},
+			trace.MCPAttrs{Tool: "b", RegistryID: "r", UpstreamStatus: 200},
+		), want: 2},
+		{name: "refused, unknown and failed calls are not counted", rt: program(
+			trace.MCPAttrs{Tool: "a", RegistryID: "r", UpstreamStatus: 200},
+			trace.MCPAttrs{Tool: "write", RegistryID: "r", UpstreamStatus: 403, RPCErrorCode: -32001},
+			trace.MCPAttrs{Tool: "nope", UpstreamStatus: 404},
+			trace.MCPAttrs{Tool: "down", RegistryID: "r", UpstreamStatus: 502},
+		), want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			emitter := &captureEmitter{}
+			rec := appusage.NewRequestRecorder(true, emitter, &outcomeCounter{})
+			rec.Record(context.Background(), tc.rt, 200, startTime)
+			if tc.want == 0 {
+				assert.Empty(t, emitter.records)
+				return
+			}
+			require.Len(t, emitter.records, 1)
+			assert.Equal(t, tc.want, emitter.records[0].Requests)
+		})
+	}
+}

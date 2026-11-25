@@ -356,7 +356,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
-		"instructions": serverInstructions(rc),
+		"instructions": serverInstructions(rc) + appmcp.CodeModeInstructions(c.UserContext(), rc),
 	}))
 }
 

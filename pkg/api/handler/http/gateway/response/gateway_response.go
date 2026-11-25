@@ -41,7 +41,9 @@ type GatewayResponse struct {
 	// for readers to dig out of metadata: a reader that missed it there read a
 	// gateway as open — the domain default — and showed a curated Store as
 	// wide open.
-	StoreMode       string                 `json:"store_mode"`
+	StoreMode string `json:"store_mode"`
+	// MCPCodeMode is the gateway's MCP Code Mode: off, read_only or full.
+	MCPCodeMode     string                 `json:"mcp_code_mode" enums:"off,read_only,full"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
@@ -77,6 +79,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain, agentBaseDoma
 		},
 		Metadata:        g.Metadata,
 		StoreMode:       g.StoreMode(),
+		MCPCodeMode:     g.MCPCodeMode(),
 		Telemetry:       g.Telemetry.WithoutCredentials(),
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,

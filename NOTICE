@@ -2,3 +2,10 @@ TrustGate
 Copyright 2026 NeuralTrust
 
 This product includes software developed at NeuralTrust (https://neuraltrust.ai).
+
+This product includes a modified copy of qjs (https://github.com/fastschema/qjs),
+Copyright (c) the qjs authors, licensed under the MIT License, which bundles
+QuickJS-ng (https://github.com/quickjs-ng/quickjs), Copyright (c) the QuickJS
+and QuickJS-ng authors, licensed under the MIT License. See
+third_party/qjs/LICENSE, third_party/qjs/QUICKJS-LICENSE and
+third_party/qjs/README.md.
