@@ -167,6 +167,11 @@ type MCP struct {
 	// trustgate_query or trustgate_execute request: one per call, in the
 	// order they started. The request's own fields describe the program.
 	Calls []MCPCall `json:"calls,omitempty"`
+	// ProgramBytesRead is what a Code Mode program's calls handed it, and
+	// ProgramBytesReturned what it handed back to the client: the program
+	// read the first instead of the model, which read only the second.
+	ProgramBytesRead     int64 `json:"program_bytes_read,omitempty"`
+	ProgramBytesReturned int64 `json:"program_bytes_returned,omitempty"`
 }
 
 // MCPCall is one tool call a Code Mode program made.

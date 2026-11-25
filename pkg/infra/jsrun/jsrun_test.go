@@ -249,8 +249,8 @@ func TestRun_ReachesNothingButItsTools(t *testing.T) {
 	`, nil)
 	var got struct {
 		Passwd, Proc, Home, Write any
-		Entries               []string
-		Exec                  any
+		Entries                   []string
+		Exec                      any
 	}
 	if err := json.Unmarshal(res.Value, &got); err != nil {
 		t.Fatalf("decode %s: %v", res.Value, err)

@@ -92,6 +92,10 @@ naming the program's tool.
   its tool calls included.
 - `trustgate.mcp.code.program_calls` (`{call}`): how many tool calls one
   program made.
+- `trustgate.mcp.code.bytes_read` (bytes): what programs' calls handed them,
+  results and errors. The model did not read it.
+- `trustgate.mcp.code.bytes_returned` (bytes): what programs handed back to
+  clients, their logs included. This is what the model read instead.
 
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.
