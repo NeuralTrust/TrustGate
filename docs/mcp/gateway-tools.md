@@ -18,7 +18,8 @@ something up and three ways to call:
 
 The consolidated tools are the same three on applications and on the Store.
 A gateway with [Code Mode](code-mode.md) on also offers `trustgate_query`, and
-`trustgate_execute`, which run a program that calls the user's tools.
+`trustgate_execute`, which run a program that calls the user's tools. A gateway can also list only these tools and not the user's
+(`mcp_tool_listing: "gateway"`, see [Code Mode](code-mode.md#listing-only-the-gateways-tools)).
 Their list never changes with what the user installs or connects, so a client
 that keeps the list it fetched (Claude's hosted connectors do) is never left
 without a tool. On an application, `trustgate_search` offers the `overview`

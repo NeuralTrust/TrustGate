@@ -208,6 +208,14 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
+	if gatewayToolsOnly(ctx) && d.inventoryImpl != nil && metaToolsPermitted(req.consumer) {
+		// The gateway lists only its own tools: the user's are found with
+		// trustgate_search and called with trustgate_call or from a program,
+		// so the upstreams are not even asked for their lists here.
+		tools := appendGatewayTools([]Tool{}, d.consolidatedDefinitions(ctx, req.consumer))
+		tools = appendGatewayTools(tools, d.codeModeDefinitions(ctx))
+		return map[string]any{"tools": tools}, nil
+	}
 	tools, err := d.composer.ListTools(ctx, req.consumer)
 	if err != nil {
 		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
@@ -383,10 +391,16 @@ func (d *RPCDispatcher) callThrough(
 			map[string]any{"error": "missing_name"},
 		)
 	}
+	if IsCodeModeToolName(args.Name) {
+		// A client that kept the tool list it fetched before Code Mode was
+		// turned on has no trustgate_query of its own: the call-through is its
+		// way to one.
+		return d.runProgram(ctx, req, args.Name, args.Arguments)
+	}
 	if isGatewayToolName(args.Name) {
 		markMetaTool(ctx)
 		return toolErrorResult(
-			args.Name+" is one of the gateway's own tools and is already in your tool list: call it directly, not through "+CallToolName+".",
+			args.Name+" is one of the gateway's own tools: call it directly, not through "+CallToolName+".",
 			map[string]any{"error": "gateway_tool", "name": args.Name},
 		)
 	}

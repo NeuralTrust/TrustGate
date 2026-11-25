@@ -59,6 +59,9 @@ type UpdateInput struct {
 	// MCPCodeMode, when set, sets the MCP Code Mode (off|read_only|full). It is
 	// a reserved metadata key stamped server-side, like StoreMode.
 	MCPCodeMode *string
+	// MCPToolListing, when set, sets which tools MCP tools/list offers
+	// (all|gateway). A reserved metadata key stamped server-side.
+	MCPToolListing *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -174,6 +177,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		codeMode = *in.MCPCodeMode
 	}
 	g.Metadata = domain.WithMCPCodeMode(g.Metadata, codeMode)
+	listing := old.MCPToolListing()
+	if in.MCPToolListing != nil {
+		listing = *in.MCPToolListing
+	}
+	g.Metadata = domain.WithMCPToolListing(g.Metadata, listing)
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
 	}

@@ -27,6 +27,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -85,6 +86,22 @@ func codeModeOffers(mode, tool string) bool {
 	return false
 }
 
+// gatewayToolsOnly reports whether the request's gateway lists only its own
+// tools.
+func gatewayToolsOnly(ctx context.Context) bool {
+	gw, ok := appgateway.FromContext(ctx)
+	return ok && gw.MCPToolListing() == gatewaydomain.MCPToolListingGateway
+}
+
+// ToolListingInstructions tells a client of a gateway that lists only its own
+// tools where the user's are.
+func ToolListingInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
+	if !gatewayToolsOnly(ctx) || !metaToolsPermitted(rc) {
+		return ""
+	}
+	return " The user's tools are not in your tool list: find them with " + SearchToolName + ` {"query": …} and call one with ` + GatewayCallToolName + ` {"tool": <name>, "arguments": {…}}.`
+}
+
 // CodeModeOffered reports which Code Mode tools the request's gateway offers.
 func CodeModeOffered(ctx context.Context) (query, execute bool) {
 	mode := codeModeOf(ctx)
@@ -102,11 +119,33 @@ func CodeModeInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer)
 	query, execute := CodeModeOffered(ctx)
 	switch {
 	case execute:
-		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you."
+		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you." + programFallback
 	case query:
-		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you."
+		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you." + programFallback
 	}
 	return ""
+}
+
+// programFallback tells a client whose tool list predates Code Mode how to
+// run a program anyway.
+const programFallback = " If " + QueryToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + QueryToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": …}}.`
+
+// ProgramHintForEarlierTools closes the earlier inventory tool's answer when
+// the gateway runs Code Mode programs. A client that still uses the earlier
+// tools fetched its list before Code Mode: this answer is the one place it
+// learns that programs exist and how to run one.
+func ProgramHintForEarlierTools(ctx context.Context) string {
+	query, execute := CodeModeOffered(ctx)
+	if !query {
+		return ""
+	}
+	hint := "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
+		CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
+		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer. Only tools that read can be called from it."
+	if execute {
+		hint += " For a program that also writes, use " + ExecuteToolName + " the same way."
+	}
+	return hint
 }
 
 // codeModeDefinitions are the Code Mode tools the gateway offers this
@@ -174,10 +213,14 @@ func programDefinition(name string, limits jsrun.Limits) (Tool, error) {
 
 // programCall is one call a program made, as its answer reports it.
 type programCall struct {
-	Tool  string `json:"tool"`
-	OK    bool   `json:"ok"`
-	Ms    int64  `json:"ms"`
-	Error string `json:"error,omitempty"`
+	Tool string `json:"tool"`
+	// Server is the server the tool resolved to, empty when it resolved to none.
+	Server string `json:"server,omitempty"`
+	OK     bool   `json:"ok"`
+	Ms     int64  `json:"ms"`
+	Error  string `json:"error,omitempty"`
+	// registry is where the call went, for attributing the program's request.
+	registry *registrydomain.Registry
 }
 
 // runProgram serves QueryToolName and ExecuteToolName.
@@ -219,6 +262,7 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		return d.programCall(ctx, req, tool, call, record)
 	})
 	elapsed := time.Since(started)
+	attributeProgram(ctx, calls)
 	var failed *jsrun.Error
 	switch {
 	case errors.As(err, &failed):
@@ -279,8 +323,12 @@ func (d *RPCDispatcher) programCall(
 	record func(programCall),
 ) (jsrun.CallResult, error) {
 	started := time.Now()
+	var reg *registrydomain.Registry
 	done := func(res jsrun.CallResult, err error) (jsrun.CallResult, error) {
-		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds()}
+		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), registry: reg}
+		if reg != nil {
+			c.Server = reg.Name
+		}
 		if res.Err != nil {
 			c.Error = res.Err.Name
 		}
@@ -296,12 +344,12 @@ func (d *RPCDispatcher) programCall(
 	if span != nil {
 		ctx = trace.NewSpanContext(ctx, span)
 	}
-	res, err := d.programCallTraced(ctx, req, program, call)
+	res, err := d.programCallTraced(ctx, req, program, call, &reg)
 	finishProgramSpan(span, res, err)
 	return done(res, err)
 }
 
-func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call) (jsrun.CallResult, error) {
+func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call, reg **registrydomain.Registry) (jsrun.CallResult, error) {
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return jsrun.CallResult{}, err
 	}
@@ -310,6 +358,7 @@ func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchReque
 		d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{}, err)
 		return resolveFailure(err, call.Name, d.closestToolNames(ctx, req.consumer, call.Name))
 	}
+	*reg = target.Registry
 	if program == QueryToolName {
 		if refusal := readOnlyRefusal(target, call.Name, codeModeOf(ctx)); refusal != nil {
 			if span := trace.SpanFromContext(ctx); span != nil {
@@ -486,6 +535,43 @@ func (d *RPCDispatcher) closestToolNames(ctx context.Context, rc *appconsumer.Ro
 		out = append(out, candidates[r.Index].entry.Name)
 	}
 	return out
+}
+
+// attributeProgram names, on the program's own span, the servers its calls
+// went to: Activity's Provider for the program is them, not the gateway. One
+// server is named as a direct call would name it; several by their names,
+// with no registry, host or catalog code, since none of those is the
+// program's.
+func attributeProgram(ctx context.Context, calls []programCall) {
+	span := trace.SpanFromContext(ctx)
+	if span == nil {
+		return
+	}
+	var servers []*registrydomain.Registry
+	seen := make(map[string]struct{})
+	for _, c := range calls {
+		if c.registry == nil {
+			continue
+		}
+		key := c.registry.ID.String()
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		servers = append(servers, c.registry)
+	}
+	switch len(servers) {
+	case 0:
+		return
+	case 1:
+		annotateRegistry(span, servers[0], "")
+	default:
+		names := make([]string, 0, len(servers))
+		for _, reg := range servers {
+			names = append(names, reg.Name)
+		}
+		span.SetMCPUpstream(strings.Join(names, ", "), "", "", "", "", "")
+	}
 }
 
 func startProgramSpan(ctx context.Context, program, tool string) *trace.Span {

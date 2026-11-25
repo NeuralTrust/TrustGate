@@ -136,6 +136,11 @@ func (d *RPCDispatcher) gatewayCall(ctx context.Context, req dispatchRequest, ar
 			map[string]any{"error": "missing_tool"},
 		)
 	}
+	if IsCodeModeToolName(args.Tool) {
+		// As through the earlier call-through: a client whose list predates
+		// Code Mode reaches its tools here.
+		return d.runProgram(ctx, req, args.Tool, args.Arguments)
+	}
 	if isGatewayToolName(args.Tool) {
 		markMetaTool(ctx)
 		return toolErrorResult(

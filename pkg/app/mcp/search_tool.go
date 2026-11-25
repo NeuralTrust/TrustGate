@@ -549,9 +549,9 @@ func programHint(ctx context.Context) string {
 	query, execute := CodeModeOffered(ctx)
 	switch {
 	case execute:
-		return "To do several calls at once, write them in one " + QueryToolName + " (reads only) or " + ExecuteToolName + " program, calling each as await tools.<name>({…}) with the signatures above."
+		return "To do several calls at once, write them in one " + QueryToolName + " (reads only) or " + ExecuteToolName + " program, calling each as await tools.<name>({…}) with the signatures above (through " + GatewayCallToolName + " if the program tool is not in your list)."
 	case query:
-		return "To do several read calls at once, write them in one " + QueryToolName + " program, calling each as await tools.<name>({…}) with the signatures above."
+		return "To do several read calls at once, write them in one " + QueryToolName + " program, calling each as await tools.<name>({…}) with the signatures above (through " + GatewayCallToolName + " if " + QueryToolName + " is not in your list)."
 	}
 	return ""
 }
