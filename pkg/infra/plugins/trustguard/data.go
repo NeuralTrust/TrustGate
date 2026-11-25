@@ -71,9 +71,9 @@ type GuardAttributes struct {
 }
 
 // GuardToolCall identifies the agent's tool call a tools/call executes: the
-// correlation id read from params._meta (toolCallID), the gateway's own key
-// when the caller sent one, else the id the agent sent under its own key, which
-// is the one its hook reports. TrustGuard reads it as attributes.tool.call_id to
+// correlation id read from params._meta (toolCallID): the gateway's own key
+// when the caller sent a usable one, else the id the agent sent under its own
+// key, which is the one its hook reports. TrustGuard reads it as attributes.tool.call_id to
 // count a call checked by both the hook and the gateway once. Absent when the
 // caller sent no usable id.
 type GuardToolCall struct {
