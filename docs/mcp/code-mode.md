@@ -255,8 +255,21 @@ Provider shows for it.
   - `upstream_status`, `rpc_error_code`, `latency_ms`, `tool_risk`, `decision`
   - `error`, the error's name only: never what its message quoted.
 
-  On OTLP it carries `trustgate.mcp.program_calls` and
-  `trustgate.mcp.program_tools` (see
+  The request also carries what the program read and what it returned:
+  - `program_bytes_read`: what its calls handed it, each result as the
+    program saw it (or the error's message and data).
+  - `program_bytes_returned`: the text the client got back, the result and
+    logs, or why it failed.
+
+  The model read the second instead of the first. The console estimates the
+  tokens kept out of the model's context from the difference, at 4 bytes a
+  token. That is a floor: each direct call's result also comes wrapped in its
+  MCP envelope, and whatever enters the conversation is sent again on every
+  later turn.
+
+  On OTLP it carries `trustgate.mcp.program_calls`,
+  `trustgate.mcp.program_tools`, `trustgate.mcp.program_bytes_read` and
+  `trustgate.mcp.program_bytes_returned` (see
   [the OTLP contract](../telemetry/otlp-metadata-contract.md)). Each call has
   its own MCP span, marked with the program (`trace.MCPAttrs.Program`).
 - **Usage.** The program's own request is the gateway's and is not billed.
@@ -267,6 +280,7 @@ Provider shows for it.
   - `trustgate.mcp.code.programs` by `surface`, `tool` and `result`
   - `trustgate.mcp.code.program_duration`
   - `trustgate.mcp.code.program_calls`
+  - `trustgate.mcp.code.bytes_read` and `trustgate.mcp.code.bytes_returned`
 
   A program's first call after a search counts as that search's follow-up in
   `trustgate.mcp.search.follow_ups`, with `via` naming the program's tool.

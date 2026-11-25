@@ -13509,6 +13509,13 @@ const docTemplate = `{
                 "policy_scope": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
                 },
+                "program_bytes_read": {
+                    "description": "ProgramBytesRead is what a Code Mode program's calls handed it, and\nProgramBytesReturned what it handed back to the client: the program\nread the first instead of the model, which read only the second.",
+                    "type": "integer"
+                },
+                "program_bytes_returned": {
+                    "type": "integer"
+                },
                 "prompt": {
                     "type": "string"
                 },
