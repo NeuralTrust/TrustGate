@@ -59,3 +59,18 @@ func TestPrincipalUser_UsesTheAuthenticatedPrincipal(t *testing.T) {
 	assert.Equal(t, "platform@acme.test", user.Email,
 		"the credential's identity, never the one the caller declared")
 }
+
+func TestPrincipalUser_NoAuthMethodForAConnectedAccountEmail(t *testing.T) {
+	rt := trace.New("trace-1", trace.Metadata{GatewayID: "gw-1"})
+	rt.SetPrincipalIdentity("alice", "external_jwt", "ada@acme.test")
+	ctx := trace.NewContext(context.Background(), rt)
+	assert.Equal(t, "external_jwt", principalUser(ctx).AuthMethod, "the credential's own email")
+
+	rt = trace.New("trace-2", trace.Metadata{GatewayID: "gw-1"})
+	rt.SetPrincipalIdentity("alice", "external_jwt", "ada@acme.test")
+	rt.MarkPrincipalEmailConnected()
+	user := principalUser(trace.NewContext(context.Background(), rt))
+	require.NotNil(t, user)
+	assert.Equal(t, "ada@acme.test", user.Email)
+	assert.Empty(t, user.AuthMethod, "a connected-account email is not vouched by the credential's method")
+}
