@@ -144,6 +144,7 @@ func (d *RPCDispatcher) gatewayCall(ctx context.Context, req dispatchRequest, ar
 		)
 	}
 	result, reached, err := d.invokeTool(ctx, req, args.Tool, args.Arguments, meta)
+	d.searchStats.called(ctx, req.consumer, callViaGatewayCall, args.Tool, reached, err)
 	return withSchemaOnFailureVia(GatewayCallToolName, args.Tool, reached, result, err)
 }
 

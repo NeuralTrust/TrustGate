@@ -27,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
@@ -67,6 +68,7 @@ type RPCDispatcher struct {
 	inventoryImpl *inventoryTool
 	agents        AgentTools
 	storeScoper   appstore.Scoper
+	searchStats   *searchMetrics
 	handlers      map[string]rpcHandler
 }
 
@@ -83,6 +85,7 @@ func NewRPCDispatcher(
 	d := &RPCDispatcher{
 		composer: composer, plugins: plugins, limiter: limiter,
 		connections: connections, store: store,
+		searchStats: newSearchMetrics(nil),
 	}
 	d.handlers = map[string]rpcHandler{
 		"tools/list":               d.listTools,
@@ -105,6 +108,13 @@ func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatche
 // WithAgentTools wires the Store's agent meta-tools (see AgentTools).
 func (d *RPCDispatcher) WithAgentTools(agents AgentTools) *RPCDispatcher {
 	d.agents = agents
+	return d
+}
+
+// WithSearchMeter records trustgate_search's metrics on meter instead of the
+// global meter provider's.
+func (d *RPCDispatcher) WithSearchMeter(meter metric.Meter) *RPCDispatcher {
+	d.searchStats = newSearchMetrics(meter)
 	return d
 }
 
@@ -315,7 +325,8 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
-	result, _, err := d.invokeTool(ctx, req, params.Name, params.Arguments, params.Meta)
+	result, reached, err := d.invokeTool(ctx, req, params.Name, params.Arguments, params.Meta)
+	d.searchStats.called(ctx, req.consumer, callViaDirect, params.Name, reached, err)
 	return result, err
 }
 
@@ -359,6 +370,7 @@ func (d *RPCDispatcher) callThrough(
 		)
 	}
 	result, reached, err := d.invokeTool(ctx, req, args.Name, args.Arguments, meta)
+	d.searchStats.called(ctx, req.consumer, callViaCallThrough, args.Name, reached, err)
 	return withSchemaOnFailure(args.Name, reached, result, err)
 }
 
