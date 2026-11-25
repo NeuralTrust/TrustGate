@@ -106,6 +106,7 @@ func (d *RPCDispatcher) search(ctx context.Context, req dispatchRequest, argumen
 	var args searchArgs
 	if len(arguments) > 0 {
 		if err := json.Unmarshal(arguments, &args); err != nil {
+			d.searchStats.searched(ctx, req.consumer, searchKindUnknown, searchResultInvalid)
 			return toolErrorResult(
 				SearchToolName+" takes {\"query\", \"kind\", \"server\", \"name\", \"limit\", \"cursor\"}, all optional, and these arguments could not be read as that. Fix them and call again.",
 				map[string]any{"error": "invalid_arguments"},
@@ -119,12 +120,17 @@ func (d *RPCDispatcher) search(ctx context.Context, req dispatchRequest, argumen
 
 	kinds := d.searchKinds(ctx, req.consumer)
 	if args.Kind != "" && !containsString(kinds, args.Kind) {
+		d.searchStats.searched(ctx, req.consumer, searchKindUnknown, searchResultInvalid)
 		return toolErrorResult(
 			fmt.Sprintf("%s cannot search %q here. It searches: %s.", SearchToolName, args.Kind, strings.Join(kinds, ", ")),
 			map[string]any{"error": "invalid_arguments", "kinds": kinds},
 		)
 	}
 
+	switch args.Kind {
+	case SearchKindCatalog, SearchKindAgent, SearchKindModel:
+		d.searchStats.searched(ctx, req.consumer, args.Kind, searchResultAnswered)
+	}
 	switch args.Kind {
 	case SearchKindCatalog:
 		return d.delegateSearch(ctx, req, StoreSearchToolName, map[string]any{
@@ -149,9 +155,16 @@ func (d *RPCDispatcher) search(ctx context.Context, req dispatchRequest, argumen
 		return nil, err
 	}
 	if args.Name != "" {
-		return d.describeTool(inventory, args.Name, isStore(req.consumer))
+		result, found, err := d.describeTool(inventory, args.Name, isStore(req.consumer))
+		outcome := searchResultNotFound
+		if found {
+			outcome = searchResultFound
+		}
+		d.searchStats.searched(ctx, req.consumer, searchKindDetail, outcome)
+		return result, err
 	}
 	if args.Kind == SearchKindOverview || (args.Kind == "" && args.Query == "" && args.Server == "") {
+		d.searchStats.searched(ctx, req.consumer, SearchKindOverview, searchResultAnswered)
 		return d.overview(ctx, req.consumer, inventory, strings.ToLower(args.Server), args.Brief)
 	}
 	return d.searchTools(ctx, req, inventory, args)
@@ -317,6 +330,15 @@ func (d *RPCDispatcher) searchTools(ctx context.Context, req dispatchRequest, in
 		if len(agents) > 0 {
 			structured["agents"] = agents
 		}
+	}
+	if args.Query != "" {
+		names := make([]string, 0, end-offset)
+		for _, i := range ordered[offset:end] {
+			names = append(names, candidates[i].entry.Name)
+		}
+		d.searchStats.searchedTools(ctx, req.consumer, match, total, len(catalog) > 0 || len(agents) > 0, names, offset)
+	} else {
+		d.searchStats.searchedTools(ctx, req.consumer, match, total, false, nil, offset)
 	}
 	if total == 0 && len(catalog) == 0 && len(agents) == 0 {
 		// Nothing matched. The answer is never just "nothing": it names what
@@ -713,7 +735,8 @@ func overviewStateText(server map[string]any) string {
 // describeTool answers a request for one tool by its exact name. A name that
 // is not on the surface answers with the closest ones that are, so a caller
 // holding a stale or misspelt name is one step from the right one.
-func (d *RPCDispatcher) describeTool(inventory *ToolInventory, name string, store bool) (any, error) {
+// describeTool answers a lookup by name, and whether the name was found.
+func (d *RPCDispatcher) describeTool(inventory *ToolInventory, name string, store bool) (any, bool, error) {
 	candidates := d.candidates(inventory, "")
 	for _, c := range candidates {
 		if c.entry.Name != name {
@@ -749,7 +772,8 @@ func (d *RPCDispatcher) describeTool(inventory *ToolInventory, name string, stor
 		if !c.entry.Callable {
 			fmt.Fprintf(&b, "\n\nIt cannot be called yet: %s %s. Its input schema is known once the server serves it.",
 				c.server.Name, pendingServerPhrase(c.server, store))
-			return marshalToolResult(b.String(), structured)
+			result, err := marshalToolResult(b.String(), structured)
+			return result, true, err
 		}
 		schema := json.RawMessage(`{"type":"object"}`)
 		if len(c.entry.InputSchema) > 0 && json.Valid(c.entry.InputSchema) {
@@ -767,7 +791,8 @@ func (d *RPCDispatcher) describeTool(inventory *ToolInventory, name string, stor
 		}
 		fmt.Fprintf(&b, "\n\nSignature: %s\n\nInput schema: %s", signature, schema)
 		fmt.Fprintf(&b, "\n\nIf %s is not in your own tool list, call it with %s: {\"tool\": %q, \"arguments\": {…}}.", c.entry.Name, GatewayCallToolName, c.entry.Name)
-		return marshalToolResult(b.String(), structured)
+		result, err := marshalToolResult(b.String(), structured)
+		return result, true, err
 	}
 
 	docs := make([]searchDoc, len(candidates))
@@ -789,7 +814,8 @@ func (d *RPCDispatcher) describeTool(inventory *ToolInventory, name string, stor
 	} else {
 		text += " Search for it with " + SearchToolName + " {\"query\": …}."
 	}
-	return marshalToolResult(text, structured)
+	result, err := marshalToolResult(text, structured)
+	return result, false, err
 }
 
 func containsString(list []string, value string) bool {

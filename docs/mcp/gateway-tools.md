@@ -74,10 +74,51 @@ Ranking is BM25 per field. Names weigh 3, titles 2, server name and code 1.5,
 description and parameter names 1. Each field saturates on its own, and the
 description counts each distinct word once, from its first 300 characters and
 40 distinct words. A server that stuffs its descriptions with keywords cannot
-outrank a tool whose name matches. A small synonym list (issue/ticket,
-email/mail, create/new, English/Spanish pairs) widens a query at 0.6 weight.
+outrank a tool whose name matches. On top of the words:
+
+- **Synonyms** (issue/ticket/incidencia, meeting/event/reunión, refund/reembolso…)
+  widen a query at 0.6 weight, both ways. **Implied words** go one way at 0.5:
+  "move" reaches `update`, "schedule" `create`, "cancel" `delete`, "create"
+  `save`, "reply" `comment`, but `update` never reaches "move".
+- **Plurals and accents** fold, including Spanish `-iones` (reuniones →
+  reunión). Two words a tool writes as one count joined ("on call" → oncall).
+- **Intent.** The first verb or question word of the request (show, what, who,
+  find, create, schedule, move, cancel, send, ver, qué, crear, borrar,
+  avisar…) is matched against the first verb in the tool's name past its
+  server's words. A tool that does what was asked counts up to 1.6×, one that
+  does something else 0.7×, and a tool that removes or ends something 0.3× when
+  the request only reads, so a read never gets a delete first.
+- **Server named.** A tool counts 1.5× when the query names its server ("in
+  linear", "on my calendar").
+
 A query that scores nothing falls back to a substring match, so it never finds
 less than the earlier tools did.
+
+### Eval
+
+`testdata/search_eval.json` holds about 170 requests as people write them, in
+English and Spanish, with synonyms, vague and ambiguous asks, each with the
+tools that answer it. `TestSearchEval` ranks them over the catalog's real tools
+twice: a typical Store surface of 25 servers (about 620 tools) and the whole
+catalog (about 2,850). It fails under a floor: recall@1 0.78, recall@10 0.98
+and MRR 0.85 on the typical surface; 0.70, 0.93 and 0.78 on the whole catalog;
+and any read request that gets a destructive tool first.
+
+```sh
+go test ./pkg/app/mcp -run TestSearchEval -v   # the report, with every miss
+```
+
+When a case fails because the ranking is wrong, fix the ranking; change a case
+only when its expected tools are wrong. A ranking change that helps one case
+must not lower the floors.
+
+### Metrics
+
+`trustgate.mcp.searches`, `trustgate.mcp.search.follow_ups` and
+`trustgate.mcp.unknown_tool_calls` measure the ranking on real traffic: empty
+searches, where the search put the tool the caller then called, calls to tools
+the search did not return, calls to tools that do not exist. See
+[operational metrics](../operational-metrics.md).
 
 The ranking only orders. A listing without a query returns every tool, and a
 call by exact name reaches a tool whether or not a search returned it.
@@ -117,5 +158,4 @@ The answer keeps every field the earlier tools answered with (a link keeps its
 
 ## Not done yet
 
-- Shadow comparison of the ranking on real traffic.
 - Code Mode (`trustgate_query`, `trustgate_execute`).

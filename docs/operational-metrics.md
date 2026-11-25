@@ -51,6 +51,32 @@ The product-event pipeline reports its own health:
   exporter reports `0`, so missing telemetry shows up as a value instead of
   an absence of data.
 
+`trustgate_search`, the MCP gateway's search tool, reports how well it serves
+the people who use it (see [gateway tools](mcp/gateway-tools.md)). Its labels
+are bounded: never a query, a tool name, a gateway, a consumer or a person.
+`surface` is `store` or `application` on all three.
+
+- `trustgate.mcp.searches` (`{search}`): every `trustgate_search` call. `kind`
+  is `tool`, `overview`, `detail` (a lookup by `name`), `catalog`, `agent`,
+  `model`, or `unknown` (arguments that could not be read). `result` is
+  `results`, `empty` (no tool matched), `catalog_only` (no tool matched but the
+  Store catalog or an agent did), `found` and `not_found` for a lookup,
+  `answered` for the other kinds, or `invalid`. A tool search adds `match`:
+  `ranked`, `substring` (the ranking scored nothing and the substring fallback
+  answered) or `listing` (no query).
+- `trustgate.mcp.search.follow_ups` (`{call}`): the first tool call a caller
+  makes within 10 minutes of a tool search with a query, by where that search
+  put the tool called. `result` is `hit_1`, `hit_3` (2nd–3rd), `hit_10`
+  (4th–10th), `hit_later` or `not_returned`; `via` is `direct`,
+  `trustgate_call` or `trustgate_call_tool`. Read against
+  `trustgate.mcp.searches{kind="tool",match!="listing"}`: the share of
+  searches followed by a call, and how far down the page that call was. The
+  last search is kept per replica, so with several replicas the counts are a
+  lower bound.
+- `trustgate.mcp.unknown_tool_calls` (`{call}`): tool calls naming a tool
+  nobody serves, by `via` and `after_search` (whether the caller searched in
+  the 10 minutes before).
+
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.
 

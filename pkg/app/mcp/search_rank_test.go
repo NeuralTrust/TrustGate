@@ -156,3 +156,119 @@ func TestSearchTokens(t *testing.T) {
 		}
 	}
 }
+
+// calendarCorpus is a server whose tools share their nouns and differ by verb.
+var calendarCorpus = []searchDoc{
+	{Name: "calendar_list_events", Server: "Google Calendar", Code: "com.google.workspace/calendar", Description: "List events in a time range."},
+	{Name: "calendar_create_event", Server: "Google Calendar", Code: "com.google.workspace/calendar", Description: "Create a calendar event."},
+	{Name: "calendar_update_event", Server: "Google Calendar", Code: "com.google.workspace/calendar", Description: "Update an existing calendar event."},
+	{Name: "calendar_delete_event", Server: "Google Calendar", Code: "com.google.workspace/calendar", Description: "Delete a calendar event."},
+	{Name: "pagerduty_list_schedules", Server: "PagerDuty", Code: "com.pagerduty/mcp", Description: "List on-call schedules."},
+	{Name: "pagerduty_list_oncalls", Server: "PagerDuty", Code: "com.pagerduty/mcp", Description: "List who is on call."},
+	{Name: "box_who_am_i", Server: "Box", Code: "com.box/mcp", Description: "Get the current user."},
+}
+
+func topOf(query string, docs []searchDoc) string {
+	ranked := rankSearchDocs(query, docs)
+	if len(ranked) == 0 {
+		return ""
+	}
+	return docs[ranked[0].Index].Name
+}
+
+// The verb a request asks with picks among tools that share the noun.
+func TestRankSearchDocs_TheVerbPicksTheTool(t *testing.T) {
+	t.Parallel()
+	for query, want := range map[string]string{
+		"what's on my calendar today":   "calendar_list_events",
+		"schedule a meeting with ana":   "calendar_create_event",
+		"move my 3pm meeting to 4pm":    "calendar_update_event",
+		"cancel the standup event":      "calendar_delete_event",
+		"qué reuniones tengo hoy":       "calendar_list_events",
+		"borrar el evento del viernes":  "calendar_delete_event",
+		"who is on call":                "pagerduty_list_oncalls",
+		"quién está de guardia":         "pagerduty_list_oncalls",
+		"reprogramar la reunión":        "calendar_update_event",
+		"show the events of the day":    "calendar_list_events",
+		"agendar una reunión con marta": "calendar_create_event",
+	} {
+		if got := topOf(query, calendarCorpus); got != want {
+			t.Fatalf("%q: top = %s, want %s", query, got, want)
+		}
+	}
+}
+
+// A request that only reads never gets a tool that removes something first,
+// even when the removal is the closer match by its words.
+func TestRankSearchDocs_AReadNeverGetsARemovalFirst(t *testing.T) {
+	t.Parallel()
+	docs := []searchDoc{
+		{Name: "tasks_delete_task", Server: "Tasks", Description: "Delete my task."},
+		{Name: "tasks_get_my_tasks", Server: "Tasks", Description: "Get tasks."},
+	}
+	for _, query := range []string{"show my task", "what are my tasks", "ver mis tareas"} {
+		if got := topOf(query, docs); got != "tasks_get_my_tasks" {
+			t.Fatalf("%q: top = %s, want the read", query, got)
+		}
+	}
+	if got := topOf("delete my task", docs); got != "tasks_delete_task" {
+		t.Fatalf("a removal asked for is still found: top = %s", got)
+	}
+}
+
+// A request that names a server is about that server's tools.
+func TestRankSearchDocs_NamingTheServerKeepsItsTools(t *testing.T) {
+	t.Parallel()
+	docs := []searchDoc{
+		{Name: "atlassian_addCommentToJiraIssue", Server: "Atlassian", Code: "com.atlassian/mcp", Description: "Add a comment to a Jira issue."},
+		{Name: "linear_save_comment", Server: "Linear", Code: "app.linear/mcp", Description: "Create or update a comment."},
+	}
+	if got := topOf("add a comment to a linear issue", docs); got != "linear_save_comment" {
+		t.Fatalf("top = %s, want linear_save_comment", got)
+	}
+}
+
+func TestIntentFactor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		request, tool action
+		want          float64
+	}{
+		{0, actionDelete, 1},
+		{actionRead, 0, 1},
+		{actionRead, actionRead, 1 + intentBoost},
+		{actionSearch | actionRead, actionRead, 1 + intentBoost/2},
+		{actionCreate, actionCreate | actionUpdate, 1 + intentBoost},
+		{actionCreate, actionRead, intentPenalty},
+		{actionRead, actionDelete, destructivePenalty},
+		{actionSearch | actionRead, actionDelete, destructivePenalty},
+		{actionUpdate, actionDelete, intentPenalty},
+	} {
+		if got := intentFactor(tc.request, tc.tool); got != tc.want {
+			t.Fatalf("intentFactor(%b, %b) = %v, want %v", tc.request, tc.tool, got, tc.want)
+		}
+	}
+}
+
+func TestToolAction_SkipsTheServersOwnWords(t *testing.T) {
+	t.Parallel()
+	doc := indexSearchDoc(searchDoc{Name: "save_drive_list_files", Server: "Save Drive"})
+	if doc.action != actionRead {
+		t.Fatalf("action = %b, want read: the server is named Save, the tool lists", doc.action)
+	}
+}
+
+func TestNormalizeToken_SpanishPlurals(t *testing.T) {
+	t.Parallel()
+	for word, want := range map[string]string{
+		"reuniones": "reunion",
+		"acciones":  "accion",
+		"tareas":    "tarea",
+		"issues":    "issue",
+		"policies":  "policy",
+	} {
+		if got := normalizeToken(word); got != want {
+			t.Fatalf("normalizeToken(%q) = %q, want %q", word, got, want)
+		}
+	}
+}

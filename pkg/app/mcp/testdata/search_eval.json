@@ -1,0 +1,1463 @@
+{
+ "description": "Search eval for trustgate_search: each case is a request a person makes, written the way they would ask it, and the tools that answer it. Any listed tool counts as a hit. intent is read when the person only wants to look. See search_eval_test.go.",
+ "surface": [
+  "app.linear/mcp",
+  "com.atlassian/mcp",
+  "com.notion/mcp",
+  "com.google.workspace/gmail",
+  "com.google.workspace/calendar",
+  "com.google.workspace/drive",
+  "com.microsoft/outlook",
+  "com.stripe/mcp",
+  "dev.sentry/mcp",
+  "com.hubspot/mcp",
+  "com.asana/mcp",
+  "com.pagerduty/mcp",
+  "com.datadoghq/mcp",
+  "com.box/mcp",
+  "com.monday/mcp",
+  "com.airtable/mcp",
+  "net.todoist/mcp",
+  "us.zoom/team-chat",
+  "com.intercom/mcp",
+  "com.vercel/mcp",
+  "com.supabase/mcp",
+  "com.frontapp/mcp",
+  "ai.granola/mcp",
+  "com.dropbox/mcp",
+  "com.calendly/mcp"
+ ],
+ "cases": [
+  {
+   "query": "list my linear issues",
+   "expect": [
+    "linear_list_issues"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "show the issues assigned to me in Linear",
+   "expect": [
+    "linear_list_issues"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "open a new linear ticket for the login crash",
+   "expect": [
+    "linear_save_issue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "create a bug in linear",
+   "expect": [
+    "linear_save_issue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "update the status of a linear issue to done",
+   "expect": [
+    "linear_save_issue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "add a comment to a linear issue",
+   "expect": [
+    "linear_save_comment"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "reply on the linear ticket ENG-412",
+   "expect": [
+    "linear_save_comment"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "read the comments on a linear issue",
+   "expect": [
+    "linear_list_comments"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "get the details of linear issue ENG-12",
+   "expect": [
+    "linear_get_issue"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list linear projects",
+   "expect": [
+    "linear_list_projects"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "which teams exist in linear",
+   "expect": [
+    "linear_list_teams"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "current linear cycle",
+   "expect": [
+    "linear_list_cycles"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "post a project status update in linear",
+   "expect": [
+    "linear_save_status_update"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "what labels can I use on linear issues",
+   "expect": [
+    "linear_list_issue_labels"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "crear una incidencia en linear",
+   "expect": [
+    "linear_save_issue"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "listar mis incidencias de linear",
+   "expect": [
+    "linear_list_issues"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "comentar en una incidencia de linear",
+   "expect": [
+    "linear_save_comment"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "ver los proyectos de linear",
+   "expect": [
+    "linear_list_projects"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "create a jira issue",
+   "expect": [
+    "atlassian_createJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search jira with jql for open bugs",
+   "expect": [
+    "atlassian_searchJiraIssuesUsingJql"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "find jira tickets in the PAY project",
+   "expect": [
+    "atlassian_searchJiraIssuesUsingJql"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "move a jira issue to in progress",
+   "expect": [
+    "atlassian_transitionJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "comment on a jira ticket",
+   "expect": [
+    "atlassian_addCommentToJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "log two hours of work on a jira issue",
+   "expect": [
+    "atlassian_addWorklogToJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "edit the summary of a jira issue",
+   "expect": [
+    "atlassian_editJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "get jira issue PAY-77",
+   "expect": [
+    "atlassian_getJiraIssue"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "write a confluence page with the release notes",
+   "expect": [
+    "atlassian_createConfluencePage"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search confluence for the onboarding guide",
+   "expect": [
+    "atlassian_searchConfluenceUsingCql",
+    "atlassian_search"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "read a confluence page",
+   "expect": [
+    "atlassian_getConfluencePage"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list confluence spaces",
+   "expect": [
+    "atlassian_getConfluenceSpaces"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "crear un ticket en jira",
+   "expect": [
+    "atlassian_createJiraIssue"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "buscar tickets de jira abiertos",
+   "expect": [
+    "atlassian_searchJiraIssuesUsingJql"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "actualizar una página de confluence",
+   "expect": [
+    "atlassian_updateConfluencePage"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "search notion for the roadmap",
+   "expect": [
+    "notion_notion-search"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a notion page with the meeting notes",
+   "expect": [
+    "notion_notion-create-pages"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "update a notion page",
+   "expect": [
+    "notion_notion-update-page"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "query a notion database",
+   "expect": [
+    "notion_notion-query-data-sources",
+    "notion_notion-query-database-view"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a new notion database for leads",
+   "expect": [
+    "notion_notion-create-database"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "comment on a notion page",
+   "expect": [
+    "notion_notion-create-comment"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "duplicate a notion page",
+   "expect": [
+    "notion_notion-duplicate-page"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "buscar en notion la documentación de onboarding",
+   "expect": [
+    "notion_notion-search"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "crear una página en notion",
+   "expect": [
+    "notion_notion-create-pages"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "search my email for the invoice from acme",
+   "expect": [
+    "google_workspace_gmail_search_threads"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "find emails from my boss",
+   "expect": [
+    "google_workspace_gmail_search_threads"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "draft an email to the team",
+   "expect": [
+    "google_workspace_gmail_create_draft"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "write a gmail draft replying to sara",
+   "expect": [
+    "google_workspace_gmail_create_draft"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "read the email thread about the contract",
+   "expect": [
+    "google_workspace_gmail_get_thread",
+    "google_workspace_gmail_search_threads"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "label this gmail thread as finance",
+   "expect": [
+    "google_workspace_gmail_label_thread"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "move the newsletter email to trash",
+   "expect": [
+    "google_workspace_gmail_trash_thread",
+    "google_workspace_gmail_trash_message"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "mark that email as spam",
+   "expect": [
+    "google_workspace_gmail_mark_thread_spam",
+    "google_workspace_gmail_mark_message_spam"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "what labels do I have in gmail",
+   "expect": [
+    "google_workspace_gmail_list_labels"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "buscar correos de facturas",
+   "expect": [
+    "google_workspace_gmail_search_threads",
+    "microsoft_outlook_mcp_MailTools_graph_mail_searchMessages"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "redactar un correo para el cliente",
+   "expect": [
+    "google_workspace_gmail_create_draft",
+    "microsoft_outlook_mcp_MailTools_graph_mail_createMessage"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "leer el correo de ayer de recursos humanos",
+   "expect": [
+    "google_workspace_gmail_search_threads",
+    "google_workspace_gmail_get_message",
+    "google_workspace_gmail_get_thread",
+    "microsoft_outlook_mcp_MailTools_graph_mail_searchMessages"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "send an email with outlook",
+   "expect": [
+    "microsoft_outlook_mcp_MailTools_graph_mail_sendMail"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "reply to an outlook message",
+   "expect": [
+    "microsoft_outlook_mcp_MailTools_graph_mail_reply",
+    "microsoft_outlook_mcp_MailTools_graph_mail_replyAll"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search my outlook inbox for the offer letter",
+   "expect": [
+    "microsoft_outlook_mcp_MailTools_graph_mail_searchMessages"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list the emails I sent in outlook",
+   "expect": [
+    "microsoft_outlook_mcp_MailTools_graph_mail_listSent"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "what's on my calendar tomorrow",
+   "expect": [
+    "google_workspace_calendar_list_events",
+    "google_workspace_calendar_search_events"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "schedule a meeting with ana on friday",
+   "expect": [
+    "google_workspace_calendar_create_event"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "find a free slot for a 30 minute call with the design team",
+   "expect": [
+    "google_workspace_calendar_suggest_time"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "move my 3pm meeting to 4pm",
+   "expect": [
+    "google_workspace_calendar_update_event"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "cancel the standup event",
+   "expect": [
+    "google_workspace_calendar_delete_event"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "accept the invitation to the offsite",
+   "expect": [
+    "google_workspace_calendar_respond_to_event"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "list my calendars",
+   "expect": [
+    "google_workspace_calendar_list_calendars"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "crear un evento en el calendario el lunes",
+   "expect": [
+    "google_workspace_calendar_create_event"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "qué reuniones tengo hoy",
+   "expect": [
+    "google_workspace_calendar_list_events",
+    "google_workspace_calendar_search_events",
+    "granola_list_meetings"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "search google drive for the q3 budget spreadsheet",
+   "expect": [
+    "google_workspace_drive_search_files"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "read the contents of a drive document",
+   "expect": [
+    "google_workspace_drive_read_file_content",
+    "google_workspace_drive_download_file_content"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "show my recent files in drive",
+   "expect": [
+    "google_workspace_drive_list_recent_files"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "who has access to this drive file",
+   "expect": [
+    "google_workspace_drive_get_file_permissions"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a new google doc",
+   "expect": [
+    "google_workspace_drive_create_file"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "upload a file to box",
+   "expect": [
+    "box_upload_file"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search box for the signed nda",
+   "expect": [
+    "box_search_files_keyword"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "share a box folder with a link",
+   "expect": [
+    "box_add_folder_shared_link"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "ask box ai a question about this contract",
+   "expect": [
+    "box_ai_qa_single_file"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list the files in a box folder",
+   "expect": [
+    "box_list_folder_content_by_folder_id"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a folder in dropbox",
+   "expect": [
+    "dropbox_CreateFolder"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search dropbox for the pitch deck",
+   "expect": [
+    "dropbox_Search"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "get a shareable link for a dropbox file",
+   "expect": [
+    "dropbox_CreateSharedLink"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "buscar el contrato en drive",
+   "expect": [
+    "google_workspace_drive_search_files",
+    "box_search_files_keyword",
+    "dropbox_Search"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "subir un archivo a box",
+   "expect": [
+    "box_upload_file"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "list stripe customers",
+   "expect": [
+    "stripe_list_customers"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a stripe customer for acme corp",
+   "expect": [
+    "stripe_create_customer"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "refund the last payment",
+   "expect": [
+    "stripe_create_refund"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "issue a refund in stripe",
+   "expect": [
+    "stripe_create_refund"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "cancel a customer's subscription",
+   "expect": [
+    "stripe_cancel_subscription"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "check my stripe balance",
+   "expect": [
+    "stripe_retrieve_balance"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a payment link for the pro plan",
+   "expect": [
+    "stripe_create_payment_link"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "list open invoices in stripe",
+   "expect": [
+    "stripe_list_invoices"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a coupon with 20 percent off",
+   "expect": [
+    "stripe_create_coupon"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "show disputes",
+   "expect": [
+    "stripe_list_disputes"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "listar clientes de stripe",
+   "expect": [
+    "stripe_list_customers"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "hacer un reembolso",
+   "expect": [
+    "stripe_create_refund"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "crear una factura en stripe",
+   "expect": [
+    "stripe_create_invoice"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "search sentry for errors in checkout",
+   "expect": [
+    "sentry_search_issues",
+    "sentry_search_events"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "show the details of a sentry issue",
+   "expect": [
+    "sentry_get_issue_details"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "analyze a sentry issue with seer",
+   "expect": [
+    "sentry_analyze_issue_with_seer"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list sentry projects",
+   "expect": [
+    "sentry_find_projects"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "search the datadog logs for 500 errors",
+   "expect": [
+    "datadoghq_search_datadog_logs",
+    "datadoghq_analyze_datadog_logs"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "look at the cpu metric for the api service",
+   "expect": [
+    "datadoghq_get_datadog_metric",
+    "datadoghq_search_datadog_metrics"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "find datadog monitors that are alerting",
+   "expect": [
+    "datadoghq_search_datadog_monitors"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a datadog monitor for latency",
+   "expect": [
+    "datadoghq_create_datadog_monitor"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search datadog traces for the slow request",
+   "expect": [
+    "datadoghq_get_datadog_trace",
+    "datadoghq_search_datadog_spans",
+    "datadoghq_apm_search_spans",
+    "datadoghq_apm_query_trace"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "open a datadog dashboard",
+   "expect": [
+    "datadoghq_get_datadog_dashboard",
+    "datadoghq_search_datadog_dashboards"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list active pagerduty incidents",
+   "expect": [
+    "pagerduty_list_incidents"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "who is on call right now",
+   "expect": [
+    "pagerduty_list_oncalls"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "acknowledge the pagerduty incident",
+   "expect": [
+    "pagerduty_manage_incidents"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "resolve an incident in pagerduty",
+   "expect": [
+    "pagerduty_manage_incidents"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "show the pagerduty schedule for the platform team",
+   "expect": [
+    "pagerduty_get_schedule",
+    "pagerduty_list_schedules"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "buscar errores en sentry",
+   "expect": [
+    "sentry_search_issues",
+    "sentry_search_events"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "quién está de guardia",
+   "expect": [
+    "pagerduty_list_oncalls"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "ver los logs de datadog del servicio de pagos",
+   "expect": [
+    "datadoghq_search_datadog_logs",
+    "datadoghq_analyze_datadog_logs"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "find the contact jane doe in hubspot",
+   "expect": [
+    "hubspot_search_crm_objects"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "search hubspot deals closing this month",
+   "expect": [
+    "hubspot_search_crm_objects"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "update a deal stage in hubspot",
+   "expect": [
+    "hubspot_manage_crm_objects"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "create a company record in the crm",
+   "expect": [
+    "hubspot_manage_crm_objects"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search intercom conversations about billing",
+   "expect": [
+    "intercom_search_conversations"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "find a customer in intercom by email",
+   "expect": [
+    "intercom_search_contacts"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "write a help center article in intercom",
+   "expect": [
+    "intercom_create_article"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "reply to a customer conversation in front",
+   "expect": [
+    "frontapp_send_reply"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "assign the front conversation to marta",
+   "expect": [
+    "frontapp_assign_conversation"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "search front for conversations about refunds",
+   "expect": [
+    "frontapp_search_conversations"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "buscar un contacto en hubspot",
+   "expect": [
+    "hubspot_search_crm_objects"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "show my asana tasks",
+   "expect": [
+    "asana_get_my_tasks"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a task in asana for the launch",
+   "expect": [
+    "asana_create_tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "mark an asana task as complete",
+   "expect": [
+    "asana_update_tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "comment on an asana task",
+   "expect": [
+    "asana_add_comment"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "delete an asana task",
+   "expect": [
+    "asana_delete_task"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "create an item on the monday board",
+   "expect": [
+    "monday_create_item"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "change the status column of a monday item",
+   "expect": [
+    "monday_change_item_column_values"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "get the items of a monday board",
+   "expect": [
+    "monday_get_board_items_page"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "add a todo to buy milk tomorrow",
+   "expect": [
+    "todoist_add-tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "what are my todoist tasks for today",
+   "expect": [
+    "todoist_find-tasks-by-date",
+    "todoist_find-tasks"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "complete the todoist task",
+   "expect": [
+    "todoist_complete-tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "reschedule my todoist tasks to next week",
+   "expect": [
+    "todoist_reschedule-tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "list the records in an airtable table",
+   "expect": [
+    "airtable_list_records_for_table"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "add rows to an airtable base",
+   "expect": [
+    "airtable_create_records_for_table"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "update a record in airtable",
+   "expect": [
+    "airtable_update_records_for_table"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "delete records from airtable",
+   "expect": [
+    "airtable_delete_records_for_table"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "añadir una tarea a todoist",
+   "expect": [
+    "todoist_add-tasks"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "mis tareas de asana",
+   "expect": [
+    "asana_get_my_tasks"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "crear un registro en airtable",
+   "expect": [
+    "airtable_create_records_for_table"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "send a message in a zoom chat channel",
+   "expect": [
+    "zoom_team_chat_zoom_chat_message_send"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "create a zoom chat channel for the project",
+   "expect": [
+    "zoom_team_chat_zoom_chat_channel_create"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "get the transcript of yesterday's meeting",
+   "expect": [
+    "granola_get_meeting_transcript"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list my recent meetings notes",
+   "expect": [
+    "granola_list_meetings",
+    "granola_query_granola_meetings"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "enviar un mensaje al canal del equipo",
+   "expect": [
+    "zoom_team_chat_zoom_chat_message_send"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "transcripción de la reunión con el cliente",
+   "expect": [
+    "granola_get_meeting_transcript",
+    "granola_query_granola_meetings"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "list my calendly event types",
+   "expect": [
+    "calendly_event_types-list_event_types"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "create a single use scheduling link",
+   "expect": [
+    "calendly_scheduling_links-create_single_use_scheduling_link"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "cancel a calendly meeting",
+   "expect": [
+    "calendly_meetings-cancel_event"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "list upcoming calendly meetings",
+   "expect": [
+    "calendly_meetings-list_events"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "list vercel deployments",
+   "expect": [
+    "vercel_list_deployments"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "show the build logs of the last deployment",
+   "expect": [
+    "vercel_get_deployment_build_logs"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "deploy this project to vercel",
+   "expect": [
+    "vercel_deploy_to_vercel"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "check if a domain is available",
+   "expect": [
+    "vercel_check_domain_availability_and_price"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "run a sql query on supabase",
+   "expect": [
+    "supabase_execute_sql"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "list the tables in my supabase database",
+   "expect": [
+    "supabase_list_tables"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "apply a database migration",
+   "expect": [
+    "supabase_apply_migration"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "show supabase logs for the auth service",
+   "expect": [
+    "supabase_get_logs"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "generate typescript types for my database",
+   "expect": [
+    "supabase_generate_typescript_types"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "ver los despliegues de vercel",
+   "expect": [
+    "vercel_list_deployments"
+   ],
+   "intent": "read",
+   "lang": "es"
+  },
+  {
+   "query": "ejecutar una consulta sql",
+   "expect": [
+    "supabase_execute_sql"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "open a bug ticket for the payment failure",
+   "expect": [
+    "linear_save_issue",
+    "atlassian_createJiraIssue",
+    "asana_create_tasks",
+    "monday_create_item"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "track this as a task",
+   "expect": [
+    "linear_save_issue",
+    "atlassian_createJiraIssue",
+    "asana_create_tasks",
+    "monday_create_item",
+    "todoist_add-tasks"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "let the customer know their refund was processed",
+   "expect": [
+    "google_workspace_gmail_create_draft",
+    "microsoft_outlook_mcp_MailTools_graph_mail_sendMail",
+    "frontapp_send_reply",
+    "intercom_search_conversations"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "find the document about our pricing",
+   "expect": [
+    "notion_notion-search",
+    "google_workspace_drive_search_files",
+    "atlassian_search",
+    "box_search_files_keyword",
+    "dropbox_Search"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "what broke in production last night",
+   "expect": [
+    "sentry_search_issues",
+    "pagerduty_list_incidents",
+    "datadoghq_search_datadog_events",
+    "datadoghq_search_datadog_incidents",
+    "sentry_search_events"
+   ],
+   "intent": "read",
+   "lang": "en"
+  },
+  {
+   "query": "tell the team the release is out",
+   "expect": [
+    "zoom_team_chat_zoom_chat_message_send",
+    "google_workspace_gmail_create_draft",
+    "microsoft_outlook_mcp_MailTools_graph_mail_sendMail"
+   ],
+   "intent": "write",
+   "lang": "en"
+  },
+  {
+   "query": "abrir un bug por el fallo de pagos",
+   "expect": [
+    "linear_save_issue",
+    "atlassian_createJiraIssue",
+    "asana_create_tasks",
+    "monday_create_item"
+   ],
+   "intent": "write",
+   "lang": "es"
+  },
+  {
+   "query": "avisar al equipo de que la versión ya está publicada",
+   "expect": [
+    "zoom_team_chat_zoom_chat_message_send",
+    "google_workspace_gmail_create_draft",
+    "microsoft_outlook_mcp_MailTools_graph_mail_sendMail"
+   ],
+   "intent": "write",
+   "lang": "es"
+  }
+ ]
+}
