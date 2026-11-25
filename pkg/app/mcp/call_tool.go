@@ -112,6 +112,7 @@ var errCallToolArgumentsNotObject = errors.New("mcp: call-through arguments are 
 // the call-through is a loop with no end.
 func isGatewayToolName(name string) bool {
 	return IsConsolidatedToolName(name) ||
+		IsCodeModeToolName(name) ||
 		name == CallToolName ||
 		name == InventoryToolName ||
 		name == ListAgentsToolName ||

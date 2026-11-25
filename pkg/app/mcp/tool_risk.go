@@ -64,3 +64,19 @@ func (t Tool) Risk() (risk string, openWorld *bool) {
 		return ToolRiskAdditive, &world
 	}
 }
+
+// DeclaresOpenWorld reports whether the tool's server says, in so many words,
+// that it reaches an open world (openWorldHint: true), rather than leaving the
+// hint to its default. Code Mode keeps such a tool out of read-only programs:
+// a program could put what it read into the query of a web search or a fetch.
+func (t Tool) DeclaresOpenWorld() bool {
+	raw, ok := t.payload["annotations"]
+	if !ok {
+		return false
+	}
+	var hints toolHints
+	if err := json.Unmarshal(raw, &hints); err != nil {
+		return false
+	}
+	return hints.OpenWorld != nil && *hints.OpenWorld
+}

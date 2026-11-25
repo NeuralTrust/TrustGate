@@ -18,6 +18,7 @@ linters:
   exclusions:
     paths:
       - vendor
+      - third_party
       - ".*\\.pb\\.go$"
       - ".*_gen\\.go$"
       - ".*_mock\\.go$"

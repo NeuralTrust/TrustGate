@@ -9470,6 +9470,15 @@
                         }
                     ]
                 },
+                "mcp_code_mode": {
+                    "description": "MCPCodeMode sets MCP Code Mode: \"off\" (the default), \"read_only\"\n(trustgate_query: programs that call the user's read-only tools) or\n\"full\" (also trustgate_execute: programs that call any of their tools).\nOmitted leaves it unchanged.",
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "read_only",
+                        "full"
+                    ]
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {
@@ -9540,6 +9549,15 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "mcp_code_mode": {
+                    "description": "MCPCodeMode is the gateway's MCP Code Mode: off, read_only or full.",
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "read_only",
+                        "full"
+                    ]
                 },
                 "metadata": {
                     "type": "object",
@@ -10376,6 +10394,13 @@
                 "openapi": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest"
                 },
+                "read_only_tools": {
+                    "description": "ReadOnlyTools are the server's tools, by the name the server gives\nthem, that an admin vouches only read: MCP Code Mode's trustgate_query\nmay call them even when the server does not annotate them. Omitted on\nupdate, the stored list is kept; an empty list clears it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "source": {
                     "type": "string"
                 },
@@ -11126,6 +11151,13 @@
                 "origin": {
                     "description": "Origin is \"store\" when the gateway materialised this registry from the\ncatalog itself (self-service install, approval, consumer binding).",
                     "type": "string"
+                },
+                "read_only_tools": {
+                    "description": "ReadOnlyTools are the tools an admin vouches only read (MCP Code Mode).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "source": {
                     "type": "string"
@@ -13428,6 +13460,13 @@
                 "account_ref": {
                     "type": "string"
                 },
+                "calls": {
+                    "description": "Calls are the tool calls a Code Mode program made, for a\ntrustgate_query or trustgate_execute request: one per call, in the\norder they started. The request's own fields describe the program.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall"
+                    }
+                },
                 "catalog_code": {
                     "type": "string"
                 },
@@ -13481,6 +13520,44 @@
                 },
                 "upstream_latency_ms": {
                     "type": "integer"
+                },
+                "upstream_status": {
+                    "type": "integer"
+                },
+                "upstream_tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "rpc_error_code": {
+                    "type": "integer"
+                },
+                "server_name": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                },
+                "tool_risk": {
+                    "type": "string"
                 },
                 "upstream_status": {
                     "type": "integer"

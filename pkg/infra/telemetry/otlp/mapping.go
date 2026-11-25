@@ -63,6 +63,8 @@ const (
 	attrMCPDecision          = "trustgate.mcp.decision"
 	attrMCPToolRisk          = "trustgate.mcp.tool_risk"
 	attrMCPToolOpenWorld     = "trustgate.mcp.tool_open_world"
+	attrMCPProgramCalls      = "trustgate.mcp.program_calls"
+	attrMCPProgramTools      = "trustgate.mcp.program_tools"
 
 	attrA2AMethod              = "trustgate.a2a.method"
 	attrA2ARegistryID          = "trustgate.a2a.registry_id"
@@ -228,6 +230,11 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrMCPToolRisk, evt.MCP.ToolRisk)
 		if evt.MCP.ToolOpenWorld != nil {
 			attrs = append(attrs, attribute.Bool(attrMCPToolOpenWorld, *evt.MCP.ToolOpenWorld))
+		}
+		if len(evt.MCP.Calls) > 0 {
+			attrs = append(attrs,
+				attribute.Int(attrMCPProgramCalls, len(evt.MCP.Calls)),
+				attribute.StringSlice(attrMCPProgramTools, programTools(evt.MCP.Calls)))
 		}
 	}
 	if evt.A2A != nil {
@@ -396,4 +403,25 @@ func jsonString(v interface{}) string {
 		return ""
 	}
 	return string(data)
+}
+
+// maxProgramTools bounds trustgate.mcp.program_tools.
+const maxProgramTools = 50
+
+// programTools are the distinct tools a Code Mode program called, in the
+// order it first called them.
+func programTools(calls []events.MCPCall) []string {
+	seen := make(map[string]struct{}, len(calls))
+	out := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if _, dup := seen[call.Tool]; dup || call.Tool == "" {
+			continue
+		}
+		if len(out) == maxProgramTools {
+			break
+		}
+		seen[call.Tool] = struct{}{}
+		out = append(out, call.Tool)
+	}
+	return out
 }

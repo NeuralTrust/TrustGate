@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"strings"
 	"testing"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
@@ -818,6 +819,54 @@ func TestUpdater_Update_UserHeadersKeptWhenOmittedAndClearedWhenEmpty(t *testing
 			}
 			if len(got.MCPTarget.UserHeaders) != tc.want {
 				t.Fatalf("user headers = %+v, want %d", got.MCPTarget.UserHeaders, tc.want)
+			}
+		})
+	}
+}
+
+// An admin's read-only list is kept when an update omits it, cleared by an
+// empty one and replaced (trimmed, deduplicated, sorted) by a new one.
+func TestUpdater_Update_ReadOnlyToolsKeptWhenOmittedAndClearedWhenEmpty(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		incoming []string
+		want     []string
+	}{
+		{name: "omitted keeps the list", incoming: nil, want: []string{"list_issues"}},
+		{name: "empty list clears it", incoming: []string{}, want: []string{}},
+		{name: "a new list replaces it", incoming: []string{" search ", "get_issue", "search", ""}, want: []string{"get_issue", "search"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "linear", "", &domain.MCPTarget{
+				URL:           "https://linear.example.com/mcp",
+				ReadOnlyTools: []string{"list_issues"},
+			})
+			if err != nil {
+				t.Fatalf("NewMCPRegistry error: %v", err)
+			}
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+			updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+			got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+				ID:        existing.ID,
+				MCPTarget: &domain.MCPTarget{ReadOnlyTools: tc.incoming},
+			})
+			if err != nil {
+				t.Fatalf("Update error: %v", err)
+			}
+			if strings.Join(got.MCPTarget.ReadOnlyTools, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("read-only tools = %q, want %q", got.MCPTarget.ReadOnlyTools, tc.want)
+			}
+			for _, name := range tc.want {
+				if !got.MCPTarget.IsReadOnlyTool(name) {
+					t.Fatalf("%s is not read-only", name)
+				}
 			}
 		})
 	}

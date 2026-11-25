@@ -452,12 +452,31 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 	}
 	var mcp *events.MCP
 	var upstreamMs int64
+	var calls []events.MCPCall
 	for _, span := range requestTrace.Spans() {
 		if span.Type != trace.SpanMCP {
 			continue
 		}
 		attrs, ok := span.MCPAttrsCopy()
 		if !ok {
+			continue
+		}
+		if attrs.Program != "" {
+			// A call a Code Mode program made: it is listed under the
+			// program's request, whose own span is the event.
+			calls = append(calls, events.MCPCall{
+				Tool:           attrs.Tool,
+				UpstreamTool:   attrs.UpstreamTool,
+				ServerName:     attrs.ServerName,
+				RegistryID:     attrs.RegistryID,
+				CatalogCode:    attrs.CatalogCode,
+				UpstreamStatus: attrs.UpstreamStatus,
+				RPCErrorCode:   attrs.RPCErrorCode,
+				LatencyMs:      span.Latency().Milliseconds(),
+				ToolRisk:       attrs.ToolRisk,
+				Decision:       attrs.Decision,
+				Error:          errorKind(span.Error()),
+			})
 			continue
 		}
 		upstreamMs += span.Latency().Milliseconds()
@@ -482,6 +501,9 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			ToolRisk:       attrs.ToolRisk,
 			ToolOpenWorld:  attrs.ToolOpenWorld,
 		}
+	}
+	if mcp != nil && len(calls) > 0 {
+		mcp.Calls = calls
 	}
 	return mcp, upstreamMs
 }
@@ -849,4 +871,18 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// errorKind is the part of an error message before its first colon (the
+// error's name, for a Code Mode call), so an event names how a call failed
+// without carrying what the message quoted.
+func errorKind(msg string) string {
+	if i := strings.IndexByte(msg, ':'); i >= 0 {
+		msg = msg[:i]
+	}
+	msg = strings.TrimSpace(msg)
+	if len(msg) > 64 {
+		msg = msg[:64]
+	}
+	return msg
 }

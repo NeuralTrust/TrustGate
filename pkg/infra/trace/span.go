@@ -115,6 +115,10 @@ type MCPAttrs struct {
 	// (see mcp.Tool.Risk): "" and nil when the tool declares none.
 	ToolRisk      string
 	ToolOpenWorld *bool
+	// Program is, for a tool a Code Mode program called, the gateway tool that
+	// ran the program (trustgate_query or trustgate_execute); empty for the
+	// request's own call. A program's calls are spans of its request, one each.
+	Program string
 }
 
 // A2AAttrs describe one A2A call: the agent and method, the task it ran,
@@ -500,6 +504,15 @@ func (s *Span) SetMCPDecision(decision string) {
 	defer s.mu.Unlock()
 	s.ensureMCP()
 	s.MCP.Decision = decision
+}
+
+// SetMCPProgram marks the span as a tool call made by a Code Mode program
+// run by the named gateway tool.
+func (s *Span) SetMCPProgram(program string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.Program = program
 }
 
 // SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.
