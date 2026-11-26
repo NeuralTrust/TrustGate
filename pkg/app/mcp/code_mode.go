@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -26,7 +27,10 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -48,7 +52,13 @@ import (
 // can call; what keeps a user's agent from writing is what keeps a direct
 // call from it: the application's tool restrictions and the gateway's
 // policies. The tool is marked destructive, so clients that confirm such tools
-// show the person the program first.
+// show the person the program first. A client's own rules for single tools
+// (allow this one, ask for that one) do not reach the calls inside a program:
+// only the gateway sees those.
+//
+// What a program hands back, its answer or why it failed, passes the response
+// policies of every server it called; a failed call is described to it in the
+// words the tools/call handler would use with a client.
 //
 // See docs/mcp/code-mode.md.
 
@@ -158,6 +168,7 @@ func programDefinition(limits jsrun.Limits) (Tool, error) {
 		"A call returns the tool's structured result, or its JSON text parsed, or its text; a failed call throws a ToolError you can catch. " +
 		"`return` the smallest value that answers the task. console.log lines come back too. " +
 		"There is no network, file or timer access, and no import of modules. " +
+		"If it stops early (its time, a consent or a rate limit), the calls it already made stay made. " +
 		fmt.Sprintf("Limits: %s, %d tool calls, %d KB of result.", limits.Timeout, limits.MaxCalls, limits.MaxOutputBytes/1000) +
 		consolidatedToolDisclaimer
 	return toolFromDefinition(map[string]any{
@@ -189,6 +200,9 @@ type programCall struct {
 	Error  string `json:"error,omitempty"`
 	// registry is where the call went, for attributing the program's request.
 	registry *registrydomain.Registry
+	// target is the tool the call resolved to, nil when it resolved to none;
+	// its plan is one the program's answer passes.
+	target *ResolvedTool
 	// bytes is what the call handed the program: its result, or its error.
 	bytes int64
 }
@@ -228,7 +242,10 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		mu.Unlock()
 	}
 	started := time.Now()
-	result, err := d.programs.Run(ctx, args.Code, func(ctx context.Context, call jsrun.Call) (jsrun.CallResult, error) {
+	// A gateway's programs share its own slots on this process, so no tenant
+	// can take every slot.
+	runCtx := jsrun.WithTenant(ctx, req.consumer.Consumer.GatewayID.String())
+	result, err := d.programs.Run(runCtx, args.Code, func(ctx context.Context, call jsrun.Call) (jsrun.CallResult, error) {
 		return d.programCall(ctx, req, tool, call, record)
 	})
 	elapsed := time.Since(started)
@@ -240,12 +257,20 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		d.programStats.took(ctx, req.consumer, tool, elapsed)
 		text := programFailureText(tool, failed, calls)
 		d.recordProgramBytes(ctx, req, tool, calls, len(text))
-		return toolErrorResult(text, map[string]any{
+		raw, err := toolErrorResult(text, map[string]any{
 			"error":   failed.Kind,
 			"message": failed.Message,
 			"calls":   callsOrEmpty(calls),
 			"logs":    logsOrEmpty(failed.Logs),
 		})
+		if err != nil {
+			return nil, err
+		}
+		// A program that fails still hands back its message and its logs,
+		// built from what its calls returned: they pass the same policies as
+		// an answer, or a program could throw what a policy kept it from
+		// returning.
+		return d.programAnswer(ctx, req, tool, arguments, calls, raw)
 	case err != nil:
 		// A consent the user must give or a rate limit: the program stops and
 		// the client gets what a direct call would have got.
@@ -273,10 +298,24 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 	if err != nil {
 		return nil, err
 	}
-	// What reaches the model is what the program made of its calls' results,
-	// which each passed the response policies on their own; the program may
-	// have decoded, joined or reshaped them, so its answer passes them too.
-	post, err := d.plugins.PreResponse(ctx, req.consumer, ToolCall{Exposed: tool, Arguments: arguments}, raw)
+	return d.programAnswer(ctx, req, tool, arguments, calls, raw)
+}
+
+// programAnswer passes what a program hands back through the response
+// policies. What reaches the model is what the program made of its calls'
+// results, which each passed the response policies on their own; the program
+// may have decoded, joined or reshaped them, so its answer passes them too,
+// under the plan of every server it called (see answerPlan).
+func (d *RPCDispatcher) programAnswer(
+	ctx context.Context,
+	req dispatchRequest,
+	tool string,
+	arguments json.RawMessage,
+	calls []programCall,
+	raw json.RawMessage,
+) (any, error) {
+	call := ToolCall{Exposed: tool, Arguments: arguments, Plan: answerPlan(ctx, req.consumer, calls)}
+	post, err := d.plugins.PreResponse(ctx, req.consumer, call, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +323,38 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		return post.Result, nil
 	}
 	return raw, nil
+}
+
+// answerPlan is the plan a program's answer passes: every policy that ran on
+// one of its calls, each once. A policy scoped to one server (or one tool, or
+// one group of users) saw that call's result; the answer the program built
+// from it is that server's data too. Without scoped plans, or when no call
+// reached a tool, it is nil: the consumer's base plan.
+func answerPlan(ctx context.Context, rc *appconsumer.RoutableConsumer, calls []programCall) *appplugins.StagePlan {
+	if rc == nil || rc.MCPPlans == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	var plans []*appplugins.StagePlan
+	seen := make(map[*appplugins.StagePlan]struct{})
+	for _, c := range calls {
+		if c.target == nil {
+			continue
+		}
+		plan := rc.MCPPlans.PlanFor(c.target.Registry, c.target.Tool.Name, principal)
+		if plan == nil {
+			continue
+		}
+		if _, dup := seen[plan]; dup {
+			continue
+		}
+		seen[plan] = struct{}{}
+		plans = append(plans, plan)
+	}
+	if len(plans) == 0 {
+		return nil
+	}
+	return plans[0].Union(plans[1:]...)
 }
 
 // programCall runs one call a program made, exactly as a direct call would
@@ -296,11 +367,12 @@ func (d *RPCDispatcher) programCall(
 	record func(programCall),
 ) (jsrun.CallResult, error) {
 	started := time.Now()
-	var reg *registrydomain.Registry
+	var target *ResolvedTool
 	done := func(res jsrun.CallResult, err error) (jsrun.CallResult, error) {
-		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), registry: reg, bytes: int64(len(res.Value))}
-		if reg != nil {
-			c.Server = reg.Name
+		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), target: target, bytes: int64(len(res.Value))}
+		if target != nil {
+			c.registry = target.Registry
+			c.Server = target.Registry.Name
 		}
 		if res.Err != nil {
 			c.Error = res.Err.Name
@@ -309,21 +381,23 @@ func (d *RPCDispatcher) programCall(
 		record(c)
 		return res, err
 	}
-	if isGatewayToolName(call.Name) || IsCodeModeToolName(call.Name) {
-		return done(callError("NotAllowedError", call.Name+" is one of the gateway's own tools; a program calls the user's tools only."), nil)
-	}
 	// Each call is its own span: Activity and usage see the tools the program
-	// called, each with its server, policies and outcome.
+	// called, each with its server, policies and outcome, a refused one too.
 	span := startProgramSpan(ctx, program, call.Name)
 	if span != nil {
 		ctx = trace.NewSpanContext(ctx, span)
 	}
-	res, err := d.programCallTraced(ctx, req, program, call, &reg)
+	if isGatewayToolName(call.Name) || IsCodeModeToolName(call.Name) {
+		res := callError("NotAllowedError", call.Name+" is one of the gateway's own tools; a program calls the user's tools only.")
+		finishProgramSpan(span, res, nil)
+		return done(res, nil)
+	}
+	res, err := d.programCallTraced(ctx, req, program, call, &target)
 	finishProgramSpan(span, res, err)
 	return done(res, err)
 }
 
-func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call, reg **registrydomain.Registry) (jsrun.CallResult, error) {
+func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call, resolved **ResolvedTool) (jsrun.CallResult, error) {
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return jsrun.CallResult{}, err
 	}
@@ -332,11 +406,11 @@ func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchReque
 		d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{}, err)
 		return resolveFailure(err, call.Name, d.closestToolNames(ctx, req.consumer, call.Name))
 	}
-	*reg = target.Registry
+	*resolved = target
 	d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{target: target}, nil)
 	result, _, err := d.invokeResolved(ctx, req, target, call.Arguments, nil)
 	if err != nil {
-		return invokeFailure(err)
+		return invokeFailure(err, call.Name)
 	}
 	return programValue(result), nil
 }
@@ -365,13 +439,49 @@ func resolveFailure(err error, name string, closest []string) (jsrun.CallResult,
 	case errors.As(err, &notPermitted):
 		return callError("NotAllowedError", name+" is not one of the tools this connection may call."), nil
 	}
-	return callError("ToolError", name+" could not be reached: "+err.Error()), nil
+	return callError("ToolError", name+" could not be reached: "+callerSafeText(name, err)), nil
 }
 
-// invokeFailure is what the program sees when a call failed. A policy that
-// refused the call is an error the program can catch, as is an upstream that
-// failed; a consent or a rate limit ends the program.
-func invokeFailure(err error) (jsrun.CallResult, error) {
+// callerSafeText is what a program is told of a call that failed with err, on
+// the terms the tools/call handler answers a client with (writeAppError in
+// pkg/api/handler/http/mcp). An error the gateway wrote for callers is said as
+// it is. One it did not classify can carry whatever the layer that raised it
+// put there (an upstream URL with a token in its query, a driver message): the
+// program, and the model it answers, get the fact, and the log gets the error.
+func callerSafeText(tool string, err error) string {
+	var (
+		notConnected *ApplicationNotConnectedError
+		notServing   *ServerNotServingError
+		notPermitted *ToolNotPermittedError
+	)
+	switch {
+	case errors.As(err, &notConnected):
+		return notConnected.Error()
+	case errors.As(err, &notServing):
+		return notServing.Error()
+	case errors.As(err, &notPermitted):
+		return notPermitted.Error()
+	case errors.Is(err, ErrToolNotFound), errors.Is(err, ErrNoPrincipal),
+		errors.Is(err, ErrUpstreamNeedsCallerToken), errors.Is(err, ErrAudienceMismatch),
+		errors.Is(err, sts.ErrNoUserIdentity), errors.Is(err, sts.ErrInteractionRequired),
+		errors.Is(err, registrydomain.ErrURLTemplate):
+		return err.Error()
+	case errors.Is(err, sts.ErrIdentityIssuerMismatch):
+		return sts.ErrIdentityIssuerMismatch.Error()
+	case errors.Is(err, sts.ErrExchangeIdentityUnavailable):
+		return sts.ErrExchangeIdentityUnavailable.Error()
+	case errors.Is(err, ErrUnreachable), errors.Is(err, ErrUpstreamUnavailable):
+		slog.Default().Warn("mcp code mode: a program's call found its upstream unreachable", "tool", tool, "error", err)
+		return "upstream MCP server unreachable"
+	}
+	slog.Default().Error("mcp code mode: unclassified error on a program's call", "tool", tool, "error", err)
+	return "internal error"
+}
+
+// invokeFailure is what the program sees when a call to tool failed. A policy
+// that refused the call is an error the program can catch, as is an upstream
+// that failed; a consent or a rate limit ends the program.
+func invokeFailure(err error, tool string) (jsrun.CallResult, error) {
 	var consent *ConsentRequiredError
 	if errors.As(err, &consent) {
 		return jsrun.CallResult{}, err
@@ -388,9 +498,9 @@ func invokeFailure(err error) (jsrun.CallResult, error) {
 	}
 	var notPermitted *ToolNotPermittedError
 	if errors.As(err, &notPermitted) {
-		return callError("NotAllowedError", err.Error()), nil
+		return callError("NotAllowedError", notPermitted.Error()), nil
 	}
-	return callError("ToolError", err.Error()), nil
+	return callError("ToolError", callerSafeText(tool, err)), nil
 }
 
 // programValue turns a tool's result into what the program sees: its
