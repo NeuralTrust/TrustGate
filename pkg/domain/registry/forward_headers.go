@@ -55,6 +55,8 @@ var unforwardableHeaders = map[string]struct{}{
 	"Api-Key":              {},
 	"X-Goog-Api-Key":       {},
 	"X-Amz-Security-Token": {},
+	// The end user's ID token is for TrustGuard alone.
+	"X-Neuraltrust-User-Token": {},
 }
 
 // unforwardablePrefixes are the gateway's own headers.

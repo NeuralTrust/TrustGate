@@ -36,6 +36,10 @@ type GuardRequest struct {
 	// FailureMode is the policy's failure_mode. It travels as the
 	// X-Failure-Mode header, never in the body; empty is sent as open.
 	FailureMode string `json:"-"`
+	// UserToken is the end user's ID token the application sent in X-NeuralTrust-User-Token. It rides only on a
+	// v2 body (assets.user.token), where TrustGuard verifies it. It lives here and not on GuardUser so the v1
+	// wire stays byte-identical: it never serializes.
+	UserToken string `json:"-"`
 	// request is the request context the body was built from. The v2 engine reads
 	// the model and the MCP server from it. Never serialized.
 	request *infracontext.RequestContext
@@ -44,6 +48,9 @@ type GuardRequest struct {
 type GuardUser struct {
 	ID    string `json:"id,omitempty"`
 	Email string `json:"email,omitempty"`
+	// AuthMethod is how the gateway authenticated the user (the principal method). It rides only on a v2 body,
+	// so the v1 wire stays as it was.
+	AuthMethod string `json:"-"`
 }
 
 // GuardPayload is the minimal LLM evaluate body used for response-direction
@@ -67,6 +74,25 @@ type GuardAttributes struct {
 	Consumer    *GuardConsumer  `json:"consumer,omitempty"`
 	MCPServer   *GuardMCPServer `json:"mcp_server,omitempty"`
 	Stream      *GuardStream    `json:"stream,omitempty"`
+	ToolCall    *GuardToolCall  `json:"tool,omitempty"`
+}
+
+// GuardToolCall identifies the agent's tool call a tools/call executes: the
+// correlation id read from params._meta (toolCallID): the gateway's own key
+// when the caller sent a usable one, else the id the agent sent under its own
+// key, which is the one its hook reports. TrustGuard reads it as attributes.tool.call_id to
+// count a call checked by both the hook and the gateway once. Absent when the
+// caller sent no usable id.
+type GuardToolCall struct {
+	CallID string `json:"call_id"`
+}
+
+// toolCallOf is the tool call attribute of an MCP request, nil without an id.
+func toolCallOf(req *infracontext.RequestContext) *GuardToolCall {
+	if req == nil || !req.MCP || req.MCPToolCallID == "" {
+		return nil
+	}
+	return &GuardToolCall{CallID: req.MCPToolCallID}
 }
 
 // GuardMCPServer names the MCP server a tools/call goes to: the registry id,

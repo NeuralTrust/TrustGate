@@ -19,6 +19,16 @@ paths = [
   '''pkg/container/di_smoke_test\.go''',
   '''.*cursor_phase_\d+\.md''',
   '''(^|/)mcp-oauth\.key$''',
+  # Test fixtures with dummy keys and headers (AWS's documented example key, sk-live-0123456789 and the like).
+  '''pkg/api/handler/http/diagnostics/test_policy_connection_handler_test\.go''',
+  '''pkg/api/handler/http/registry/response/registry_response_test\.go''',
+  '''pkg/app/oauth/connect_admin_row_test\.go''',
+  '''pkg/app/policy/connection_tester_test\.go''',
+  '''pkg/app/registry/updater_test\.go''',
+  '''pkg/common/secret/settings_test\.go''',
+  '''pkg/domain/registry/headers_test\.go''',
+  '''pkg/domain/registry/mcp_user_headers_test\.go''',
+  '''pkg/infra/providers/credentials_test\.go''',
 ]
 regexes = [
   '''smoke-secret-key-that-is-long-enough-\d+''',

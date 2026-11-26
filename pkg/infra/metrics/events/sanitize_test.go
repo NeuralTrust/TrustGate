@@ -218,3 +218,10 @@ func TestSanitizeExtras_RedactsOAuthTokenFields(t *testing.T) {
 	assert.Equal(t, "[REDACTED]", out["client_assertion"])
 	assert.Equal(t, "user-42", out["subject"])
 }
+
+func TestRedactHeaders_RedactsTheUserToken(t *testing.T) {
+	for _, key := range []string{"X-NeuralTrust-User-Token", "x-neuraltrust-user-token"} {
+		out := events.RedactHeaders(map[string][]string{key: {"test-user-token"}})
+		assert.Equal(t, []string{"[REDACTED]"}, out[key])
+	}
+}

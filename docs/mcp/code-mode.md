@@ -154,12 +154,24 @@ Then:
 - **Ends the program.** A consent the user must give, or a rate limit. The
   client gets the protocol error a direct call would have got, so it can show
   the consent link.
-- **Can be caught.** A policy refusal or an upstream failure.
+- **Can be caught.** A policy refusal or an upstream failure. The program is
+  told what the `tools/call` handler would tell a client: an error the gateway
+  did not word for callers (it can carry an upstream URL with a token in it)
+  becomes `internal error` or `upstream MCP server unreachable`, and the detail
+  goes to the log.
 
-The program's answer passes the consumer's response policies once more as a
-whole. Each call's result already passed them, but the program can decode,
-join or reshape what it read, and the guard has to see what actually reaches
-the model.
+What the program hands back passes the response policies once more as a whole:
+its answer, and also its message and logs when it fails. Each call's result
+already passed them, but the program can decode, join or reshape what it read,
+and the guard has to see what actually reaches the model. The plan is every
+policy that ran on one of its calls, each once: a policy scoped to one server,
+tool or group of users sees the answer built from that server's data. A
+program whose calls reached no tool, or a consumer without scoped policies,
+uses the consumer's base plan.
+
+A program that stops early (its time, a consent or a rate limit) has already
+made the calls before that point. Nothing is rolled back; a program the model
+runs again makes them again.
 
 The request policies do not inspect the program's code itself: a code-injection
 detector would flag every program. They inspect each call it makes.
@@ -182,7 +194,11 @@ could call only tools their servers annotated `readOnlyHint` (and not
   consent and rate limits.
 - **The client confirms the program.** `trustgate_execute` is annotated
   `destructiveHint: true`, so clients that confirm such tools show the person
-  the program before it runs.
+  the program before it runs. A client's own rules for single tools (allow
+  this one, ask before that one, deny another) do not reach the calls inside a
+  program: the client sees one tool. Allowing `trustgate_execute` without
+  asking allows every tool the user can call. Rules that must hold belong in
+  the gateway: the application's tool restrictions and its policies.
 
 To keep an application's agents from writing, restrict the application to the
 tools that read. `mcp_target.read_only_tools` is no longer read or returned,
@@ -201,18 +217,28 @@ README lists the patches. The runner is `pkg/infra/jsrun`.
     the global object. `import("qjs:std")` still loads them, but the
     filesystem they see is empty, and there are no sockets, environment or
     processes.
-  - The runner's own functions are read-only.
+  - The runner's own functions are read-only, and the JSON functions it uses
+    are taken before the program runs.
+  - The runner trusts nothing the program hands back. The prelude runs beside
+    the program, which can get round it (by giving every object a `toJSON`,
+    say), so every limit is enforced again in Go on what crosses over: the
+    size of each step, the log lines, the error message, each call's name and
+    arguments (a JSON object), the result (valid JSON).
 - **Memory.** Each runtime's WebAssembly memory is capped at 64 MiB.
   QuickJS's own allocations are capped at 48 MiB. A program that allocates
   without end gets an out-of-memory error, not the gateway's memory.
 - **Time.** A program's context ends its runtime wherever it is, including
   an infinite loop. There is no real sleep: a timer spins inside
   WebAssembly, where the context can stop it.
+- **Compute.** Apart from its run time, a program has a compute budget: the
+  time it spends running JavaScript, waits on its calls excluded. A loop is
+  stopped when the budget runs out (`compute`), long before its run time.
 - **Crashes.** A recursion deep enough to overflow the engine's stack traps
   inside WebAssembly. The program fails with `crashed` and the runtime is
   discarded.
-- **Concurrency.** At most 8 programs run at once per process. Past that a
-  program waits for a slot until its request ends (`busy`).
+- **Concurrency.** At most 8 programs run at once per process, and at most 2
+  of one gateway's, so no tenant takes every slot. Past either a program waits
+  up to 5 seconds for a slot, then fails with `busy`.
 - **Warm-up.** The engine is compiled once per process, about half a second,
   in the background when the MCP plane starts.
 
@@ -224,12 +250,18 @@ README lists the patches. The runner is `pkg/infra/jsrun`.
 | Program size | 20,000 bytes |
 | Result | 25,000 bytes of JSON |
 | One call's result handed to the program | 4 MiB |
+| One call's arguments | 4 MiB |
 | Log lines | 100, of 1,000 bytes |
+| Error message | 4,000 bytes, and 10 lines of stack |
+| Compute (JavaScript running) | 5 s |
+| What one step hands the runner | 16 MiB |
+| Programs at once | 8 per process, 2 per gateway |
+| Wait for a slot | 5 s |
 
 A program that does not finish returns a tool error. The answer carries:
 
-- `error`: the kind, one of `thrown`, `timeout`, `memory`, `call_limit`,
-  `output_limit`, `code_limit`, `stalled`, `crashed` or `busy`.
+- `error`: the kind, one of `thrown`, `timeout`, `compute`, `memory`,
+  `call_limit`, `output_limit`, `code_limit`, `stalled`, `crashed` or `busy`.
 - A message written for the model to fix the program.
 - The calls the program made before it stopped, and its logs.
 
