@@ -237,6 +237,25 @@ OAuth consent screen):
 | Gmail `label_thread` / `create_label` returns Forbidden | Token was issued with `gmail.readonly` + `gmail.compose` only. Catalog now requests `gmail.modify`. Add that scope on the GCP consent screen and Reconnect Gmail |
 | API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail / Drive equivalents) |
 | Works once, fails ~1h later / “reconnect” | Grant has no `refresh_token` (pre-offline build, or user must **Reconnect** once after deploy so Google re-issues offline access) |
+| Connect page: `invalid_client` / “The provided client secret is invalid” | The client ID and secret on the server's registry are not an active pair in Google Cloud: a rotated or deleted secret, a secret from another OAuth client, or (before trimming) a stray space. The page and `trustgate_access` say an administrator must update it; the log line is `the server's OAuth client was rejected`, with the registry's name. Each gateway has its own registry: update every one that uses this client |
+| Google answers 401 to a token it just refreshed | The grant no longer opens the server (its scopes changed, or access was revoked). TrustGate marks the account for a reconnect (`credential_rejected`): the Store and the agent show the server as waiting on the person, and `trustgate_access` with `connect` gives the link |
+
+### 4.7 Rotating the client secret
+
+Google keeps two secrets active on one OAuth client, so a rotation needs no
+downtime:
+
+1. In Google Cloud, add a new secret to the client. Copy it then: the list
+   only shows it truncated afterwards.
+2. Put it where TrustGate reads it:
+   - **BYO client:** the server's registry in the console, on every gateway
+     that uses this client.
+   - **Shared client (§5):** `GOOGLE_WORKSPACE_MCP_CLIENT_SECRET` in the
+     agentgateway secrets, then restart the MCP plane and the control plane
+     (it is read at start and travels in the config snapshot). With the shared
+     client set, a registry whose client ID is the shared one uses this secret,
+     not the one on the registry.
+3. Connect once to check, then disable the old secret in Google Cloud.
 
 ---
 

@@ -445,6 +445,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		appNotLinked  *appmcp.ApplicationNotConnectedError
 		notServing    *appmcp.ServerNotServingError
 		invalidParams *InvalidParamsError
+		clientReject  *appmcp.OAuthClientRejectedError
 	)
 	switch {
 	case errors.As(err, &rpcErr):
@@ -550,6 +551,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.As(err, &clientReject):
+		// The server's own OAuth client is misconfigured. The text names the
+		// server and who fixes it, never the client or the provider's words.
+		middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
+		return writeRPCError(c, id, codeInternalError, clientReject.Error())
 	case errors.As(err, &notServing):
 		// The owning server is installed but not reachable. Name that server and
 		// its state; the discovery error itself can carry an upstream URL, so it

@@ -450,11 +450,14 @@ func resolveFailure(err error, name string, closest []string) (jsrun.CallResult,
 // program, and the model it answers, get the fact, and the log gets the error.
 func callerSafeText(tool string, err error) string {
 	var (
-		notConnected *ApplicationNotConnectedError
-		notServing   *ServerNotServingError
-		notPermitted *ToolNotPermittedError
+		notConnected   *ApplicationNotConnectedError
+		notServing     *ServerNotServingError
+		notPermitted   *ToolNotPermittedError
+		rejectedClient *OAuthClientRejectedError
 	)
 	switch {
+	case errors.As(err, &rejectedClient):
+		return rejectedClient.Error()
 	case errors.As(err, &notConnected):
 		return notConnected.Error()
 	case errors.As(err, &notServing):

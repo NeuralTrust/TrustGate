@@ -342,6 +342,11 @@ func (t *MCPTarget) Normalize() {
 	if t.Auth == nil {
 		t.Auth = &MCPAuth{Mode: MCPAuthModeNone}
 	}
+	// A client ID or secret pasted with a stray space or line break was kept
+	// as typed, and the provider refused it as another client's
+	// (invalid_client). Neither ever carries surrounding whitespace.
+	t.Auth.ClientID = strings.TrimSpace(t.Auth.ClientID)
+	t.Auth.ClientSecret = strings.TrimSpace(t.Auth.ClientSecret)
 }
 
 // targetURLValid reports whether the target URL is a valid http(s) URL, treating

@@ -46,6 +46,9 @@ const (
 	// InventoryCauseEndUserNotNamed: the instance keeps one account per person
 	// and the request named nobody; the application names the user it acts for.
 	InventoryCauseEndUserNotNamed = "end_user_not_named"
+	// InventoryCauseOAuthClientRejected: the provider refused the server's
+	// OAuth client (its client ID or secret); an administrator fixes it.
+	InventoryCauseOAuthClientRejected = "oauth_client_rejected"
 )
 
 // ToolInventory is the calling principal's whole MCP surface, server by server:
