@@ -177,6 +177,13 @@ func TestV2RequestGolden(t *testing.T) {
 			Attributes: GuardAttributes{ContentType: "text", User: &GuardUser{ID: "u-1", Email: "ana@example.com"}, Consumer: consumer},
 			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
 		}},
+		// The end user's ID token (X-NeuralTrust-User-Token) rides as assets.user.token; with no principal it is the only user field.
+		{"llm_input_user_token", GuardRequest{
+			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
+			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
+			Attributes: GuardAttributes{ContentType: "text", User: &GuardUser{Token: "test-user-token"}, Consumer: consumer},
+			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
+		}},
 		{"llm_output", GuardRequest{
 			Payload: json.RawMessage(`{"input":"hi there"}`), Direction: directionOutput, Protocol: protocolLLM,
 			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",

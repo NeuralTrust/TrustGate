@@ -31,6 +31,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -371,7 +372,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:      principalUser(ctx),
+			User:      guardUser(ctx, in.Request),
 			Consumer:  guardConsumer(in.Request),
 			MCPServer: guardMCPServer(in.Request),
 		},
@@ -1060,6 +1061,43 @@ func principalUser(ctx context.Context) *GuardUser {
 		user.AuthMethod = strings.TrimSpace(meta.PrincipalMethod)
 	}
 	return user
+}
+
+// maxUserTokenBytes bounds the ID token read from the header; a longer value is not a token.
+const maxUserTokenBytes = 16 << 10
+
+// guardUser is the principal the gateway authenticated plus the end user's ID token the application
+// sent, when it did. A token with no principal still yields a user: TrustGuard takes it from the
+// token's claims.
+func guardUser(ctx context.Context, req *infracontext.RequestContext) *GuardUser {
+	user := principalUser(ctx)
+	token := userTokenOf(req)
+	if token == "" {
+		return user
+	}
+	if user == nil {
+		user = &GuardUser{}
+	}
+	user.Token = token
+	return user
+}
+
+func userTokenOf(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	for key, values := range req.Headers {
+		if !strings.EqualFold(key, consumerdomain.UserTokenHeader) {
+			continue
+		}
+		for _, v := range values {
+			v = strings.TrimSpace(v)
+			if v != "" && len(v) <= maxUserTokenBytes && !strings.ContainsAny(v, "\r\n") {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {

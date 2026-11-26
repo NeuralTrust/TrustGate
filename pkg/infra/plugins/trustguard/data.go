@@ -47,6 +47,9 @@ type GuardUser struct {
 	// AuthMethod is how the gateway authenticated the user (the principal method). It rides only on a v2 body,
 	// so the v1 wire stays as it was.
 	AuthMethod string `json:"-"`
+	// Token is the end user's ID token the application sent in X-NeuralTrust-User-Token. It rides only on a v2
+	// body (assets.user.token), where TrustGuard verifies it; the v1 wire never carries it.
+	Token string `json:"-"`
 }
 
 // GuardPayload is the minimal LLM evaluate body used for response-direction
