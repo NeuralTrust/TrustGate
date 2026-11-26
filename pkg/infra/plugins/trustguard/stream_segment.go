@@ -105,6 +105,7 @@ func (p *Plugin) inspectSegment(
 	body := GuardRequest{
 		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
+		UserToken:       userTokenOf(in.Request),
 		Payload:         payload,
 		Direction:       directionOutput,
 		Protocol:        protocolFor(in.Request.ConsumerType),
@@ -118,7 +119,7 @@ func (p *Plugin) inspectSegment(
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:     guardUser(ctx, in.Request),
+			User:     principalUser(ctx),
 			Consumer: guardConsumer(in.Request),
 			Stream:   segmentStream(traceID, seg, block),
 		},
@@ -364,6 +365,16 @@ func (p *Plugin) segmentFailure(
 			Body:       pe.Body,
 			StatusCode: pe.StatusCode,
 			Headers:    pe.Headers,
+		}, nil
+	}
+	if refused := userTokenRefusal(err); refused != nil && appplugins.Blocks(in.Mode) {
+		pe := userTokenRefusedPluginError(refused)
+		return &appplugins.SegmentVerdict{
+			Block:      true,
+			Type:       pe.Type,
+			Message:    pe.Message,
+			Body:       pe.Body,
+			StatusCode: pe.StatusCode,
 		}, nil
 	}
 	reason := reasonOfError(ctx, err)

@@ -39,6 +39,14 @@ verified.
 - It is not part of `original_request.headers` (the allowlist above), is never relayed to
   the model provider or MCP server (a registry cannot list it in `forward_client_headers`),
   and is redacted in telemetry headers.
+- If the header carries more than one distinct value (several lines or casings) it is
+  ignored as a whole.
+- The header is client-controlled, so TrustGuard refusing it is a block, not a failure of
+  the guard: `user_token_not_configured`, `invalid_user_token`, `user_mismatch`,
+  `asset_conflict` and `user_token_required` (and a 403 on a request that carried a token)
+  answer 403 `trustguard_user_token_rejected` whatever the `failure_mode`, and the
+  gateway's own service token is not refetched. `user_token_unavailable` (503) stays an
+  availability failure and follows `failure_mode`.
 - The declared `X-NeuralTrust-End-User` header is unchanged: it never reaches TrustGuard's
   gate attributes.
 

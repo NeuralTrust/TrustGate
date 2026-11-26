@@ -359,6 +359,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	body := GuardRequest{
 		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
+		UserToken:       userTokenOf(in.Request),
 		Payload:         payload,
 		Direction:       direction,
 		Protocol:        protocol,
@@ -372,7 +373,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
-			User:      guardUser(ctx, in.Request),
+			User:      principalUser(ctx),
 			Consumer:  guardConsumer(in.Request),
 			MCPServer: guardMCPServer(in.Request),
 		},
@@ -424,6 +425,15 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 	}
 	if err != nil {
+		if refused := userTokenRefusal(err); refused != nil && appplugins.Blocks(in.Mode) {
+			recordGuardOutcome(in.Event, guardData{
+				Direction:               direction,
+				Decision:                decisionBlocked,
+				AttachmentsNotInspected: tgt.attachmentsOmitted,
+				AttachmentsNotFetched:   tgt.attachmentsNotFetched,
+			})
+			return nil, userTokenRefusedPluginError(refused)
+		}
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
 			recordGuardOutcome(in.Event, guardData{
@@ -1066,38 +1076,33 @@ func principalUser(ctx context.Context) *GuardUser {
 // maxUserTokenBytes bounds the ID token read from the header; a longer value is not a token.
 const maxUserTokenBytes = 16 << 10
 
-// guardUser is the principal the gateway authenticated plus the end user's ID token the application
-// sent, when it did. A token with no principal still yields a user: TrustGuard takes it from the
-// token's claims.
-func guardUser(ctx context.Context, req *infracontext.RequestContext) *GuardUser {
-	user := principalUser(ctx)
-	token := userTokenOf(req)
-	if token == "" {
-		return user
-	}
-	if user == nil {
-		user = &GuardUser{}
-	}
-	user.Token = token
-	return user
-}
-
+// userTokenOf reads the end user's ID token from the request. A header that arrives with more than one
+// distinct non-empty value (several lines or casings) is ambiguous and is ignored as a whole: no token
+// is sent, so TrustGuard sees an unverified user and applies its own rule for that.
 func userTokenOf(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
+	token := ""
 	for key, values := range req.Headers {
 		if !strings.EqualFold(key, consumerdomain.UserTokenHeader) {
 			continue
 		}
 		for _, v := range values {
 			v = strings.TrimSpace(v)
-			if v != "" && len(v) <= maxUserTokenBytes && !strings.ContainsAny(v, "\r\n") {
-				return v
+			if v == "" {
+				continue
 			}
+			if len(v) > maxUserTokenBytes || strings.ContainsAny(v, "\r\n") {
+				return ""
+			}
+			if token != "" && token != v {
+				return ""
+			}
+			token = v
 		}
 	}
-	return ""
+	return token
 }
 
 func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {

@@ -181,7 +181,8 @@ func TestV2RequestGolden(t *testing.T) {
 		{"llm_input_user_token", GuardRequest{
 			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
 			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
-			Attributes: GuardAttributes{ContentType: "text", User: &GuardUser{Token: "test-user-token"}, Consumer: consumer},
+			UserToken:  "test-user-token",
+			Attributes: GuardAttributes{ContentType: "text", Consumer: consumer},
 			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
 		}},
 		{"llm_output", GuardRequest{

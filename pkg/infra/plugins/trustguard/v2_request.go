@@ -127,6 +127,13 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 		}
 		req.Attributes.ToolCall = toolCallOf(request)
 	}
+	if body.UserToken != "" {
+		// With no principal the token is the whole user: TrustGuard takes it from the claims.
+		if assets.User == nil {
+			assets.User = &v2User{}
+		}
+		assets.User.Token = body.UserToken
+	}
 	if assets != (v2Assets{}) {
 		req.Assets = &assets
 	}
@@ -150,7 +157,7 @@ func v2UserOf(user *GuardUser) *v2User {
 	if user == nil || *user == (GuardUser{}) {
 		return nil
 	}
-	return &v2User{ID: user.ID, Email: user.Email, AuthMethod: user.AuthMethod, Token: user.Token}
+	return &v2User{ID: user.ID, Email: user.Email, AuthMethod: user.AuthMethod}
 }
 
 // withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the

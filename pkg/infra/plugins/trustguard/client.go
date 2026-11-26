@@ -246,6 +246,12 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 		plugin = PluginNameV2
 	}
 	recordEvaluation(ctx, plugin, res.Header.Get(engineHeader), res.StatusCode)
+	// TrustGuard refusing the end user's token is a verdict on the caller's request, not a failure of the
+	// guard or of the gateway's own credential: the header is client-controlled, so failing open here would
+	// let any garbage token skip every control. Read before the generic 401/403 branches.
+	if refused := userTokenRefusalOf(res.StatusCode, raw, body.UserToken != ""); refused != nil {
+		return nil, refused
+	}
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
 	}
