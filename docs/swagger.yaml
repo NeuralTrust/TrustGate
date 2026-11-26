@@ -1193,6 +1193,25 @@ definitions:
           Entitlements is optional; only platform admins may set it (tenant callers get 422).
           When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
           has more gateways than the new MaxInstances returns 409 — delete excess first.
+      mcp_code_mode:
+        description: |-
+          MCPCodeMode sets MCP Code Mode: "off" (the default) or "on"
+          (trustgate_execute: programs that call the user's tools). The earlier
+          "read_only" and "full" are taken as "on". Omitted leaves it unchanged.
+        enum:
+        - "off"
+        - "on"
+        type: string
+      mcp_tool_listing:
+        description: |-
+          MCPToolListing sets which tools MCP clients are listed: "all" (the
+          default: the user's tools and the gateway's own) or "gateway" (only the
+          gateway's own; the user's are found with trustgate_search). Omitted
+          leaves it unchanged.
+        enum:
+        - all
+        - gateway
+        type: string
       metadata:
         additionalProperties:
           type: string
@@ -1245,6 +1264,19 @@ definitions:
       hosts:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts'
       id:
+        type: string
+      mcp_code_mode:
+        description: 'MCPCodeMode is the gateway''s MCP Code Mode: off or on.'
+        enum:
+        - "off"
+        - "on"
+        type: string
+      mcp_tool_listing:
+        description: 'MCPToolListing is which tools MCP clients are listed: all or
+          gateway.'
+        enum:
+        - all
+        - gateway
         type: string
       metadata:
         additionalProperties:
@@ -4041,6 +4073,14 @@ definitions:
     properties:
       account_ref:
         type: string
+      calls:
+        description: |-
+          Calls are the tool calls a Code Mode program made, for a
+          trustgate_query or trustgate_execute request: one per call, in the
+          order they started. The request's own fields describe the program.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall'
+        type: array
       catalog_code:
         type: string
       decision:
@@ -4059,6 +4099,14 @@ definitions:
         type: string
       policy_scope:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope'
+      program_bytes_read:
+        description: |-
+          ProgramBytesRead is what a Code Mode program's calls handed it, and
+          ProgramBytesReturned what it handed back to the client: the program
+          read the first instead of the model, which read only the second.
+        type: integer
+      program_bytes_returned:
+        type: integer
       prompt:
         type: string
       registry_id:
@@ -4090,6 +4138,31 @@ definitions:
         type: string
       upstream_latency_ms:
         type: integer
+      upstream_status:
+        type: integer
+      upstream_tool:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall:
+    properties:
+      catalog_code:
+        type: string
+      decision:
+        type: string
+      error:
+        type: string
+      latency_ms:
+        type: integer
+      registry_id:
+        type: string
+      rpc_error_code:
+        type: integer
+      server_name:
+        type: string
+      tool:
+        type: string
+      tool_risk:
+        type: string
       upstream_status:
         type: integer
       upstream_tool:

@@ -111,6 +111,118 @@ func WithStoreMode(metadata map[string]string, mode string) map[string]string {
 	return metadata
 }
 
+// MetadataMCPCodeModeKey holds the gateway's MCP Code Mode: whether its MCP
+// connections are offered trustgate_execute, which runs a program calling the
+// user's tools in a sandbox (see docs/mcp/code-mode.md). Stamped by the server
+// from UpdateGatewayRequest.MCPCodeMode; never taken from client metadata.
+const MetadataMCPCodeModeKey = "mcp_code_mode"
+
+// MCP Code Mode values.
+const (
+	// MCPCodeModeOff offers no program-running tool. The default.
+	MCPCodeModeOff = "off"
+	// MCPCodeModeOn offers trustgate_execute, whose programs may call any tool
+	// the user can call, each under the same checks as a direct call.
+	MCPCodeModeOn = "on"
+)
+
+// Values Code Mode had while it offered a read-only program tool apart. Both
+// mean on: a gateway that stored one keeps Code Mode, and an older console
+// that sends one still turns it on.
+const (
+	mcpCodeModeLegacyReadOnly = "read_only"
+	mcpCodeModeLegacyFull     = "full"
+)
+
+// IsMCPCodeMode reports whether mode is an MCP Code Mode value: off, on, or
+// one of the earlier read_only and full, which mean on.
+func IsMCPCodeMode(mode string) bool {
+	switch mode {
+	case MCPCodeModeOff, MCPCodeModeOn, mcpCodeModeLegacyReadOnly, mcpCodeModeLegacyFull:
+		return true
+	}
+	return false
+}
+
+// NormalizeMCPCodeMode maps an MCP Code Mode value to off or on.
+func NormalizeMCPCodeMode(mode string) string {
+	switch mode {
+	case MCPCodeModeOn, mcpCodeModeLegacyReadOnly, mcpCodeModeLegacyFull:
+		return MCPCodeModeOn
+	}
+	return MCPCodeModeOff
+}
+
+// MCPCodeMode returns the gateway's MCP Code Mode, off unless its admin turned
+// it on.
+func (g *Gateway) MCPCodeMode() string {
+	if g == nil || g.Metadata == nil {
+		return MCPCodeModeOff
+	}
+	return NormalizeMCPCodeMode(g.Metadata[MetadataMCPCodeModeKey])
+}
+
+// WithMCPCodeMode stamps the MCP Code Mode into gateway metadata. Off, the
+// default, is the key's absence.
+func WithMCPCodeMode(metadata map[string]string, mode string) map[string]string {
+	if NormalizeMCPCodeMode(mode) != MCPCodeModeOn {
+		if metadata != nil {
+			delete(metadata, MetadataMCPCodeModeKey)
+		}
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataMCPCodeModeKey] = MCPCodeModeOn
+	return metadata
+}
+
+// MetadataMCPToolListingKey holds which tools the gateway's MCP tools/list
+// offers. Stamped by the server from UpdateGatewayRequest.MCPToolListing;
+// never taken from client metadata.
+const MetadataMCPToolListingKey = "mcp_tool_listing"
+
+// MCP tool listings.
+const (
+	// MCPToolListingAll lists the user's tools and the gateway's own. The default.
+	MCPToolListingAll = "all"
+	// MCPToolListingGateway lists only the gateway's own tools: the user's are
+	// found with trustgate_search and called with trustgate_call or from a
+	// Code Mode program. A direct call to one still works.
+	MCPToolListingGateway = "gateway"
+)
+
+// IsMCPToolListing reports whether listing is one of the MCP tool listings.
+func IsMCPToolListing(listing string) bool {
+	return listing == MCPToolListingAll || listing == MCPToolListingGateway
+}
+
+// MCPToolListing returns which tools the gateway lists, all unless its admin
+// chose the gateway's own only.
+func (g *Gateway) MCPToolListing() string {
+	if g != nil && g.Metadata != nil && g.Metadata[MetadataMCPToolListingKey] == MCPToolListingGateway {
+		return MCPToolListingGateway
+	}
+	return MCPToolListingAll
+}
+
+// WithMCPToolListing stamps the tool listing into gateway metadata. All, the
+// default, is the key's absence.
+func WithMCPToolListing(metadata map[string]string, listing string) map[string]string {
+	if listing != MCPToolListingGateway {
+		if metadata != nil {
+			delete(metadata, MetadataMCPToolListingKey)
+		}
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataMCPToolListingKey] = listing
+	return metadata
+}
+
 // RetentionWindow is the stamped trace-retention window for this gateway, and
 // whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
 // runs on requests where the gateway never resolved.
@@ -142,7 +254,8 @@ func (g *Gateway) ServedByOwnDataPlane() bool {
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataMCPCodeModeKey ||
+		key == MetadataMCPToolListingKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {

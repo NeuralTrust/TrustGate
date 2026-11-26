@@ -26,6 +26,7 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -37,6 +38,15 @@ var ErrMethodNotFound = errors.New("mcp: method not found")
 // protocols counts the execution once (ENG-1579). The reverse-DNS prefix keeps
 // it out of the way of the keys the MCP spec reserves.
 const toolCallIDMetaKey = "ai.neuraltrust/toolCallId"
+
+// agentToolCallIDMetaKeys are the params._meta keys under which agents already
+// send the id of the tool call they are executing, read after toolCallIDMetaKey.
+// It is the id the agent's hook reports as tool_use_id, so TrustGuard can count
+// a call checked by both the hook and the gateway once.
+var agentToolCallIDMetaKeys = []string{
+	"claudecode/toolUseId", // Claude Code: the Anthropic tool_use id, "toolu_…"
+	"callId",               // Codex: the model's call id, "call_…"
+}
 
 // maxToolCallIDLen bounds what a caller can put in a Redis key derived from the
 // id. Real ids are short ("call_abc123", "toolu_01A…").
@@ -69,7 +79,10 @@ type RPCDispatcher struct {
 	agents        AgentTools
 	storeScoper   appstore.Scoper
 	searchStats   *searchMetrics
-	handlers      map[string]rpcHandler
+	// programs runs Code Mode programs; programStats counts them.
+	programs     *jsrun.Runner
+	programStats *programMetrics
+	handlers     map[string]rpcHandler
 }
 
 func NewRPCDispatcher(
@@ -85,7 +98,9 @@ func NewRPCDispatcher(
 	d := &RPCDispatcher{
 		composer: composer, plugins: plugins, limiter: limiter,
 		connections: connections, store: store,
-		searchStats: newSearchMetrics(nil),
+		searchStats:  newSearchMetrics(nil),
+		programs:     jsrun.New(jsrun.Limits{}, 0),
+		programStats: newProgramMetrics(nil),
 	}
 	d.handlers = map[string]rpcHandler{
 		"tools/list":               d.listTools,
@@ -115,6 +130,16 @@ func (d *RPCDispatcher) WithAgentTools(agents AgentTools) *RPCDispatcher {
 // global meter provider's.
 func (d *RPCDispatcher) WithSearchMeter(meter metric.Meter) *RPCDispatcher {
 	d.searchStats = newSearchMetrics(meter)
+	d.programStats = newProgramMetrics(meter)
+	return d
+}
+
+// WithPrograms runs Code Mode programs with runner instead of one with the
+// default limits.
+func (d *RPCDispatcher) WithPrograms(runner *jsrun.Runner) *RPCDispatcher {
+	if runner != nil {
+		d.programs = runner
+	}
 	return d
 }
 
@@ -192,6 +217,14 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
+	if gatewayToolsOnly(ctx) && d.inventoryImpl != nil && metaToolsPermitted(req.consumer) {
+		// The gateway lists only its own tools: the user's are found with
+		// trustgate_search and called with trustgate_call or from a program,
+		// so the upstreams are not even asked for their lists here.
+		tools := appendGatewayTools([]Tool{}, d.consolidatedDefinitions(ctx, req.consumer))
+		tools = appendGatewayTools(tools, d.codeModeDefinitions(ctx))
+		return map[string]any{"tools": tools}, nil
+	}
 	tools, err := d.composer.ListTools(ctx, req.consumer)
 	if err != nil {
 		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
@@ -217,6 +250,9 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	// hosted connectors keep theirs until the person reconnects — keeps
 	// working.
 	tools = appendGatewayTools(withoutGatewayNames(tools), d.consolidatedDefinitions(ctx, req.consumer))
+	if metaToolsPermitted(req.consumer) {
+		tools = appendGatewayTools(tools, d.codeModeDefinitions(ctx))
+	}
 	result["tools"] = tools
 	return result, nil
 }
@@ -289,6 +325,8 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		return d.gatewayCall(ctx, req, params.Arguments, params.Meta)
 	case AccessToolName:
 		return d.access(ctx, req, params.Arguments)
+	case QueryToolName, ExecuteToolName:
+		return d.runProgram(ctx, req, params.Name, params.Arguments)
 	}
 	if params.Name == CallToolName && d.inventory != nil {
 		return d.callThrough(ctx, req, params.Arguments, params.Meta)
@@ -362,10 +400,16 @@ func (d *RPCDispatcher) callThrough(
 			map[string]any{"error": "missing_name"},
 		)
 	}
+	if IsCodeModeToolName(args.Name) {
+		// A client that kept the tool list it fetched before Code Mode was
+		// turned on has no trustgate_query of its own: the call-through is its
+		// way to one.
+		return d.runProgram(ctx, req, args.Name, args.Arguments)
+	}
 	if isGatewayToolName(args.Name) {
 		markMetaTool(ctx)
 		return toolErrorResult(
-			args.Name+" is one of the gateway's own tools and is already in your tool list: call it directly, not through "+CallToolName+".",
+			args.Name+" is one of the gateway's own tools: call it directly, not through "+CallToolName+".",
 			map[string]any{"error": "gateway_tool", "name": args.Name},
 		)
 	}
@@ -398,6 +442,17 @@ func (d *RPCDispatcher) invokeTool(
 	if err != nil {
 		return nil, toolInvocation{}, err
 	}
+	return d.invokeResolved(ctx, req, target, arguments, meta)
+}
+
+// invokeResolved calls a tool already resolved: the request stages, the
+// upstream, the response stages.
+func (d *RPCDispatcher) invokeResolved(
+	ctx context.Context,
+	req dispatchRequest,
+	target *ResolvedTool,
+	arguments, meta json.RawMessage,
+) (any, toolInvocation, error) {
 	reached := toolInvocation{target: target}
 	if span := trace.SpanFromContext(ctx); span != nil {
 		annotateRegistry(span, target.Registry, target.Tool.Name)
@@ -410,7 +465,7 @@ func (d *RPCDispatcher) invokeTool(
 		NativeTool:       target.Tool.Name,
 		Arguments:        arguments,
 		Plan:             planFor(ctx, req.consumer, target),
-		ClientToolCallID: clientToolCallID(meta),
+		ClientToolCallID: toolCallID(meta),
 	}
 	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
 	if err != nil {
@@ -475,6 +530,29 @@ func clientToolCallID(meta json.RawMessage) string {
 		return ""
 	}
 	return id
+}
+
+// toolCallID is the id of the tool call a caller volunteered in params._meta:
+// the gateway's own key (clientToolCallID), else the first usable key an agent
+// already sends (agentToolCallIDMetaKeys), held to the same rule.
+func toolCallID(meta json.RawMessage) string {
+	if id := clientToolCallID(meta); id != "" {
+		return id
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		return ""
+	}
+	for _, key := range agentToolCallIDMetaKeys {
+		var id string
+		if err := json.Unmarshal(fields[key], &id); err != nil {
+			continue
+		}
+		if id != "" && len(id) <= maxToolCallIDLen && isToolCallIDToken(id) {
+			return id
+		}
+	}
+	return ""
 }
 
 func isToolCallIDToken(id string) bool {

@@ -29,8 +29,9 @@ const (
 	v2EvaluateSpanName = "trustguard_v2.evaluate"
 )
 
-// v2Request is TrustGuard v2's evaluate body. TrustGuard v2 decodes it strictly and knows no
-// v2 name: consumer_id is application_id, and there is no a2a.
+// v2Request is TrustGuard v2's evaluate body. TrustGuard v2 decodes it strictly and refuses
+// application_id, attributes.application, attributes.model, attributes.user and
+// attributes.mcp_server: the agent, model, user and MCP server are named only in assets.
 type v2Request struct {
 	OriginalRequest *requestmeta.OriginalRequest `json:"original_request,omitempty"`
 	Payload         json.RawMessage              `json:"payload"`
@@ -38,17 +39,33 @@ type v2Request struct {
 	Protocol        string                       `json:"protocol"`
 	GatewayID       string                       `json:"gateway_id"`
 	SessionID       string                       `json:"session_id,omitempty"`
-	ApplicationID   string                       `json:"application_id,omitempty"`
+	Assets          *v2Assets                    `json:"assets,omitempty"`
 	Attributes      v2Attributes                 `json:"attributes"`
 }
 
+// v2Assets is what the request is about, one entry per kind.
+type v2Assets struct {
+	Agent     *v2Agent     `json:"agent,omitempty"`
+	Model     *v2Model     `json:"model,omitempty"`
+	User      *v2User      `json:"user,omitempty"`
+	MCPServer *v2MCPServer `json:"mcp_server,omitempty"`
+}
+
+// v2Attributes keeps what is not an asset.
 type v2Attributes struct {
-	ContentType string         `json:"content_type"`
-	Model       *v2Model       `json:"model,omitempty"`
-	User        *v2User        `json:"user,omitempty"`
-	Application *v2Application `json:"application,omitempty"`
-	MCPServer   *v2MCPServer   `json:"mcp_server,omitempty"`
-	Stream      *GuardStream   `json:"stream,omitempty"`
+	ContentType string       `json:"content_type"`
+	Stream      *GuardStream `json:"stream,omitempty"`
+	// ToolCall is the agent's id for the tool call being checked.
+	ToolCall *GuardToolCall `json:"tool,omitempty"`
+}
+
+// v2Agent is the calling application: a consumer, or the synthetic one of a personal key
+// or the MCP Store.
+type v2Agent struct {
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Audience  string `json:"audience,omitempty"`
+	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
 // v2User is the end user. AuthMethod is the gateway's principal method (jwt, oauth, personal_key, api_key...): how it
@@ -57,17 +74,6 @@ type v2User struct {
 	ID         string `json:"id,omitempty"`
 	Email      string `json:"email,omitempty"`
 	AuthMethod string `json:"auth_method,omitempty"`
-}
-
-func v2UserOf(u *GuardUser) *v2User {
-	if u == nil {
-		return nil
-	}
-	return &v2User{ID: u.ID, Email: u.Email, AuthMethod: u.AuthMethod}
-}
-
-type v2Application struct {
-	Name string `json:"name"`
 }
 
 // v2MCPServer carries TrustGuard v2's canonical id of the server: the catalog code, or
@@ -96,29 +102,52 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 		Protocol:        body.Protocol,
 		GatewayID:       body.GatewayID,
 		SessionID:       body.SessionID,
-		ApplicationID:   strings.TrimSpace(body.ConsumerID),
 		Attributes: v2Attributes{
 			ContentType: body.Attributes.ContentType,
-			User:        v2UserOf(body.Attributes.User),
-			MCPServer:   v2MCPServerOf(body.Attributes.MCPServer),
 			Stream:      body.Attributes.Stream,
 		},
 	}
+	assets := v2Assets{
+		Agent:     v2AgentOf(body),
+		User:      v2UserOf(body.Attributes.User),
+		MCPServer: v2MCPServerOf(body.Attributes.MCPServer),
+	}
 	if request != nil {
-		// An A2A call names an agent, not a model: the agent is application_id.
+		// An A2A call names an agent, not a model: the agent is assets.agent.
 		if !request.MCP && !request.A2A {
-			req.Attributes.Model = v2ModelOf(request, body.Direction)
-		} else if server := req.Attributes.MCPServer; server != nil {
+			assets.Model = v2ModelOf(request, body.Direction)
+		} else if server := assets.MCPServer; server != nil {
 			server.Name = strings.TrimSpace(request.MCPServerName)
 			if tool := strings.TrimSpace(request.MCPTool); tool != "" {
 				server.Tool = &v2Tool{Name: tool}
 			}
 		}
+		req.Attributes.ToolCall = toolCallOf(request)
 	}
-	if c := body.Attributes.Consumer; c != nil && c.Name != "" {
-		req.Attributes.Application = &v2Application{Name: c.Name}
+	if assets != (v2Assets{}) {
+		req.Assets = &assets
 	}
 	return req
+}
+
+func v2AgentOf(body GuardRequest) *v2Agent {
+	agent := v2Agent{ID: strings.TrimSpace(body.ConsumerID)}
+	if c := body.Attributes.Consumer; c != nil {
+		agent.Name = c.Name
+		agent.Audience = c.Audience
+		agent.Synthetic = c.Synthetic
+	}
+	if agent == (v2Agent{}) {
+		return nil
+	}
+	return &agent
+}
+
+func v2UserOf(user *GuardUser) *v2User {
+	if user == nil || *user == (GuardUser{}) {
+		return nil
+	}
+	return &v2User{ID: user.ID, Email: user.Email, AuthMethod: user.AuthMethod}
 }
 
 // withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the
@@ -132,8 +161,8 @@ func withInventory(body GuardRequest) GuardRequest {
 		return body
 	}
 	if !req.MCP {
-		if served := v2ModelOf(req, body.Direction).Name; served != "" {
-			body.Attributes.Model.ServedName = served
+		if served := v2ModelOf(req, body.Direction); served != nil && served.Name != "" {
+			body.Attributes.Model.ServedName = served.Name
 		}
 		return body
 	}
@@ -145,6 +174,7 @@ func withInventory(body GuardRequest) GuardRequest {
 		}
 		body.Attributes.MCPServer = &server
 	}
+	body.Attributes.ToolCall = toolCallOf(req)
 	return body
 }
 
@@ -173,21 +203,29 @@ func v2ModelOf(req *infracontext.RequestContext, direction string) *v2Model {
 		strings.HasPrefix(strings.ToLower(name), "arn:") || strings.EqualFold(name, "auto") {
 		name = ""
 	}
-	return &v2Model{
+	model := v2Model{
 		Name:          name,
 		Provider:      strings.ToLower(strings.TrimSpace(req.Provider)),
-		RequestedName: req.RequestedModel,
+		RequestedName: strings.TrimSpace(req.RequestedModel),
 	}
+	if model == (v2Model{}) {
+		return nil
+	}
+	return &model
 }
 
 func v2MCPServerOf(server *GuardMCPServer) *v2MCPServer {
 	if server == nil {
 		return nil
 	}
+	id := server.ID
 	if server.Code != "" {
-		return &v2MCPServer{ID: server.Code}
+		id = server.Code
 	}
-	return &v2MCPServer{ID: server.ID}
+	if id == "" {
+		return nil
+	}
+	return &v2MCPServer{ID: id}
 }
 
 // normalizeV2Response reads a v2-shaped /v1/evaluate answer in the v1 shape the plugin enforces. The v2

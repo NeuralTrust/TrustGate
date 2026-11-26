@@ -45,6 +45,15 @@ type UpdateGatewayRequest struct {
 	// "curated" (only shelf servers) or "none" (self-install disabled). Omitted
 	// leaves the current mode unchanged.
 	StoreMode *string `json:"store_mode,omitempty"`
+	// MCPCodeMode sets MCP Code Mode: "off" (the default) or "on"
+	// (trustgate_execute: programs that call the user's tools). The earlier
+	// "read_only" and "full" are taken as "on". Omitted leaves it unchanged.
+	MCPCodeMode *string `json:"mcp_code_mode,omitempty" enums:"off,on"`
+	// MCPToolListing sets which tools MCP clients are listed: "all" (the
+	// default: the user's tools and the gateway's own) or "gateway" (only the
+	// gateway's own; the user's are found with trustgate_search). Omitted
+	// leaves it unchanged.
+	MCPToolListing *string `json:"mcp_tool_listing,omitempty" enums:"all,gateway"`
 
 	// ClearTrafficLabeling is set by DetectClears when the body sends
 	// "traffic_labeling": null.
@@ -88,6 +97,21 @@ func (r *UpdateGatewayRequest) Validate() error {
 			return fmt.Errorf("store_mode must be %q, %q or %q: %w", domain.StoreModeOpen, domain.StoreModeCurated, domain.StoreModeNone, commonerrors.ErrValidation)
 		}
 		r.StoreMode = &mode
+	}
+	if r.MCPCodeMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*r.MCPCodeMode))
+		if !domain.IsMCPCodeMode(mode) {
+			return fmt.Errorf("mcp_code_mode must be %q or %q: %w", domain.MCPCodeModeOff, domain.MCPCodeModeOn, commonerrors.ErrValidation)
+		}
+		mode = domain.NormalizeMCPCodeMode(mode)
+		r.MCPCodeMode = &mode
+	}
+	if r.MCPToolListing != nil {
+		listing := strings.ToLower(strings.TrimSpace(*r.MCPToolListing))
+		if !domain.IsMCPToolListing(listing) {
+			return fmt.Errorf("mcp_tool_listing must be %q or %q: %w", domain.MCPToolListingAll, domain.MCPToolListingGateway, commonerrors.ErrValidation)
+		}
+		r.MCPToolListing = &listing
 	}
 	return nil
 }

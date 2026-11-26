@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -362,7 +363,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
-		"instructions": serverInstructions(rc),
+		"instructions": initializeInstructions(c.UserContext(), rc),
 	}))
 }
 
@@ -392,6 +393,15 @@ func earlierToolsInstructions(store bool) string {
 		earlier = appmcp.InventoryToolName + ", " + appmcp.CallToolName + ", trustgate_store_*, " + appmcp.ListAgentsToolName + ", " + appmcp.CallAgentToolName
 	}
 	return " If your tool list shows this gateway's earlier tools instead (" + earlier + "), use them for the same purposes: they still work."
+}
+
+// initializeInstructions are the instructions initialize answers with. What
+// depends on the gateway's settings — where the user's tools are, and when to
+// write a program — comes right after the opening sentence: clients cut long
+// instructions, and these are the sentences that change what a model does.
+func initializeInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
+	rest := strings.TrimPrefix(serverInstructions(rc), baseServerInstructions)
+	return baseServerInstructions + appmcp.ToolListingInstructions(ctx, rc) + appmcp.CodeModeInstructions(ctx, rc) + rest
 }
 
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {

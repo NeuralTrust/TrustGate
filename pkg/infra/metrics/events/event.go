@@ -163,6 +163,30 @@ type MCP struct {
 	// no hint: the server's claim, advisory only.
 	ToolRisk      string `json:"tool_risk,omitempty"`
 	ToolOpenWorld *bool  `json:"tool_open_world,omitempty"`
+	// Calls are the tool calls a Code Mode program made, for a
+	// trustgate_query or trustgate_execute request: one per call, in the
+	// order they started. The request's own fields describe the program.
+	Calls []MCPCall `json:"calls,omitempty"`
+	// ProgramBytesRead is what a Code Mode program's calls handed it, and
+	// ProgramBytesReturned what it handed back to the client: the program
+	// read the first instead of the model, which read only the second.
+	ProgramBytesRead     int64 `json:"program_bytes_read,omitempty"`
+	ProgramBytesReturned int64 `json:"program_bytes_returned,omitempty"`
+}
+
+// MCPCall is one tool call a Code Mode program made.
+type MCPCall struct {
+	Tool           string `json:"tool"`
+	UpstreamTool   string `json:"upstream_tool,omitempty"`
+	ServerName     string `json:"server_name,omitempty"`
+	RegistryID     string `json:"registry_id,omitempty"`
+	CatalogCode    string `json:"catalog_code,omitempty"`
+	UpstreamStatus int    `json:"upstream_status,omitempty"`
+	RPCErrorCode   int    `json:"rpc_error_code,omitempty"`
+	LatencyMs      int64  `json:"latency_ms,omitempty"`
+	ToolRisk       string `json:"tool_risk,omitempty"`
+	Decision       string `json:"decision,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // A2A describes an A2A call on the agent plane. Outcome is ok, blocked,

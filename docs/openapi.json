@@ -11571,6 +11571,22 @@
                             }
                         ]
                     },
+                    "mcp_code_mode": {
+                        "description": "MCPCodeMode sets MCP Code Mode: \"off\" (the default) or \"on\"\n(trustgate_execute: programs that call the user's tools). The earlier\n\"read_only\" and \"full\" are taken as \"on\". Omitted leaves it unchanged.",
+                        "type": "string",
+                        "enum": [
+                            "off",
+                            "on"
+                        ]
+                    },
+                    "mcp_tool_listing": {
+                        "description": "MCPToolListing sets which tools MCP clients are listed: \"all\" (the\ndefault: the user's tools and the gateway's own) or \"gateway\" (only the\ngateway's own; the user's are found with trustgate_search). Omitted\nleaves it unchanged.",
+                        "type": "string",
+                        "enum": [
+                            "all",
+                            "gateway"
+                        ]
+                    },
                     "metadata": {
                         "type": "object",
                         "additionalProperties": {
@@ -11641,6 +11657,22 @@
                     },
                     "id": {
                         "type": "string"
+                    },
+                    "mcp_code_mode": {
+                        "description": "MCPCodeMode is the gateway's MCP Code Mode: off or on.",
+                        "type": "string",
+                        "enum": [
+                            "off",
+                            "on"
+                        ]
+                    },
+                    "mcp_tool_listing": {
+                        "description": "MCPToolListing is which tools MCP clients are listed: all or gateway.",
+                        "type": "string",
+                        "enum": [
+                            "all",
+                            "gateway"
+                        ]
                     },
                     "metadata": {
                         "type": "object",
@@ -15529,6 +15561,13 @@
                     "account_ref": {
                         "type": "string"
                     },
+                    "calls": {
+                        "description": "Calls are the tool calls a Code Mode program made, for a\ntrustgate_query or trustgate_execute request: one per call, in the\norder they started. The request's own fields describe the program.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall"
+                        }
+                    },
                     "catalog_code": {
                         "type": "string"
                     },
@@ -15547,6 +15586,13 @@
                     },
                     "policy_scope": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
+                    },
+                    "program_bytes_read": {
+                        "description": "ProgramBytesRead is what a Code Mode program's calls handed it, and\nProgramBytesReturned what it handed back to the client: the program\nread the first instead of the model, which read only the second.",
+                        "type": "integer"
+                    },
+                    "program_bytes_returned": {
+                        "type": "integer"
                     },
                     "prompt": {
                         "type": "string"
@@ -15582,6 +15628,44 @@
                     },
                     "upstream_latency_ms": {
                         "type": "integer"
+                    },
+                    "upstream_status": {
+                        "type": "integer"
+                    },
+                    "upstream_tool": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPCall": {
+                "type": "object",
+                "properties": {
+                    "catalog_code": {
+                        "type": "string"
+                    },
+                    "decision": {
+                        "type": "string"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "latency_ms": {
+                        "type": "integer"
+                    },
+                    "registry_id": {
+                        "type": "string"
+                    },
+                    "rpc_error_code": {
+                        "type": "integer"
+                    },
+                    "server_name": {
+                        "type": "string"
+                    },
+                    "tool": {
+                        "type": "string"
+                    },
+                    "tool_risk": {
+                        "type": "string"
                     },
                     "upstream_status": {
                         "type": "integer"

@@ -117,3 +117,48 @@ func TestEventToRecord_LLMKindNoMCP(t *testing.T) {
 	_, hasMethod := attrs[attrMCPMethod]
 	assert.False(t, hasMethod)
 }
+
+// A Code Mode program's request carries how many calls it made and the
+// distinct tools it called, in the order it first called them.
+func TestEventToRecord_MCPProgramCalls(t *testing.T) {
+	t.Parallel()
+	evt := &events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		Status:        events.Status{Code: 200},
+		Request:       events.Request{Method: "POST", Path: "/mcp"},
+		Response:      events.Response{StatusCode: 200},
+		MCP: &events.MCP{Method: "tools/call", Tool: "trustgate_query", Calls: []events.MCPCall{
+			{Tool: "linear_list_issues"}, {Tool: "linear_list_comments"}, {Tool: "linear_list_comments"},
+		}, ProgramBytesRead: 48_000, ProgramBytesReturned: 120},
+	}
+	attrs := attrsOf(eventToRecord(evt))
+	assert.Equal(t, int64(3), attrs[attrMCPProgramCalls].AsInt64())
+	assert.Equal(t, []string{"linear_list_issues", "linear_list_comments"}, attrs[attrMCPProgramTools].AsStringSlice())
+	assert.Equal(t, int64(48_000), attrs[attrMCPProgramBytesRead].AsInt64())
+	assert.Equal(t, int64(120), attrs[attrMCPProgramBytesRet].AsInt64())
+
+	evt.MCP.Calls, evt.MCP.ProgramBytesRead, evt.MCP.ProgramBytesReturned = nil, 0, 0
+	attrs = attrsOf(eventToRecord(evt))
+	for _, key := range []string{attrMCPProgramCalls, attrMCPProgramBytesRead, attrMCPProgramBytesRet} {
+		_, has := attrs[key]
+		assert.False(t, has, "a request that is not a program carries no %s", key)
+	}
+}
+
+// A program that made no call still returned something: what it returned is
+// recorded, with nothing read.
+func TestEventToRecord_MCPProgramWithoutCalls(t *testing.T) {
+	t.Parallel()
+	evt := &events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		Status:        events.Status{Code: 200},
+		Request:       events.Request{Method: "POST", Path: "/mcp"},
+		Response:      events.Response{StatusCode: 200},
+		MCP:           &events.MCP{Method: "tools/call", Tool: "trustgate_query", ProgramBytesReturned: 2},
+	}
+	attrs := attrsOf(eventToRecord(evt))
+	assert.Equal(t, int64(0), attrs[attrMCPProgramBytesRead].AsInt64())
+	assert.Equal(t, int64(2), attrs[attrMCPProgramBytesRet].AsInt64())
+}

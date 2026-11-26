@@ -52,6 +52,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/console"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
 	mcpopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/openapi"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
@@ -422,6 +423,17 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		return nil, err
 	}
 	gateway = gateway.WithInventoryTool(inventory)
+
+	// Code Mode programs answer inside the tools/call response, so they stop
+	// with the margin under the write deadline agent calls keep. The engine is
+	// compiled once per process; compile it now, off the request path, so the
+	// first program does not wait for it.
+	programLimits := jsrun.Limits{}
+	if deadline := p.Cfg.Server.WriteTimeout * 3 / 4; deadline > 0 && deadline < jsrun.DefaultLimits.Timeout {
+		programLimits.Timeout = deadline
+	}
+	gateway = gateway.WithPrograms(jsrun.New(programLimits, 0))
+	go jsrun.Warm()
 
 	if p.Forwarder != nil && p.AgentAccess != nil {
 		// An agent call answers inside the tools/call response, so it gives up
