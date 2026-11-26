@@ -84,9 +84,10 @@ A program's calls also count in `trustgate.mcp.search.follow_ups`, with `via`
 naming the program's tool.
 
 - `trustgate.mcp.code.programs` (`{program}`): programs, by how they ended.
-  `result` is `ok`, `thrown`, `timeout`, `memory`, `call_limit`,
-  `output_limit`, `code_limit`, `stalled`, `crashed`, `busy` (no slot on the
-  replica before the request ended), `aborted` (a consent or a rate limit
+  `result` is `ok`, `thrown`, `timeout`, `compute` (its compute budget ran
+  out), `memory`, `call_limit`, `output_limit`, `code_limit`, `stalled`,
+  `crashed`, `busy` (no slot on the replica, or none of its gateway's, within
+  the wait), `aborted` (a consent or a rate limit
   stopped it), `invalid` (no code) or `not_offered` (the gateway's Code Mode
   does not offer the tool).
 - `trustgate.mcp.code.program_duration` (seconds): how long a program ran,

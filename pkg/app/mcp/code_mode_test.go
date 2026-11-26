@@ -42,18 +42,31 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-// scriptedUpstream answers each tool by name and records what was called.
+// scriptedUpstream answers each tool by name and records what was called. A
+// tool in failures fails with its error; a call to gated waits for gate to
+// close, saying so on entered first.
 type scriptedUpstream struct {
 	*fakeUpstream
-	mu      sync.Mutex
-	called  []string
-	answers map[string]string
+	mu       sync.Mutex
+	called   []string
+	answers  map[string]string
+	failures map[string]error
+	gated    string
+	gate     chan struct{}
+	entered  chan struct{}
 }
 
 func (s *scriptedUpstream) CallTool(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
 	s.mu.Lock()
 	s.called = append(s.called, name)
 	s.mu.Unlock()
+	if name == s.gated && s.gate != nil {
+		s.entered <- struct{}{}
+		<-s.gate
+	}
+	if err := s.failures[name]; err != nil {
+		return nil, err
+	}
 	if answer, ok := s.answers[name]; ok {
 		return json.RawMessage(answer), nil
 	}
@@ -378,16 +391,16 @@ func TestCodeMode_ProgramCallsFollowASearch(t *testing.T) {
 // would have got.
 func TestCodeMode_ConsentEndsTheProgram(t *testing.T) {
 	t.Parallel()
-	res, err := invokeFailure(&ConsentRequiredError{Provider: "linear"})
+	res, err := invokeFailure(&ConsentRequiredError{Provider: "linear"}, "linear_list_issues")
 	var consent *ConsentRequiredError
 	if !errors.As(err, &consent) || res.Err != nil {
 		t.Fatalf("invokeFailure = %+v, %v", res, err)
 	}
-	_, err = invokeFailure(&RPCError{Code: CodeRateLimited, Message: "slow down"})
+	_, err = invokeFailure(&RPCError{Code: CodeRateLimited, Message: "slow down"}, "linear_list_issues")
 	if err == nil {
 		t.Fatal("a rate limit ends the program")
 	}
-	res, err = invokeFailure(&RPCError{Code: CodePolicyBlocked, Message: "pii"})
+	res, err = invokeFailure(&RPCError{Code: CodePolicyBlocked, Message: "pii"}, "linear_list_issues")
 	if err != nil || res.Err == nil || res.Err.Name != "PolicyError" {
 		t.Fatalf("a policy refusal is an error the program can catch: %+v, %v", res, err)
 	}
