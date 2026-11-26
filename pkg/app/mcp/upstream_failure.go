@@ -118,6 +118,10 @@ func ClassifyUpstreamFailure(err error) *UpstreamFailure {
 // inventoryCauseForFailure is the inventory cause code for a classified dial
 // failure. Empty when the failure is not one the status text can name.
 func inventoryCauseForFailure(err error) string {
+	var rejectedClient *OAuthClientRejectedError
+	if errors.As(err, &rejectedClient) {
+		return InventoryCauseOAuthClientRejected
+	}
 	f := ClassifyUpstreamFailure(err)
 	if f == nil {
 		return ""
