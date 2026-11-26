@@ -26,12 +26,17 @@ import (
 // drives the program with: __start, __poll and __settle (and __in, the
 // settled results). Those are defined read-only, so a program cannot replace
 // them; a program that tampered with its own state could only fake its own
-// result, and every call it asks for still goes through the caller.
+// result, and every call it asks for still goes through the caller. The JSON
+// functions are taken before the program runs, so replacing them later does
+// not change what the runner reads. None of this is a boundary: the runner
+// re-checks every limit on what it reads (see jsrun.go).
 const preludeSource = `(() => {
   "use strict";
   for (const name of ["std", "os", "bjson", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "navigator"]) {
     try { delete globalThis[name]; } catch (_) {}
   }
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
   const MAX_LOG_LINES = __MAX_LOG_LINES__;
   const MAX_LOG_LINE = __MAX_LOG_LINE__;
   let logs = [];
@@ -39,7 +44,7 @@ const preludeSource = `(() => {
   let dropped = 0;
   const show = (v) => {
     if (typeof v === "string") return v;
-    try { const s = JSON.stringify(v); return s === undefined ? String(v) : s; } catch (_) { return String(v); }
+    try { const s = stringify(v); return s === undefined ? String(v) : s; } catch (_) { return String(v); }
   };
   const log = (...args) => {
     if (kept >= MAX_LOG_LINES) { dropped++; return; }
@@ -70,7 +75,7 @@ const preludeSource = `(() => {
       return Promise.reject(new TypeError("tools." + name + " takes one object of arguments, like tools." + name + "({ … })"));
     }
     let json;
-    try { json = JSON.stringify(args); } catch (e) {
+    try { json = stringify(args); } catch (e) {
       return Promise.reject(new TypeError("the arguments of tools." + name + " are not JSON: " + e.message));
     }
     const id = ++nextID;
@@ -108,7 +113,7 @@ const preludeSource = `(() => {
     try { promise = main(); } catch (e) { fail(e); return; }
     promise.then((v) => {
       let json;
-      try { json = JSON.stringify(v === undefined ? null : v); } catch (e) {
+      try { json = stringify(v === undefined ? null : v); } catch (e) {
         fail(Object.assign(new Error("The program returned a value that is not JSON (" + e.message + "). Return plain objects, arrays, strings, numbers or booleans."), { name: "NotJSONError" }));
         return;
       }
@@ -120,12 +125,12 @@ const preludeSource = `(() => {
   const poll = () => {
     const calls = queue;
     queue = [];
-    const out = JSON.stringify({ done, ok, value, error, calls: done ? [] : calls, logs, dropped });
+    const out = stringify({ done, ok, value, error, calls: done ? [] : calls, logs, dropped });
     logs = [];
     return out;
   };
   const settle = () => {
-    const results = JSON.parse(globalThis.__in);
+    const results = parse(globalThis.__in);
     globalThis.__in = "";
     for (const r of results) {
       const p = pending.get(r.id);
@@ -138,7 +143,9 @@ const preludeSource = `(() => {
   for (const [name, fn] of [["__start", start], ["__poll", poll], ["__settle", settle]]) {
     Object.defineProperty(globalThis, name, { value: fn, writable: false, configurable: false });
   }
-  globalThis.__in = "";
+  // The runner writes the settled results here; it stays a plain value, never
+  // an accessor the program could put in its place.
+  Object.defineProperty(globalThis, "__in", { value: "", writable: true, configurable: false });
 })();
 `
 

@@ -38,8 +38,8 @@ const (
 	programReturnedMetric = "trustgate.mcp.code.bytes_returned"
 )
 
-// Results of a program beyond jsrun's error kinds (thrown, timeout, memory,
-// call_limit, output_limit, code_limit, stalled, crashed, busy).
+// Results of a program beyond jsrun's error kinds (thrown, timeout, compute,
+// memory, call_limit, output_limit, code_limit, stalled, crashed, busy).
 const (
 	programResultOK         = "ok"
 	programResultAborted    = "aborted"
