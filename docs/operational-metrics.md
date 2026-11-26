@@ -78,20 +78,26 @@ are bounded: never a query, a tool name, a gateway, a consumer or a person.
   the 10 minutes before).
 
 MCP Code Mode (see [Code Mode](mcp/code-mode.md)) reports its programs, with
-the same bounded labels plus `tool` (`trustgate_query` or `trustgate_execute`).
+the same bounded labels plus `tool` (`trustgate_execute`; `trustgate_query`
+for a call to the retired tool).
 A program's calls also count in `trustgate.mcp.search.follow_ups`, with `via`
 naming the program's tool.
 
 - `trustgate.mcp.code.programs` (`{program}`): programs, by how they ended.
-  `result` is `ok`, `thrown`, `timeout`, `memory`, `call_limit`,
-  `output_limit`, `code_limit`, `stalled`, `crashed`, `busy` (no slot on the
-  replica before the request ended), `aborted` (a consent or a rate limit
+  `result` is `ok`, `thrown`, `timeout`, `compute` (its compute budget ran
+  out), `memory`, `call_limit`, `output_limit`, `code_limit`, `stalled`,
+  `crashed`, `busy` (no slot on the replica, or none of its gateway's, within
+  the wait), `aborted` (a consent or a rate limit
   stopped it), `invalid` (no code) or `not_offered` (the gateway's Code Mode
   does not offer the tool).
 - `trustgate.mcp.code.program_duration` (seconds): how long a program ran,
   its tool calls included.
 - `trustgate.mcp.code.program_calls` (`{call}`): how many tool calls one
   program made.
+- `trustgate.mcp.code.bytes_read` (bytes): what programs' calls handed them,
+  results and errors. The model did not read it.
+- `trustgate.mcp.code.bytes_returned` (bytes): what programs handed back to
+  clients, their logs included. This is what the model read instead.
 
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.

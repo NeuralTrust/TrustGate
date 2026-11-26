@@ -1,9 +1,11 @@
 # MCP Code Mode
 
 This page is for engineers working on the MCP plane and for admins deciding
-whether to turn Code Mode on. It describes `trustgate_query` and
-`trustgate_execute`: tools that run a short JavaScript program, written by the
-model, that calls the user's tools inside the gateway and returns one result.
+whether to turn Code Mode on. It describes `trustgate_execute`: the tool that
+runs a short JavaScript program, written by the model, that calls the user's
+tools inside the gateway and returns one result. With `trustgate_search` it is
+the whole surface a model needs, as in Cloudflare's Code Mode: one tool to
+find, one to run.
 
 ## Why
 
@@ -28,16 +30,17 @@ Code Mode is a gateway setting, off by default:
 
 ```http
 PUT /v1/gateways/{id}
-{"mcp_code_mode": "read_only"}
+{"mcp_code_mode": "on"}
 ```
 
 | `mcp_code_mode` | Offered tools |
 |---|---|
 | `off` | none |
-| `read_only` | `trustgate_query` |
-| `full` | `trustgate_query` and `trustgate_execute` |
+| `on` | `trustgate_execute` |
 
-The gateway response always carries `mcp_code_mode`. The value is stored in
+The earlier values `read_only` and `full` are still accepted, and both mean
+`on`: a gateway that stored one has Code Mode on. The gateway response always
+carries `mcp_code_mode`, `off` or `on`. The value is stored in
 reserved gateway metadata (`mcp_code_mode`). A client cannot set or remove it
 through `metadata`.
 
@@ -89,11 +92,17 @@ places:
 ### Clients that kept an earlier tool list
 
 A client that fetched its tool list before Code Mode was turned on has no
-`trustgate_query` in it. Claude's hosted connectors keep theirs until the
+`trustgate_execute` in it. Claude's hosted connectors keep theirs until the
 person reconnects. Both call-throughs run a program for it:
-`trustgate_call {"tool": "trustgate_query", "arguments": {"code": …}}` and the
-earlier `trustgate_call_tool {"name": "trustgate_query", …}`. The gateway's
+`trustgate_call {"tool": "trustgate_execute", "arguments": {"code": …}}` and the
+earlier `trustgate_call_tool {"name": "trustgate_execute", …}`. The gateway's
 mode applies the same way.
+
+`trustgate_query`, which ran programs that could only call tools their servers
+marked read-only, is retired. A client that kept it in its list gets a tool
+error (`replaced`) telling it to send the same code to `trustgate_execute`; the
+program is not run, because that client listed the tool as read-only and may
+run it without asking the person.
 
 Such a client learns this from two places it still reads live: the
 `initialize` instructions, and the answer of the earlier `trustgate_list_tools`,
@@ -114,7 +123,7 @@ which closes with how to run a program.
   |---|---|
   | `ToolError` | The tool answered `isError`, or the upstream failed |
   | `PolicyError` | A request policy refused it |
-  | `NotAllowedError` | The read-only rule, or the toolkit |
+  | `NotAllowedError` | The application may not use the tool, or it is one of the gateway's own |
   | `NotFoundError` | No such tool; the message names the closest ones |
 
   The program can catch it.
@@ -145,44 +154,55 @@ Then:
 - **Ends the program.** A consent the user must give, or a rate limit. The
   client gets the protocol error a direct call would have got, so it can show
   the consent link.
-- **Can be caught.** A policy refusal or an upstream failure.
+- **Can be caught.** A policy refusal or an upstream failure. The program is
+  told what the `tools/call` handler would tell a client: an error the gateway
+  did not word for callers (it can carry an upstream URL with a token in it)
+  becomes `internal error` or `upstream MCP server unreachable`, and the detail
+  goes to the log.
 
-The program's answer passes the consumer's response policies once more as a
-whole. Each call's result already passed them, but the program can decode,
-join or reshape what it read, and the guard has to see what actually reaches
-the model.
+What the program hands back passes the response policies once more as a whole:
+its answer, and also its message and logs when it fails. Each call's result
+already passed them, but the program can decode, join or reshape what it read,
+and the guard has to see what actually reaches the model. The plan is every
+policy that ran on one of its calls, each once: a policy scoped to one server,
+tool or group of users sees the answer built from that server's data. A
+program whose calls reached no tool, or a consumer without scoped policies,
+uses the consumer's base plan.
+
+A program that stops early (its time, a consent or a rate limit) has already
+made the calls before that point. Nothing is rolled back; a program the model
+runs again makes them again.
 
 The request policies do not inspect the program's code itself: a code-injection
 detector would flag every program. They inspect each call it makes.
 
-## The read-only rule
+## No read-only mode
 
-`trustgate_query` calls a tool only when the tool reads. That means one of:
+A program may call any tool the user can call, whatever its server says the
+tool does. An earlier version also offered `trustgate_query`, whose programs
+could call only tools their servers annotated `readOnlyHint` (and not
+`openWorldHint`), or that an admin listed in the server's
+`mcp_target.read_only_tools`. It was removed:
 
-- Its server annotates it `readOnlyHint: true`, and does not declare
-  `openWorldHint: true`. An open-world tool, such as a web search or a fetch,
-  could carry what the program read out in its arguments.
-- An admin lists it in the server's `mcp_target.read_only_tools`, by the name
-  the server gives the tool (`list_issues`, not `linear_list_issues`). The
-  list covers servers that do not annotate their tools, and open-world tools
-  the admin trusts. It changes nothing else: a listed tool is called and
-  guarded like any other.
+- **The annotations are the server's own claim**, unverified, and servers
+  differ: Slack marks its channel reads open-world, many servers mark nothing.
+  A rule built on them refused ordinary reads and let through whatever a
+  server mislabelled.
+- **The gateway already has the real controls.** What a program can reach is
+  what a direct call can: the application's tool restrictions decide which
+  tools exist for it, and each call passes the request and response policies,
+  consent and rate limits.
+- **The client confirms the program.** `trustgate_execute` is annotated
+  `destructiveHint: true`, so clients that confirm such tools show the person
+  the program before it runs. A client's own rules for single tools (allow
+  this one, ask before that one, deny another) do not reach the calls inside a
+  program: the client sees one tool. Allowing `trustgate_execute` without
+  asking allows every tool the user can call. Rules that must hold belong in
+  the gateway: the application's tool restrictions and its policies.
 
-```http
-PUT /v1/registries/{id}
-{"mcp_target": {"read_only_tools": ["list_issues", "get_issue"]}}
-```
-
-The list is kept when an update omits it, and cleared by an empty list. The
-server trims, deduplicates and sorts it; at most 500 names.
-
-An unannotated tool that no admin lists is refused, with a message that points
-to `trustgate_call`. Annotations are the server's own claim. The list is the
-admin's.
-
-`trustgate_execute` calls any tool the user can call. Its definition is
-annotated `destructiveHint: true`, so clients ask the user before running it,
-showing the program.
+To keep an application's agents from writing, restrict the application to the
+tools that read. `mcp_target.read_only_tools` is no longer read or returned,
+and is ignored when sent.
 
 ## The sandbox
 
@@ -197,18 +217,28 @@ README lists the patches. The runner is `pkg/infra/jsrun`.
     the global object. `import("qjs:std")` still loads them, but the
     filesystem they see is empty, and there are no sockets, environment or
     processes.
-  - The runner's own functions are read-only.
+  - The runner's own functions are read-only, and the JSON functions it uses
+    are taken before the program runs.
+  - The runner trusts nothing the program hands back. The prelude runs beside
+    the program, which can get round it (by giving every object a `toJSON`,
+    say), so every limit is enforced again in Go on what crosses over: the
+    size of each step, the log lines, the error message, each call's name and
+    arguments (a JSON object), the result (valid JSON).
 - **Memory.** Each runtime's WebAssembly memory is capped at 64 MiB.
   QuickJS's own allocations are capped at 48 MiB. A program that allocates
   without end gets an out-of-memory error, not the gateway's memory.
 - **Time.** A program's context ends its runtime wherever it is, including
   an infinite loop. There is no real sleep: a timer spins inside
   WebAssembly, where the context can stop it.
+- **Compute.** Apart from its run time, a program has a compute budget: the
+  time it spends running JavaScript, waits on its calls excluded. A loop is
+  stopped when the budget runs out (`compute`), long before its run time.
 - **Crashes.** A recursion deep enough to overflow the engine's stack traps
   inside WebAssembly. The program fails with `crashed` and the runtime is
   discarded.
-- **Concurrency.** At most 8 programs run at once per process. Past that a
-  program waits for a slot until its request ends (`busy`).
+- **Concurrency.** At most 8 programs run at once per process, and at most 2
+  of one gateway's, so no tenant takes every slot. Past either a program waits
+  up to 5 seconds for a slot, then fails with `busy`.
 - **Warm-up.** The engine is compiled once per process, about half a second,
   in the background when the MCP plane starts.
 
@@ -220,12 +250,18 @@ README lists the patches. The runner is `pkg/infra/jsrun`.
 | Program size | 20,000 bytes |
 | Result | 25,000 bytes of JSON |
 | One call's result handed to the program | 4 MiB |
+| One call's arguments | 4 MiB |
 | Log lines | 100, of 1,000 bytes |
+| Error message | 4,000 bytes, and 10 lines of stack |
+| Compute (JavaScript running) | 5 s |
+| What one step hands the runner | 16 MiB |
+| Programs at once | 8 per process, 2 per gateway |
+| Wait for a slot | 5 s |
 
 A program that does not finish returns a tool error. The answer carries:
 
-- `error`: the kind, one of `thrown`, `timeout`, `memory`, `call_limit`,
-  `output_limit`, `code_limit`, `stalled`, `crashed` or `busy`.
+- `error`: the kind, one of `thrown`, `timeout`, `compute`, `memory`,
+  `call_limit`, `output_limit`, `code_limit`, `stalled`, `crashed` or `busy`.
 - A message written for the model to fix the program.
 - The calls the program made before it stopped, and its logs.
 
@@ -249,24 +285,39 @@ a direct call names it, several by their names joined. That is what Activity's
 Provider shows for it.
 
 - **Activity.** The program's request is one event, `mcp.tool` =
-  `trustgate_query` or `trustgate_execute`. Each call the program made is in
+  `trustgate_execute` (`trustgate_query` on requests from before it was
+  retired). Each call the program made is in
   `mcp.calls[]`:
   - `tool`, `upstream_tool`, `server_name`, `registry_id`, `catalog_code`
   - `upstream_status`, `rpc_error_code`, `latency_ms`, `tool_risk`, `decision`
   - `error`, the error's name only: never what its message quoted.
 
-  On OTLP it carries `trustgate.mcp.program_calls` and
-  `trustgate.mcp.program_tools` (see
+  The request also carries what the program read and what it returned:
+  - `program_bytes_read`: what its calls handed it, each result as the
+    program saw it (or the error's message and data).
+  - `program_bytes_returned`: the text the client got back, the result and
+    logs, or why it failed.
+
+  The model read the second instead of the first. The console estimates the
+  tokens kept out of the model's context from the difference, at 4 bytes a
+  token. That is a floor: each direct call's result also comes wrapped in its
+  MCP envelope, and whatever enters the conversation is sent again on every
+  later turn.
+
+  On OTLP it carries `trustgate.mcp.program_calls`,
+  `trustgate.mcp.program_tools`, `trustgate.mcp.program_bytes_read` and
+  `trustgate.mcp.program_bytes_returned` (see
   [the OTLP contract](../telemetry/otlp-metadata-contract.md)). Each call has
   its own MCP span, marked with the program (`trace.MCPAttrs.Program`).
 - **Usage.** The program's own request is the gateway's and is not billed.
   Each call that reached its tool is a request: resolved to a server and
-  answered, with a result or a tool error. Calls refused by a policy, by the
-  read-only rule or for a name nobody serves are not counted.
+  answered, with a result or a tool error. Calls refused by a policy or for a
+  name nobody serves are not counted.
 - **Metrics** (see [operational metrics](../operational-metrics.md)):
   - `trustgate.mcp.code.programs` by `surface`, `tool` and `result`
   - `trustgate.mcp.code.program_duration`
   - `trustgate.mcp.code.program_calls`
+  - `trustgate.mcp.code.bytes_read` and `trustgate.mcp.code.bytes_returned`
 
   A program's first call after a search counts as that search's follow-up in
   `trustgate.mcp.search.follow_ups`, with `via` naming the program's tool.
@@ -277,10 +328,9 @@ Provider shows for it.
 |---|---|
 | `pkg/infra/jsrun` | the runner: limits, the batched event loop, the prelude |
 | `third_party/qjs` | the engine, patched |
-| `pkg/app/mcp/code_mode.go` | the tools, each call's path, the read-only rule, result shaping |
+| `pkg/app/mcp/code_mode.go` | the tool, each call's path, result shaping |
 | `pkg/app/mcp/code_mode_metrics.go` | the metrics |
 | `pkg/domain/gateway` | `MCPCodeMode`, the setting |
-| `pkg/domain/registry` | `MCPTarget.ReadOnlyTools` |
 | `pkg/app/metrics/builder.go`, `pkg/app/usage` | Activity and usage of a program's calls |
 
 Tests: `go test ./pkg/infra/jsrun/ ./pkg/app/mcp/ -run 'Run|CodeMode'`. The
@@ -307,11 +357,11 @@ multi-step. For each gateway mode it reports:
 - how many multi-step tasks got a program,
 - how many first programs ran.
 
-`EVAL_MODES` picks the modes (default `off,read_only`, so a run compares
+`EVAL_MODES` picks the modes (default `off,on`, so a run compares
 Code Mode with calling tools one at a time), `EVAL_TASKS` a subset of tasks,
 and `EVAL_REPORT` a JSON file for the results. Run it before and after
 changing a tool's description or the instructions.
 
-A reference program solves each task through `trustgate_query`, without a
+A reference program solves each task through `trustgate_execute`, without a
 model. That test runs in CI: it checks the data and the graded answers agree,
 and exercises Code Mode end to end over several servers.

@@ -119,6 +119,12 @@ type MCPAttrs struct {
 	// ran the program (trustgate_query or trustgate_execute); empty for the
 	// request's own call. A program's calls are spans of its request, one each.
 	Program string
+	// ProgramBytesRead and ProgramBytesReturned are, on a Code Mode
+	// program's own span, what its calls handed it and what it handed back
+	// to the client: the first stayed out of the model's context, the second
+	// went into it.
+	ProgramBytesRead     int64
+	ProgramBytesReturned int64
 }
 
 // A2AAttrs describe one A2A call: the agent and method, the task it ran,
@@ -513,6 +519,16 @@ func (s *Span) SetMCPProgram(program string) {
 	defer s.mu.Unlock()
 	s.ensureMCP()
 	s.MCP.Program = program
+}
+
+// SetMCPProgramBytes records, on a Code Mode program's own span, the bytes
+// its calls handed it and the bytes it handed back to the client.
+func (s *Span) SetMCPProgramBytes(read, returned int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.ProgramBytesRead = read
+	s.MCP.ProgramBytesReturned = returned
 }
 
 // SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.

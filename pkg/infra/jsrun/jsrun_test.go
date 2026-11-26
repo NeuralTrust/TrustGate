@@ -149,7 +149,7 @@ func TestRun_AFailedCallIsAnErrorTheProgramCanCatch(t *testing.T) {
 	}
 	_, err := run(t, Limits{}, `await tools.read_secrets({});`, caller)
 	msg := wantKind(t, err, KindThrown)
-	if !strings.Contains(msg, "PolicyError: blocked by policy") || !strings.Contains(msg, "query.js:1") {
+	if !strings.Contains(msg, "PolicyError: blocked by policy") || !strings.Contains(msg, "program.js:1") {
 		t.Fatalf("message = %q", msg)
 	}
 }
@@ -206,15 +206,15 @@ func TestRun_Limits(t *testing.T) {
 		kind   ErrorKind
 	}{
 		{"infinite loop", Limits{Timeout: 300 * time.Millisecond}, `for (;;) {}`, KindTimeout},
-		{"memory", Limits{}, `const a = []; for (;;) a.push("x".repeat(1 << 20));`, KindMemory},
-		{"typed array", Limits{}, `return new Uint8Array(1 << 30).length;`, KindMemory},
+		{"memory", Limits{Compute: time.Minute}, `const a = []; for (;;) a.push("x".repeat(1 << 20));`, KindMemory},
+		{"typed array", Limits{Compute: time.Minute}, `return new Uint8Array(1 << 30).length;`, KindMemory},
 		{"calls", Limits{MaxCalls: 3}, `await Promise.all([1,2,3,4].map(i => tools.x({ i })));`, KindCallLimit},
 		{"calls in a loop", Limits{MaxCalls: 3}, `for (let i = 0; i < 10; i++) await tools.x({ i });`, KindCallLimit},
 		{"output", Limits{MaxOutputBytes: 100}, `return "x".repeat(200);`, KindOutputLimit},
 		{"not JSON", Limits{}, `return 10n;`, KindOutputLimit},
 		{"code", Limits{MaxCodeBytes: 10}, `return "this program is long";`, KindCodeLimit},
 		{"stalled", Limits{}, `await new Promise(() => {});`, KindStalled},
-		{"recursion", Limits{}, `function f() { return f(); } return f();`, KindCrashed},
+		{"recursion", Limits{Compute: time.Minute}, `function f() { return f(); } return f();`, KindCrashed},
 		{"thrown", Limits{}, `throw new Error("boom");`, KindThrown},
 		{"thrown value", Limits{}, `throw 42;`, KindThrown},
 	} {
@@ -249,8 +249,8 @@ func TestRun_ReachesNothingButItsTools(t *testing.T) {
 	`, nil)
 	var got struct {
 		Passwd, Proc, Home, Write any
-		Entries               []string
-		Exec                  any
+		Entries                   []string
+		Exec                      any
 	}
 	if err := json.Unmarshal(res.Value, &got); err != nil {
 		t.Fatalf("decode %s: %v", res.Value, err)
@@ -327,4 +327,190 @@ func TestRun_ProgramsDoNotShareState(t *testing.T) {
 	if err != nil || string(res.Value) != `"undefined"` {
 		t.Fatalf("second program saw %s (%v)", res.Value, err)
 	}
+}
+
+// fakeStateJS makes the state the prelude hands the runner whatever rewrite
+// returns, through a toJSON every object inherits: what a program that gets
+// round the prelude can do.
+func fakeStateJS(rewrite string) string {
+	return `
+		const rewrite = ` + rewrite + `;
+		Object.defineProperty(Object.prototype, "toJSON", {
+			configurable: true, writable: true,
+			value: function () {
+				if (this && typeof this === "object" && "done" in this && "calls" in this && !this.__fake) {
+					return Object.assign({}, rewrite(this), { __fake: true });
+				}
+				return this;
+			},
+		});
+	`
+}
+
+// The prelude bounds the logs, but a program can rewrite what the prelude
+// hands back. The runner bounds them again on its side.
+func TestRun_TheRunnerBoundsLogsWhateverTheProgramHandsBack(t *testing.T) {
+	t.Parallel()
+	limits := Limits{MaxLogLines: 5, MaxLogLineBytes: 10}
+	res, err := run(t, limits, fakeStateJS(`(s) => ({ ...s, logs: Array(50).fill("y".repeat(50000)) })`)+`
+		for (let i = 0; i < 4; i++) await tools.x({ i });
+		return 1;
+	`, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(res.Logs) != limits.MaxLogLines {
+		t.Fatalf("kept %d log lines, the limit is %d", len(res.Logs), limits.MaxLogLines)
+	}
+	for _, line := range res.Logs {
+		if len(line) > limits.MaxLogLineBytes+len("…") {
+			t.Fatalf("kept a %d-byte line, the limit is %d", len(line), limits.MaxLogLineBytes)
+		}
+	}
+	if res.LogsDropped < 5*50-limits.MaxLogLines {
+		t.Fatalf("dropped = %d", res.LogsDropped)
+	}
+}
+
+func TestRun_AStepLargerThanTheLimitEndsTheProgram(t *testing.T) {
+	t.Parallel()
+	_, err := run(t, Limits{MaxStepBytes: 1 << 20}, fakeStateJS(`(s) => ({ ...s, logs: Array(40).fill("y".repeat(50000)) })`)+`
+		await tools.x({});
+		return 1;
+	`, nil)
+	wantKind(t, err, KindOutputLimit)
+}
+
+// Replacing JSON after the prelude ran changes nothing the runner reads.
+func TestRun_ReplacingJSONDoesNotReachTheRunner(t *testing.T) {
+	t.Parallel()
+	res := mustRun(t, `
+		JSON.stringify = () => '{"done":true,"ok":true,"value":"\"faked\"","logs":[],"dropped":0}';
+		JSON.parse = () => [];
+		console.log("real");
+		const r = await tools.x({ n: 1 });
+		return r.tool;
+	`, nil)
+	if string(res.Value) != `"x"` || len(res.Logs) != 1 || res.Logs[0] != "real" {
+		t.Fatalf("value = %s, logs = %q", res.Value, res.Logs)
+	}
+}
+
+func TestRun_ThrownMessagesAreBounded(t *testing.T) {
+	t.Parallel()
+	_, err := run(t, Limits{MaxErrorBytes: 1000}, `throw new Error("x".repeat(1000000));`, nil)
+	msg := wantKind(t, err, KindThrown)
+	if len(msg) > 1200 {
+		t.Fatalf("message is %d bytes", len(msg))
+	}
+}
+
+// A call the program queued round the prelude's checks is refused by the
+// runner before it reaches the caller.
+func TestRun_RefusesCallsThePreludeWouldHave(t *testing.T) {
+	t.Parallel()
+	for name, rewrite := range map[string]string{
+		"array arguments":    `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, args: "[1,2]" })) })`,
+		"invalid arguments":  `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, args: "{" })) })`,
+		"string arguments":   `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, args: "\"str\"" })) })`,
+		"null arguments":     `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, args: "null" })) })`,
+		"oversized name":     `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, name: "n".repeat(300) })) })`,
+		"oversized argument": `(s) => ({ ...s, calls: s.calls.map((c) => ({ ...c, args: JSON.stringify({ a: "z".repeat(3000) }) })) })`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var reached atomic.Int32
+			res, err := run(t, Limits{MaxCallArgsBytes: 2000}, fakeStateJS(rewrite)+`
+				try { await tools.x({}); return "called"; } catch (e) { return e.name; }
+			`, func(ctx context.Context, call Call) (CallResult, error) {
+				reached.Add(1)
+				return echo(ctx, call)
+			})
+			if err != nil || string(res.Value) != `"TypeError"` || reached.Load() != 0 {
+				t.Fatalf("value = %s, err = %v, calls reached = %d", res.Value, err, reached.Load())
+			}
+		})
+	}
+}
+
+// A loop is stopped by its compute budget long before its time runs out;
+// time spent waiting on tools is not compute.
+func TestRun_ComputeIsBudgetedApartFromWaiting(t *testing.T) {
+	t.Parallel()
+	started := time.Now()
+	_, err := run(t, Limits{Compute: 200 * time.Millisecond, Timeout: 10 * time.Second}, `for (;;) {}`, nil)
+	wantKind(t, err, KindCompute)
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("stopped after %s", elapsed)
+	}
+
+	slow := func(ctx context.Context, call Call) (CallResult, error) {
+		time.Sleep(150 * time.Millisecond)
+		return echo(ctx, call)
+	}
+	res, err := run(t, Limits{Compute: 100 * time.Millisecond}, `
+		await tools.a({}); await tools.b({}); await tools.c({});
+		return "waited";
+	`, slow)
+	if err != nil || string(res.Value) != `"waited"` {
+		t.Fatalf("value = %s, err = %v", res.Value, err)
+	}
+}
+
+// One tenant's programs cannot take every slot: past its own share it is told
+// so, while another tenant still runs.
+func TestRun_ATenantHasItsOwnShareOfSlots(t *testing.T) {
+	t.Parallel()
+	r := New(Limits{MaxPerTenant: 1, MaxWait: 100 * time.Millisecond}, 4)
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = r.Run(WithTenant(context.Background(), "acme"), `await tools.block({}); return 1;`, func(context.Context, Call) (CallResult, error) {
+			started.Done()
+			<-release
+			return CallResult{Value: json.RawMessage(`1`)}, nil
+		})
+	}()
+	started.Wait()
+
+	_, err := r.Run(WithTenant(context.Background(), "acme"), `return 1;`, echo)
+	if msg := wantKind(t, err, KindBusy); !strings.Contains(msg, "already running 1") {
+		t.Fatalf("message = %q", msg)
+	}
+	if _, err := r.Run(WithTenant(context.Background(), "globex"), `return 1;`, echo); err != nil {
+		t.Fatalf("another tenant: %v", err)
+	}
+	close(release)
+	<-done
+
+	r.mu.Lock()
+	left := len(r.tenants)
+	r.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d tenants still tracked after every program ended", left)
+	}
+}
+
+// Waiting for a slot is bounded even when the caller's context has no
+// deadline.
+func TestRun_WaitingForASlotIsBounded(t *testing.T) {
+	t.Parallel()
+	r := New(Limits{MaxWait: 50 * time.Millisecond}, 1)
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(1)
+	go func() {
+		_, _ = r.Run(context.Background(), `await tools.block({}); return 1;`, func(context.Context, Call) (CallResult, error) {
+			started.Done()
+			<-release
+			return CallResult{Value: json.RawMessage(`1`)}, nil
+		})
+	}()
+	started.Wait()
+	_, err := r.Run(context.Background(), `return 1;`, echo)
+	close(release)
+	wantKind(t, err, KindBusy)
 }

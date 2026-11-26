@@ -546,14 +546,10 @@ func searchToolsText(
 // programHint is the sentence a search answer closes with when the gateway
 // runs Code Mode programs: the signatures above are the API a program calls.
 func programHint(ctx context.Context) string {
-	query, execute := CodeModeOffered(ctx)
-	switch {
-	case execute:
-		return "To do several calls at once, write them in one " + QueryToolName + " (reads only) or " + ExecuteToolName + " program, calling each as await tools.<name>({…}) with the signatures above (through " + GatewayCallToolName + " if the program tool is not in your list)."
-	case query:
-		return "To do several read calls at once, write them in one " + QueryToolName + " program, calling each as await tools.<name>({…}) with the signatures above (through " + GatewayCallToolName + " if " + QueryToolName + " is not in your list)."
+	if !CodeModeOffered(ctx) {
+		return ""
 	}
-	return ""
+	return "To do several calls at once, write them in one " + ExecuteToolName + " program, calling each as await tools.<name>({…}) with the signatures above (through " + GatewayCallToolName + " if " + ExecuteToolName + " is not in your list)."
 }
 
 // overviewServers are the caller's servers as the overview lists them:

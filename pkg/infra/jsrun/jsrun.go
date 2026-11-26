@@ -24,6 +24,11 @@
 // results back and lets the program run again, until the program finishes.
 // The WebAssembly module is only ever touched by one goroutine, so calls run
 // in parallel without the runtime being shared.
+//
+// The prelude that drives the program runs inside the sandbox, beside the
+// program, which can replace the builtins it uses (JSON, the prototypes'
+// toJSON). So nothing the program hands back is trusted: every limit is
+// enforced again here, on what crosses into Go.
 package jsrun
 
 import (
@@ -34,7 +39,9 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/third_party/qjs"
 )
@@ -61,6 +68,23 @@ type Limits struct {
 	// cap (qjs.MemoryLimitPages) sits above it, for allocations QuickJS does
 	// not count.
 	MemoryBytes int
+	// Compute is how long the program may spend running JavaScript, waits on
+	// its tool calls excluded. Timeout bounds the whole run; this bounds what
+	// it costs the gateway's CPU.
+	Compute time.Duration
+	// MaxCallArgsBytes is the largest arguments object one call may send.
+	MaxCallArgsBytes int
+	// MaxErrorBytes is the longest error message kept from a program.
+	MaxErrorBytes int
+	// MaxStepBytes is the most the program may hand the runner in one step:
+	// its calls, its logs and its result together.
+	MaxStepBytes int
+	// MaxWait is how long a program waits for a slot before it is told the
+	// gateway is busy.
+	MaxWait time.Duration
+	// MaxPerTenant is how many programs one tenant (a gateway) may run at
+	// once on this process, so that no tenant takes every slot.
+	MaxPerTenant int
 }
 
 // DefaultLimits are the limits a program runs under unless told otherwise.
@@ -74,6 +98,12 @@ var DefaultLimits = Limits{
 	MaxLogLines:        100,
 	MaxLogLineBytes:    1_000,
 	MemoryBytes:        48 << 20,
+	Compute:            5 * time.Second,
+	MaxCallArgsBytes:   4 << 20,
+	MaxErrorBytes:      4_000,
+	MaxStepBytes:       16 << 20,
+	MaxWait:            5 * time.Second,
+	MaxPerTenant:       2,
 }
 
 func (l Limits) withDefaults() Limits {
@@ -104,6 +134,24 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.MemoryBytes > 0 {
 		d.MemoryBytes = l.MemoryBytes
+	}
+	if l.Compute > 0 {
+		d.Compute = l.Compute
+	}
+	if l.MaxCallArgsBytes > 0 {
+		d.MaxCallArgsBytes = l.MaxCallArgsBytes
+	}
+	if l.MaxErrorBytes > 0 {
+		d.MaxErrorBytes = l.MaxErrorBytes
+	}
+	if l.MaxStepBytes > 0 {
+		d.MaxStepBytes = l.MaxStepBytes
+	}
+	if l.MaxWait > 0 {
+		d.MaxWait = l.MaxWait
+	}
+	if l.MaxPerTenant > 0 {
+		d.MaxPerTenant = l.MaxPerTenant
 	}
 	return d
 }
@@ -157,6 +205,8 @@ const (
 	KindThrown ErrorKind = "thrown"
 	// KindTimeout: it ran past its time.
 	KindTimeout ErrorKind = "timeout"
+	// KindCompute: it spent more than its compute budget running JavaScript.
+	KindCompute ErrorKind = "compute"
 	// KindMemory: it ran out of memory.
 	KindMemory ErrorKind = "memory"
 	// KindCallLimit: it made more tool calls than it may.
@@ -190,15 +240,63 @@ func (e *Error) Error() string { return e.Message }
 type Runner struct {
 	limits Limits
 	slots  chan struct{}
+
+	mu      sync.Mutex
+	tenants map[string]*tenantSlots
+}
+
+// tenantSlots are one tenant's slots, kept while anyone holds or waits for one.
+type tenantSlots struct {
+	ch    chan struct{}
+	users int
 }
 
 // New returns a runner that runs up to concurrent programs at once on this
-// process; past that a program waits for a slot until its context ends.
+// process, and up to Limits.MaxPerTenant of them for any one tenant (see
+// WithTenant). Past either, a program waits for a slot for Limits.MaxWait
+// and is then told the gateway is busy.
 func New(limits Limits, concurrent int) *Runner {
 	if concurrent <= 0 {
 		concurrent = 8
 	}
-	return &Runner{limits: limits.withDefaults(), slots: make(chan struct{}, concurrent)}
+	return &Runner{
+		limits:  limits.withDefaults(),
+		slots:   make(chan struct{}, concurrent),
+		tenants: make(map[string]*tenantSlots),
+	}
+}
+
+type tenantKey struct{}
+
+// WithTenant names whose program runs on ctx: a tenant's programs share
+// Limits.MaxPerTenant slots.
+func WithTenant(ctx context.Context, tenant string) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenant)
+}
+
+func tenantFrom(ctx context.Context) string {
+	tenant, _ := ctx.Value(tenantKey{}).(string)
+	return tenant
+}
+
+// tenant returns tenant's slots and the function to call once done with them.
+func (r *Runner) tenant(key string) (*tenantSlots, func()) {
+	r.mu.Lock()
+	t := r.tenants[key]
+	if t == nil {
+		t = &tenantSlots{ch: make(chan struct{}, r.limits.MaxPerTenant)}
+		r.tenants[key] = t
+	}
+	t.users++
+	r.mu.Unlock()
+	return t, func() {
+		r.mu.Lock()
+		t.users--
+		if t.users == 0 {
+			delete(r.tenants, key)
+		}
+		r.mu.Unlock()
+	}
 }
 
 var warmOnce sync.Once
@@ -225,16 +323,37 @@ func (r *Runner) Run(ctx context.Context, code string, call Caller) (Result, err
 		return Result{}, &Error{Kind: KindCodeLimit, Message: fmt.Sprintf(
 			"The program is %d bytes; the most this runs is %d. Write a shorter one.", len(code), limits.MaxCodeBytes)}
 	}
+	wait := time.NewTimer(limits.MaxWait)
+	defer wait.Stop()
+	if key := tenantFrom(ctx); key != "" {
+		t, done := r.tenant(key)
+		defer done()
+		select {
+		case t.ch <- struct{}{}:
+			defer func() { <-t.ch }()
+		case <-wait.C:
+			return Result{}, &Error{Kind: KindBusy, Message: fmt.Sprintf(
+				"This gateway is already running %d programs. Wait for one to finish, or make these calls one at a time.", limits.MaxPerTenant)}
+		case <-ctx.Done():
+			return Result{}, busy()
+		}
+	}
 	select {
 	case r.slots <- struct{}{}:
 		defer func() { <-r.slots }()
+	case <-wait.C:
+		return Result{}, busy()
 	case <-ctx.Done():
-		return Result{}, &Error{Kind: KindBusy, Message: "The gateway is running too many programs right now. Try again in a moment."}
+		return Result{}, busy()
 	}
 	ctx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()
-	p := &program{ctx: ctx, limits: limits, call: call}
+	p := &program{ctx: ctx, limits: limits, call: call, computeLeft: limits.Compute}
 	return p.run(code)
+}
+
+func busy() *Error {
+	return &Error{Kind: KindBusy, Message: "The gateway is running too many programs right now. Try again in a moment."}
 }
 
 type program struct {
@@ -243,7 +362,17 @@ type program struct {
 	call   Caller
 	rt     *qjs.Runtime
 	calls  int
-	logs   []string
+	// logs are the lines kept, at most MaxLogLines; dropped counts the rest,
+	// here and in the prelude (jsDropped, its own count).
+	logs      []string
+	dropped   int
+	jsDropped int
+
+	// computeLeft is what is left of the compute budget. Running out cancels
+	// the runtime's context, which closes the module under the program.
+	computeLeft   time.Duration
+	computeOut    atomic.Bool
+	cancelCompute context.CancelFunc
 }
 
 // pollState is what the prelude's __poll reports.
@@ -286,8 +415,11 @@ func (p *program) run(code string) (result Result, err error) {
 			p.rt.Discard()
 		}
 	}()
+	engineCtx, cancelCompute := context.WithCancel(p.ctx)
+	defer cancelCompute()
+	p.cancelCompute = cancelCompute
 	rt, err := qjs.New(qjs.Option{
-		Context:     p.ctx,
+		Context:     engineCtx,
 		CWD:         "/",
 		Stdout:      io.Discard,
 		Stderr:      io.Discard,
@@ -310,7 +442,7 @@ func (p *program) run(code string) (result Result, err error) {
 		if err != nil {
 			return Result{}, p.failure(err)
 		}
-		p.logs = append(p.logs, state.Logs...)
+		p.keepLogs(state.Logs, state.Dropped)
 		if state.Done {
 			return p.finish(state)
 		}
@@ -333,27 +465,111 @@ func (p *program) run(code string) (result Result, err error) {
 	}
 }
 
-func (p *program) eval(code string) error {
-	v, err := p.rt.Eval("query.js", qjs.Code(code))
-	if err != nil {
-		return err
+// errComputeSpent is the engine refusing to run a program whose compute
+// budget is gone.
+var errComputeSpent = errors.New("jsrun: compute budget spent")
+
+// engine runs fn inside the engine, charged to the program's compute budget.
+// A timer cancels the runtime's context when the budget runs out mid-run.
+func (p *program) engine(fn func() error) error {
+	if p.computeLeft <= 0 {
+		p.computeOut.Store(true)
+		p.cancelCompute()
+		return errComputeSpent
 	}
-	v.Free()
-	return nil
+	started := time.Now()
+	timer := time.AfterFunc(p.computeLeft, func() {
+		p.computeOut.Store(true)
+		p.cancelCompute()
+	})
+	err := fn()
+	timer.Stop()
+	p.computeLeft -= time.Since(started)
+	return err
+}
+
+func (p *program) eval(code string) error {
+	return p.engine(func() error {
+		v, err := p.rt.Eval("program.js", qjs.Code(code))
+		if err != nil {
+			return err
+		}
+		v.Free()
+		return nil
+	})
 }
 
 func (p *program) poll() (pollState, error) {
-	v, err := p.rt.Eval("poll.js", qjs.Code("globalThis.__poll()"))
+	var raw string
+	err := p.engine(func() error {
+		v, err := p.rt.Eval("poll.js", qjs.Code("globalThis.__poll()"))
+		if err != nil {
+			return err
+		}
+		raw = v.String()
+		v.Free()
+		return nil
+	})
 	if err != nil {
 		return pollState{}, err
 	}
-	raw := v.String()
-	v.Free()
+	if len(raw) > p.limits.MaxStepBytes {
+		return pollState{}, p.fail(KindOutputLimit, fmt.Sprintf(
+			"The program handed back %d bytes in one step; the most is %d. Log, send and return less.",
+			len(raw), p.limits.MaxStepBytes))
+	}
 	var state pollState
 	if err := json.Unmarshal([]byte(raw), &state); err != nil {
 		return pollState{}, fmt.Errorf("jsrun: read program state: %w", err)
 	}
 	return state, nil
+}
+
+// keepLogs keeps what fits of the lines the program logged since the last
+// step. The prelude bounds them too, but a program can get round the prelude.
+func (p *program) keepLogs(lines []string, jsDropped int) {
+	if jsDropped > p.jsDropped {
+		p.jsDropped = jsDropped
+	}
+	for _, line := range lines {
+		if len(p.logs) >= p.limits.MaxLogLines {
+			p.dropped++
+			continue
+		}
+		p.logs = append(p.logs, truncate(line, p.limits.MaxLogLineBytes))
+	}
+}
+
+// truncate cuts s to at most max bytes, on a rune boundary, marking the cut.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// maxToolNameBytes is the longest tool name a call may carry; MCP names are
+// far shorter.
+const maxToolNameBytes = 256
+
+// refusedCall is why the runner will not run a call the program queued, or ""
+// when it will. The prelude checks the same, but a program can get round it.
+func (p *program) refusedCall(q queuedCall) string {
+	if q.Name == "" || len(q.Name) > maxToolNameBytes {
+		return "a tool is called by its name, at most 256 bytes long"
+	}
+	if len(q.Args) > p.limits.MaxCallArgsBytes {
+		return fmt.Sprintf("the arguments of %s are %d bytes; the most a call may send is %d", q.Name, len(q.Args), p.limits.MaxCallArgsBytes)
+	}
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(q.Args), &args); err != nil || args == nil {
+		return "tools." + q.Name + " takes one object of arguments, like tools." + q.Name + "({ … })"
+	}
+	return ""
 }
 
 func (p *program) runCalls(queued []queuedCall) ([]settled, error) {
@@ -367,6 +583,10 @@ func (p *program) runCalls(queued []queuedCall) ([]settled, error) {
 	for i, q := range queued {
 		p.calls++
 		seq := p.calls
+		if why := p.refusedCall(q); why != "" {
+			results[i] = settled{ID: q.ID, Error: &CallError{Name: "TypeError", Message: why}}
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, q queuedCall, seq int) {
@@ -428,8 +648,15 @@ func (p *program) settle(results []settled) error {
 	if err != nil {
 		return err
 	}
-	p.rt.Context().Global().SetPropertyStr("__in", p.rt.Context().NewString(string(raw)))
-	return p.eval("globalThis.__settle()")
+	return p.engine(func() error {
+		p.rt.Context().Global().SetPropertyStr("__in", p.rt.Context().NewString(string(raw)))
+		v, err := p.rt.Eval("program.js", qjs.Code("globalThis.__settle()"))
+		if err != nil {
+			return err
+		}
+		v.Free()
+		return nil
+	})
 }
 
 func (p *program) finish(state pollState) (Result, error) {
@@ -445,7 +672,10 @@ func (p *program) finish(state pollState) (Result, error) {
 			"The program returned %d bytes; the most it may return is %d. Return less: pick the fields you need, slice, count or summarize in the program.",
 			len(value), p.limits.MaxOutputBytes))
 	}
-	return Result{Value: json.RawMessage(value), Logs: p.logs, LogsDropped: state.Dropped, Calls: p.calls}, nil
+	if !json.Valid([]byte(value)) {
+		return Result{}, p.fail(KindOutputLimit, "The program returned a value that is not JSON. Return plain objects, arrays, strings, numbers or booleans.")
+	}
+	return Result{Value: json.RawMessage(value), Logs: p.logs, LogsDropped: p.dropped + p.jsDropped, Calls: p.calls}, nil
 }
 
 func (p *program) thrownError(t *thrown) error {
@@ -458,9 +688,9 @@ func (p *program) thrownError(t *thrown) error {
 	if t.Name == "NotJSONError" {
 		return p.fail(KindOutputLimit, t.Message)
 	}
-	msg := t.Message
-	if t.Name != "" && !strings.HasPrefix(msg, t.Name) {
-		msg = t.Name + ": " + msg
+	msg := truncate(t.Message, p.limits.MaxErrorBytes)
+	if name := truncate(t.Name, 100); name != "" && !strings.HasPrefix(msg, name) {
+		msg = name + ": " + msg
 	}
 	if stack := programStack(t.Stack); stack != "" {
 		msg += "\n" + stack
@@ -468,12 +698,21 @@ func (p *program) thrownError(t *thrown) error {
 	return p.fail(KindThrown, msg)
 }
 
+// maxStackLines and maxStackLineBytes bound the stack kept with an error.
+const (
+	maxStackLines     = 10
+	maxStackLineBytes = 200
+)
+
 // programStack keeps the stack lines that point into the program.
 func programStack(stack string) string {
 	var lines []string
 	for _, line := range strings.Split(stack, "\n") {
-		if strings.Contains(line, "query.js") {
-			lines = append(lines, strings.TrimSpace(line))
+		if len(lines) == maxStackLines {
+			break
+		}
+		if strings.Contains(line, "program.js") {
+			lines = append(lines, truncate(strings.TrimSpace(line), maxStackLineBytes))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -485,6 +724,10 @@ func (p *program) failure(err error) error {
 	if errors.As(err, &known) {
 		return err
 	}
+	if p.computeOut.Load() {
+		return p.fail(KindCompute, fmt.Sprintf(
+			"The program computed for more than %s and was stopped. Do less in the program: filter in the tool's arguments, or keep fewer fields.", p.limits.Compute))
+	}
 	if p.ctx.Err() != nil {
 		return p.fail(KindTimeout, p.timeoutMessage())
 	}
@@ -493,11 +736,11 @@ func (p *program) failure(err error) error {
 	case strings.Contains(text, "out of memory"):
 		return p.fail(KindMemory, "The program ran out of memory. Hold less at once: slice what you load, or keep only the fields you need.")
 	case strings.Contains(text, "SyntaxError"), strings.Contains(text, "ReferenceError"), strings.Contains(text, "TypeError"):
-		return p.fail(KindThrown, cleanEngineError(text))
+		return p.fail(KindThrown, truncate(cleanEngineError(text), p.limits.MaxErrorBytes))
 	case strings.Contains(text, "wasm error"), strings.Contains(text, "module closed"), strings.Contains(text, "failed to call"):
 		return p.fail(KindCrashed, "The program crashed the engine, most often by recursing too deep. Use a loop instead.")
 	}
-	return p.fail(KindThrown, cleanEngineError(text))
+	return p.fail(KindThrown, truncate(cleanEngineError(text), p.limits.MaxErrorBytes))
 }
 
 func (p *program) timeoutMessage() string {
@@ -520,7 +763,7 @@ func cleanEngineError(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || (strings.HasPrefix(line, "at ") && !strings.Contains(line, "query.js")) {
+		if line == "" || (strings.HasPrefix(line, "at ") && !strings.Contains(line, "program.js")) {
 			continue
 		}
 		lines = append(lines, line)

@@ -325,6 +325,7 @@ func TestBuilder_MCPListsAProgramsCalls(t *testing.T) {
 	rt := trace.New("trace-program", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
 	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
 		Method: "tools/call", Operation: "tool", Tool: "trustgate_query", UpstreamStatus: http.StatusOK,
+		ProgramBytesRead: 48_000, ProgramBytesReturned: 120,
 	}, 300*time.Millisecond))
 	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
 		Method: "tools/call", Operation: "tool", Tool: "linear_list_issues", UpstreamTool: "list_issues",
@@ -345,6 +346,8 @@ func TestBuilder_MCPListsAProgramsCalls(t *testing.T) {
 	require.NotNil(t, evt.MCP)
 	assert.Equal(t, "trustgate_query", evt.MCP.Tool, "the event is the program's request")
 	assert.Equal(t, int64(300), evt.MCP.UpstreamLatencyMs, "the calls' time is inside the program's")
+	assert.Equal(t, int64(48_000), evt.MCP.ProgramBytesRead)
+	assert.Equal(t, int64(120), evt.MCP.ProgramBytesReturned)
 	require.Len(t, evt.MCP.Calls, 2)
 	assert.Equal(t, events.MCPCall{
 		Tool: "linear_list_issues", UpstreamTool: "list_issues", ServerName: "linear", RegistryID: "reg-1",

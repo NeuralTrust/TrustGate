@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -26,7 +27,10 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/jsrun"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -43,21 +47,29 @@ import (
 // policies, rate limit and audit as a direct call. A program can do nothing a
 // direct call could not.
 //
-// trustgate_query runs programs that only read: they may call a tool its
-// server annotates readOnlyHint, or one the server's admin lists in
-// read_only_tools, and not one that declares it reaches an open world (a web
-// search or a fetch could carry what the program read elsewhere) unless the
-// admin listed it. trustgate_execute runs programs that may call any tool the
-// user can call; clients ask the user before running it. A gateway offers
-// neither, the first, or both (gateway mcp_code_mode).
+// One tool runs programs, trustgate_execute, offered when the gateway's Code
+// Mode is on (gateway mcp_code_mode). A program may call any tool the user
+// can call; what keeps a user's agent from writing is what keeps a direct
+// call from it: the application's tool restrictions and the gateway's
+// policies. The tool is marked destructive, so clients that confirm such tools
+// show the person the program first. A client's own rules for single tools
+// (allow this one, ask for that one) do not reach the calls inside a program:
+// only the gateway sees those.
+//
+// What a program hands back, its answer or why it failed, passes the response
+// policies of every server it called; a failed call is described to it in the
+// words the tools/call handler would use with a client.
 //
 // See docs/mcp/code-mode.md.
 
 const (
-	// QueryToolName runs a program that calls the user's read-only tools.
-	QueryToolName = "trustgate_query"
 	// ExecuteToolName runs a program that may call any of the user's tools.
 	ExecuteToolName = "trustgate_execute"
+	// QueryToolName is retired. It ran programs that could call only tools
+	// their servers marked read-only; a client that kept it in its tool list
+	// is told to send the program to ExecuteToolName instead. It is not run:
+	// that client listed it as read-only and may run it without asking.
+	QueryToolName = "trustgate_query"
 )
 
 // IsCodeModeToolName reports whether name is one of the Code Mode tools.
@@ -77,13 +89,7 @@ func codeModeOf(ctx context.Context) string {
 
 // codeModeOffers reports whether the gateway's Code Mode offers the tool.
 func codeModeOffers(mode, tool string) bool {
-	switch tool {
-	case QueryToolName:
-		return mode == gatewaydomain.MCPCodeModeReadOnly || mode == gatewaydomain.MCPCodeModeFull
-	case ExecuteToolName:
-		return mode == gatewaydomain.MCPCodeModeFull
-	}
-	return false
+	return tool == ExecuteToolName && mode == gatewaydomain.MCPCodeModeOn
 }
 
 // gatewayToolsOnly reports whether the request's gateway lists only its own
@@ -102,94 +108,67 @@ func ToolListingInstructions(ctx context.Context, rc *appconsumer.RoutableConsum
 	return " The user's tools are not in your tool list: find them with " + SearchToolName + ` {"query": …} and call one with ` + GatewayCallToolName + ` {"tool": <name>, "arguments": {…}}.`
 }
 
-// CodeModeOffered reports which Code Mode tools the request's gateway offers.
-func CodeModeOffered(ctx context.Context) (query, execute bool) {
-	mode := codeModeOf(ctx)
-	return codeModeOffers(mode, QueryToolName), codeModeOffers(mode, ExecuteToolName)
+// CodeModeOffered reports whether the request's gateway offers
+// ExecuteToolName.
+func CodeModeOffered(ctx context.Context) bool {
+	return codeModeOffers(codeModeOf(ctx), ExecuteToolName)
 }
 
 // CodeModeInstructions is the sentence the initialize instructions close with
 // on a gateway with Code Mode on: when to write a program instead of calling
-// tools one at a time. The tools' own descriptions say the same, for a client
+// tools one at a time. The tool's own description says the same, for a client
 // that does not pass instructions on.
 func CodeModeInstructions(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
-	if !metaToolsPermitted(rc) {
+	if !metaToolsPermitted(rc) || !CodeModeOffered(ctx) {
 		return ""
 	}
-	query, execute := CodeModeOffered(ctx)
-	switch {
-	case execute:
-		return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one program: " + QueryToolName + " for one that only reads, " + ExecuteToolName + " for one that also writes. Only what the program returns comes back to you." + programFallback
-	case query:
-		return " For a task that only reads and takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + QueryToolName + " program: only what it returns comes back to you." + programFallback
-	}
-	return ""
+	return " For a task that takes several tool calls (a loop over results, filtering, joining or counting), find the tools with " + SearchToolName + " and do the work in one " + ExecuteToolName + " program: only what it returns comes back to you." + programFallback
 }
 
 // programFallback tells a client whose tool list predates Code Mode how to
 // run a program anyway.
-const programFallback = " If " + QueryToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + QueryToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": …}}.`
+const programFallback = " If " + ExecuteToolName + " is not in your tool list, call it through " + GatewayCallToolName + ` {"tool": "` + ExecuteToolName + `", "arguments": {"code": …}} or ` + CallToolName + ` {"name": "` + ExecuteToolName + `", "arguments": {"code": …}}.`
 
 // ProgramHintForEarlierTools closes the earlier inventory tool's answer when
 // the gateway runs Code Mode programs. A client that still uses the earlier
 // tools fetched its list before Code Mode: this answer is the one place it
 // learns that programs exist and how to run one.
 func ProgramHintForEarlierTools(ctx context.Context) string {
-	query, execute := CodeModeOffered(ctx)
-	if !query {
+	if !CodeModeOffered(ctx) {
 		return ""
 	}
-	hint := "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
-		CallToolName + ` {"name": "` + QueryToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
-		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer. Only tools that read can be called from it."
-	if execute {
-		hint += " For a program that also writes, use " + ExecuteToolName + " the same way."
-	}
-	return hint
+	return "\n\nFor a task that takes several calls (a loop over results, filtering, joining or counting), run them in one program on the gateway: " +
+		CallToolName + ` {"name": "` + ExecuteToolName + `", "arguments": {"code": <the body of an async JavaScript function>}}` +
+		", calling each tool in it as await tools.<name>({…}) and returning the smallest answer."
 }
 
 // codeModeDefinitions are the Code Mode tools the gateway offers this
-// request, none when Code Mode is off.
+// request: ExecuteToolName when Code Mode is on, none when it is off.
 func (d *RPCDispatcher) codeModeDefinitions(ctx context.Context) []Tool {
-	if d.inventoryImpl == nil || d.inventory == nil {
+	if d.inventoryImpl == nil || d.inventory == nil || !CodeModeOffered(ctx) {
 		return nil
 	}
-	mode := codeModeOf(ctx)
-	limits := d.programs.Limits()
-	var defs []Tool
-	if codeModeOffers(mode, QueryToolName) {
-		if def, err := programDefinition(QueryToolName, limits); err == nil {
-			defs = append(defs, def)
-		}
+	def, err := programDefinition(d.programs.Limits())
+	if err != nil {
+		return nil
 	}
-	if codeModeOffers(mode, ExecuteToolName) {
-		if def, err := programDefinition(ExecuteToolName, limits); err == nil {
-			defs = append(defs, def)
-		}
-	}
-	return defs
+	return []Tool{def}
 }
 
-func programDefinition(name string, limits jsrun.Limits) (Tool, error) {
-	var description, title string
-	annotations := map[string]any{"idempotentHint": false, "openWorldHint": true}
-	if name == QueryToolName {
-		title = "Run a program that reads the user's tools"
-		description = "Run a short JavaScript program on the gateway that calls the user's read-only tools and returns one result. " +
-			"Use it instead of several " + GatewayCallToolName + " calls when a task needs more than one call, a loop over results, or filtering, joining or counting before you answer: only what the program returns comes back to you. "
-		annotations["readOnlyHint"] = true
-		annotations["destructiveHint"] = false
-	} else {
-		title = "Run a program that uses the user's tools"
-		description = "Run a short JavaScript program on the gateway that calls any of the user's tools, including ones that create, change or delete, and returns one result. " +
-			"Use it for a task of several steps that writes, such as updating every item a search finds. For a task that only reads, use " + QueryToolName + ". "
-		annotations["readOnlyHint"] = false
-		annotations["destructiveHint"] = true
-	}
-	description += "In the program, call a tool as `await tools.<name>(args)` with its exact name and the arguments its signature in " + SearchToolName + " gives (search first if you do not have them); calls run in parallel with Promise.all. " +
+// programDefinition is ExecuteToolName as clients list it. It is marked
+// destructive: a program may call tools that write, and clients that confirm
+// such tools show the person the program before it runs.
+func programDefinition(limits jsrun.Limits) (Tool, error) {
+	name := ExecuteToolName
+	annotations := map[string]any{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
+	title := "Run a program that uses the user's tools"
+	description := "Run a short JavaScript program on the gateway that calls the user's tools and returns one result. " +
+		"Use it instead of several " + GatewayCallToolName + " calls when a task needs more than one call, a loop over results, or filtering, joining or counting before you answer: only what the program returns comes back to you. " +
+		"In the program, call a tool as `await tools.<name>(args)` with its exact name and the arguments its signature in " + SearchToolName + " gives (search first if you do not have them); calls run in parallel with Promise.all. " +
 		"A call returns the tool's structured result, or its JSON text parsed, or its text; a failed call throws a ToolError you can catch. " +
 		"`return` the smallest value that answers the task. console.log lines come back too. " +
 		"There is no network, file or timer access, and no import of modules. " +
+		"If it stops early (its time, a consent or a rate limit), the calls it already made stay made. " +
 		fmt.Sprintf("Limits: %s, %d tool calls, %d KB of result.", limits.Timeout, limits.MaxCalls, limits.MaxOutputBytes/1000) +
 		consolidatedToolDisclaimer
 	return toolFromDefinition(map[string]any{
@@ -221,9 +200,14 @@ type programCall struct {
 	Error  string `json:"error,omitempty"`
 	// registry is where the call went, for attributing the program's request.
 	registry *registrydomain.Registry
+	// target is the tool the call resolved to, nil when it resolved to none;
+	// its plan is one the program's answer passes.
+	target *ResolvedTool
+	// bytes is what the call handed the program: its result, or its error.
+	bytes int64
 }
 
-// runProgram serves QueryToolName and ExecuteToolName.
+// runProgram serves ExecuteToolName, and answers the retired QueryToolName.
 func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, tool string, arguments json.RawMessage) (any, error) {
 	// The program's own request is the gateway's; each tool it calls is
 	// counted as that tool's call (see usage and the event builder).
@@ -232,13 +216,13 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		return nil, &ToolNotPermittedError{Tool: tool}
 	}
 	mode := codeModeOf(ctx)
+	if tool == QueryToolName && codeModeOffers(mode, ExecuteToolName) {
+		d.programStats.ran(ctx, req.consumer, tool, programResultNotOffered, 0)
+		return toolErrorResult(QueryToolName+" was replaced by "+ExecuteToolName+". Send the same code to "+ExecuteToolName+".", map[string]any{"error": "replaced", "use": ExecuteToolName})
+	}
 	if !codeModeOffers(mode, tool) {
 		d.programStats.ran(ctx, req.consumer, tool, programResultNotOffered, 0)
-		text := tool + " is not turned on for this gateway."
-		if tool == ExecuteToolName && codeModeOffers(mode, QueryToolName) {
-			text = tool + " is not turned on for this gateway; " + QueryToolName + " is, for programs that only read."
-		}
-		return toolErrorResult(text+" Call the tools one at a time with "+GatewayCallToolName+".", map[string]any{"error": "not_enabled", "code_mode": mode})
+		return toolErrorResult("Code Mode is not turned on for this gateway. Call the tools one at a time with "+GatewayCallToolName+".", map[string]any{"error": "not_enabled", "code_mode": mode})
 	}
 	var args struct {
 		Code string `json:"code"`
@@ -258,7 +242,10 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		mu.Unlock()
 	}
 	started := time.Now()
-	result, err := d.programs.Run(ctx, args.Code, func(ctx context.Context, call jsrun.Call) (jsrun.CallResult, error) {
+	// A gateway's programs share its own slots on this process, so no tenant
+	// can take every slot.
+	runCtx := jsrun.WithTenant(ctx, req.consumer.Consumer.GatewayID.String())
+	result, err := d.programs.Run(runCtx, args.Code, func(ctx context.Context, call jsrun.Call) (jsrun.CallResult, error) {
 		return d.programCall(ctx, req, tool, call, record)
 	})
 	elapsed := time.Since(started)
@@ -268,12 +255,22 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 	case errors.As(err, &failed):
 		d.programStats.ran(ctx, req.consumer, tool, string(failed.Kind), len(calls))
 		d.programStats.took(ctx, req.consumer, tool, elapsed)
-		return toolErrorResult(programFailureText(tool, failed, calls), map[string]any{
+		text := programFailureText(tool, failed, calls)
+		d.recordProgramBytes(ctx, req, tool, calls, len(text))
+		raw, err := toolErrorResult(text, map[string]any{
 			"error":   failed.Kind,
 			"message": failed.Message,
 			"calls":   callsOrEmpty(calls),
 			"logs":    logsOrEmpty(failed.Logs),
 		})
+		if err != nil {
+			return nil, err
+		}
+		// A program that fails still hands back its message and its logs,
+		// built from what its calls returned: they pass the same policies as
+		// an answer, or a program could throw what a policy kept it from
+		// returning.
+		return d.programAnswer(ctx, req, tool, arguments, calls, raw)
 	case err != nil:
 		// A consent the user must give or a rate limit: the program stops and
 		// the client gets what a direct call would have got.
@@ -296,14 +293,29 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		structured["logs_dropped"] = result.LogsDropped
 		text += fmt.Sprintf("\n(%d more log lines dropped)", result.LogsDropped)
 	}
+	d.recordProgramBytes(ctx, req, tool, calls, len(text))
 	raw, err := marshalToolResult(text, structured)
 	if err != nil {
 		return nil, err
 	}
-	// What reaches the model is what the program made of its calls' results,
-	// which each passed the response policies on their own; the program may
-	// have decoded, joined or reshaped them, so its answer passes them too.
-	post, err := d.plugins.PreResponse(ctx, req.consumer, ToolCall{Exposed: tool, Arguments: arguments}, raw)
+	return d.programAnswer(ctx, req, tool, arguments, calls, raw)
+}
+
+// programAnswer passes what a program hands back through the response
+// policies. What reaches the model is what the program made of its calls'
+// results, which each passed the response policies on their own; the program
+// may have decoded, joined or reshaped them, so its answer passes them too,
+// under the plan of every server it called (see answerPlan).
+func (d *RPCDispatcher) programAnswer(
+	ctx context.Context,
+	req dispatchRequest,
+	tool string,
+	arguments json.RawMessage,
+	calls []programCall,
+	raw json.RawMessage,
+) (any, error) {
+	call := ToolCall{Exposed: tool, Arguments: arguments, Plan: answerPlan(ctx, req.consumer, calls)}
+	post, err := d.plugins.PreResponse(ctx, req.consumer, call, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +323,38 @@ func (d *RPCDispatcher) runProgram(ctx context.Context, req dispatchRequest, too
 		return post.Result, nil
 	}
 	return raw, nil
+}
+
+// answerPlan is the plan a program's answer passes: every policy that ran on
+// one of its calls, each once. A policy scoped to one server (or one tool, or
+// one group of users) saw that call's result; the answer the program built
+// from it is that server's data too. Without scoped plans, or when no call
+// reached a tool, it is nil: the consumer's base plan.
+func answerPlan(ctx context.Context, rc *appconsumer.RoutableConsumer, calls []programCall) *appplugins.StagePlan {
+	if rc == nil || rc.MCPPlans == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	var plans []*appplugins.StagePlan
+	seen := make(map[*appplugins.StagePlan]struct{})
+	for _, c := range calls {
+		if c.target == nil {
+			continue
+		}
+		plan := rc.MCPPlans.PlanFor(c.target.Registry, c.target.Tool.Name, principal)
+		if plan == nil {
+			continue
+		}
+		if _, dup := seen[plan]; dup {
+			continue
+		}
+		seen[plan] = struct{}{}
+		plans = append(plans, plan)
+	}
+	if len(plans) == 0 {
+		return nil
+	}
+	return plans[0].Union(plans[1:]...)
 }
 
 // programCall runs one call a program made, exactly as a direct call would
@@ -323,33 +367,37 @@ func (d *RPCDispatcher) programCall(
 	record func(programCall),
 ) (jsrun.CallResult, error) {
 	started := time.Now()
-	var reg *registrydomain.Registry
+	var target *ResolvedTool
 	done := func(res jsrun.CallResult, err error) (jsrun.CallResult, error) {
-		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), registry: reg}
-		if reg != nil {
-			c.Server = reg.Name
+		c := programCall{Tool: call.Name, OK: err == nil && res.Err == nil, Ms: time.Since(started).Milliseconds(), target: target, bytes: int64(len(res.Value))}
+		if target != nil {
+			c.registry = target.Registry
+			c.Server = target.Registry.Name
 		}
 		if res.Err != nil {
 			c.Error = res.Err.Name
+			c.bytes += int64(len(res.Err.Message) + len(res.Err.Data))
 		}
 		record(c)
 		return res, err
 	}
-	if isGatewayToolName(call.Name) || IsCodeModeToolName(call.Name) {
-		return done(callError("NotAllowedError", call.Name+" is one of the gateway's own tools; a program calls the user's tools only."), nil)
-	}
 	// Each call is its own span: Activity and usage see the tools the program
-	// called, each with its server, policies and outcome.
+	// called, each with its server, policies and outcome, a refused one too.
 	span := startProgramSpan(ctx, program, call.Name)
 	if span != nil {
 		ctx = trace.NewSpanContext(ctx, span)
 	}
-	res, err := d.programCallTraced(ctx, req, program, call, &reg)
+	if isGatewayToolName(call.Name) || IsCodeModeToolName(call.Name) {
+		res := callError("NotAllowedError", call.Name+" is one of the gateway's own tools; a program calls the user's tools only.")
+		finishProgramSpan(span, res, nil)
+		return done(res, nil)
+	}
+	res, err := d.programCallTraced(ctx, req, program, call, &target)
 	finishProgramSpan(span, res, err)
 	return done(res, err)
 }
 
-func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call, reg **registrydomain.Registry) (jsrun.CallResult, error) {
+func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchRequest, program string, call jsrun.Call, resolved **ResolvedTool) (jsrun.CallResult, error) {
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return jsrun.CallResult{}, err
 	}
@@ -358,48 +406,13 @@ func (d *RPCDispatcher) programCallTraced(ctx context.Context, req dispatchReque
 		d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{}, err)
 		return resolveFailure(err, call.Name, d.closestToolNames(ctx, req.consumer, call.Name))
 	}
-	*reg = target.Registry
-	if program == QueryToolName {
-		if refusal := readOnlyRefusal(target, call.Name, codeModeOf(ctx)); refusal != nil {
-			if span := trace.SpanFromContext(ctx); span != nil {
-				annotateRegistry(span, target.Registry, target.Tool.Name)
-				span.SetMCPToolRisk(target.Tool.Risk())
-			}
-			return jsrun.CallResult{Err: refusal}, nil
-		}
-	}
+	*resolved = target
 	d.searchStats.called(ctx, req.consumer, program, call.Name, toolInvocation{target: target}, nil)
 	result, _, err := d.invokeResolved(ctx, req, target, call.Arguments, nil)
 	if err != nil {
-		return invokeFailure(err)
+		return invokeFailure(err, call.Name)
 	}
 	return programValue(result), nil
-}
-
-// readOnlyRefusal is why a read-only program may not call the tool, nil when
-// it may.
-func readOnlyRefusal(target *ResolvedTool, name, mode string) *jsrun.CallError {
-	listed := target.Registry != nil && target.Registry.MCPTarget.IsReadOnlyTool(target.Tool.Name)
-	if listed {
-		return nil
-	}
-	risk, _ := target.Tool.Risk()
-	elsewhere := " Call it on its own with " + GatewayCallToolName
-	if mode == gatewaydomain.MCPCodeModeFull {
-		elsewhere += ", or from " + ExecuteToolName
-	}
-	elsewhere += "."
-	switch {
-	case risk != ToolRiskReadOnly:
-		why := "may change something"
-		if risk == "" {
-			why = "does not say it only reads (its server does not annotate it)"
-		}
-		return &jsrun.CallError{Name: "NotAllowedError", Message: name + " " + why + ", so " + QueryToolName + " cannot call it." + elsewhere}
-	case target.Tool.DeclaresOpenWorld():
-		return &jsrun.CallError{Name: "NotAllowedError", Message: name + " reaches outside the user's own data (its server marks it open-world), so a read-only program cannot call it: what the program read could leave in its arguments." + elsewhere}
-	}
-	return nil
 }
 
 func callError(name, message string) jsrun.CallResult {
@@ -426,13 +439,49 @@ func resolveFailure(err error, name string, closest []string) (jsrun.CallResult,
 	case errors.As(err, &notPermitted):
 		return callError("NotAllowedError", name+" is not one of the tools this connection may call."), nil
 	}
-	return callError("ToolError", name+" could not be reached: "+err.Error()), nil
+	return callError("ToolError", name+" could not be reached: "+callerSafeText(name, err)), nil
 }
 
-// invokeFailure is what the program sees when a call failed. A policy that
-// refused the call is an error the program can catch, as is an upstream that
-// failed; a consent or a rate limit ends the program.
-func invokeFailure(err error) (jsrun.CallResult, error) {
+// callerSafeText is what a program is told of a call that failed with err, on
+// the terms the tools/call handler answers a client with (writeAppError in
+// pkg/api/handler/http/mcp). An error the gateway wrote for callers is said as
+// it is. One it did not classify can carry whatever the layer that raised it
+// put there (an upstream URL with a token in its query, a driver message): the
+// program, and the model it answers, get the fact, and the log gets the error.
+func callerSafeText(tool string, err error) string {
+	var (
+		notConnected *ApplicationNotConnectedError
+		notServing   *ServerNotServingError
+		notPermitted *ToolNotPermittedError
+	)
+	switch {
+	case errors.As(err, &notConnected):
+		return notConnected.Error()
+	case errors.As(err, &notServing):
+		return notServing.Error()
+	case errors.As(err, &notPermitted):
+		return notPermitted.Error()
+	case errors.Is(err, ErrToolNotFound), errors.Is(err, ErrNoPrincipal),
+		errors.Is(err, ErrUpstreamNeedsCallerToken), errors.Is(err, ErrAudienceMismatch),
+		errors.Is(err, sts.ErrNoUserIdentity), errors.Is(err, sts.ErrInteractionRequired),
+		errors.Is(err, registrydomain.ErrURLTemplate):
+		return err.Error()
+	case errors.Is(err, sts.ErrIdentityIssuerMismatch):
+		return sts.ErrIdentityIssuerMismatch.Error()
+	case errors.Is(err, sts.ErrExchangeIdentityUnavailable):
+		return sts.ErrExchangeIdentityUnavailable.Error()
+	case errors.Is(err, ErrUnreachable), errors.Is(err, ErrUpstreamUnavailable):
+		slog.Default().Warn("mcp code mode: a program's call found its upstream unreachable", "tool", tool, "error", err)
+		return "upstream MCP server unreachable"
+	}
+	slog.Default().Error("mcp code mode: unclassified error on a program's call", "tool", tool, "error", err)
+	return "internal error"
+}
+
+// invokeFailure is what the program sees when a call to tool failed. A policy
+// that refused the call is an error the program can catch, as is an upstream
+// that failed; a consent or a rate limit ends the program.
+func invokeFailure(err error, tool string) (jsrun.CallResult, error) {
 	var consent *ConsentRequiredError
 	if errors.As(err, &consent) {
 		return jsrun.CallResult{}, err
@@ -449,9 +498,9 @@ func invokeFailure(err error) (jsrun.CallResult, error) {
 	}
 	var notPermitted *ToolNotPermittedError
 	if errors.As(err, &notPermitted) {
-		return callError("NotAllowedError", err.Error()), nil
+		return callError("NotAllowedError", notPermitted.Error()), nil
 	}
-	return callError("ToolError", err.Error()), nil
+	return callError("ToolError", callerSafeText(tool, err)), nil
 }
 
 // programValue turns a tool's result into what the program sees: its
@@ -542,6 +591,20 @@ func (d *RPCDispatcher) closestToolNames(ctx context.Context, rc *appconsumer.Ro
 // server is named as a direct call would name it; several by their names,
 // with no registry, host or catalog code, since none of those is the
 // program's.
+// recordProgramBytes puts on the program's request, and on Code Mode's
+// metrics, what its calls handed it and what it handed back to the client
+// (returned): the model read the second instead of the first.
+func (d *RPCDispatcher) recordProgramBytes(ctx context.Context, req dispatchRequest, tool string, calls []programCall, returned int) {
+	var read int64
+	for _, c := range calls {
+		read += c.bytes
+	}
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPProgramBytes(read, int64(returned))
+	}
+	d.programStats.moved(ctx, req.consumer, tool, read, int64(returned))
+}
+
 func attributeProgram(ctx context.Context, calls []programCall) {
 	span := trace.SpanFromContext(ctx)
 	if span == nil {

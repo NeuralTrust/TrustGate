@@ -17,7 +17,7 @@ package mcp
 // The world the Code Mode agent eval (code_mode_agent_eval_test.go, behind
 // the agenteval tag) runs in: fake Linear, GitHub and Calendar servers with
 // fixed data, the tasks and what their answers must say. The reference
-// programs below solve every task through trustgate_query, so this file is
+// programs below solve every task through trustgate_execute, so this file is
 // also an end-to-end test of Code Mode over several servers, run in CI.
 
 import (
@@ -359,14 +359,14 @@ var referencePrograms = map[string]string{
 func TestCodeModeEval_ReferenceProgramsAnswerEveryTask(t *testing.T) {
 	t.Parallel()
 	w := newEvalWorld(t)
-	ctx := w.ctx(gatewaydomain.MCPCodeModeReadOnly)
+	ctx := w.ctx(gatewaydomain.MCPCodeModeOn)
 	for _, task := range evalTasks {
 		code, ok := referencePrograms[task.Name]
 		if !ok {
 			t.Fatalf("%s has no reference program", task.Name)
 		}
 		input, _ := json.Marshal(map[string]string{"code": code})
-		out, isError := w.dispatch(ctx, QueryToolName, input)
+		out, isError := w.dispatch(ctx, ExecuteToolName, input)
 		if isError {
 			t.Fatalf("%s: reference program failed: %s", task.Name, out)
 		}

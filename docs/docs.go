@@ -9478,12 +9478,11 @@ const docTemplate = `{
                     ]
                 },
                 "mcp_code_mode": {
-                    "description": "MCPCodeMode sets MCP Code Mode: \"off\" (the default), \"read_only\"\n(trustgate_query: programs that call the user's read-only tools) or\n\"full\" (also trustgate_execute: programs that call any of their tools).\nOmitted leaves it unchanged.",
+                    "description": "MCPCodeMode sets MCP Code Mode: \"off\" (the default) or \"on\"\n(trustgate_execute: programs that call the user's tools). The earlier\n\"read_only\" and \"full\" are taken as \"on\". Omitted leaves it unchanged.",
                     "type": "string",
                     "enum": [
                         "off",
-                        "read_only",
-                        "full"
+                        "on"
                     ]
                 },
                 "mcp_tool_listing": {
@@ -9566,12 +9565,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "mcp_code_mode": {
-                    "description": "MCPCodeMode is the gateway's MCP Code Mode: off, read_only or full.",
+                    "description": "MCPCodeMode is the gateway's MCP Code Mode: off or on.",
                     "type": "string",
                     "enum": [
                         "off",
-                        "read_only",
-                        "full"
+                        "on"
                     ]
                 },
                 "mcp_tool_listing": {
@@ -10417,13 +10415,6 @@ const docTemplate = `{
                 "openapi": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest"
                 },
-                "read_only_tools": {
-                    "description": "ReadOnlyTools are the server's tools, by the name the server gives\nthem, that an admin vouches only read: MCP Code Mode's trustgate_query\nmay call them even when the server does not annotate them. Omitted on\nupdate, the stored list is kept; an empty list clears it.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "source": {
                     "type": "string"
                 },
@@ -11174,13 +11165,6 @@ const docTemplate = `{
                 "origin": {
                     "description": "Origin is \"store\" when the gateway materialised this registry from the\ncatalog itself (self-service install, approval, consumer binding).",
                     "type": "string"
-                },
-                "read_only_tools": {
-                    "description": "ReadOnlyTools are the tools an admin vouches only read (MCP Code Mode).",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "source": {
                     "type": "string"
@@ -13508,6 +13492,13 @@ const docTemplate = `{
                 },
                 "policy_scope": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
+                },
+                "program_bytes_read": {
+                    "description": "ProgramBytesRead is what a Code Mode program's calls handed it, and\nProgramBytesReturned what it handed back to the client: the program\nread the first instead of the model, which read only the second.",
+                    "type": "integer"
+                },
+                "program_bytes_returned": {
+                    "type": "integer"
                 },
                 "prompt": {
                     "type": "string"
