@@ -96,9 +96,14 @@
   },
   "mcp": {
     "payload": {
-      "tool": "search",
-      "arguments": {
-        "q": "login"
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "tools/call",
+      "params": {
+        "name": "search",
+        "arguments": {
+          "q": "login"
+        }
       }
     },
     "direction": "input",

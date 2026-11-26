@@ -177,7 +177,7 @@ func TestV2RequestGolden(t *testing.T) {
 			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", SentModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
 		}},
 		{"mcp", GuardRequest{
-			Payload: json.RawMessage(`{"tool":"search","arguments":{"q":"login"}}`), Direction: directionInput, Protocol: protocolMCP,
+			Payload: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"login"}}}`), Direction: directionInput, Protocol: protocolMCP,
 			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
 			Attributes: GuardAttributes{ContentType: "text", User: user, Consumer: consumer, MCPServer: &GuardMCPServer{ID: "reg-1", Code: "github"}},
 			request:    &infracontext.RequestContext{MCP: true, MCPServerName: "GitHub", MCPTool: "search"},
