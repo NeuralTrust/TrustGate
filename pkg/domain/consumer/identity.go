@@ -28,6 +28,14 @@ import (
 // connections; on LLM consumers that opt in it is recorded for attribution.
 const EndUserHeader = "X-NeuralTrust-End-User"
 
+// UserTokenHeader is the request header an application uses to hand the gateway
+// its end user's ID token. It is for TrustGuard only: the guard plugin forwards
+// it as assets.user.token so TrustGuard verifies the person against the
+// integration's identity provider. It never reaches a provider or an MCP server,
+// and telemetry redacts it. Authorization is not reused: that one carries the
+// application's own credential.
+const UserTokenHeader = "X-NeuralTrust-User-Token" // #nosec G101 -- HTTP header name, not a credential
+
 // Identity is what a consumer declares about who calls it.
 //
 // It used to declare whether people stood behind the calls (`acts_for_users`)

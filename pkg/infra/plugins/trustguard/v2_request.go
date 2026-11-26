@@ -74,6 +74,9 @@ type v2User struct {
 	ID         string `json:"id,omitempty"`
 	Email      string `json:"email,omitempty"`
 	AuthMethod string `json:"auth_method,omitempty"`
+	// Token is the end user's ID token; TrustGuard verifies it against the integration's identity provider
+	// and takes the user from its claims.
+	Token string `json:"token,omitempty"`
 }
 
 // v2MCPServer carries TrustGuard v2's canonical id of the server: the catalog code, or
@@ -123,6 +126,13 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 			}
 		}
 		req.Attributes.ToolCall = toolCallOf(request)
+	}
+	if body.UserToken != "" {
+		// With no principal the token is the whole user: TrustGuard takes it from the claims.
+		if assets.User == nil {
+			assets.User = &v2User{}
+		}
+		assets.User.Token = body.UserToken
 	}
 	if assets != (v2Assets{}) {
 		req.Assets = &assets

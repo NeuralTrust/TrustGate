@@ -23,6 +23,36 @@ metadata for `trustguard.ip` and `trustguard.request.headers`; direct/legacy cal
 their evaluate connection metadata. Deploy the compatible TrustGuard version first because
 older strict evaluate decoders reject unknown fields.
 
+## The end user's ID token
+
+An application that calls TrustGate with its own API key can have its user verified by
+TrustGuard by sending the user's ID token in the `X-NeuralTrust-User-Token` request
+header. The TrustGuard v2 plugin forwards it as `assets.user.token`, and TrustGuard
+verifies it against the `settings.identity_provider` of the integration, taking the user
+from the token's claims. Without an identity provider on the integration the token is not
+verified.
+
+- `Authorization` is not used: it carries the application's own credential.
+- Only the v2 plugin (`trustguard_v2`) reads and forwards the header, on LLM and MCP
+  requests; the v1 plugin ignores it and its wire never carries it. An integration that
+  sets `require_user_token` therefore needs the v2 plugin.
+- A token with no authenticated principal still sends `assets.user` with just the token.
+- Each stream segment re-verifies the token: one that expires mid-stream cuts the stream
+  with a 403.
+- It is not part of `original_request.headers` (the allowlist above), is never relayed to
+  the model provider or MCP server (a registry cannot list it in `forward_client_headers`),
+  and is redacted in telemetry headers.
+- If the header carries more than one distinct value (several lines or casings) it is
+  ignored as a whole.
+- The header is client-controlled, so TrustGuard refusing it is a block, not a failure of
+  the guard: `user_token_not_configured`, `invalid_user_token`, `user_mismatch`,
+  `asset_conflict` and `user_token_required` (classified by TrustGuard's error `code`, never by the status alone; a codeless 403 is
+  the gateway's own credential being refused and follows `failure_mode`) answer 403 `trustguard_user_token_rejected` whatever the `failure_mode`, and the
+  gateway's own service token is not refetched. `user_token_unavailable` (503) stays an
+  availability failure and follows `failure_mode`.
+- The declared `X-NeuralTrust-End-User` header is unchanged: it never reaches TrustGuard's
+  gate attributes.
+
 ## Trusted GCP ingress
 
 `ORIGINAL_REQUEST_IP_MODE=peer` is the default and ignores forwarding headers.

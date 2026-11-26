@@ -95,6 +95,38 @@
       "content_type": "text"
     }
   },
+  "llm_input_user_token": {
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "direction": "input",
+    "protocol": "llm",
+    "gateway_id": "gw-1",
+    "session_id": "s-1",
+    "assets": {
+      "agent": {
+        "id": "app-1",
+        "name": "Support",
+        "audience": "internal"
+      },
+      "model": {
+        "name": "gpt-4o",
+        "provider": "openai",
+        "requested_name": "@openai/gpt-4o"
+      },
+      "user": {
+        "token": "test-user-token"
+      }
+    },
+    "attributes": {
+      "content_type": "text"
+    }
+  },
   "llm_output": {
     "payload": {
       "input": "hi there"

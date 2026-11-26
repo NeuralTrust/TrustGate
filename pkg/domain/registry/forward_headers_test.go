@@ -98,3 +98,13 @@ func TestLLMTargetValidateNormalizesForwardClientHeaders(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidRegistry", err)
 	}
 }
+
+func TestForwardClientHeadersRefusesTheUserToken(t *testing.T) {
+	opts := map[string]any{ProviderOptionForwardClientHeaders: []any{"x-neuraltrust-user-token"}}
+	if err := NormalizeForwardClientHeaders(opts); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("err = %v, want ErrInvalidRegistry", err)
+	}
+	if got := ForwardClientHeaders(map[string]any{ProviderOptionForwardClientHeaders: []any{"X-NeuralTrust-User-Token", "traceparent"}}); !slices.Equal(got, []string{"Traceparent"}) {
+		t.Fatalf("forwarded = %v", got)
+	}
+}
