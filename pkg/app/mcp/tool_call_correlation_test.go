@@ -72,6 +72,41 @@ func TestClientToolCallID(t *testing.T) {
 	}
 }
 
+// toolCallID reads the gateway's own key first, then the keys agents already send, each held to clientToolCallID's rule.
+func TestToolCallID_AgentKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		meta string
+		want string
+	}{
+		{name: "codex call id", meta: `{"callId":"call_Xy12"}`, want: "call_Xy12"},
+		{
+			name: "claude code tool use id",
+			meta: `{"claudecode/toolUseId":"toolu_01ABC","io.modelcontextprotocol/progressToken":3}`,
+			want: "toolu_01ABC",
+		},
+		{
+			name: "own key wins over the agents' keys",
+			meta: `{"callId":"call_agent","claudecode/toolUseId":"toolu_agent","ai.neuraltrust/toolCallId":"call_own"}`,
+			want: "call_own",
+		},
+		{name: "claude code key before codex key", meta: `{"callId":"call_2","claudecode/toolUseId":"toolu_1"}`, want: "toolu_1"},
+		{name: "unusable own key falls through", meta: `{"ai.neuraltrust/toolCallId":"a:b","callId":"call_3"}`, want: "call_3"},
+		{name: "unusable codex id", meta: `{"callId":"call 3"}`, want: ""},
+		{name: "codex id not a string", meta: `{"callId":7}`, want: ""},
+		{name: "codex id too long", meta: `{"callId":"` + strings.Repeat("a", maxToolCallIDLen+1) + `"}`, want: ""},
+		{name: "absent meta", meta: "", want: ""},
+		{name: "malformed meta", meta: `{not-json`, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, toolCallID(json.RawMessage(tt.meta)))
+		})
+	}
+}
+
 func TestPluginRunner_ToolCallID_ReachesPlugins(t *testing.T) {
 	t.Parallel()
 	call := ToolCall{
@@ -149,6 +184,16 @@ func TestRPCDispatcher_CallTool_PropagatesToolCallIDFromMeta(t *testing.T) {
 			name:   "unusable id",
 			params: `{"name":"run_query","arguments":{"q":"select 1"},"_meta":{"ai.neuraltrust/toolCallId":"a:b"}}`,
 			want:   "",
+		},
+		{
+			name:   "codex meta",
+			params: `{"name":"run_query","arguments":{"q":"select 1"},"_meta":{"callId":"call_codex1"}}`,
+			want:   "call_codex1",
+		},
+		{
+			name:   "claude code meta",
+			params: `{"name":"run_query","arguments":{"q":"select 1"},"_meta":{"claudecode/toolUseId":"toolu_01cc"}}`,
+			want:   "toolu_01cc",
 		},
 	}
 	for _, tt := range tests {

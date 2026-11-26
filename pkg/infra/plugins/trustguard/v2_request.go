@@ -55,6 +55,8 @@ type v2Assets struct {
 type v2Attributes struct {
 	ContentType string       `json:"content_type"`
 	Stream      *GuardStream `json:"stream,omitempty"`
+	// ToolCall is the agent's id for the tool call being checked.
+	ToolCall *GuardToolCall `json:"tool,omitempty"`
 }
 
 // v2Agent is the calling application: a consumer, or the synthetic one of a personal key
@@ -112,6 +114,7 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 				server.Tool = &v2Tool{Name: tool}
 			}
 		}
+		req.Attributes.ToolCall = toolCallOf(request)
 	}
 	if assets != (v2Assets{}) {
 		req.Assets = &assets
@@ -163,6 +166,7 @@ func withInventory(body GuardRequest) GuardRequest {
 		}
 		body.Attributes.MCPServer = &server
 	}
+	body.Attributes.ToolCall = toolCallOf(req)
 	return body
 }
 

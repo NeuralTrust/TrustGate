@@ -39,6 +39,15 @@ var ErrMethodNotFound = errors.New("mcp: method not found")
 // it out of the way of the keys the MCP spec reserves.
 const toolCallIDMetaKey = "ai.neuraltrust/toolCallId"
 
+// agentToolCallIDMetaKeys are the params._meta keys under which agents already
+// send the id of the tool call they are executing, read after toolCallIDMetaKey.
+// It is the id the agent's hook reports as tool_use_id, so TrustGuard can count
+// a call checked by both the hook and the gateway once.
+var agentToolCallIDMetaKeys = []string{
+	"claudecode/toolUseId", // Claude Code: the Anthropic tool_use id, "toolu_…"
+	"callId",               // Codex: the model's call id, "call_…"
+}
+
 // maxToolCallIDLen bounds what a caller can put in a Redis key derived from the
 // id. Real ids are short ("call_abc123", "toolu_01A…").
 const maxToolCallIDLen = 128
@@ -456,7 +465,7 @@ func (d *RPCDispatcher) invokeResolved(
 		NativeTool:       target.Tool.Name,
 		Arguments:        arguments,
 		Plan:             planFor(ctx, req.consumer, target),
-		ClientToolCallID: clientToolCallID(meta),
+		ClientToolCallID: toolCallID(meta),
 	}
 	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
 	if err != nil {
@@ -521,6 +530,29 @@ func clientToolCallID(meta json.RawMessage) string {
 		return ""
 	}
 	return id
+}
+
+// toolCallID is the id of the tool call a caller volunteered in params._meta:
+// the gateway's own key (clientToolCallID), else the first usable key an agent
+// already sends (agentToolCallIDMetaKeys), held to the same rule.
+func toolCallID(meta json.RawMessage) string {
+	if id := clientToolCallID(meta); id != "" {
+		return id
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		return ""
+	}
+	for _, key := range agentToolCallIDMetaKeys {
+		var id string
+		if err := json.Unmarshal(fields[key], &id); err != nil {
+			continue
+		}
+		if id != "" && len(id) <= maxToolCallIDLen && isToolCallIDToken(id) {
+			return id
+		}
+	}
+	return ""
 }
 
 func isToolCallIDToken(id string) bool {
