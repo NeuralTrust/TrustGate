@@ -204,7 +204,7 @@ func TestV2PluginSpeaksV2OnTheWire(t *testing.T) {
 	assert.Equal(t, directionInput, got.Direction)
 	assert.Equal(t, protocolLLM, got.Protocol)
 	assert.Equal(t, "sess-123", got.SessionID)
-	assert.Equal(t, map[string]any{"name": "gpt-4o", "provider": "openai"}, got.Assets["model"])
+	assert.Equal(t, map[string]any{"name": "gpt-4o", "provider": "openai", "requested_name": "gpt-4o-mini"}, got.Assets["model"])
 	for _, old := range []string{"model", "user", "application", "mcp_server"} {
 		assert.NotContains(t, got.Attributes, old, "attributes.%s moved into assets", old)
 	}

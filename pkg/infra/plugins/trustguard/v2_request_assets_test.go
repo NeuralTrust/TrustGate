@@ -55,7 +55,7 @@ func TestV2RequestNamesAssetsOnlyInAssetsBlock(t *testing.T) {
 		"payload":{"input":"hi"},"direction":"input","protocol":"llm","gateway_id":"gw-1","session_id":"s-1",
 		"assets":{
 			"agent":{"id":"app-1","name":"Support","audience":"internal","synthetic":true},
-			"model":{"name":"gpt-4o","provider":"openai"},
+			"model":{"name":"gpt-4o","provider":"openai","requested_name":"@openai/gpt-4o"},
 			"user":{"id":"u-1","email":"ana@example.com"}
 		},
 		"attributes":{"content_type":"text","stream":{"id":"t:response","seq":2,"final":false}}

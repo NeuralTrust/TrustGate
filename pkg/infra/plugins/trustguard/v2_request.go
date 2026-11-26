@@ -79,8 +79,9 @@ type v2Tool struct {
 }
 
 type v2Model struct {
-	Name     string `json:"name,omitempty"`
-	Provider string `json:"provider,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	RequestedName string `json:"requested_name,omitempty"`
 }
 
 func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Request {
@@ -190,7 +191,11 @@ func v2ModelOf(req *infracontext.RequestContext, direction string) *v2Model {
 		strings.HasPrefix(strings.ToLower(name), "arn:") || strings.EqualFold(name, "auto") {
 		name = ""
 	}
-	model := v2Model{Name: name, Provider: strings.ToLower(strings.TrimSpace(req.Provider))}
+	model := v2Model{
+		Name:          name,
+		Provider:      strings.ToLower(strings.TrimSpace(req.Provider)),
+		RequestedName: strings.TrimSpace(req.RequestedModel),
+	}
 	if model == (v2Model{}) {
 		return nil
 	}
