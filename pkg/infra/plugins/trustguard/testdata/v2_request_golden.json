@@ -1,0 +1,130 @@
+{
+  "a2a": {
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hello"
+            }
+          ]
+        }
+      ]
+    },
+    "direction": "input",
+    "protocol": "a2a",
+    "gateway_id": "gw-1",
+    "session_id": "ctx-1",
+    "assets": {
+      "agent": {
+        "id": "app-1",
+        "name": "Support",
+        "audience": "internal"
+      }
+    },
+    "attributes": {
+      "content_type": "text"
+    }
+  },
+  "llm_input": {
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    },
+    "direction": "input",
+    "protocol": "llm",
+    "gateway_id": "gw-1",
+    "session_id": "s-1",
+    "assets": {
+      "agent": {
+        "id": "app-1",
+        "name": "Support",
+        "audience": "internal"
+      },
+      "model": {
+        "name": "gpt-4o",
+        "provider": "openai",
+        "requested_name": "@openai/gpt-4o"
+      },
+      "user": {
+        "id": "u-1",
+        "email": "ana@example.com"
+      }
+    },
+    "attributes": {
+      "content_type": "text"
+    }
+  },
+  "llm_output": {
+    "payload": {
+      "input": "hi there"
+    },
+    "direction": "output",
+    "protocol": "llm",
+    "gateway_id": "gw-1",
+    "session_id": "s-1",
+    "assets": {
+      "agent": {
+        "id": "app-1",
+        "name": "Support",
+        "audience": "internal"
+      },
+      "model": {
+        "name": "gpt-4o",
+        "provider": "openai",
+        "requested_name": "@openai/gpt-4o"
+      },
+      "user": {
+        "id": "u-1",
+        "email": "ana@example.com"
+      }
+    },
+    "attributes": {
+      "content_type": "text",
+      "stream": {
+        "id": "t:response",
+        "seq": 1,
+        "final": true
+      }
+    }
+  },
+  "mcp": {
+    "payload": {
+      "tool": "search",
+      "arguments": {
+        "q": "login"
+      }
+    },
+    "direction": "input",
+    "protocol": "mcp",
+    "gateway_id": "gw-1",
+    "session_id": "s-1",
+    "assets": {
+      "agent": {
+        "id": "app-1",
+        "name": "Support",
+        "audience": "internal"
+      },
+      "user": {
+        "id": "u-1",
+        "email": "ana@example.com"
+      },
+      "mcp_server": {
+        "id": "github",
+        "name": "GitHub",
+        "tool": {
+          "name": "search"
+        }
+      }
+    },
+    "attributes": {
+      "content_type": "text"
+    }
+  }
+}

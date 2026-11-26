@@ -15,7 +15,10 @@
 package trustguard
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,4 +120,90 @@ func TestV1RequestKeepsItsOwnShape(t *testing.T) {
 	assert.Equal(t, map[string]any{"name": "gpt-4o", "provider": "openai"}, attrs["model"])
 	assert.Equal(t, map[string]any{"id": "u-1"}, attrs["user"])
 	assert.Equal(t, map[string]any{"name": "Support"}, attrs["consumer"])
+}
+
+// Without a request context nothing is known of the model nor of the MCP server's name and tool:
+// the assets block carries what the body itself names.
+func TestV2RequestWithoutRequestContext(t *testing.T) {
+	t.Parallel()
+	llm := GuardRequest{
+		Direction:  directionInput,
+		Protocol:   protocolLLM,
+		ConsumerID: "app-1",
+		Attributes: GuardAttributes{ContentType: "text", User: &GuardUser{ID: "u-1"}},
+	}
+	assert.JSONEq(t, `{
+		"payload":null,"direction":"input","protocol":"llm","gateway_id":"",
+		"assets":{"agent":{"id":"app-1"},"user":{"id":"u-1"}},
+		"attributes":{"content_type":"text"}
+	}`, marshalV2(t, llm))
+
+	mcp := GuardRequest{
+		Direction:  directionInput,
+		Protocol:   protocolMCP,
+		ConsumerID: "app-1",
+		Attributes: GuardAttributes{ContentType: "text", MCPServer: &GuardMCPServer{ID: "reg-1", Code: "github"}},
+	}
+	assert.JSONEq(t, `{
+		"payload":null,"direction":"input","protocol":"mcp","gateway_id":"",
+		"assets":{"agent":{"id":"app-1"},"mcp_server":{"id":"github"}},
+		"attributes":{"content_type":"text"}
+	}`, marshalV2(t, mcp))
+}
+
+var updateGolden = flag.Bool("update", false, "rewrite testdata/v2_request_golden.json")
+
+const v2GoldenPath = "testdata/v2_request_golden.json"
+
+// The golden holds the exact v2 evaluate bodies TrustGate emits; TrustGuard decodes the same
+// file in its contract test. Regenerate with: go test ./pkg/infra/plugins/trustguard -run TestV2RequestGolden -update
+func TestV2RequestGolden(t *testing.T) {
+	consumer := &GuardConsumer{ID: "app-1", Name: "Support", Audience: "internal"}
+	user := &GuardUser{ID: "u-1", Email: "ana@example.com"}
+	cases := []struct {
+		name string
+		body GuardRequest
+	}{
+		{"llm_input", GuardRequest{
+			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
+			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
+			Attributes: GuardAttributes{ContentType: "text", User: user, Consumer: consumer},
+			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
+		}},
+		{"llm_output", GuardRequest{
+			Payload: json.RawMessage(`{"input":"hi there"}`), Direction: directionOutput, Protocol: protocolLLM,
+			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
+			Attributes: GuardAttributes{ContentType: "text", User: user, Consumer: consumer, Stream: &GuardStream{ID: "t:response", Seq: 1, Final: true}},
+			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", SentModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
+		}},
+		{"mcp", GuardRequest{
+			Payload: json.RawMessage(`{"tool":"search","arguments":{"q":"login"}}`), Direction: directionInput, Protocol: protocolMCP,
+			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
+			Attributes: GuardAttributes{ContentType: "text", User: user, Consumer: consumer, MCPServer: &GuardMCPServer{ID: "reg-1", Code: "github"}},
+			request:    &infracontext.RequestContext{MCP: true, MCPServerName: "GitHub", MCPTool: "search"},
+		}},
+		{"a2a", GuardRequest{
+			Payload: json.RawMessage(`{"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`), Direction: directionInput, Protocol: protocolA2A,
+			GatewayID: "gw-1", SessionID: "ctx-1", ConsumerID: "app-1",
+			Attributes: GuardAttributes{ContentType: "text", Consumer: consumer},
+			request:    &infracontext.RequestContext{A2A: true},
+		}},
+	}
+	got := map[string]json.RawMessage{}
+	for _, c := range cases {
+		got[c.name] = json.RawMessage(marshalV2(t, c.body))
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	require.NoError(t, enc.Encode(got))
+
+	if *updateGolden {
+		require.NoError(t, os.MkdirAll("testdata", 0o755))
+		require.NoError(t, os.WriteFile(v2GoldenPath, buf.Bytes(), 0o644))
+	}
+	want, err := os.ReadFile(v2GoldenPath)
+	require.NoError(t, err, "run with -update to create the golden")
+	assert.JSONEq(t, string(want), buf.String())
 }
