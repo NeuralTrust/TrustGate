@@ -105,7 +105,7 @@ func (p *Plugin) inspectSegment(
 	body := GuardRequest{
 		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
-		UserToken:       userTokenOf(in.Request),
+		UserToken:       p.userToken(in.Request),
 		Payload:         payload,
 		Direction:       directionOutput,
 		Protocol:        protocolFor(in.Request.ConsumerType),

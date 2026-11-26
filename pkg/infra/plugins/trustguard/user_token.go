@@ -47,10 +47,9 @@ func (e *userTokenRefusedError) Error() string {
 	return fmt.Sprintf("trustguard: user token refused status %d (%s)", e.status, e.code)
 }
 
-// userTokenRefusalOf classifies a 400, 401 or 403 answer. A known code is a refusal whatever the
-// status. A 403 without one is also a refusal when the request carried a user token, since it
-// cannot then be told apart from the token being refused.
-func userTokenRefusalOf(status int, raw []byte, sentToken bool) *userTokenRefusedError {
+// userTokenRefusalOf classifies a 400, 401 or 403 answer by TrustGuard's error code alone, whatever the
+// status. An answer without one (a service-side 403, say) is never a refusal of the user's token.
+func userTokenRefusalOf(status int, raw []byte) *userTokenRefusedError {
 	switch status {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
 	default:
@@ -62,9 +61,6 @@ func userTokenRefusalOf(status int, raw []byte, sentToken bool) *userTokenRefuse
 	_ = json.Unmarshal(raw, &envelope)
 	if _, ok := userTokenCodes[envelope.Code]; ok {
 		return &userTokenRefusedError{status: status, code: envelope.Code}
-	}
-	if status == http.StatusForbidden && sentToken {
-		return &userTokenRefusedError{status: status, code: "user_token_rejected"}
 	}
 	return nil
 }

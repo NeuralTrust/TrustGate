@@ -211,10 +211,9 @@ func TestV2PluginUserTokenUnavailableStaysAvailability(t *testing.T) {
 
 func TestUserTokenRefusalOfLeavesOtherAnswersAlone(t *testing.T) {
 	t.Parallel()
-	assert.Nil(t, userTokenRefusalOf(http.StatusUnauthorized, []byte(`{"error":"expired"}`), true), "a 401 without a code is the service token")
-	assert.Nil(t, userTokenRefusalOf(http.StatusForbidden, []byte(`{}`), false), "a 403 without a user token stays the service's")
-	assert.NotNil(t, userTokenRefusalOf(http.StatusForbidden, []byte(`{}`), true))
-	assert.Nil(t, userTokenRefusalOf(http.StatusServiceUnavailable, []byte(`{"code":"user_token_unavailable"}`), true))
+	assert.Nil(t, userTokenRefusalOf(http.StatusUnauthorized, []byte(`{"error":"expired"}`)), "a 401 without a code is the service token")
+	assert.Nil(t, userTokenRefusalOf(http.StatusForbidden, []byte(`{}`)), "a codeless 403 stays the service's")
+	assert.Nil(t, userTokenRefusalOf(http.StatusServiceUnavailable, []byte(`{"code":"user_token_unavailable"}`)))
 }
 
 func TestStreamSegmentV1WithOnlyTheTokenHeaderSendsNoUser(t *testing.T) {
@@ -242,4 +241,41 @@ func TestSegmentFailureBlocksOnAUserTokenRefusal(t *testing.T) {
 	require.NotNil(t, verdict)
 	assert.True(t, verdict.Block)
 	assert.Equal(t, http.StatusForbidden, verdict.StatusCode)
+}
+
+// A codeless 403 is the service's own credential being refused, with or without the token header, on v1 and
+// v2: it is an authRejectedError and follows failure_mode, as before.
+func TestCodelessForbiddenIsTheServicesOwn(t *testing.T) {
+	t.Parallel()
+	req, _ := userTokenRequest()
+
+	t.Run("v1", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeGuard{status: http.StatusForbidden}
+		p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+		res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil))
+		require.NoError(t, err, "fails open by default")
+		require.NotNil(t, res)
+		assert.Zero(t, f.lastBody.Attributes.User)
+	})
+	t.Run("v2", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeV2Engine{status: http.StatusForbidden, raw: `{"error":"the service token is not allowed to evaluate"}`}
+		p := newV2TestPlugin(t, newV2Engine(t, f).URL)
+		res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, v2Settings(""), req, nil))
+		require.NoError(t, err, "fails open by default")
+		require.NotNil(t, res)
+	})
+	t.Run("reason", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, failureReasonUnauthorized, reasonOfError(context.Background(), &authRejectedError{status: http.StatusForbidden}))
+		assert.Equal(t, failureReasonUserTokenRejected, reasonOfError(context.Background(), &userTokenRefusedError{status: 403, code: "invalid_user_token"}))
+	})
+}
+
+func TestV1PluginNeverReadsTheUserToken(t *testing.T) {
+	t.Parallel()
+	req, _ := userTokenRequest()
+	assert.Empty(t, newTestPlugin(t, adapter.NewRegistry(), "http://unused").userToken(req))
+	assert.Equal(t, fakeUserToken, newV2TestPlugin(t, "http://unused").userToken(req))
 }
