@@ -273,6 +273,32 @@ func (d *RPCDispatcher) access(ctx context.Context, req dispatchRequest, argumen
 	return accessResult(args.Action, result), nil
 }
 
+// unavailableConnectAnswer is the answer to a connect for a server the gateway
+// cannot use right now, saying who can change that. A person's own account
+// the server refused is not here: the gateway asks that person to reconnect
+// (credentialResolver.RejectRefreshed), so the server waits on them instead.
+// What stays unavailable over a credential is one an administrator set: the
+// server's OAuth client, or a key or token on the server itself.
+func unavailableConnectAnswer(server InventoryServer) (json.RawMessage, error) {
+	switch {
+	case server.Cause == InventoryCauseOAuthClientRejected:
+		return toolErrorResult(
+			fmt.Sprintf("%s cannot be connected right now: %s. Until then a connect fails at the provider.", server.Name, unavailablePhrase(server.Cause)),
+			map[string]any{"error": "oauth_client_rejected", "server": server.Name, "cause": server.Cause},
+		)
+	case strings.HasPrefix(server.Cause, "credential_rejected_"):
+		return toolErrorResult(
+			fmt.Sprintf("%s rejected the credential the gateway holds for it (HTTP %s). It is not an account this user connects: an administrator updates it on the server in the console.",
+				server.Name, strings.TrimPrefix(server.Cause, "credential_rejected_")),
+			map[string]any{"error": "credential_rejected", "server": server.Name, "cause": server.Cause},
+		)
+	}
+	return toolErrorResult(
+		fmt.Sprintf("%s is not waiting on an account: the gateway cannot reach it right now (%s). Connecting would not change that.", server.Name, unavailablePhrase(server.Cause)),
+		map[string]any{"error": "unavailable", "server": server.Name, "cause": server.Cause},
+	)
+}
+
 func (d *RPCDispatcher) storeCall(ctx context.Context, req dispatchRequest, tool string, fields map[string]any) (json.RawMessage, error) {
 	for key, value := range fields {
 		switch v := value.(type) {
@@ -314,10 +340,7 @@ func (d *RPCDispatcher) accessConnect(ctx context.Context, req dispatchRequest, 
 				map[string]any{"status": "connected", "server": server.Name},
 			)
 		case server.State == InventoryStateUnavailable:
-			return toolErrorResult(
-				fmt.Sprintf("%s is not waiting on an account: the gateway cannot reach it right now (%s). Connecting would not change that.", server.Name, unavailablePhrase(server.Cause)),
-				map[string]any{"error": "unavailable", "server": server.Name, "cause": server.Cause},
-			)
+			return unavailableConnectAnswer(*server)
 		case callerCannotConnect(server.Cause):
 			return toolErrorResult(
 				fmt.Sprintf("%s cannot be connected from here: %s.", server.Name, strings.TrimPrefix(overviewStateText(map[string]any{"state": server.State, "cause": server.Cause}), "not connected: ")),

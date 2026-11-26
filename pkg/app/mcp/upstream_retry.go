@@ -29,6 +29,13 @@ type credentialRefresher interface {
 	Refresh(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error
 }
 
+// credentialRejecter turns a credential the upstream refused again, right
+// after it was refreshed, into a reconnect. A non-nil answer replaces the
+// upstream's 401: it is what the caller is told instead (a connect link).
+type credentialRejecter interface {
+	RejectRefreshed(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry) error
+}
+
 func invokeUpstream[T any](
 	c *composer,
 	ctx context.Context,
@@ -58,8 +65,12 @@ func invokeResolvedUpstream[T any](c *composer, ctx context.Context, rc *appcons
 		return out, err
 	}
 	if refreshErr := refresher.Refresh(ctx, rc, reg, &target); refreshErr != nil {
-		if errors.Is(refreshErr, errCredentialRefreshUnsupported) ||
-			errors.Is(refreshErr, errCredentialRefreshThrottled) {
+		// Throttled: this very token was refreshed moments ago and the
+		// upstream refuses it again, which a refresh cannot fix.
+		if errors.Is(refreshErr, errCredentialRefreshThrottled) {
+			return out, rejectRefreshed(c, ctx, rc, reg, err)
+		}
+		if errors.Is(refreshErr, errCredentialRefreshUnsupported) {
 			return out, err
 		}
 		var zero T
@@ -69,7 +80,27 @@ func invokeResolvedUpstream[T any](c *composer, ctx context.Context, rc *appcons
 		var zero T
 		return zero, ctxErr
 	}
-	return invokeTarget(c, ctx, target, invoke)
+	out, err = invokeTarget(c, ctx, target, invoke)
+	if errors.Is(err, ErrUpstreamUnauthorized) {
+		return out, rejectRefreshed(c, ctx, rc, reg, err)
+	}
+	return out, err
+}
+
+// rejectRefreshed is what a caller is told when the upstream refuses a token
+// it was just handed: the grant no longer opens the server (its scopes, the
+// account's access or the client changed upstream), and only a new
+// authorization replaces it. Without a rejecter, or for a credential nobody
+// can reconnect from here, the upstream's own rejection stands.
+func rejectRefreshed(c *composer, ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, rejected error) error {
+	rejecter, ok := c.creds.(credentialRejecter)
+	if !ok {
+		return rejected
+	}
+	if err := rejecter.RejectRefreshed(ctx, rc, reg); err != nil {
+		return err
+	}
+	return rejected
 }
 
 func invokeTarget[T any](

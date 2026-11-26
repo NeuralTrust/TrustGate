@@ -598,6 +598,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		if errors.Is(err, ErrInvalidClient) {
 			s.rejectDynamicClient(ctx, gatewayID, reg, cfg.ClientID, cfg.ClientSlot)
+			return st.TicketID, rejectedClientError(gatewayID, reg, err)
 		}
 		return st.TicketID, err
 	}
@@ -622,6 +623,36 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	}
 	return st.TicketID, nil
 }
+
+// rejectedClientError is a code exchange whose OAuth client the provider
+// refused. A client an administrator entered on the server is wrong (a stale
+// or mistyped secret, another client's ID): the person on the page cannot fix
+// that, so the answer says who can, and the log names the server. A
+// dynamically registered client was just dropped and the next connect
+// registers a new one, so its error stands as it is.
+func rejectedClientError(gatewayID ids.GatewayID, reg *registrydomain.Registry, err error) error {
+	cfg := forwardedAuth(reg)
+	if cfg == nil || cfg.Registration == registrydomain.RegistrationAuto {
+		return err
+	}
+	slog.Error("oauth connect: the server's OAuth client was rejected; an administrator must update its client ID or secret",
+		"registry", reg.Name, "registry_id", reg.ID.String(), "gateway_id", gatewayID.String(), "provider", cfg.Provider)
+	return &clientRejectedError{err: err}
+}
+
+// clientRejectedError is the provider's own refusal followed by who fixes it.
+type clientRejectedError struct{ err error }
+
+func (e *clientRejectedError) Error() string {
+	sep := ". "
+	if strings.HasSuffix(strings.TrimSpace(e.err.Error()), ".") {
+		sep = " "
+	}
+	return strings.TrimSpace(e.err.Error()) + sep +
+		"This server's OAuth client was rejected: an administrator updates its client ID or secret in the console."
+}
+
+func (e *clientRejectedError) Unwrap() error { return e.err }
 
 func (s *connectService) rejectDynamicClient(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry, clientID, slot string) {
 	cfg := forwardedAuth(reg)

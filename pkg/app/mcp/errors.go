@@ -85,6 +85,29 @@ func (e *UnknownToolError) Error() string {
 
 func (e *UnknownToolError) Unwrap() error { return ErrToolNotFound }
 
+// OAuthClientRejectedError is a server whose OAuth client, the client ID and
+// secret an administrator entered on it, its provider refused (invalid_client
+// or unauthorized_client). No caller fixes it by connecting: every grant goes
+// through that client. The text names the server and who acts, never the
+// client ID, the secret or the provider's own words.
+type OAuthClientRejectedError struct {
+	Server string
+	Code   string
+	// Err is the provider's refusal, kept for errors.Is (oauth ErrInvalidClient).
+	Err error
+}
+
+func (e *OAuthClientRejectedError) Unwrap() error { return e.Err }
+
+func (e *OAuthClientRejectedError) Error() string {
+	code := e.Code
+	if code == "" {
+		code = "invalid_client"
+	}
+	return fmt.Sprintf("the OAuth client of %q was rejected by its provider (%s): "+
+		"an administrator updates its client ID or secret on the server in the console", e.Server, code)
+}
+
 // ServerNotServingError reports that the registry which owns a tool is installed
 // but not serving. The text names that server and its state and nothing else:
 // the discovery error underneath can carry an upstream URL.

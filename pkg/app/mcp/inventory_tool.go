@@ -505,6 +505,8 @@ func unavailablePhrase(cause string) string {
 	switch {
 	case strings.HasPrefix(cause, "credential_rejected_"):
 		return "the server rejected the credential (HTTP " + strings.TrimPrefix(cause, "credential_rejected_") + ")"
+	case cause == InventoryCauseOAuthClientRejected:
+		return "its provider rejected the server's OAuth client ID or secret, which an administrator updates in the console"
 	case strings.HasPrefix(cause, "redirect_not_followed_"):
 		return "upstream redirected (HTTP " + strings.TrimPrefix(cause, "redirect_not_followed_") + ") — not followed"
 	case cause == "redirect_http_refused":
