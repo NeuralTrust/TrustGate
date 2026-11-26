@@ -90,6 +90,9 @@ const (
 	// ConsentCauseRegisteredClientLost: the dynamically registered OAuth client
 	// the grant was issued to is gone, so the token cannot be redeemed.
 	ConsentCauseRegisteredClientLost = "registered_client_lost"
+	// ConsentCauseCredentialRejected: the upstream refused an access token
+	// right after it was refreshed, so the grant itself no longer opens it.
+	ConsentCauseCredentialRejected = "credential_rejected"
 )
 
 func (e *ConsentRequiredError) Error() string {
@@ -321,6 +324,60 @@ func (r *credentialResolver) Refresh(
 	return nil
 }
 
+// RejectRefreshed handles a forwarded credential the upstream refused right
+// after it was refreshed. The refresh worked, so the provider still honours
+// the grant; the server does not. Its scopes, the account's access or what the
+// server requires changed since the person connected, and only a new
+// authorization replaces it. The stored credential is marked as needing a
+// reconnect, so every view reports it so, and the caller is asked to connect.
+// Nil for any other kind of credential: there is nothing to reconnect.
+func (r *credentialResolver) RejectRefreshed(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+) error {
+	if rc == nil || rc.Consumer == nil || reg == nil || reg.MCPTarget == nil {
+		return nil
+	}
+	cfg := reg.MCPTarget.Auth
+	if cfg == nil || cfg.Mode != registrydomain.MCPAuthModeForwarded {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil {
+		return nil
+	}
+	subject := registrydomain.CredentialSubject(reg, principal.Subject)
+	if cred, err := r.vault.Find(ctx, rc.Consumer.GatewayID, subject, registrydomain.ForwardedVaultProviderFor(reg, nil)); err == nil {
+		r.requireReconnect(ctx, cred, cfg.Provider, ConsentCauseCredentialRejected)
+	}
+	return r.consentRequired(ctx, rc, reg, cfg.Provider, subject,
+		ConsentCauseCredentialRejected,
+		"upstream rejected the credential right after it was refreshed")
+}
+
+// rejectedClient is the error for a refresh whose OAuth client the provider
+// refused, when that client is one an administrator entered: the registry's
+// own configuration is wrong, which no user can fix by connecting, so it is
+// said at ERROR, naming the server. A dynamically registered client is not
+// this case: forgetRejectedDynamicClient drops it and a reconnect registers a
+// new one.
+func (r *credentialResolver) rejectedClient(reg *registrydomain.Registry, gatewayID ids.GatewayID, provider string, err error) error {
+	if !errors.Is(err, appoauth.ErrInvalidClient) || reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil ||
+		reg.MCPTarget.Auth.Registration == registrydomain.RegistrationAuto {
+		return nil
+	}
+	code := "invalid_client"
+	var invalid *appoauth.InvalidClientError
+	if errors.As(err, &invalid) && invalid.Code != "" {
+		code = invalid.Code
+	}
+	r.logger.Error("mcp credentials: the server's OAuth client was rejected; an administrator must update its client ID or secret",
+		"registry", reg.Name, "registry_id", reg.ID.String(), "gateway_id", gatewayID.String(),
+		"provider", provider, "oauth_error", code)
+	return &OAuthClientRejectedError{Server: inventoryServerName(reg), Code: code, Err: err}
+}
+
 func (r *credentialResolver) forgetRejectedDynamicClient(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -414,6 +471,9 @@ func (r *credentialResolver) refreshCredential(
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
 			r.forgetRejectedDynamicClient(ctx, gatewayID, reg, refreshCfg.ClientID, refreshCfg.ClientSlot, err)
+			if rejected := r.rejectedClient(reg, gatewayID, provider, err); rejected != nil {
+				return nil, rejected
+			}
 			// Providers that rotate refresh tokens (Notion, and OAuth 2.1 in
 			// general) invalidate the previous one on every refresh, and
 			// singleflight only dedupes within this process. A sibling replica

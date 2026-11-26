@@ -450,3 +450,15 @@ func TestMCPTarget_PinsURLVariable(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPTarget_NormalizeTrimsAPastedClientIDAndSecret(t *testing.T) {
+	t.Parallel()
+	target := &MCPTarget{URL: "https://gmailmcp.googleapis.com/mcp/v1", Auth: &MCPAuth{
+		Mode: MCPAuthModeForwarded, Provider: "com.google.workspace/gmail",
+		ClientID: " 123.apps.googleusercontent.com\n", ClientSecret: "GOCSPX-secret \n",
+	}}
+	target.Normalize()
+	if target.Auth.ClientID != "123.apps.googleusercontent.com" || target.Auth.ClientSecret != "GOCSPX-secret" {
+		t.Fatalf("auth = %+v, want the pasted values trimmed", target.Auth)
+	}
+}
