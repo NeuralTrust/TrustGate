@@ -44,6 +44,9 @@ type GuardRequest struct {
 type GuardUser struct {
 	ID    string `json:"id,omitempty"`
 	Email string `json:"email,omitempty"`
+	// AuthMethod is how the gateway authenticated the user (the principal method). It rides only on a v2 body,
+	// so the v1 wire stays as it was.
+	AuthMethod string `json:"-"`
 }
 
 // GuardPayload is the minimal LLM evaluate body used for response-direction

@@ -33,6 +33,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 // v2WireRequest is TrustGuard's v2 evaluate decoder: unknown fields are a 400.
@@ -617,4 +618,46 @@ func TestV2PluginTimeoutFailsOpen(t *testing.T) {
 	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, v2Settings(""), requestContext(), nil, event))
 	require.NoError(t, err)
 	assertFailedOpen(t, res, span, failureReasonTimeout)
+}
+
+func TestV2PluginSendsHowTheGatewayAuthenticatedTheUser(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"external_jwt", "oauth", "personal_key", "api_key"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeV2Engine{}
+			p := newV2TestPlugin(t, newV2Engine(t, f).URL)
+			rt := trace.New("trace-user", trace.Metadata{})
+			rt.SetPrincipalIdentity("alice", method, "ada@example.com")
+			ctx := trace.NewContext(context.Background(), rt)
+
+			_, err := p.Execute(ctx, execInput(policy.StagePreRequest, policy.ModeEnforce, v2Settings(""), requestContext(), nil))
+			require.NoError(t, err)
+
+			seen := f.seen()
+			require.Len(t, seen, 1)
+			assert.Equal(t, map[string]any{"id": "alice", "email": "ada@example.com", "auth_method": method}, seen[0].Assets["user"])
+		})
+	}
+}
+
+func TestV2PluginSendsNoUserWithoutAPrincipal(t *testing.T) {
+	t.Parallel()
+	f := &fakeV2Engine{}
+	p := newV2TestPlugin(t, newV2Engine(t, f).URL)
+
+	_, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, v2Settings(""), requestContext(), nil))
+	require.NoError(t, err)
+
+	seen := f.seen()
+	require.Len(t, seen, 1)
+	assert.NotContains(t, seen[0].Assets, "user")
+}
+
+// TrustGuard v1 keeps the body it always had: the method rides on the v2 wire only.
+func TestV1UserWireCarriesNoAuthMethod(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(GuardUser{ID: "alice", Email: "ada@example.com", AuthMethod: "jwt"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"alice","email":"ada@example.com"}`, string(raw))
 }

@@ -47,7 +47,7 @@ type v2Request struct {
 type v2Assets struct {
 	Agent     *v2Agent     `json:"agent,omitempty"`
 	Model     *v2Model     `json:"model,omitempty"`
-	User      *GuardUser   `json:"user,omitempty"`
+	User      *v2User      `json:"user,omitempty"`
 	MCPServer *v2MCPServer `json:"mcp_server,omitempty"`
 }
 
@@ -66,6 +66,14 @@ type v2Agent struct {
 	Name      string `json:"name,omitempty"`
 	Audience  string `json:"audience,omitempty"`
 	Synthetic bool   `json:"synthetic,omitempty"`
+}
+
+// v2User is the end user. AuthMethod is the gateway's principal method (jwt, oauth, personal_key, api_key...): how it
+// authenticated the user, which TrustGuard v2 reads to decide whether the email is vouched for.
+type v2User struct {
+	ID         string `json:"id,omitempty"`
+	Email      string `json:"email,omitempty"`
+	AuthMethod string `json:"auth_method,omitempty"`
 }
 
 // v2MCPServer carries TrustGuard v2's canonical id of the server: the catalog code, or
@@ -135,11 +143,11 @@ func v2AgentOf(body GuardRequest) *v2Agent {
 	return &agent
 }
 
-func v2UserOf(user *GuardUser) *GuardUser {
+func v2UserOf(user *GuardUser) *v2User {
 	if user == nil || *user == (GuardUser{}) {
 		return nil
 	}
-	return user
+	return &v2User{ID: user.ID, Email: user.Email, AuthMethod: user.AuthMethod}
 }
 
 // withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the
