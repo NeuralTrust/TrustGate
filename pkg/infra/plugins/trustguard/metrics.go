@@ -31,7 +31,7 @@ const (
 	failureReasonUnauthorized = "unauthorized"
 	failureReasonTransport    = "transport"
 	// failureReasonUserTokenRejected is TrustGuard refusing the end user's token; in observe it is only recorded.
-	failureReasonUserTokenRejected = "user_token_rejected"
+	failureReasonUserTokenRejected = "user_token_rejected" // #nosec G101 -- a metric reason label, not a credential
 	failureReasonTimeout           = "timeout"
 	// failureReasonCredentialsMissing and failureReasonBaseURLMissing are a pod
 	// started without TRUSTGUARD_CLIENT_ID/SECRET or TRUSTGUARD_BASE_URL: no
