@@ -43,6 +43,8 @@ type geminiRequest struct {
 	SystemInstruction *geminiContent    `json:"systemInstruction,omitempty"`
 	GenerationConfig  *geminiGenConfig  `json:"generationConfig,omitempty"`
 	Tools             []geminiToolGroup `json:"tools,omitempty"`
+
+	carried map[string]json.RawMessage `json:"-"`
 }
 
 // UnmarshalJSON also reads the snake_case spelling of each field, which the
@@ -52,8 +54,12 @@ func (r *geminiRequest) UnmarshalJSON(b []byte) error {
 	type plain geminiRequest
 	var in struct {
 		plain
-		SystemInstruction *geminiContent   `json:"system_instruction"`
-		GenerationConfig  *geminiGenConfig `json:"generation_config"`
+		SystemInstruction   *geminiContent   `json:"system_instruction"`
+		GenerationConfig    *geminiGenConfig `json:"generation_config"`
+		SafetySettings      json.RawMessage  `json:"safetySettings"`
+		SafetySettingsSnake json.RawMessage  `json:"safety_settings"`
+		CachedContent       json.RawMessage  `json:"cachedContent"`
+		CachedContentSnake  json.RawMessage  `json:"cached_content"`
 	}
 	if err := json.Unmarshal(b, &in); err != nil {
 		return err
@@ -61,6 +67,8 @@ func (r *geminiRequest) UnmarshalJSON(b []byte) error {
 	*r = geminiRequest(in.plain)
 	r.SystemInstruction = cmp.Or(r.SystemInstruction, in.SystemInstruction)
 	r.GenerationConfig = cmp.Or(r.GenerationConfig, in.GenerationConfig)
+	r.carried = carryRaw(nil, "safetySettings", in.SafetySettings, in.SafetySettingsSnake)
+	r.carried = carryRaw(r.carried, "cachedContent", in.CachedContent, in.CachedContentSnake)
 	return nil
 }
 
@@ -322,11 +330,23 @@ func (p geminiPendingCalls) resolve(fr *geminiFuncResponse) string {
 }
 
 type geminiGenConfig struct {
-	MaxOutputTokens  *int     `json:"maxOutputTokens,omitempty"`
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"topP,omitempty"`
-	TopK             *int     `json:"topK,omitempty"`
-	ResponseMimeType string   `json:"responseMimeType,omitempty"`
+	MaxOutputTokens  *geminiInt   `json:"maxOutputTokens,omitempty"`
+	Temperature      *geminiFloat `json:"temperature,omitempty"`
+	TopP             *geminiFloat `json:"topP,omitempty"`
+	TopK             *geminiFloat `json:"topK,omitempty"`
+	ResponseMimeType string       `json:"responseMimeType,omitempty"`
+
+	carried map[string]json.RawMessage `json:"-"`
+}
+
+// MarshalJSON writes the carried keys after the modelled ones.
+func (c geminiGenConfig) MarshalJSON() ([]byte, error) {
+	type plain geminiGenConfig
+	b, err := json.Marshal(plain(c))
+	if err != nil {
+		return nil, err
+	}
+	return appendRawFields(b, c.carried)
 }
 
 // UnmarshalJSON also reads the snake_case spelling of each field.
@@ -334,10 +354,10 @@ func (c *geminiGenConfig) UnmarshalJSON(b []byte) error {
 	type plain geminiGenConfig
 	var in struct {
 		plain
-		MaxOutputTokens  *int     `json:"max_output_tokens"`
-		TopP             *float64 `json:"top_p"`
-		TopK             *int     `json:"top_k"`
-		ResponseMimeType string   `json:"response_mime_type"`
+		MaxOutputTokens  *geminiInt   `json:"max_output_tokens"`
+		TopP             *geminiFloat `json:"top_p"`
+		TopK             *geminiFloat `json:"top_k"`
+		ResponseMimeType string       `json:"response_mime_type"`
 	}
 	if err := json.Unmarshal(b, &in); err != nil {
 		return err
@@ -347,6 +367,11 @@ func (c *geminiGenConfig) UnmarshalJSON(b []byte) error {
 	c.TopP = cmp.Or(c.TopP, in.TopP)
 	c.TopK = cmp.Or(c.TopK, in.TopK)
 	c.ResponseMimeType = cmp.Or(c.ResponseMimeType, in.ResponseMimeType)
+	carried, err := carriedGenConfig(b, c.ResponseMimeType)
+	if err != nil {
+		return err
+	}
+	c.carried = carried
 	return nil
 }
 
@@ -432,7 +457,8 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	cr := &CanonicalRequest{
-		Model: req.Model,
+		Model:             req.Model,
+		RequestExtensions: geminiRequestExtensions(&req),
 	}
 
 	if req.SystemInstruction != nil {
@@ -522,11 +548,11 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 
 	if gc := req.GenerationConfig; gc != nil {
 		if gc.MaxOutputTokens != nil {
-			cr.MaxTokens = *gc.MaxOutputTokens
+			cr.MaxTokens = int(*gc.MaxOutputTokens)
 		}
-		cr.Temperature = gc.Temperature
-		cr.TopP = gc.TopP
-		cr.TopK = gc.TopK
+		cr.Temperature = gc.Temperature.value()
+		cr.TopP = gc.TopP.value()
+		cr.TopK = geminiTopK(gc.TopK)
 		if gc.ResponseMimeType == "application/json" {
 			cr.ResponseFormat = &CanonicalRespFormat{Type: "json_object"}
 		}
@@ -700,26 +726,32 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	var gc geminiGenConfig
 	hasGC := false
 	if req.MaxTokens > 0 {
-		gc.MaxOutputTokens = &req.MaxTokens
+		maxTokens := geminiInt(req.MaxTokens)
+		gc.MaxOutputTokens = &maxTokens
 		hasGC = true
 	}
 	if req.Temperature != nil {
-		gc.Temperature = req.Temperature
+		gc.Temperature = newGeminiFloat(req.Temperature)
 		hasGC = true
 	}
 	if req.TopP != nil {
-		gc.TopP = req.TopP
+		gc.TopP = newGeminiFloat(req.TopP)
 		hasGC = true
 	}
 	if req.TopK != nil {
-		gc.TopK = req.TopK
+		topK := float64(*req.TopK)
+		gc.TopK = newGeminiFloat(&topK)
 		hasGC = true
 	}
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {
 		gc.ResponseMimeType = "application/json"
 		hasGC = true
 	}
-	if hasGC {
+	gc.carried = geminiCarriedGenConfigFrom(req.RequestExtensions)
+	if gc.ResponseMimeType != "" {
+		delete(gc.carried, geminiResponseMimeType)
+	}
+	if hasGC || len(gc.carried) > 0 {
 		out.GenerationConfig = &gc
 	}
 
@@ -738,7 +770,11 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		out.Tools = []geminiToolGroup{{FunctionDeclarations: decls}}
 	}
 
-	return json.Marshal(out)
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return appendRawFields(body, geminiCarriedFrom(req.RequestExtensions, geminiCarriedKeys))
 }
 
 func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {

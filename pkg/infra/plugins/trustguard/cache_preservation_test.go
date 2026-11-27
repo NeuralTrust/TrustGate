@@ -106,6 +106,37 @@ func TestRewriteRequestReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testin
 	assert.NotContains(t, string(out), `"thinking"`)
 }
 
+// A masked Gemini request keeps the config that holds no prompt text, so it
+// is not answered under Google's default safety thresholds or without its
+// cached context; labels, which may hold personal data, is still dropped
+// (ENG-3682).
+func TestRewriteRequestKeepsGeminiConfigKeys(t *testing.T) {
+	t.Parallel()
+	body := `{"contents":[{"role":"user","parts":[{"text":"mail bob@corp.example"}]}],` +
+		`"systemInstruction":{"parts":[{"text":"be brief"}],"role":"user"},` +
+		`"safetySettings":[{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","threshold":"BLOCK_NONE"}],` +
+		`"cachedContent":"cachedContents/c1","labels":{"who":"bob@corp.example"},` +
+		`"generationConfig":{"temperature":0,"topK":1,"thinkingConfig":{"thinkingBudget":0},"stopSequences":["END"]}}`
+	reg := adapter.NewRegistry()
+	for _, format := range []adapter.Format{adapter.FormatGemini, adapter.FormatVertex} {
+		creq, err := reg.DecodeRequestFor([]byte(body), format)
+		require.NoError(t, err)
+		masked := strings.ReplaceAll(joinRequestText(creq), "bob@corp.example", "[EMAIL]")
+
+		out, ok := rewriteRequest(reg, format, []byte(body), creq, masked)
+
+		require.True(t, ok, format)
+		assert.NotContains(t, string(out), "bob@corp.example", format)
+		assert.NotContains(t, string(out), `"labels"`, format)
+		for _, kept := range []string{
+			`"safetySettings":[{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","threshold":"BLOCK_NONE"}]`,
+			`"cachedContent":"cachedContents/c1"`, `"thinkingConfig":{"thinkingBudget":0}`, `"stopSequences":["END"]`,
+		} {
+			assert.Contains(t, string(out), kept, format)
+		}
+	}
+}
+
 func TestRewriteRequestKeepsResponsesStorageKeys(t *testing.T) {
 	t.Parallel()
 	body := `{"model":"gpt-5","store":false,"previous_response_id":"resp_1","include":["reasoning.encrypted_content"],` +
