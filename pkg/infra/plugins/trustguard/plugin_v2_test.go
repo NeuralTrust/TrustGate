@@ -636,7 +636,7 @@ func TestV2PluginSendsHowTheGatewayAuthenticatedTheUser(t *testing.T) {
 
 			seen := f.seen()
 			require.Len(t, seen, 1)
-			assert.Equal(t, map[string]any{"id": "alice", "email": "ada@example.com", "auth_method": method}, seen[0].Assets["user"])
+			assert.Equal(t, map[string]any{"id": "alice", "email": "ada@example.com"}, seen[0].Assets["user"])
 		})
 	}
 }
@@ -652,12 +652,4 @@ func TestV2PluginSendsNoUserWithoutAPrincipal(t *testing.T) {
 	seen := f.seen()
 	require.Len(t, seen, 1)
 	assert.NotContains(t, seen[0].Assets, "user")
-}
-
-// TrustGuard v1 keeps the body it always had: the method rides on the v2 wire only.
-func TestV1UserWireCarriesNoAuthMethod(t *testing.T) {
-	t.Parallel()
-	raw, err := json.Marshal(GuardUser{ID: "alice", Email: "ada@example.com", AuthMethod: "jwt"})
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"id":"alice","email":"ada@example.com"}`, string(raw))
 }

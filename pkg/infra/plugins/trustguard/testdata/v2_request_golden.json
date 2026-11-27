@@ -54,73 +54,7 @@
       },
       "user": {
         "id": "u-1",
-        "email": "ana@example.com",
-        "auth_method": "external_jwt"
-      }
-    },
-    "attributes": {
-      "content_type": "text"
-    }
-  },
-  "llm_input_connected_email": {
-    "payload": {
-      "messages": [
-        {
-          "role": "user",
-          "content": "hello"
-        }
-      ]
-    },
-    "direction": "input",
-    "protocol": "llm",
-    "gateway_id": "gw-1",
-    "session_id": "s-1",
-    "assets": {
-      "agent": {
-        "id": "app-1",
-        "name": "Support",
-        "audience": "internal"
-      },
-      "model": {
-        "name": "gpt-4o",
-        "provider": "openai",
-        "requested_name": "@openai/gpt-4o"
-      },
-      "user": {
-        "id": "u-1",
         "email": "ana@example.com"
-      }
-    },
-    "attributes": {
-      "content_type": "text"
-    }
-  },
-  "llm_input_user_token": {
-    "payload": {
-      "messages": [
-        {
-          "role": "user",
-          "content": "hello"
-        }
-      ]
-    },
-    "direction": "input",
-    "protocol": "llm",
-    "gateway_id": "gw-1",
-    "session_id": "s-1",
-    "assets": {
-      "agent": {
-        "id": "app-1",
-        "name": "Support",
-        "audience": "internal"
-      },
-      "model": {
-        "name": "gpt-4o",
-        "provider": "openai",
-        "requested_name": "@openai/gpt-4o"
-      },
-      "user": {
-        "token": "test-user-token"
       }
     },
     "attributes": {
@@ -148,8 +82,7 @@
       },
       "user": {
         "id": "u-1",
-        "email": "ana@example.com",
-        "auth_method": "external_jwt"
+        "email": "ana@example.com"
       }
     },
     "attributes": {
@@ -185,8 +118,7 @@
       },
       "user": {
         "id": "u-1",
-        "email": "ana@example.com",
-        "auth_method": "external_jwt"
+        "email": "ana@example.com"
       },
       "mcp_server": {
         "id": "github",

@@ -48,7 +48,7 @@ func TestV2RequestNamesAssetsOnlyInAssetsBlock(t *testing.T) {
 		ConsumerID: " app-1 ",
 		Attributes: GuardAttributes{
 			ContentType: "text",
-			User:        &GuardUser{ID: "u-1", Email: "ana@example.com", AuthMethod: "jwt"},
+			User:        &GuardUser{ID: "u-1", Email: "ana@example.com"},
 			Consumer:    &GuardConsumer{ID: "app-1", Name: "Support", Audience: "internal", Synthetic: true},
 			Stream:      &GuardStream{ID: "t:response", Seq: 2},
 		},
@@ -59,7 +59,7 @@ func TestV2RequestNamesAssetsOnlyInAssetsBlock(t *testing.T) {
 		"assets":{
 			"agent":{"id":"app-1","name":"Support","audience":"internal","synthetic":true},
 			"model":{"name":"gpt-4o","provider":"openai","requested_name":"@openai/gpt-4o"},
-			"user":{"id":"u-1","email":"ana@example.com","auth_method":"jwt"}
+			"user":{"id":"u-1","email":"ana@example.com"}
 		},
 		"attributes":{"content_type":"text","stream":{"id":"t:response","seq":2,"final":false}}
 	}`, marshalV2(t, body))
@@ -104,7 +104,7 @@ func TestV1RequestKeepsItsOwnShape(t *testing.T) {
 		Attributes: GuardAttributes{
 			ContentType: "text",
 			Model:       GuardModel{Name: "gpt-4o", Provider: "openai"},
-			User:        &GuardUser{ID: "u-1", AuthMethod: "jwt"},
+			User:        &GuardUser{ID: "u-1"},
 			Consumer:    &GuardConsumer{Name: "Support"},
 		},
 	}
@@ -159,7 +159,7 @@ const v2GoldenPath = "testdata/v2_request_golden.json"
 // file in its contract test. Regenerate with: go test ./pkg/infra/plugins/trustguard -run TestV2RequestGolden -update
 func TestV2RequestGolden(t *testing.T) {
 	consumer := &GuardConsumer{ID: "app-1", Name: "Support", Audience: "internal"}
-	user := &GuardUser{ID: "u-1", Email: "ana@example.com", AuthMethod: "external_jwt"}
+	user := &GuardUser{ID: "u-1", Email: "ana@example.com"}
 	cases := []struct {
 		name string
 		body GuardRequest
@@ -168,21 +168,6 @@ func TestV2RequestGolden(t *testing.T) {
 			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
 			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
 			Attributes: GuardAttributes{ContentType: "text", User: user, Consumer: consumer},
-			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
-		}},
-		// A connected-account email is not vouched for by the credential: no auth_method.
-		{"llm_input_connected_email", GuardRequest{
-			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
-			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
-			Attributes: GuardAttributes{ContentType: "text", User: &GuardUser{ID: "u-1", Email: "ana@example.com"}, Consumer: consumer},
-			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
-		}},
-		// The end user's ID token (X-NeuralTrust-User-Token) rides as assets.user.token; with no principal it is the only user field.
-		{"llm_input_user_token", GuardRequest{
-			Payload: json.RawMessage(`{"messages":[{"role":"user","content":"hello"}]}`), Direction: directionInput, Protocol: protocolLLM,
-			GatewayID: "gw-1", SessionID: "s-1", ConsumerID: "app-1",
-			UserToken:  "test-user-token",
-			Attributes: GuardAttributes{ContentType: "text", Consumer: consumer},
 			request:    &infracontext.RequestContext{Provider: "openai", ResolvedModel: "gpt-4o", RequestedModel: "@openai/gpt-4o"},
 		}},
 		{"llm_output", GuardRequest{

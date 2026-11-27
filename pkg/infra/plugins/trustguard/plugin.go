@@ -31,7 +31,6 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -359,7 +358,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	body := GuardRequest{
 		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
-		UserToken:       p.userToken(in.Request),
 		Payload:         payload,
 		Direction:       direction,
 		Protocol:        protocol,
@@ -425,15 +423,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 	}
 	if err != nil {
-		if refused := userTokenRefusal(err); refused != nil && appplugins.Blocks(in.Mode) {
-			recordGuardOutcome(in.Event, guardData{
-				Direction:               direction,
-				Decision:                decisionBlocked,
-				AttachmentsNotInspected: tgt.attachmentsOmitted,
-				AttachmentsNotFetched:   tgt.attachmentsNotFetched,
-			})
-			return nil, userTokenRefusedPluginError(refused)
-		}
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
 			recordGuardOutcome(in.Event, guardData{
@@ -1065,53 +1054,7 @@ func principalUser(ctx context.Context) *GuardUser {
 	if id == "" && email == "" {
 		return nil
 	}
-	user := &GuardUser{ID: id, Email: email}
-	// The method vouches for the email only when the credential carried it, not a connected account's.
-	if !meta.PrincipalEmailConnected {
-		user.AuthMethod = strings.TrimSpace(meta.PrincipalMethod)
-	}
-	return user
-}
-
-// maxUserTokenBytes bounds the ID token read from the header; a longer value is not a token.
-const maxUserTokenBytes = 16 << 10
-
-// userTokenOf reads the end user's ID token from the request. A header that arrives with more than one
-// distinct non-empty value (several lines or casings) is ambiguous and is ignored as a whole: no token
-// is sent, so TrustGuard sees an unverified user and applies its own rule for that.
-// userToken is the end user's ID token for the evaluate body. Only the v2 plugin reads it: v1 neither
-// forwards nor reacts to it.
-func (p *Plugin) userToken(req *infracontext.RequestContext) string {
-	if !p.v2 {
-		return ""
-	}
-	return userTokenOf(req)
-}
-
-func userTokenOf(req *infracontext.RequestContext) string {
-	if req == nil {
-		return ""
-	}
-	token := ""
-	for key, values := range req.Headers {
-		if !strings.EqualFold(key, consumerdomain.UserTokenHeader) {
-			continue
-		}
-		for _, v := range values {
-			v = strings.TrimSpace(v)
-			if v == "" {
-				continue
-			}
-			if len(v) > maxUserTokenBytes || strings.ContainsAny(v, "\r\n") {
-				return ""
-			}
-			if token != "" && token != v {
-				return ""
-			}
-			token = v
-		}
-	}
-	return token
+	return &GuardUser{ID: id, Email: email}
 }
 
 func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {

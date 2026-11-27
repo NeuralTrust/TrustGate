@@ -36,10 +36,6 @@ type GuardRequest struct {
 	// FailureMode is the policy's failure_mode. It travels as the
 	// X-Failure-Mode header, never in the body; empty is sent as open.
 	FailureMode string `json:"-"`
-	// UserToken is the end user's ID token the application sent in X-NeuralTrust-User-Token. It rides only on a
-	// v2 body (assets.user.token), where TrustGuard verifies it. It lives here and not on GuardUser so the v1
-	// wire stays byte-identical: it never serializes.
-	UserToken string `json:"-"`
 	// request is the request context the body was built from. The v2 engine reads
 	// the model and the MCP server from it. Never serialized.
 	request *infracontext.RequestContext
@@ -48,9 +44,6 @@ type GuardRequest struct {
 type GuardUser struct {
 	ID    string `json:"id,omitempty"`
 	Email string `json:"email,omitempty"`
-	// AuthMethod is how the gateway authenticated the user (the principal method). It rides only on a v2 body,
-	// so the v1 wire stays as it was.
-	AuthMethod string `json:"-"`
 }
 
 // GuardPayload is the minimal LLM evaluate body used for response-direction
