@@ -192,12 +192,10 @@ license-check: ## Verify every source file has a license header
 	@command -v addlicense >/dev/null 2>&1 || { echo "addlicense not found in PATH; run 'make tools' first" >&2; exit 1; }
 	addlicense -check -c "NeuralTrust" -y 2026 -l apache -ignore '**/mocks/**' cmd pkg tools
 
-install-pre-commit: ## Install the git pre-commit hook
-	@$(info $(M) Installing pre-commit hook ...)
-	@mkdir -p .git/hooks
-	@cp scripts/pre-commit.sh .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo "Pre-commit hook installed successfully!"
+install-pre-commit: ## Install the git hooks from .pre-commit-config.yaml
+	@$(info $(M) Installing git hooks ...)
+	@command -v pre-commit >/dev/null 2>&1 || { echo "pre-commit not found; install it with 'brew install pre-commit' or 'pipx install pre-commit'" >&2; exit 1; }
+	pre-commit install --install-hooks -t pre-commit -t commit-msg -t pre-push
 
 docker-build: ## Build the production docker image
 	@$(info $(M) Building docker image $(DOCKER_IMAGE):$(DOCKER_TAG) ...)

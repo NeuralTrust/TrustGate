@@ -10,7 +10,7 @@ an index plus the checks most often broken; the sources win on conflict.
 | `<tree>/.agents/AGENTS.md` | Layout, hexagonal rules, DI, DTO placement, config, logging, data-plane invariants, DB-less, comments, work gates |
 | `<tree>/.cursor/rules/*.mdc` | Path-scoped rules, e.g. `telemetry-event-contract.mdc` for telemetry/metrics paths |
 | `<tree>/.golangci.yml`, `.github/workflows/ci.yml` | What CI enforces (golangci, gosec high, license headers, functional tests with `-race`) |
-| `<tree>/scripts/check-comments.sh` | Mechanical comment guard run by the pre-commit hook |
+| `<tree>/.pre-commit-config.yaml` | Mechanical guards run as git hooks (comments, ticket keys, spec files, branch and commit names) |
 
 Optional, if present on the host (NeuralTrust agent baseline):
 

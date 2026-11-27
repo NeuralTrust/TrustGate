@@ -58,11 +58,13 @@ make test           # unit tests
 make test-race      # unit tests with the race detector
 ```
 
-Install the git pre-commit hook to run these automatically:
+Install the git hooks (pre-commit framework, see `.pre-commit-config.yaml`) to run these automatically:
 
 ```bash
 make install-pre-commit
 ```
+
+Commit subjects follow Conventional Commits and branches are named `<type>/<slug>`, for example `feat/add-routing-rule`. Never commit or push with `--no-verify`: when a hook fails, fix the cause.
 
 ## Project Architecture
 

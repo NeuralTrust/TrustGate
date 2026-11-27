@@ -1,0 +1,93 @@
+# Git hooks for TrustGate (public profile). Content checks run again at
+# pre-push because pushing a branch of a public repository publishes it.
+# Install with: make install-pre-commit
+minimum_pre_commit_version: "3.5.0"
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+exclude: ^(third_party|frontend|downloads)/
+
+repos:
+  - repo: https://github.com/NeuralTrust/pre-commit-hooks
+    rev: v0.1.0
+    hooks:
+      - id: commit-msg
+      - id: branch-name
+        args: [--created-after=2026-12-01]
+      - id: ticket-refs
+      - id: spec-paths
+        args: [--public]
+      - id: comment-policy
+      - id: internal-hosts
+        args: [--strict]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: /testdata/
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+        exclude: /testdata/
+      - id: mixed-line-ending
+        exclude: /testdata/
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.14.0
+    hooks:
+      - id: golangci-lint-fmt
+        pass_filenames: true
+      - id: golangci-lint
+
+  - repo: local
+    hooks:
+      - id: golangci-lint-metrics
+        name: golangci-lint (pkg/metrics module)
+        entry: bash -c 'cd pkg/metrics && golangci-lint run --new-from-rev HEAD'
+        language: system
+        files: ^pkg/metrics/.*\.go$
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy leaves no diff
+        entry: bash -c 'go mod tidy && git diff --exit-code -- go.mod go.sum'
+        language: system
+        files: (\.go|^go\.mod|^go\.sum)$
+        pass_filenames: false
+
+      - id: gosec
+        name: gosec (high severity)
+        entry: gosec -severity high -exclude-generated ./...
+        language: golang
+        additional_dependencies:
+          - github.com/securego/gosec/v2/cmd/gosec@v2.29.1-0.20261005092323-d2b649ec0182
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: unit-tests
+        name: unit tests
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-vet-functional
+        name: go vet (functional build tag)
+        entry: go vet -tags functional ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
