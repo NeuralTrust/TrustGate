@@ -40,8 +40,9 @@ type Plugin struct {
 	now   func() time.Time
 	newID func() string
 	after afterFunc
-	// spawn runs a release off the request path.
 	spawn func(func())
+
+	pendingReleases chan struct{}
 }
 
 type Option func(*Plugin)
@@ -60,8 +61,10 @@ func New(redisClient redis.UniversalClient, opts ...Option) *Plugin {
 		now:   time.Now,
 		newID: func() string { return uuid.NewString() },
 		after: defaultAfterFunc,
-		spawn: func(f func()) { go f() },
+
+		pendingReleases: make(chan struct{}, maxPendingReleases),
 	}
+	p.spawn = p.spawnRelease
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -121,7 +124,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	now := p.now()
 	tail := counter.Suffix + cfg.partition.KeySuffix(in.Request)
 	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject) + tail
-	slotKey := parallelKey(in.Config.ID, dimension, subject, tail)
+	keyDimension := dimension
 	if counter.Dimension != "" {
 		dimension = counter.Dimension
 	}
@@ -177,6 +180,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if cfg.MaxParallel > 0 {
+		slotKey := parallelKey(in.Config.ID, keyDimension, subject, tail)
 		if res, handled, err := p.takeSlot(ctx, in, cfg, slotKey, &data); handled {
 			return res, err
 		}
@@ -209,13 +213,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }
 
-// takeSlot counts the request among those in progress. It returns handled when
-// the request is already answered: refused with a 429 (no Retry-After: a slot
-// frees when some other request ends, not at a known time), or passed through
-// because the counter store failed. In observe the slot is taken even over the
-// cap so the count stays true, and the overage is only reported. The slot is
-// freed when the request ends, through the hook the plane installed; without
-// one nothing could free it, so the cap is skipped.
+// takeSlot reports handled when the request is already answered. A refusal
+// carries no Retry-After because a slot frees when another request ends, not
+// at a known time. Without the plane's end hook nothing could free the slot,
+// so the cap is skipped.
 func (p *Plugin) takeSlot(
 	ctx context.Context,
 	in appplugins.ExecInput,
@@ -235,6 +236,8 @@ func (p *Plugin) takeSlot(
 	}
 	granted, inFlight, err := p.acquire(ctx, key, member, cfg.MaxParallel, !appplugins.Blocks(in.Mode))
 	if err != nil {
+		// The script may have added the member before the reply was lost.
+		held.schedule()
 		res, err = p.counterUnavailable(ctx, in, *data, nil, "acquire", err)
 		return res, true, err
 	}

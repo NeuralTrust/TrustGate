@@ -35,9 +35,14 @@ const (
 	// maxLeaseLife bounds the heartbeat so a request whose release never runs
 	// cannot hold a slot forever.
 	maxLeaseLife = time.Hour
-	// redisCallTimeout bounds the release and heartbeat calls, which outlive
-	// the request context.
+	// redisCallTimeout bounds every lease call: a stalled Redis fails the
+	// acquire open instead of holding the request, and the release and
+	// heartbeat outlive the request context.
 	redisCallTimeout = 2 * time.Second
+	// maxPendingReleases bounds the releases in flight per pod. Past it a
+	// release is dropped and its lease frees on its TTL, so a Redis stall
+	// cannot pile up goroutines.
+	maxPendingReleases = 256
 
 	parallelKeyPrefix = "ratelimit:parallel:"
 )
@@ -75,8 +80,16 @@ func defaultAfterFunc(d time.Duration, f func()) func() {
 	return func() { t.Stop() }
 }
 
-func WithHeartbeatTimer(after afterFunc) Option {
-	return func(p *Plugin) { p.after = after }
+func (p *Plugin) spawnRelease(f func()) {
+	select {
+	case p.pendingReleases <- struct{}{}:
+		go func() {
+			defer func() { <-p.pendingReleases }()
+			f()
+		}()
+	default:
+		slog.Warn("rate_limiter: parallel slot release dropped, too many pending; the lease frees on its TTL")
+	}
 }
 
 func (p *Plugin) acquire(ctx context.Context, key, member string, max int, force bool) (bool, int64, error) {
@@ -84,6 +97,8 @@ func (p *Plugin) acquire(ctx context.Context, key, member string, max int, force
 	if force {
 		flag = "1"
 	}
+	ctx, cancel := context.WithTimeout(ctx, redisCallTimeout)
+	defer cancel()
 	res, err := acquireScript.Run(ctx, p.redis, []string{key},
 		p.now().UnixMilli(), leaseTTL.Milliseconds(), max, member, flag).Int64Slice()
 	if err != nil {
@@ -109,10 +124,9 @@ type lease struct {
 	once   sync.Once
 }
 
-// newLease registers the release on the request's end, before the slot is
-// requested: an acquire whose reply is lost may still have added the member, and
-// releasing a member that was never added is harmless. It reports false when the
-// request already ended.
+// newLease registers the release before the slot is requested: an acquire
+// whose reply is lost may still have added the member. It reports false when
+// the request already ended.
 func (p *Plugin) newLease(done *appplugins.RequestDone, key, member string) (*lease, bool) {
 	l := &lease{p: p, key: key, member: member, started: p.now()}
 	return l, done.OnDone(l.release)
@@ -166,8 +180,6 @@ func (l *lease) release() {
 		if stop != nil {
 			stop()
 		}
-		// Off the response path: the heartbeat is already stopped, and a lost
-		// ZREM only leaves the lease to expire on its TTL.
 		l.p.spawn(l.remove)
 	})
 }

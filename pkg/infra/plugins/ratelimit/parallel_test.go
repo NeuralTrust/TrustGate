@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,12 +56,12 @@ func (f *fakeTimers) after(_ time.Duration, fn func()) func() {
 	}
 }
 
-// fireLast runs the newest scheduled heartbeat as the timer would.
 func (f *fakeTimers) fireLast(t *testing.T) {
 	t.Helper()
 	f.mu.Lock()
 	require.NotEmpty(t, f.fns)
 	fn := f.fns[len(f.fns)-1]
+	f.stopped[len(f.fns)-1] = true
 	f.mu.Unlock()
 	fn()
 }
@@ -81,7 +82,6 @@ type commandLog struct {
 	mu       sync.Mutex
 	names    []string
 	failEval error
-	// failAfterEval runs the script server-side, then loses the reply.
 	failAfterEval error
 }
 
@@ -160,8 +160,8 @@ func newParallelEnv(t *testing.T) *parallelEnv {
 	env.p = New(rdb,
 		WithClock(func() time.Time { return *env.now }),
 		WithIDGenerator(func() string { seq++; return "req-" + string(rune('a'+seq)) }),
-		WithHeartbeatTimer(env.timers.after),
 	)
+	env.p.after = env.timers.after
 	env.p.spawn = func(f func()) { f() }
 	return env
 }
@@ -175,7 +175,6 @@ func parallelSettings(maxParallel int, extra map[string]any) map[string]any {
 	return s
 }
 
-// start runs one request that has not ended; end finishes it like a plane does.
 func (e *parallelEnv) start(settings map[string]any, scope appplugins.RuntimeScope, mode policy.Mode) (*appplugins.RequestDone, *appplugins.Result, error) {
 	done := appplugins.NewRequestDone()
 	in := execInput(settings, scope)
@@ -200,6 +199,12 @@ func requirePluginError(t *testing.T, err error) *appplugins.PluginError {
 	var perr *appplugins.PluginError
 	require.ErrorAs(t, err, &perr)
 	return perr
+}
+
+func requireRefused(t *testing.T, err error) {
+	t.Helper()
+	var perr *appplugins.PluginError
+	require.ErrorAs(t, err, &perr)
 }
 
 func TestPlugin_Parallel_AcquireOverLimitAndRelease(t *testing.T) {
@@ -270,7 +275,7 @@ func TestPlugin_Parallel_CrashedPodLeaseExpires(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
-	requirePluginError(t, err)
+	requireRefused(t, err)
 
 	*env.now = env.now.Add(leaseTTL + time.Second)
 	_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
@@ -290,7 +295,7 @@ func TestPlugin_Parallel_HeartbeatKeepsALongStreamAlive(t *testing.T) {
 	env.timers.fireLast(t)
 	// Past the first lease's own TTL, still held because it was refreshed.
 	_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
-	requirePluginError(t, err)
+	requireRefused(t, err)
 
 	stream.Run()
 	assert.Zero(t, env.inFlight(parallelKeyOfGlobal))
@@ -335,7 +340,7 @@ func TestPlugin_Parallel_FollowsLimitPer(t *testing.T) {
 		_, _, err = env.start(settings, appScope("app-2"), policy.ModeEnforce)
 		require.NoError(t, err)
 		_, _, err = env.start(settings, appScope("app-1"), policy.ModeEnforce)
-		requirePluginError(t, err)
+		requireRefused(t, err)
 
 		assert.Equal(t, 1, env.inFlight("ratelimit:parallel:plugin-1:global:gw-1:app:app-1"))
 		assert.Equal(t, 1, env.inFlight("ratelimit:parallel:plugin-1:global:gw-1:app:app-2"))
@@ -352,7 +357,7 @@ func TestPlugin_Parallel_FollowsLimitPer(t *testing.T) {
 
 		require.NoError(t, run("a"))
 		require.NoError(t, run("b"))
-		requirePluginError(t, run("a"))
+		requireRefused(t, run("a"))
 		assert.Equal(t, 1, env.inFlight(parallelKeyOfGlobal+":hdr:a"))
 	})
 	t.Run("a request the policy does not apply to takes no slot", func(t *testing.T) {
@@ -432,7 +437,7 @@ func TestPlugin_Parallel_CounterErrorFailsOpen(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Empty(t, env.timers.fns, "no lease was taken")
+	assert.Len(t, env.timers.fns, 1, "the heartbeat is armed in case the script ran before the reply was lost")
 	assert.Equal(t, "failed_open", span.Plugin.Decision)
 	data, ok := span.Plugin.Extras.(RateLimiterData)
 	require.True(t, ok)
@@ -449,9 +454,70 @@ func TestPlugin_Parallel_LostAcquireReplyDoesNotLeakTheSlot(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.StatusCode, "the request failed open")
 	require.Equal(t, 1, env.inFlight(parallelKeyOfGlobal), "the script did add the member")
 
+	require.Equal(t, 1, env.timers.liveCount(), "the admitted request keeps its lease alive")
+	*env.now = env.now.Add(leaseTTL + time.Second)
+	env.timers.fireLast(t)
+	score, zerr := env.mr.ZScore(parallelKeyOfGlobal, "req-b")
+	require.NoError(t, zerr)
+	assert.Greater(t, score, float64(env.now.UnixMilli()), "the heartbeat refreshed the lease")
+
 	done.Run()
 
 	assert.Zero(t, env.inFlight(parallelKeyOfGlobal), "the end of the request frees it")
+	assert.Zero(t, env.timers.liveCount())
+}
+
+func TestPlugin_Parallel_StalledAcquireFailsOpen(t *testing.T) {
+	env := newParallelEnv(t)
+	env.cmds.failEval = context.DeadlineExceeded
+
+	done, res, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
+	require.NoError(t, err, "a deadline of the acquire's own is not the caller leaving")
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	done.Run()
+}
+
+func TestPlugin_Parallel_ReleasesAreBounded(t *testing.T) {
+	p := New(nil)
+	for i := 0; i < maxPendingReleases; i++ {
+		p.pendingReleases <- struct{}{}
+	}
+	ran := make(chan struct{}, 1)
+
+	p.spawnRelease(func() { ran <- struct{}{} })
+
+	select {
+	case <-ran:
+		t.Fatal("a release ran past the bound")
+	case <-time.After(50 * time.Millisecond):
+	}
+	<-p.pendingReleases
+	p.spawnRelease(func() { ran <- struct{}{} })
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("a release under the bound did not run")
+	}
+}
+
+func TestPlugin_Parallel_HeartbeatRacingRelease(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		env := newParallelEnv(t)
+		var removes atomic.Int32
+		env.p.spawn = func(f func()) { removes.Add(1); f() }
+		done, _, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); env.timers.fireLast(t) }()
+		go func() { defer wg.Done(); done.Run() }()
+		wg.Wait()
+
+		require.Zero(t, env.timers.liveCount(), "no heartbeat outlives the release")
+		require.EqualValues(t, 1, removes.Load())
+		require.Zero(t, env.inFlight(parallelKeyOfGlobal))
+	}
 }
 
 func TestPlugin_Parallel_ReleaseDoesNotBlockTheResponse(t *testing.T) {
@@ -479,7 +545,7 @@ func TestPlugin_Parallel_RefusedRequestsAndTheRequestCounter(t *testing.T) {
 		require.NoError(t, err)
 
 		_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
-		requirePluginError(t, err)
+		requireRefused(t, err)
 
 		members, zerr := env.mr.ZMembers(requestKey)
 		require.NoError(t, zerr)
@@ -493,7 +559,7 @@ func TestPlugin_Parallel_RefusedRequestsAndTheRequestCounter(t *testing.T) {
 		require.NoError(t, err)
 
 		_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
-		requirePluginError(t, err)
+		requireRefused(t, err)
 
 		assert.Equal(t, 1, env.inFlight(parallelKeyOfGlobal), "only the admitted request holds a slot")
 	})
