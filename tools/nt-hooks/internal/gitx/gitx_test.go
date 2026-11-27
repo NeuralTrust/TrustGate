@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,22 @@ new file mode 100644
 	}
 }
 
+// isolateGit clears the GIT_* variables git exports to hooks. Without this,
+// running the tests from a pre-push hook makes `git init` in the temporary
+// directory reinitialize the repository being pushed.
+func isolateGit(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "GIT_") {
+			t.Setenv(name, "")
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func git(t *testing.T, args ...string) {
 	t.Helper()
 	if _, err := Run(context.Background(), args...); err != nil {
@@ -65,6 +82,7 @@ func git(t *testing.T, args ...string) {
 
 func TestAddedLinesIgnoresDeletionsAndRenames(t *testing.T) {
 	dir := t.TempDir()
+	isolateGit(t)
 	t.Chdir(dir)
 	t.Setenv("PRE_COMMIT_FROM_REF", "")
 	t.Setenv("PRE_COMMIT_TO_REF", "")
@@ -106,6 +124,7 @@ func TestAddedLinesIgnoresDeletionsAndRenames(t *testing.T) {
 
 func TestAddedLinesReadsFilesOutsideTheDiff(t *testing.T) {
 	dir := t.TempDir()
+	isolateGit(t)
 	t.Chdir(dir)
 	t.Setenv("PRE_COMMIT_FROM_REF", "")
 	t.Setenv("PRE_COMMIT_TO_REF", "")
