@@ -49,6 +49,7 @@ type Exporter struct {
 	shutdownTimeout time.Duration
 	class           metrics.DataClass
 	closed          atomic.Bool
+	reporter        *failureReporter
 }
 
 // newExporterWithProvider builds an Exporter around an already-constructed
@@ -88,6 +89,9 @@ func (e *Exporter) DataClass() metrics.DataClass {
 // SetDataClass binds the exporter to a data class before it serves traffic.
 func (e *Exporter) SetDataClass(class metrics.DataClass) {
 	e.class = class
+	if e.reporter != nil {
+		e.reporter.setDataClass(class)
+	}
 }
 
 // Publish maps the event to an OTLP log record and enqueues it without blocking

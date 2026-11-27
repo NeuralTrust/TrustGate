@@ -244,7 +244,7 @@ func TestNewLoggerProvider_BuildsForBothProtocols(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			provider, err := newLoggerProvider(context.Background(), tc.s)
+			provider, _, err := newLoggerProvider(context.Background(), tc.s, nil)
 			require.NoError(t, err)
 			require.NotNil(t, provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -261,6 +261,6 @@ func TestNewLoggerProvider_TLSFileError(t *testing.T) {
 		Timeout: 5 * time.Second, Compression: compressionGzip, MaxBodyBytes: 4096,
 		TLS: &TLSSettings{CAFile: "/does/not/exist/ca.pem"},
 	}
-	_, err := newLoggerProvider(context.Background(), s)
+	_, _, err := newLoggerProvider(context.Background(), s, nil)
 	require.Error(t, err)
 }
