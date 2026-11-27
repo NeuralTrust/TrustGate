@@ -18,18 +18,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
-
-const slugMissTTL = 5 * time.Second
-
-type slugMiss struct {
-	at time.Time
-}
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=gateway_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
@@ -40,9 +33,16 @@ type Finder interface {
 
 var _ Finder = (*finder)(nil)
 
+// finder serves gateways from memoryCache and remembers, in missCache, the ids
+// and slugs the repository did not have. A miss lives for the miss map's short
+// TTL, which bounds how long a gateway created or renamed on another replica
+// can still answer not found here; on this replica the gateway is cached under
+// the same key and wins, because memoryCache is read first. A data plane drops
+// its misses with every other cache when it applies a config-sync snapshot.
 type finder struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
+	missCache   *cache.TTLMap
 	logger      *slog.Logger
 }
 
@@ -50,34 +50,53 @@ func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slo
 	return &finder{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.GatewayTTLName),
+		missCache:   manager.GetTTLMap(cache.GatewayMissTTLName),
 		logger:      logger,
 	}
 }
 
 func (f *finder) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
-	if g, ok := f.cached(gatewayIDCacheKey(id), "gateway_id", id.String()); ok {
+	key := gatewayIDCacheKey(id)
+	if g, ok := f.cached(key, "gateway_id", id.String()); ok {
 		return g, nil
 	}
-	g, err := f.repo.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
+	if f.missedRecently(key) {
+		return nil, domain.ErrNotFound
 	}
-	setGatewayCache(f.memoryCache, g)
-	return g, nil
+	return f.load(key, func() (*domain.Gateway, error) {
+		return f.repo.FindByID(ctx, id)
+	})
 }
 
 func (f *finder) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	slug = domain.NormalizeSlug(slug)
 	key := gatewaySlugCacheKey(slug)
-	if f.missedRecently(key) {
-		return nil, domain.ErrNotFound
-	}
 	if g, ok := f.cached(key, "gateway_slug", slug); ok {
 		return g, nil
 	}
-	g, err := f.repo.FindBySlug(ctx, slug)
+	if f.missedRecently(key) {
+		return nil, domain.ErrNotFound
+	}
+	// The gateways table only holds slugs that pass IsValidSlug (a CHECK with
+	// the same pattern), so anything else is answered without a query and is
+	// not remembered: callers pass request headers straight through, and an
+	// 8 KB header must not become an 8 KB miss key. Checked after the miss map,
+	// which never holds an invalid slug, so a remembered miss skips the regexp.
+	if !domain.IsValidSlug(slug) {
+		return nil, domain.ErrNotFound
+	}
+	return f.load(key, func() (*domain.Gateway, error) {
+		return f.repo.FindBySlug(ctx, slug)
+	})
+}
+
+// load takes the miss map's generation before the read, so a miss found while
+// the map was being cleared is not remembered.
+func (f *finder) load(key string, read func() (*domain.Gateway, error)) (*domain.Gateway, error) {
+	generation := f.missCache.Generation()
+	g, err := read()
 	if errors.Is(err, domain.ErrNotFound) {
-		f.memoryCache.Set(key, slugMiss{at: time.Now()})
+		f.missCache.RememberMiss(key, generation, cache.GatewayMissCacheMaxEntries)
 		return nil, err
 	}
 	if err != nil {
@@ -88,19 +107,8 @@ func (f *finder) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, 
 }
 
 func (f *finder) missedRecently(key string) bool {
-	cached, ok := f.memoryCache.Get(key)
-	if !ok {
-		return false
-	}
-	miss, ok := cached.(slugMiss)
-	if !ok {
-		return false
-	}
-	if time.Since(miss.at) < slugMissTTL {
-		return true
-	}
-	f.memoryCache.Delete(key)
-	return false
+	_, missed := f.missCache.Get(key)
+	return missed
 }
 
 func (f *finder) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error) {

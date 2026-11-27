@@ -78,9 +78,7 @@ func (f *apiKeyFinder) FindByAPIKey(ctx context.Context, rawKey string) (*domain
 // key presented again does not reach the database every time. Any change to a
 // gateway's credentials clears the map with InvalidateGatewayDataEvent.
 func (f *apiKeyFinder) rememberMiss(hash string, generation uint64) {
-	if f.missCache.Len() < cache.AuthKeyMissCacheMaxEntries {
-		f.missCache.SetIfGeneration(hash, struct{}{}, generation)
-	}
+	f.missCache.RememberMiss(hash, generation, cache.AuthKeyMissCacheMaxEntries)
 }
 
 // live refuses a key that has passed its expiry.
