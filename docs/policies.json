@@ -112,7 +112,7 @@
                 "key": "models",
                 "label": "Only For Models",
                 "type": "array",
-                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. gpt-6-luna or gpt-5*). A model is matched and counted by its name without the @provider/ prefix, so @openai/gpt-6-luna and gpt-6-luna share one counter. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model.",
+                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. gpt-6-luna or gpt-5*). A model is matched and counted by its name without the @provider/ prefix, so @openai/gpt-6-luna and gpt-6-luna share one counter. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
                 "item": {
                   "key": "model",
                   "label": "Model",
@@ -430,7 +430,7 @@
                 "key": "models",
                 "label": "Only For Models",
                 "type": "array",
-                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. gpt-6-luna or gpt-5*). A model is matched and counted by its name without the @provider/ prefix, so @openai/gpt-6-luna and gpt-6-luna share one counter. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model.",
+                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. gpt-6-luna or gpt-5*). A model is matched and counted by its name without the @provider/ prefix, so @openai/gpt-6-luna and gpt-6-luna share one counter. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
                 "item": {
                   "key": "model",
                   "label": "Model",
