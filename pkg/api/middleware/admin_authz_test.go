@@ -311,6 +311,8 @@ func TestRequireCatalogRegistryAccess(t *testing.T) {
 			"/v1/models-catalog?registry_id=" + registryID.String(),
 			"/v1/models-catalog?gateway_id=not-a-uuid&registry_id=" + registryID.String(),
 			"/v1/models-catalog?gateway_id=" + gatewayID.String() + "&registry_id=not-a-uuid",
+			"/v1/models-catalog?gateway_id=" + ids.GatewayID{}.String() + "&registry_id=" + registryID.String(),
+			"/v1/models-catalog?gateway_id=" + gatewayID.String() + "&registry_id=" + ids.RegistryID{}.String(),
 		} {
 			require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, target), target)
 		}
@@ -324,5 +326,35 @@ func TestRequireCatalogRegistryAccess(t *testing.T) {
 
 		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, scoped))
 		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+
+	t.Run("a service credential is refused", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		authz := middleware.NewAdminAuthzMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), finder)
+		app := fiber.New()
+		app.Use(identityMiddleware(serviceIdentity(gatewayID.String(), "acme", "gateways:read")))
+		app.Get("/v1/models-catalog", authz.RequireCatalogRegistryAccess(), func(c *fiber.Ctx) error {
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		require.Equal(t, fiber.StatusForbidden, do(t, app, fiber.MethodGet, scoped))
+		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+
+	t.Run("a denial logs the gateway named in the query", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, gatewayID).Return(gatewayOwnedBy(gatewayID, "globex"), nil).Once()
+		var logs strings.Builder
+		authz := middleware.NewAdminAuthzMiddleware(slog.New(slog.NewTextHandler(&logs, nil)), finder)
+		app := fiber.New()
+		app.Use(identityMiddleware(human))
+		app.Get("/v1/models-catalog", authz.RequireCatalogRegistryAccess(), func(c *fiber.Ctx) error {
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, scoped))
+		require.Contains(t, logs.String(), "gateway_id="+gatewayID.String())
 	})
 }

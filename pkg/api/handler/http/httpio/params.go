@@ -201,3 +201,20 @@ func containsString(items []string, want string) bool {
 	}
 	return false
 }
+
+// CatalogRegistryScope reads the optional ?gateway_id= and ?registry_id= that
+// narrow a catalog listing to what one registry's credentials can use. It
+// reports ok only when both are present, parse and are not the nil UUID; any
+// other query is an unscoped listing. The route's authorization guard and its
+// handler both call it, so they always agree on which requests reach a registry.
+func CatalogRegistryScope(c *fiber.Ctx) (ids.GatewayID, ids.RegistryID, bool) {
+	gatewayID, err := ids.Parse[ids.GatewayKind](c.Query("gateway_id"))
+	if err != nil || gatewayID.IsNil() {
+		return ids.GatewayID{}, ids.RegistryID{}, false
+	}
+	registryID, err := ids.Parse[ids.RegistryKind](c.Query("registry_id"))
+	if err != nil || registryID.IsNil() {
+		return ids.GatewayID{}, ids.RegistryID{}, false
+	}
+	return gatewayID, registryID, true
+}
