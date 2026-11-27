@@ -31,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	infraopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/openapi"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 )
 
 func Core(c *container.Container) error {
@@ -121,6 +122,7 @@ func provideRuntimeBase(c *container.Container) error {
 	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
 		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format), cfg.Logger.FileEnabled)
 		slog.SetDefault(log)
+		otlp.InstallErrorHandler(log)
 		return log
 	}); err != nil {
 		return err

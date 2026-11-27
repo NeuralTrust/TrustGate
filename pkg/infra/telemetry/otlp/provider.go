@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -45,13 +46,15 @@ const (
 // newLoggerProvider builds a dedicated logs provider for the given settings. The
 // OTLP client connects lazily, so an unreachable Collector never blocks
 // construction; only hard config errors (such as unreadable TLS files) return an
-// error. It never installs or reads the OTel global LoggerProvider.
-func newLoggerProvider(ctx context.Context, s Settings) (*sdklog.LoggerProvider, error) {
+// error. It never installs or reads the OTel global LoggerProvider. Export
+// failures are logged through logger by the returned reporter.
+func newLoggerProvider(ctx context.Context, s Settings, logger *slog.Logger) (*sdklog.LoggerProvider, *failureReporter, error) {
 	exporter, err := newLogExporter(ctx, s)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	processor := sdklog.NewBatchProcessor(exporter,
+	reporting := newReportingExporter(exporter, logger, s.Endpoint)
+	processor := sdklog.NewBatchProcessor(reporting,
 		sdklog.WithMaxQueueSize(batchMaxQueueSize),
 		sdklog.WithExportTimeout(s.Timeout),
 	)
@@ -60,7 +63,17 @@ func newLoggerProvider(ctx context.Context, s Settings) (*sdklog.LoggerProvider,
 		sdklog.WithResource(newResource()),
 		sdklog.WithAttributeValueLengthLimit(s.MaxBodyBytes),
 	)
-	return provider, nil
+	return provider, reporting.reporter, nil
+}
+
+func newOTLPExporter(ctx context.Context, s Settings, logger *slog.Logger) (*Exporter, error) {
+	provider, reporter, err := newLoggerProvider(ctx, s, logger)
+	if err != nil {
+		return nil, err
+	}
+	exporter := newExporterWithProvider(provider, logger, s.Timeout)
+	exporter.reporter = reporter
+	return exporter, nil
 }
 
 func newResource() *resource.Resource {

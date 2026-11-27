@@ -48,11 +48,11 @@ func (t *Template) WithTenantSettings(settings map[string]interface{}) (appmetri
 	if err != nil {
 		return nil, err
 	}
-	provider, err := newLoggerProvider(context.Background(), s)
+	exporter, err := newOTLPExporter(context.Background(), s, t.logger)
 	if err != nil {
 		return nil, err
 	}
-	return newExporterWithProvider(provider, t.logger, s.Timeout), nil
+	return exporter, nil
 }
 
 // tenantSettings parses and checks tenant settings.
