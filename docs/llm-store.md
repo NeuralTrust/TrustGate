@@ -501,6 +501,11 @@ gains `:app:<id>`, `:grp:<id>` or `:mdl:<model>` for these modes (and
 `:key:<kind>:<id>` on `rate_limiter`) and is unchanged for `shared`; a budget
 per API key keeps the `key:<kind>:<id>` layout above.
 
+`group_by` (`subject`, `claim` or `header`) splits only a `shared` or `header`
+counter: a policy that sets it with another `limit_per` is refused, and
+`limit_per: header` needs `group_by: header` (or `group_by_header` alone, the
+older spelling).
+
 ## Group budgets
 
 A group budget caps what a directory group's keys spend in a UTC calendar
