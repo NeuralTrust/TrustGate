@@ -24,6 +24,7 @@ const JanitorInterval = 1 * time.Minute
 
 const (
 	GatewayTTLName      = "gateway"
+	GatewayMissTTLName  = "gateway_miss"
 	RegistryTTLName     = "backend"
 	ConsumerTTLName     = "consumer"
 	ConsumerDataTTLName = "consumer_data"
@@ -44,6 +45,7 @@ const (
 
 const (
 	GatewayCacheTTL        = 1 * time.Hour
+	GatewayMissCacheTTL    = 5 * time.Second
 	RegistryCacheTTL       = 5 * time.Minute
 	ConsumerCacheTTL       = 5 * time.Minute
 	ConsumerDataCacheTTL   = 1 * time.Hour
@@ -62,6 +64,11 @@ const (
 // once, so a flood of random keys cannot grow the map without bound; past the
 // cap a miss is simply not remembered.
 const AuthKeyMissCacheMaxEntries = 100_000
+
+// GatewayMissCacheMaxEntries caps the unknown gateway ids and slugs remembered
+// at once, so a flood of random ones cannot grow the map without bound; past
+// the cap a miss is simply not remembered.
+const GatewayMissCacheMaxEntries = 100_000
 
 type TTLMapManager struct {
 	mu         sync.Mutex

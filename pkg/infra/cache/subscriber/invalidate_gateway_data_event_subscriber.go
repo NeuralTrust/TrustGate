@@ -32,6 +32,7 @@ var _ cache.EventSubscriber[event.InvalidateGatewayDataEvent] = (*InvalidateGate
 type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
 	gatewayCache      *cache.TTLMap
+	gatewayMissCache  *cache.TTLMap
 	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
@@ -50,6 +51,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 	return &InvalidateGatewayDataEventSubscriber{
 		logger:            logger,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
+		gatewayMissCache:  c.GetTTLMap(cache.GatewayMissTTLName),
 		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
@@ -67,6 +69,9 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(_ context.Context, evt ev
 
 	if s.gatewayCache != nil {
 		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
+	}
+	if s.gatewayMissCache != nil {
+		s.gatewayMissCache.Clear()
 	}
 	if s.consumerCache != nil {
 		s.consumerCache.Clear()

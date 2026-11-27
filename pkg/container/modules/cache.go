@@ -64,6 +64,7 @@ func StartCacheJanitor(ctx context.Context, mgr *cache.TTLMapManager) {
 
 func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.GatewayTTLName, cache.GatewayCacheTTL)
+	mgr.CreateTTLMap(cache.GatewayMissTTLName, cache.GatewayMissCacheTTL)
 	mgr.CreateTTLMap(cache.RegistryTTLName, cache.RegistryCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerTTLName, cache.ConsumerCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerDataTTLName, cache.ConsumerDataCacheTTL)
