@@ -62,16 +62,7 @@ func (m *AdminAuthzMiddleware) RequireGatewayAccess(resource AdminResource) fibe
 			return c.Next()
 		}
 
-		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
-		if err != nil {
-			return httpio.WriteError(c, err)
-		}
-		if g.TenantID() != identity.TenantID {
-			// Answering 404 here keeps a foreign gateway indistinguishable from
-			// one that does not exist, so ids cannot be probed across tenants.
-			return m.notFound(c, identity)
-		}
-		return c.Next()
+		return m.requireOwnedGateway(c, identity, gatewayID)
 	}
 }
 
@@ -120,6 +111,30 @@ func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 	}
 }
 
+// RequireCatalogRegistryAccess guards the models catalog. When the query names
+// a registry (httpio.CatalogRegistryScope) the handler calls the provider with
+// that registry's credentials, so a tenant caller must own the gateway; a
+// foreign or unknown gateway answers 404, like any other gateway lookup. Any
+// other query leaves the catalog unscoped and passes without a lookup. A service
+// credential is refused here too, so the guard does not depend on
+// RequireInteractiveIdentity running before it.
+func (m *AdminAuthzMiddleware) RequireCatalogRegistryAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		identity := AdminIdentityFromContext(c)
+		if identity.IsService() {
+			return m.forbidden(c, identity, "credential is limited to its gateway")
+		}
+		if identity.Kind == AdminIdentityPlatform {
+			return c.Next()
+		}
+		gatewayID, _, ok := httpio.CatalogRegistryScope(c)
+		if !ok {
+			return c.Next()
+		}
+		return m.requireOwnedGateway(c, identity, gatewayID)
+	}
+}
+
 // RequireConfigSyncScopeAccess guards the config-sync connection listing. A
 // data plane's scope is the gateway it serves, so a tenant caller has to name
 // one of its own gateways in ?scope=; only the platform lists every data plane.
@@ -141,15 +156,8 @@ func (m *AdminAuthzMiddleware) RequireConfigSyncScopeAccess() fiber.Handler {
 		if err != nil {
 			return m.notFound(c, identity)
 		}
-		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
-		if err != nil {
-			return httpio.WriteError(c, err)
-		}
-		if g.TenantID() != identity.TenantID {
-			return m.notFound(c, identity)
-		}
 		c.Locals(configSyncScopeKey, gatewayID.String())
-		return c.Next()
+		return m.requireOwnedGateway(c, identity, gatewayID)
 	}
 }
 
@@ -165,6 +173,21 @@ func ConfigSyncScope(c *fiber.Ctx) string {
 		return scope
 	}
 	return c.Query("scope")
+}
+
+// requireOwnedGateway passes the request on only when the gateway belongs to
+// the caller's tenant. A foreign gateway answers 404, the same as one that does
+// not exist, so ids cannot be probed across tenants. A failed lookup fails
+// closed with the lookup's own error.
+func (m *AdminAuthzMiddleware) requireOwnedGateway(c *fiber.Ctx, identity AdminIdentity, gatewayID ids.GatewayID) error {
+	g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	if g.TenantID() != identity.TenantID {
+		return m.notFound(c, identity)
+	}
+	return c.Next()
 }
 
 func (m *AdminAuthzMiddleware) forbidden(c *fiber.Ctx, identity AdminIdentity, reason string) error {
@@ -192,9 +215,21 @@ func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, r
 		slog.String("token_issuer", identity.Issuer),
 		slog.String("principal_ref", logref.Opaque(identity.Subject)),
 		slog.String("tenant_id", identity.TenantID),
-		slog.String("gateway_id", c.Params("gateway_id")),
+		slog.String("gateway_id", deniedGatewayID(c)),
 		slog.String("method", c.Method()),
 		slog.String("path", c.Path()),
 		slog.String("request_id", c.Get(fiber.HeaderXRequestID)),
 	)
+}
+
+// deniedGatewayID names the gateway a denied request addressed: the path
+// parameter on gateway-scoped routes, the ?gateway_id= or ?scope= query on the
+// routes that take it there.
+func deniedGatewayID(c *fiber.Ctx) string {
+	for _, v := range []string{c.Params("gateway_id"), c.Query("gateway_id"), c.Query("scope")} {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

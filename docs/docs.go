@@ -6706,7 +6706,7 @@ const docTemplate = `{
         },
         "/v1/models-catalog": {
             "get": {
-                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys are respected). An Azure registry lists its resource's deployments: the slug is the deployment name a request must send, and the call fails instead of offering catalog names that would answer DeploymentNotFound — 404 when the registry does not exist, 422 when it is not an Azure registry or Azure rejects its endpoint or credentials, 502 when Azure does not answer. A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. For every other provider, malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys are respected). An Azure registry lists its resource's deployments: the slug is the deployment name a request must send, and the call fails instead of offering catalog names that would answer DeploymentNotFound — 404 when the registry does not exist, 422 when it is not an Azure registry or Azure rejects its endpoint or credentials, 502 when Azure does not answer. A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. For every other provider, malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog. Naming a registry requires owning its gateway: a gateway that belongs to another tenant, or does not exist, answers 404 for every provider, and a failed gateway lookup answers 500 instead of falling back to the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -6755,6 +6755,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -6763,6 +6769,12 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }

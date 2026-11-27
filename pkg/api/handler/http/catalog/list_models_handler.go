@@ -18,7 +18,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -38,7 +37,7 @@ func NewListModelsHandler(
 
 // Handle godoc
 // @Summary      List model catalog
-// @Description  Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys are respected). An Azure registry lists its resource's deployments: the slug is the deployment name a request must send, and the call fails instead of offering catalog names that would answer DeploymentNotFound — 404 when the registry does not exist, 422 when it is not an Azure registry or Azure rejects its endpoint or credentials, 502 when Azure does not answer. A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. For every other provider, malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.
+// @Description  Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys are respected). An Azure registry lists its resource's deployments: the slug is the deployment name a request must send, and the call fails instead of offering catalog names that would answer DeploymentNotFound — 404 when the registry does not exist, 422 when it is not an Azure registry or Azure rejects its endpoint or credentials, 502 when Azure does not answer. A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. For every other provider, malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog. Naming a registry requires owning its gateway: a gateway that belongs to another tenant, or does not exist, answers 404 for every provider, and a failed gateway lookup answers 500 instead of falling back to the full catalog.
 // @Tags         catalog
 // @Produce      json
 // @Security     BearerAuth
@@ -47,8 +46,10 @@ func NewListModelsHandler(
 // @Param        registry_id  query     string  false  "Registry whose credentials decide model availability"  format(uuid)
 // @Success      200          {object}  map[string][]response.ModelResponse
 // @Failure      401          {object}  httpio.ErrorBody
+// @Failure      403          {object}  httpio.ErrorBody
 // @Failure      404          {object}  httpio.ErrorBody
 // @Failure      422          {object}  httpio.ErrorBody
+// @Failure      500          {object}  httpio.ErrorBody
 // @Failure      502          {object}  httpio.ErrorBody
 // @Router       /v1/models-catalog [get]
 func (h *ListModelsHandler) Handle(c *fiber.Ctx) error {
@@ -59,11 +60,10 @@ func (h *ListModelsHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Availability is per credential set, so it can only be narrowed when the
-	// caller names the registry to scope it to. Unparseable ids fall through to
-	// the unfiltered catalog rather than failing a read-only listing.
-	gatewayID, gatewayErr := ids.Parse[ids.GatewayKind](c.Query("gateway_id"))
-	registryID, registryErr := ids.Parse[ids.RegistryKind](c.Query("registry_id"))
-	if gatewayErr == nil && registryErr == nil {
+	// caller names the registry to scope it to. Missing, unparseable or nil ids
+	// fall through to the unfiltered catalog rather than failing a read-only
+	// listing.
+	if gatewayID, registryID, ok := httpio.CatalogRegistryScope(c); ok {
 		in := appcatalog.ServerlessFilterInput{
 			ProviderCode: providerCode,
 			GatewayID:    gatewayID,
