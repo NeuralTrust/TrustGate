@@ -79,9 +79,9 @@ func (f *fakeTimers) liveCount() int {
 }
 
 type commandLog struct {
-	mu       sync.Mutex
-	names    []string
-	failEval error
+	mu            sync.Mutex
+	names         []string
+	failEval      error
 	failAfterEval error
 }
 
