@@ -493,12 +493,15 @@ policy belongs to. Absent is `shared`: one counter for the policy's scope.
 `application` and `group` take `applies_to: all` (default) or `applies_to:
 selected` with a non-empty `selected` list of application or group ids; a request
 outside the list is not limited by the policy, except that a request without a group always counts toward its application under `group`. `model` takes an optional `models`
-list of patterns (`*` is a wildcard, for example `gpt-6-luna` or `gpt-5*`); a
-request whose model does not match is not limited, and one that names none is
-counted under the route's default model. A model is matched and counted by its
-name without the `@provider/` prefix, in the request and in the patterns, so
-`@openai/gpt-6-luna` and `gpt-6-luna` share one counter; a bare
-`provider/model` is a native model id and is counted as written. On
+list of patterns (`*` is a wildcard, for example `@openai/gpt-6-luna` or
+`gpt-5*`); a request whose model does not match is not limited, and one that
+names none is counted under the route's default model. A model is counted per
+provider that serves it, the provider of the registry the request is routed to:
+`gpt-6-luna` through OpenAI and through Azure are two counters, and naming the
+provider in the request (`@openai/gpt-6-luna`) or not counts the same. A pattern
+with `@provider/` matches that provider only; one without matches the model on
+any provider. A request that fails over to another provider stays on the
+counter it was admitted under. On
 `token_rate_limiter`, a request that names no model and has no default model
 counts against the policy's own counter, so the aggregate budget and cost cap
 still apply, and a `per_model` rule is chosen by the model the request is
@@ -506,7 +509,7 @@ served with (the route's default for `auto`). `api_key` does not limit
 requests without a key, and `application` and `group` do not limit requests
 without an application. On `token_rate_limiter`, `limit_per: api_key` is `partition: key`, and
 `partition: key` cannot be combined with another `limit_per`. A counter's key
-gains `:app:<id>`, `:grp:<id>` or `:mdl:<model>` for these modes (and
+gains `:app:<id>`, `:grp:<id>` or `:mdl:@<provider>/<model>` for these modes (and
 `:key:<kind>:<id>` on `rate_limiter`) and is unchanged for `shared`; a budget
 per API key keeps the `key:<kind>:<id>` layout above.
 

@@ -132,38 +132,42 @@ func (s Spec) Resolve(scope appplugins.RuntimeScope, model func() string) Counte
 		}
 		return Counter{Applies: true, Dimension: "group", Suffix: ":grp:" + url.QueryEscape(scope.KeyGroupID)}
 	case Model:
-		name := CountedModel(model())
-		if name == "" {
+		ref := strings.TrimSpace(model())
+		if ref == "" {
 			return Counter{}
 		}
-		if len(s.Models) > 0 && !s.matchesModel(name) {
+		if len(s.Models) > 0 && !s.matchesModel(ref) {
 			return Counter{}
 		}
-		return Counter{Applies: true, Dimension: "model", Suffix: ":mdl:" + appplugins.PartitionValue(name)}
+		return Counter{Applies: true, Dimension: "model", Suffix: ":mdl:" + appplugins.PartitionValue(ref)}
 	default:
 		return Counter{Applies: true}
 	}
 }
 
-func (s Spec) matchesModel(name string) bool {
+// matchesModel reports whether a "@provider/model" ref matches a pattern. A
+// pattern that names a provider matches that provider only; one that does not
+// matches the model whatever provider serves it.
+func (s Spec) matchesModel(ref string) bool {
+	provider, name := splitModelRef(ref)
 	for _, pattern := range s.Models {
-		if modelmatch.Matches(CountedModel(pattern), name) {
+		patternProvider, patternModel := splitModelRef(pattern)
+		if patternProvider != "" && provider != "" && patternProvider != provider {
+			continue
+		}
+		if modelmatch.Matches(patternModel, name) {
 			return true
 		}
 	}
 	return false
 }
 
-// CountedModel is the model name a counter and the models filter compare: an
-// "@provider/model" ref counts as its model, so a client cannot leave a limit
-// by naming the provider. A bare "provider/model" is a native model id of its
-// own and is kept whole.
-func CountedModel(ref string) string {
+func splitModelRef(ref string) (provider, model string) {
 	ref = strings.TrimSpace(ref)
 	if intent, err := routingdomain.ParseModelRef(ref); err == nil && intent.Provider != "" {
-		return intent.Model
+		return intent.Provider, intent.Model
 	}
-	return ref
+	return "", ref
 }
 
 func (s Spec) application(scope appplugins.RuntimeScope) Counter {
@@ -213,6 +217,26 @@ func RequestModel(req *infracontext.RequestContext) string {
 		return req.DefaultModel
 	}
 	return ""
+}
+
+// RequestModelRef is the model a request is counted under, qualified by the
+// provider that serves it ("@provider/model"): the provider of the registry the
+// request is routed to, else the one the client named. The same model behind
+// two providers is two counters, and naming the provider or not does not
+// change the counter.
+func RequestModelRef(req *infracontext.RequestContext) string {
+	name := RequestModel(req)
+	if name == "" {
+		return ""
+	}
+	provider, model := splitModelRef(name)
+	if served := strings.ToLower(strings.TrimSpace(req.Provider)); served != "" {
+		provider = served
+	}
+	if provider == "" {
+		return model
+	}
+	return "@" + provider + "/" + model
 }
 
 func namesModel(ref string) bool {

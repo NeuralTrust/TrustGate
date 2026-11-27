@@ -59,10 +59,10 @@ func TestPlugin_LimitPer_CounterKeys(t *testing.T) {
 		{"application on a global policy", limitPerSettings(map[string]any{"limit_per": "application"}), aliceScope, "", []string{"trl:tk-1:global:gw-1:app:p-1"}},
 		{"application selected, in the list", limitPerSettings(map[string]any{"limit_per": "application", "applies_to": "selected", "selected": []string{"p-1"}}), aliceScope, "", []string{"trl:tk-1:global:gw-1:app:p-1"}},
 		{"application selected, outside the list", limitPerSettings(map[string]any{"limit_per": "application", "applies_to": "selected", "selected": []string{"p-2"}}), aliceScope, "", nil},
-		{"model", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
-		{"model filter matches", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
+		{"model", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"}},
+		{"model filter matches", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"}},
 		{"model filter misses", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"claude-*"}}), aliceScope, model, nil},
-		{"model filter ignores the provider the request names", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
+		{"a bare pattern matches the model on any provider", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"}},
 		{"model not named counts against the policy's own counter", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, "", []string{"trl:tk-1:global:gw-1"}},
 		{"header through limit_per", limitPerSettings(map[string]any{"limit_per": "header", "group_by_header": "X-Team"}), consumer, "", []string{"trl:tk-1:consumer:p-1"}},
 	}
@@ -141,7 +141,7 @@ func TestPlugin_LimitPer_ModelCountsTheServedDefault(t *testing.T) {
 	req.DefaultModel = "gpt-default"
 
 	spend(t, p, limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, req, 10)
-	assert.Equal(t, []string{"trl:tk-1:global:gw-1:mdl:gpt-default"}, mr.Keys())
+	assert.Equal(t, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-default"}, mr.Keys())
 }
 
 // A downgrade rewrites the body between the stages: the spend must land on the
@@ -162,7 +162,7 @@ func TestPlugin_LimitPer_ModelSpendStaysOnTheAdmittedCounterAfterDowngrade(t *te
 	req.Body = []byte(`{"model":"gpt-4o-mini"}`)
 	spend(t, p, settings, aliceScope, req, 10)
 
-	assert.Equal(t, []string{"trl:tk-1:global:gw-1:mdl:gpt-4o"}, mr.Keys())
+	assert.Equal(t, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-4o"}, mr.Keys())
 }
 
 func TestPlugin_LimitPer_ModelLessRequestStillMeetsTheAggregate(t *testing.T) {

@@ -30,7 +30,7 @@ import (
 
 func limitPerInput(settings map[string]any, scope appplugins.RuntimeScope, body string) appplugins.ExecInput {
 	in := execInput(settings, scope)
-	in.Request = &infracontext.RequestContext{Body: []byte(body)}
+	in.Request = &infracontext.RequestContext{Provider: "openai", Body: []byte(body)}
 	return in
 }
 
@@ -97,17 +97,18 @@ func TestPlugin_Execute_LimitPerCounters(t *testing.T) {
 		{"group selected, no group", withLimitPer(map[string]any{"limit_per": "group", "applies_to": "selected", "selected": []string{"grp-1"}}), noGroup, "", "ratelimit:plugin-1:global:gw-1:app:app-1"},
 		{"application without an application", withLimitPer(map[string]any{"limit_per": "application"}), globalScope(), "", ""},
 		{"group without a group or an application", withLimitPer(map[string]any{"limit_per": "group"}), globalScope(), "", ""},
-		{"model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
+		{"model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
 		{"model without a model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{}`, ""},
-		{"model filter glob matches", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
+		{"model filter glob matches", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
 		{"model filter glob misses", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"claude-*"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, ""},
-		{"model filter ignores the provider the request names", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
-		{"model filter ignores the provider a pattern names", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@anthropic/gpt-6-*"}}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
-		{"bare model shares the qualified one's counter", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
+		{"a bare pattern matches the model on any provider", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
+		{"a pattern naming another provider does not match", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@azure/gpt-6-*"}}), appScope, `{"model":"gpt-6-luna"}`, ""},
+		{"a pattern naming the serving provider matches a bare request", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@openai/gpt-6-*"}}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
+		{"bare model shares the qualified one's counter", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
 		{"a long model name is keyed by its digest", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"` + strings.Repeat("m", 200) + `"}`, "ratelimit:plugin-1:global:gw-1:mdl:h" + longModelDigest},
-		{"a request named like a pattern is counted", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"gpt-*"}}), appScope, `{"model":"gpt-*"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-%2A"},
-		{"a native provider/model id is its own model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:openai%2Fgpt-6-luna"},
-		{"model filter exact", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"a", "@openai/gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
+		{"a request named like a pattern is counted", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"gpt-*"}}), appScope, `{"model":"gpt-*"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-%2A"},
+		{"a native provider/model id is its own model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fopenai%2Fgpt-6-luna"},
+		{"model filter exact", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"a", "@openai/gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"},
 		{"header legacy through limit_per", withLimitPer(map[string]any{"limit_per": "header", "group_by_header": "X-Tenant"}), appScope, "", "ratelimit:plugin-1:global:gw-1"},
 	}
 	for _, tt := range tests {
@@ -191,10 +192,25 @@ func TestPlugin_Execute_LimitPerModelCountsTheServedDefault(t *testing.T) {
 
 	_, err := p.Execute(context.Background(), in)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ratelimit:plugin-1:global:gw-1:mdl:gpt-default"}, mr.Keys())
+	assert.Equal(t, []string{"ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-default"}, mr.Keys())
+}
+
+func TestPlugin_Execute_LimitPerModelSeparatesProviders(t *testing.T) {
+	p, mr := newTestPlugin(t)
+	settings := withLimitPer(map[string]any{"limit_per": "model"})
+	for _, provider := range []string{"openai", "azure"} {
+		in := limitPerInput(settings, globalScope(), `{"model":"gpt-6-luna"}`)
+		in.Request.Provider = provider
+		_, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+	}
+	assert.ElementsMatch(t, []string{
+		"ratelimit:plugin-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna",
+		"ratelimit:plugin-1:global:gw-1:mdl:%40azure%2Fgpt-6-luna",
+	}, mr.Keys(), "the same model behind two providers is two counters")
 }
 
 var longModelDigest = func() string {
-	sum := sha256.Sum256([]byte(strings.Repeat("m", 200)))
+	sum := sha256.Sum256([]byte("@openai/" + strings.Repeat("m", 200)))
 	return hex.EncodeToString(sum[:])
 }()

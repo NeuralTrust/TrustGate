@@ -123,7 +123,7 @@ func limitPerFields(counter string, group bool) []Field {
 			Key:         "models",
 			Label:       "Only For Models",
 			Type:        FieldTypeArray,
-			Description: "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. gpt-6-luna or gpt-5*). A model is matched and counted by its name without the @provider/ prefix, so @openai/gpt-6-luna and gpt-6-luna share one counter. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
+			Description: "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. @openai/gpt-6-luna or gpt-5*). A model is counted per provider that serves it: gpt-6-luna through OpenAI and through Azure are two counters, whether or not the request names the provider. A pattern with @provider/ matches that provider only; one without matches the model on any provider. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
 			Item:        &Field{Key: "model", Label: "Model", Type: FieldTypeString},
 		},
 	}

@@ -95,3 +95,23 @@ func TestRequestModel(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestModelRef(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *infracontext.RequestContext
+		want string
+	}{
+		{"bare model takes the serving provider", &infracontext.RequestContext{Provider: "openai", Body: []byte(`{"model":"gpt-6-luna"}`)}, "@openai/gpt-6-luna"},
+		{"qualified ref keeps its provider", &infracontext.RequestContext{Provider: "openai", RequestedModel: "@openai/gpt-6-luna"}, "@openai/gpt-6-luna"},
+		{"serving provider is case-insensitive", &infracontext.RequestContext{Provider: "Azure", Body: []byte(`{"model":"gpt-6-luna"}`)}, "@azure/gpt-6-luna"},
+		{"qualified ref without a serving provider", &infracontext.RequestContext{RequestedModel: "@openai/gpt-6-luna"}, "@openai/gpt-6-luna"},
+		{"no provider at all", &infracontext.RequestContext{Body: []byte(`{"model":"gpt-6-luna"}`)}, "gpt-6-luna"},
+		{"no model", &infracontext.RequestContext{Provider: "openai"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, limitper.RequestModelRef(tt.req))
+		})
+	}
+}

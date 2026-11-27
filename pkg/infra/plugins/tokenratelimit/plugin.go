@@ -154,7 +154,7 @@ func admittedModel(req *infracontext.RequestContext, metaKey string, stage polic
 			return m
 		}
 	}
-	m := limitper.RequestModel(req)
+	m := limitper.RequestModelRef(req)
 	if stage == policy.StagePreRequest {
 		if req.Metadata == nil {
 			req.Metadata = map[string]any{}

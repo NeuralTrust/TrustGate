@@ -107,7 +107,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("rate_limiter: %w", err)
 	}
 
-	counter := cfg.Resolve(in.Scope, func() string { return limitper.RequestModel(in.Request) })
+	counter := cfg.Resolve(in.Scope, func() string { return limitper.RequestModelRef(in.Request) })
 	if !counter.Applies {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
