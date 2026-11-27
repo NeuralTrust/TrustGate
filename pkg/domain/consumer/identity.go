@@ -28,11 +28,6 @@ import (
 // connections; on LLM consumers that opt in it is recorded for attribution.
 const EndUserHeader = "X-NeuralTrust-End-User"
 
-// UserTokenHeader is a header the gateway never acts on: a stray end user ID token
-// is not read, not sent to TrustGuard, never forwarded to a provider or an MCP
-// server, and redacted in telemetry.
-const UserTokenHeader = "X-NeuralTrust-User-Token" // #nosec G101 -- HTTP header name, not a credential
-
 // Identity is what a consumer declares about who calls it.
 //
 // It used to declare whether people stood behind the calls (`acts_for_users`)
