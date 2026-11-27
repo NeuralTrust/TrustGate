@@ -373,7 +373,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// is bound to one gateway and has no business reading platform-wide data.
 	interactive := r.deps.AdminAuthz.RequireInteractiveIdentity()
 	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListProvidersCatalog.Handle)
-	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListModelsCatalog.Handle)
+	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.AdminAuthz.RequireCatalogRegistryAccess(), r.deps.ListModelsCatalog.Handle)
 	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListPoliciesCatalog.Handle)
 	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListMCPServersCatalog.Handle)
 

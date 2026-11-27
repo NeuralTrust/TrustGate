@@ -78,7 +78,7 @@ func newAuthzApp(
 	gateways.Get("/:id", collection, ok)
 	gateways.Delete("/:id", collection, ok)
 
-	app.Get("/v1/models-catalog", authz.RequireInteractiveIdentity(), ok)
+	app.Get("/v1/models-catalog", authz.RequireInteractiveIdentity(), authz.RequireCatalogRegistryAccess(), ok)
 	app.Get("/v1/config-sync/connections", authz.RequireConfigSyncScopeAccess(), ok)
 	return app
 }
@@ -261,6 +261,68 @@ func TestRequireConfigSyncScopeAccess(t *testing.T) {
 		app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityPlatform}, finder)
 
 		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, path))
+		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+}
+
+func TestRequireCatalogRegistryAccess(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	human := middleware.AdminIdentity{Kind: middleware.AdminIdentityHuman, TenantID: "acme"}
+	scoped := "/v1/models-catalog?provider=azure&gateway_id=" + gatewayID.String() + "&registry_id=" + registryID.String()
+
+	t.Run("tenant narrows by its own registry", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, gatewayID).Return(gatewayOwnedBy(gatewayID, "acme"), nil).Once()
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, scoped))
+	})
+
+	t.Run("tenant cannot narrow by another tenant's registry", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, gatewayID).Return(gatewayOwnedBy(gatewayID, "globex"), nil).Once()
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, scoped))
+	})
+
+	t.Run("unknown gateway is not found", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		finder.EXPECT().FindByID(mock.Anything, gatewayID).Return(nil, domain.ErrNotFound).Once()
+		app := newAuthzApp(t, human, finder)
+
+		require.Equal(t, fiber.StatusNotFound, do(t, app, fiber.MethodGet, scoped))
+	})
+
+	t.Run("an unscoped catalog needs no lookup", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		app := newAuthzApp(t, human, finder)
+
+		for _, target := range []string{
+			"/v1/models-catalog",
+			"/v1/models-catalog?provider=openai",
+			"/v1/models-catalog?gateway_id=" + gatewayID.String(),
+			"/v1/models-catalog?registry_id=" + registryID.String(),
+			"/v1/models-catalog?gateway_id=not-a-uuid&registry_id=" + registryID.String(),
+			"/v1/models-catalog?gateway_id=" + gatewayID.String() + "&registry_id=not-a-uuid",
+		} {
+			require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, target), target)
+		}
+		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+
+	t.Run("platform skips the lookup", func(t *testing.T) {
+		t.Parallel()
+		finder := appgatewaymocks.NewFinder(t)
+		app := newAuthzApp(t, middleware.AdminIdentity{Kind: middleware.AdminIdentityPlatform}, finder)
+
+		require.Equal(t, fiber.StatusOK, do(t, app, fiber.MethodGet, scoped))
 		finder.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
 	})
 }

@@ -120,6 +120,36 @@ func (m *AdminAuthzMiddleware) RequireInteractiveIdentity() fiber.Handler {
 	}
 }
 
+// RequireCatalogRegistryAccess guards the models catalog. With a parseable
+// ?gateway_id= and ?registry_id= the handler calls the provider with that
+// registry's credentials, so a tenant caller must own the gateway; a foreign or
+// unknown gateway answers 404, like any other gateway lookup. Any other query
+// leaves the catalog unscoped and passes without a lookup. The ids are parsed
+// exactly as the handler parses them, so both read the same request the same way.
+func (m *AdminAuthzMiddleware) RequireCatalogRegistryAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		identity := AdminIdentityFromContext(c)
+		if identity.Kind == AdminIdentityPlatform {
+			return c.Next()
+		}
+		gatewayID, err := ids.Parse[ids.GatewayKind](c.Query("gateway_id"))
+		if err != nil {
+			return c.Next()
+		}
+		if _, err := ids.Parse[ids.RegistryKind](c.Query("registry_id")); err != nil {
+			return c.Next()
+		}
+		g, err := m.gateways.FindByID(c.UserContext(), gatewayID)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if g.TenantID() != identity.TenantID {
+			return m.notFound(c, identity)
+		}
+		return c.Next()
+	}
+}
+
 // RequireConfigSyncScopeAccess guards the config-sync connection listing. A
 // data plane's scope is the gateway it serves, so a tenant caller has to name
 // one of its own gateways in ?scope=; only the platform lists every data plane.
