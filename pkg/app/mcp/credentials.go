@@ -92,7 +92,7 @@ const (
 	ConsentCauseRegisteredClientLost = "registered_client_lost"
 	// ConsentCauseCredentialRejected: the upstream refused an access token
 	// right after it was refreshed, so the grant itself no longer opens it.
-	ConsentCauseCredentialRejected = "credential_rejected" // #nosec G101 -- consent cause name, not a credential
+	ConsentCauseCredentialRejected = "credential_rejected" // #nosec G101 -- OAuth cause code, not a secret
 )
 
 func (e *ConsentRequiredError) Error() string {
