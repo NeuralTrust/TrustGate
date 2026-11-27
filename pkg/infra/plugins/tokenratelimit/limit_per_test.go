@@ -59,9 +59,10 @@ func TestPlugin_LimitPer_CounterKeys(t *testing.T) {
 		{"application on a global policy", limitPerSettings(map[string]any{"limit_per": "application"}), aliceScope, "", []string{"trl:tk-1:global:gw-1:app:p-1"}},
 		{"application selected, in the list", limitPerSettings(map[string]any{"limit_per": "application", "applies_to": "selected", "selected": []string{"p-1"}}), aliceScope, "", []string{"trl:tk-1:global:gw-1:app:p-1"}},
 		{"application selected, outside the list", limitPerSettings(map[string]any{"limit_per": "application", "applies_to": "selected", "selected": []string{"p-2"}}), aliceScope, "", nil},
-		{"model", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"}},
-		{"model filter matches", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:%40openai%2Fgpt-6-luna"}},
-		{"model filter misses", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@anthropic/*"}}), aliceScope, model, nil},
+		{"model", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
+		{"model filter matches", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
+		{"model filter misses", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"claude-*"}}), aliceScope, model, nil},
+		{"model filter ignores the provider the request names", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
 		{"model not named", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, "", nil},
 		{"header through limit_per", limitPerSettings(map[string]any{"limit_per": "header", "group_by_header": "X-Team"}), consumer, "", []string{"trl:tk-1:consumer:p-1"}},
 	}

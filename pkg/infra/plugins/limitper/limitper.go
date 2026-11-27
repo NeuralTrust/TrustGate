@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -131,19 +132,38 @@ func (s Spec) Resolve(scope appplugins.RuntimeScope, model func() string) Counte
 		}
 		return Counter{Applies: true, Dimension: "group", Suffix: ":grp:" + url.QueryEscape(scope.KeyGroupID)}
 	case Model:
-		name := model()
+		name := CountedModel(model())
 		if name == "" {
 			return Counter{}
 		}
-		if len(s.Models) > 0 {
-			if _, ok := modelmatch.MatchAny(name, s.Models); !ok {
-				return Counter{}
-			}
+		if len(s.Models) > 0 && !s.matchesModel(name) {
+			return Counter{}
 		}
 		return Counter{Applies: true, Dimension: "model", Suffix: ":mdl:" + url.QueryEscape(name)}
 	default:
 		return Counter{Applies: true}
 	}
+}
+
+func (s Spec) matchesModel(name string) bool {
+	for _, pattern := range s.Models {
+		if modelmatch.Matches(CountedModel(pattern), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// CountedModel is the model name a counter and the models filter compare: an
+// "@provider/model" ref counts as its model, so a client cannot leave a limit
+// by naming the provider. A bare "provider/model" is a native model id of its
+// own and is kept whole.
+func CountedModel(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if intent, err := routingdomain.ParseModelRef(ref); err == nil && intent.Provider != "" {
+		return intent.Model
+	}
+	return ref
 }
 
 func (s Spec) application(scope appplugins.RuntimeScope) Counter {
