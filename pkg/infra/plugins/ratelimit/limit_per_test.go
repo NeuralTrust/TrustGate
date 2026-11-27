@@ -16,7 +16,10 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -101,6 +104,7 @@ func TestPlugin_Execute_LimitPerCounters(t *testing.T) {
 		{"model filter ignores the provider the request names", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
 		{"model filter ignores the provider a pattern names", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"@anthropic/gpt-6-*"}}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
 		{"bare model shares the qualified one's counter", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
+		{"a long model name is keyed by its digest", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"` + strings.Repeat("m", 200) + `"}`, "ratelimit:plugin-1:global:gw-1:mdl:h" + longModelDigest},
 		{"a native provider/model id is its own model", withLimitPer(map[string]any{"limit_per": "model"}), appScope, `{"model":"openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:openai%2Fgpt-6-luna"},
 		{"model filter exact", withLimitPer(map[string]any{"limit_per": "model", "models": []string{"a", "@openai/gpt-6-luna"}}), appScope, `{"model":"@openai/gpt-6-luna"}`, "ratelimit:plugin-1:global:gw-1:mdl:gpt-6-luna"},
 		{"header legacy through limit_per", withLimitPer(map[string]any{"limit_per": "header", "group_by_header": "X-Tenant"}), appScope, "", "ratelimit:plugin-1:global:gw-1"},
@@ -188,3 +192,8 @@ func TestPlugin_Execute_LimitPerModelCountsTheServedDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ratelimit:plugin-1:global:gw-1:mdl:gpt-default"}, mr.Keys())
 }
+
+var longModelDigest = func() string {
+	sum := sha256.Sum256([]byte(strings.Repeat("m", 200)))
+	return hex.EncodeToString(sum[:])
+}()

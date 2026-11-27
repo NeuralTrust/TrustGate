@@ -139,7 +139,7 @@ func (s Spec) Resolve(scope appplugins.RuntimeScope, model func() string) Counte
 		if len(s.Models) > 0 && !s.matchesModel(name) {
 			return Counter{}
 		}
-		return Counter{Applies: true, Dimension: "model", Suffix: ":mdl:" + url.QueryEscape(name)}
+		return Counter{Applies: true, Dimension: "model", Suffix: ":mdl:" + appplugins.PartitionValue(name)}
 	default:
 		return Counter{Applies: true}
 	}
