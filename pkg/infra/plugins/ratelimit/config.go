@@ -118,5 +118,5 @@ func (c *config) validate() error {
 		return fmt.Errorf("rate_limiter: %w", err)
 	}
 	c.partition = partition
-	return c.Spec.Validate("rate_limiter", limitModes, partition)
+	return c.Validate("rate_limiter", limitModes, partition)
 }

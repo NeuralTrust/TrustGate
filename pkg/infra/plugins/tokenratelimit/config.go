@@ -156,7 +156,7 @@ func (c *config) validate() error {
 		return fmt.Errorf("token_rate_limiter: %w", err)
 	}
 	c.groupBy = groupBy
-	if err := c.Spec.Validate("token_rate_limiter", limitModes, groupBy); err != nil {
+	if err := c.Validate("token_rate_limiter", limitModes, groupBy); err != nil {
 		return err
 	}
 	if c.Partition != "" && c.Mode() != limitper.Shared && c.LimitPer != limitper.APIKey {
