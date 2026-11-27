@@ -436,3 +436,29 @@ func TestConfigNormalizeCanonicalizesOnlyCalendarWindows(t *testing.T) {
 	assert.Equal(t, windowCalendarMonth, c.Aggregate.TimeWindow)
 	require.NoError(t, c.validate())
 }
+
+func TestParseConfig_CalendarWindowsAndCallerPartitions(t *testing.T) {
+	calendarAggregate := map[string]any{"max": 100, "time_window": "calendar_month"}
+	tests := []struct {
+		name     string
+		settings map[string]any
+		wantErr  bool
+	}{
+		{"header partition on a calendar aggregate", map[string]any{"group_by_header": "X-Team", "aggregate": calendarAggregate}, true},
+		{"header partition on a calendar rule", map[string]any{"group_by": "header", "group_by_header": "X-Team", "per_model": true, "rules": []map[string]any{{"model": "gpt-5", "max": 100, "time_window": "calendar_day"}}}, true},
+		{"limit_per header on a calendar aggregate", map[string]any{"limit_per": "header", "group_by_header": "X-Team", "aggregate": calendarAggregate}, true},
+		{"header partition on a rolling window", map[string]any{"group_by_header": "X-Team", "aggregate": map[string]any{"max": 100, "time_window": "1h"}}, false},
+		{"subject partition on a calendar aggregate", map[string]any{"group_by": "subject", "aggregate": calendarAggregate}, false},
+		{"claim partition on a calendar aggregate", map[string]any{"group_by": "claim", "group_by_claim": "oid", "aggregate": calendarAggregate}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseConfig(tt.settings)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

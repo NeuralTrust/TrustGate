@@ -458,7 +458,9 @@ report an aggregate. A budget change reaches the proxies as a rotation does: on
 the next `InvalidateGatewayDataEvent` on the full plane, and with the config
 snapshot on a DB-less proxy.
 
-`calendar_month` and `calendar_day` (UTC) are valid with any partition;
+`calendar_month` and `calendar_day` (UTC) are valid with any partition except a
+request header (`group_by_header`), which the client chooses: each new value would
+start a new period budget;
 `custom_pricing`, `group_by_header` and `behavior_on_exceeded: downgrade_model`
 are refused with it: a hard limit never serves past the budget. In a blocking
 mode, over budget answers 429 with `Retry-After` set to the seconds until the window resets, a Redis read error 503 `budget_unavailable` with

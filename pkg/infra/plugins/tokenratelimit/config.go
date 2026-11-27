@@ -233,6 +233,10 @@ func (c *config) validate() error {
 		}
 	}
 
+	if c.groupBy.Mode == appplugins.GroupByHeader && c.calendarWindowed() {
+		return fmt.Errorf("token_rate_limiter: calendar windows cannot be split by group_by_header, which the client chooses")
+	}
+
 	if c.CostCap != nil {
 		if err := c.CostCap.Validate(); err != nil {
 			return fmt.Errorf("token_rate_limiter: %w", err)
@@ -294,6 +298,18 @@ func (c *config) keyPartitioned() bool {
 
 func (c *config) refusesUnpriced() bool {
 	return c.keyPartitioned() && c.Unit == unitDollars
+}
+
+func (c *config) calendarWindowed() bool {
+	if c.Aggregate != nil && isCalendarWindow(c.Aggregate.TimeWindow) {
+		return true
+	}
+	for i := range c.Rules {
+		if isCalendarWindow(c.Rules[i].TimeWindow) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateWindow(window string) error {
