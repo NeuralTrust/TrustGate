@@ -66,9 +66,11 @@ repos:
         files: (\.go|^go\.mod|^go\.sum)$
         pass_filenames: false
 
+      # G115 is excluded until the existing integer-conversion findings are
+      # fixed; CI still reports it through the shared SAST workflow.
       - id: gosec
         name: gosec (high severity)
-        entry: gosec -severity high -exclude-generated ./...
+        entry: gosec -severity high -exclude-generated -exclude=G115 ./...
         language: golang
         additional_dependencies:
           - github.com/securego/gosec/v2/cmd/gosec@v2.29.1-0.20261005092323-d2b649ec0182
