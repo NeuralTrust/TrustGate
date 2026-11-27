@@ -97,7 +97,7 @@ func runCommitMsg(args []string, stderr io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("commit-msg needs the commit message file")
 	}
-	data, err := os.ReadFile(args[0]) //nolint:gosec // git passes the commit message path
+	data, err := os.ReadFile(args[0]) // #nosec G703 -- git passes the commit message path
 	if err != nil {
 		return fmt.Errorf("reading commit message: %w", err)
 	}

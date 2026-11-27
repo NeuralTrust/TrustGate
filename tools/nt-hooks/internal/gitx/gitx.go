@@ -38,7 +38,7 @@ type Line struct {
 
 // Run executes git with args and returns its stdout.
 func Run(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // fixed binary; args are refs and paths from git
+	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 G702 -- fixed binary; args are refs and paths from git
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
