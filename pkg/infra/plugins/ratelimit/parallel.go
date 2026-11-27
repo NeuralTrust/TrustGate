@@ -38,10 +38,6 @@ const (
 	// redisCallTimeout bounds every lease call's pool wait and retries; the
 	// release and heartbeat outlive the request context.
 	redisCallTimeout = 2 * time.Second
-	// maxPendingReleases bounds the releases in flight per pod. Past it a
-	// release is dropped and its lease frees on its TTL, so a Redis stall
-	// cannot pile up goroutines.
-	maxPendingReleases = 256
 
 	parallelKeyPrefix = "ratelimit:parallel:"
 )
@@ -77,18 +73,6 @@ type afterFunc func(d time.Duration, f func()) (stop func())
 func defaultAfterFunc(d time.Duration, f func()) func() {
 	t := time.AfterFunc(d, f)
 	return func() { t.Stop() }
-}
-
-func (p *Plugin) spawnRelease(f func()) {
-	select {
-	case p.pendingReleases <- struct{}{}:
-		go func() {
-			defer func() { <-p.pendingReleases }()
-			f()
-		}()
-	default:
-		slog.Warn("rate_limiter: parallel slot release dropped, too many pending; the lease frees on its TTL")
-	}
 }
 
 func (p *Plugin) acquire(ctx context.Context, key, member string, max int, force bool) (bool, int64, error) {

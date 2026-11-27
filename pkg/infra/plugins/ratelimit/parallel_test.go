@@ -492,29 +492,6 @@ func TestPlugin_Parallel_StalledAcquireFailsOpen(t *testing.T) {
 	done.Run()
 }
 
-func TestPlugin_Parallel_ReleasesAreBounded(t *testing.T) {
-	p := New(nil)
-	for i := 0; i < maxPendingReleases; i++ {
-		p.pendingReleases <- struct{}{}
-	}
-	ran := make(chan struct{}, 1)
-
-	p.spawnRelease(func() { ran <- struct{}{} })
-
-	select {
-	case <-ran:
-		t.Fatal("a release ran past the bound")
-	case <-time.After(50 * time.Millisecond):
-	}
-	<-p.pendingReleases
-	p.spawnRelease(func() { ran <- struct{}{} })
-	select {
-	case <-ran:
-	case <-time.After(time.Second):
-		t.Fatal("a release under the bound did not run")
-	}
-}
-
 func TestPlugin_Parallel_HeartbeatRacingRelease(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		env := newParallelEnv(t)

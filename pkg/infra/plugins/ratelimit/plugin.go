@@ -41,8 +41,6 @@ type Plugin struct {
 	newID func() string
 	after afterFunc
 	spawn func(func())
-
-	pendingReleases chan struct{}
 }
 
 type Option func(*Plugin)
@@ -61,10 +59,8 @@ func New(redisClient redis.UniversalClient, opts ...Option) *Plugin {
 		now:   time.Now,
 		newID: func() string { return uuid.NewString() },
 		after: defaultAfterFunc,
-
-		pendingReleases: make(chan struct{}, maxPendingReleases),
+		spawn: func(f func()) { go f() },
 	}
-	p.spawn = p.spawnRelease
 	for _, opt := range opts {
 		opt(p)
 	}
