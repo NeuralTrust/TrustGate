@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -277,4 +278,92 @@ func TestTTLMap_SetDoesNotAdvanceTheGeneration(t *testing.T) {
 	if !m.SetIfGeneration("b", 3, gen) {
 		t.Fatal("a plain Set made a concurrent fill look stale")
 	}
+}
+
+func TestTTLMap_RememberMiss(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stores a marker while the generation is current", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Minute)
+		if !m.RememberMiss("k", m.Generation(), 10) {
+			t.Fatal("expected the miss to be remembered")
+		}
+		if _, ok := m.Get("k"); !ok {
+			t.Fatal("marker missing after RememberMiss")
+		}
+	})
+
+	t.Run("a clear since the read discards it", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Minute)
+		gen := m.Generation()
+		m.Clear()
+		if m.RememberMiss("k", gen, 10) {
+			t.Fatal("a miss read before a clear must not be remembered")
+		}
+	})
+
+	t.Run("a full map of live entries refuses new keys", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Minute)
+		m.Set("a", struct{}{})
+		m.Set("b", struct{}{})
+		if m.RememberMiss("c", m.Generation(), 2) {
+			t.Fatal("expected a full map to refuse a new key")
+		}
+		if !m.RememberMiss("a", m.Generation(), 2) {
+			t.Fatal("refreshing a key already in a full map must succeed")
+		}
+		if n := m.Len(); n != 2 {
+			t.Fatalf("expected 2 entries, got %d", n)
+		}
+	})
+
+	t.Run("a full map of expired entries is swept before refusing", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(10 * time.Millisecond)
+		m.Set("a", struct{}{})
+		m.Set("b", struct{}{})
+		time.Sleep(20 * time.Millisecond)
+		if !m.RememberMiss("c", m.Generation(), 2) {
+			t.Fatal("expired entries must not keep the map full")
+		}
+		if n := m.Len(); n != 1 {
+			t.Fatalf("expected only the new entry, got %d", n)
+		}
+	})
+
+	t.Run("a full map is swept at most once per interval", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(10 * time.Millisecond)
+		m.lastFullPurge.Store(time.Now().UnixNano())
+		m.Set("a", struct{}{})
+		time.Sleep(20 * time.Millisecond)
+		if m.RememberMiss("b", m.Generation(), 1) {
+			t.Fatal("a sweep within the interval must be skipped")
+		}
+		if n := m.Len(); n != 1 {
+			t.Fatalf("expected the expired entry to stay until the next sweep, got %d", n)
+		}
+	})
+
+	t.Run("concurrent misses never exceed the cap", func(t *testing.T) {
+		t.Parallel()
+		const maxEntries = 100
+		m := NewTTLMap(time.Minute)
+		gen := m.Generation()
+		var wg sync.WaitGroup
+		for i := range 1000 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				m.RememberMiss(fmt.Sprintf("k-%d", i), gen, maxEntries)
+			}()
+		}
+		wg.Wait()
+		if n := m.Len(); n != maxEntries {
+			t.Fatalf("expected exactly %d entries, got %d", maxEntries, n)
+		}
+	})
 }

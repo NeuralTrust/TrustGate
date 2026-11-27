@@ -16,6 +16,7 @@ package gateway_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -24,10 +25,12 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/stretchr/testify/mock"
 )
 
-// The cached lookup runs on every proxied, MCP and admin request, so its cost
-// per hit is what a change to the finder must not grow.
+// BenchmarkFinder_CachedLookup measures a gateway served from memory. The
+// lookup runs on every proxied, MCP and admin request, so its cost per hit is
+// what a change to the finder must not grow.
 func BenchmarkFinder_CachedLookup(b *testing.B) {
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
@@ -50,6 +53,37 @@ func BenchmarkFinder_CachedLookup(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
 			if _, err := finder.FindBySlug(ctx, "prod"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// BenchmarkFinder_RememberedMiss measures an unknown gateway answered from the
+// miss map, without a repository query.
+func BenchmarkFinder_RememberedMiss(b *testing.B) {
+	id := ids.New[ids.GatewayKind]()
+	repo := repomocks.NewRepository(b)
+	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
+	repo.EXPECT().FindBySlug(mock.Anything, "ghost").Return(nil, domain.ErrNotFound).Once()
+	mgr := cache.NewTTLMapManager(time.Hour)
+	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
+	ctx := context.Background()
+	_, _ = finder.FindByID(ctx, id)        // remembers the miss; the error is the expected not found
+	_, _ = finder.FindBySlug(ctx, "ghost") // same
+
+	b.Run("by_id", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := finder.FindByID(ctx, id); !errors.Is(err, domain.ErrNotFound) {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("by_slug", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := finder.FindBySlug(ctx, "ghost"); !errors.Is(err, domain.ErrNotFound) {
 				b.Fatal(err)
 			}
 		}

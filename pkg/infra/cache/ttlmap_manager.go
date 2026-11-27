@@ -67,7 +67,8 @@ const AuthKeyMissCacheMaxEntries = 100_000
 
 // GatewayMissCacheMaxEntries caps the unknown gateway ids and slugs remembered
 // at once, so a flood of random ones cannot grow the map without bound; past
-// the cap a miss is simply not remembered.
+// the cap a miss is simply not remembered. The finder only remembers slugs that
+// pass IsValidSlug, so a key is at most about 70 bytes.
 const GatewayMissCacheMaxEntries = 100_000
 
 type TTLMapManager struct {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,7 +150,9 @@ func TestFinder_MissesLiveOutsideTheGatewayMap(t *testing.T) {
 
 	mgr := newCacheManager()
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
-	_, _ = finder.FindByID(context.Background(), id)
+	if _, err := finder.FindByID(context.Background(), id); !errors.Is(err, commonerrors.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
 
 	if n := mgr.GetTTLMap(cache.GatewayTTLName).Len(); n != 0 {
 		t.Fatalf("a miss must not occupy the gateway map, which lives an hour; got %d entries", n)
@@ -276,5 +279,45 @@ func TestFinder_List_Passthrough(t *testing.T) {
 	}
 	if total != 2 || len(got) != 2 {
 		t.Fatalf("unexpected list result: total=%d items=%d", total, len(got))
+	}
+}
+
+func TestFinder_InvalidSlugNeverReachesTheRepository(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	mgr := newCacheManager()
+	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
+
+	for _, slug := range []string{strings.Repeat("a", 8000), "under_score", "-leading", "has space"} {
+		if _, err := finder.FindBySlug(context.Background(), slug); !errors.Is(err, commonerrors.ErrNotFound) {
+			t.Fatalf("FindBySlug(%.20q): expected ErrNotFound, got %v", slug, err)
+		}
+	}
+	if n := mgr.GetTTLMap(cache.GatewayMissTTLName).Len(); n != 0 {
+		t.Fatalf("an invalid slug must not be remembered; miss map holds %d entries", n)
+	}
+	repo.AssertNotCalled(t, "FindBySlug", mock.Anything, mock.Anything)
+}
+
+func TestFinder_RememberedMissExpires(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Twice()
+
+	mgr := newCacheManager()
+	mgr.CreateTTLMap(cache.GatewayMissTTLName, 250*time.Millisecond)
+	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
+
+	for range 2 {
+		if _, err := finder.FindByID(context.Background(), id); !errors.Is(err, commonerrors.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	}
+	time.Sleep(600 * time.Millisecond)
+	// The first two calls cost one query; once the miss expires the next one
+	// asks again. Twice() above fails the test on any other count.
+	if _, err := finder.FindByID(context.Background(), id); !errors.Is(err, commonerrors.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

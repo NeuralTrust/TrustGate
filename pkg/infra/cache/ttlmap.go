@@ -34,7 +34,14 @@ type TTLMap struct {
 	// generation counts the removals (Delete, DeleteByPrefix, Clear), so a
 	// fill that read its source before one can be told it is stale.
 	generation atomic.Uint64
+	// lastFullPurge is when RememberMiss last swept a full map, in Unix nanos.
+	lastFullPurge atomic.Int64
 }
+
+// fullPurgeInterval spaces the sweeps RememberMiss runs on a full map, so a
+// flood that keeps it full costs one sweep per interval instead of one per
+// miss.
+const fullPurgeInterval = time.Second
 
 func NewTTLMap(ttl time.Duration) *TTLMap {
 	return &TTLMap{
@@ -173,6 +180,67 @@ func (m *TTLMap) DeleteByPrefix(prefix string) {
 	}
 }
 
+// RememberMiss stores an empty marker under key, for maps that remember lookups
+// the source answered "not found" and so set no onEvict: a marker it replaces
+// is not passed to onEvict. It stores nothing and returns false when the
+// map was cleared since generation was read, or when the map holds maxEntries
+// entries. A full map is first swept of expired entries, at most once per
+// fullPurgeInterval: they are only removed by the janitor otherwise, and until
+// then they would keep a map whose entries live seconds full for up to a
+// minute. The size check and the insert share one lock, so the cap is exact.
+func (m *TTLMap) RememberMiss(key string, generation uint64, maxEntries int) bool {
+	var (
+		evicted []any
+		onEvict func(any)
+	)
+	now := time.Now()
+	m.mu.Lock()
+	if m.generation.Load() != generation {
+		m.mu.Unlock()
+		return false
+	}
+	if _, exists := m.data[key]; !exists && len(m.data) >= maxEntries {
+		if last := m.lastFullPurge.Load(); now.UnixNano()-last >= int64(fullPurgeInterval) {
+			m.lastFullPurge.Store(now.UnixNano())
+			onEvict = m.onEvict
+			evicted = m.deleteExpiredLocked(now, onEvict != nil)
+		}
+		if len(m.data) >= maxEntries {
+			m.mu.Unlock()
+			m.fireEvicted(onEvict, evicted)
+			return false
+		}
+	}
+	m.data[key] = &TTLEntry{Value: struct{}{}, ExpiresAt: now.Add(m.ttl)}
+	m.mu.Unlock()
+	m.fireEvicted(onEvict, evicted)
+	return true
+}
+
+// deleteExpiredLocked removes the entries expired at now and, when collect is
+// set, returns their values for onEvict. The caller holds the write lock.
+func (m *TTLMap) deleteExpiredLocked(now time.Time, collect bool) []any {
+	var evicted []any
+	for k, entry := range m.data {
+		if now.After(entry.ExpiresAt) {
+			if collect {
+				evicted = append(evicted, entry.Value)
+			}
+			delete(m.data, k)
+		}
+	}
+	return evicted
+}
+
+func (m *TTLMap) fireEvicted(onEvict func(any), evicted []any) {
+	if onEvict == nil {
+		return
+	}
+	for _, value := range evicted {
+		onEvict(value)
+	}
+}
+
 func (m *TTLMap) sweepExpired(now time.Time) {
 	var (
 		evicted []any
@@ -180,18 +248,9 @@ func (m *TTLMap) sweepExpired(now time.Time) {
 	)
 	m.mu.Lock()
 	onEvict = m.onEvict
-	for k, entry := range m.data {
-		if now.After(entry.ExpiresAt) {
-			if onEvict != nil {
-				evicted = append(evicted, entry.Value)
-			}
-			delete(m.data, k)
-		}
-	}
+	evicted = m.deleteExpiredLocked(now, onEvict != nil)
 	m.mu.Unlock()
-	for _, value := range evicted {
-		onEvict(value)
-	}
+	m.fireEvicted(onEvict, evicted)
 }
 
 func (m *TTLMap) Len() int {

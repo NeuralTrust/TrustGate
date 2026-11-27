@@ -35,8 +35,10 @@ var _ Finder = (*finder)(nil)
 
 // finder serves gateways from memoryCache and remembers, in missCache, the ids
 // and slugs the repository did not have. A miss lives for the miss map's short
-// TTL; a gateway cached under the same key always wins because memoryCache is
-// read first, and InvalidateGatewayDataEvent clears the miss map.
+// TTL, which bounds how long a gateway created or renamed on another replica
+// can still answer not found here; on this replica the gateway is cached under
+// the same key and wins, because memoryCache is read first. A data plane drops
+// its misses with every other cache when it applies a config-sync snapshot.
 type finder struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
@@ -58,6 +60,9 @@ func (f *finder) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gatewa
 	if g, ok := f.cached(key, "gateway_id", id.String()); ok {
 		return g, nil
 	}
+	if f.missedRecently(key) {
+		return nil, domain.ErrNotFound
+	}
 	return f.load(key, func() (*domain.Gateway, error) {
 		return f.repo.FindByID(ctx, id)
 	})
@@ -69,24 +74,29 @@ func (f *finder) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, 
 	if g, ok := f.cached(key, "gateway_slug", slug); ok {
 		return g, nil
 	}
+	if f.missedRecently(key) {
+		return nil, domain.ErrNotFound
+	}
+	// The gateways table only holds slugs that pass IsValidSlug (a CHECK with
+	// the same pattern), so anything else is answered without a query and is
+	// not remembered: callers pass request headers straight through, and an
+	// 8 KB header must not become an 8 KB miss key. Checked after the miss map,
+	// which never holds an invalid slug, so a remembered miss skips the regexp.
+	if !domain.IsValidSlug(slug) {
+		return nil, domain.ErrNotFound
+	}
 	return f.load(key, func() (*domain.Gateway, error) {
 		return f.repo.FindBySlug(ctx, slug)
 	})
 }
 
-// load runs after a memoryCache miss: it answers from a remembered miss, and
-// only then asks the repository. The miss map's generation is taken before the
-// read, so a miss found while the map was being cleared is not remembered.
+// load takes the miss map's generation before the read, so a miss found while
+// the map was being cleared is not remembered.
 func (f *finder) load(key string, read func() (*domain.Gateway, error)) (*domain.Gateway, error) {
-	if _, missed := f.missCache.Get(key); missed {
-		return nil, domain.ErrNotFound
-	}
 	generation := f.missCache.Generation()
 	g, err := read()
 	if errors.Is(err, domain.ErrNotFound) {
-		if f.missCache.Len() < cache.GatewayMissCacheMaxEntries {
-			f.missCache.SetIfGeneration(key, struct{}{}, generation)
-		}
+		f.missCache.RememberMiss(key, generation, cache.GatewayMissCacheMaxEntries)
 		return nil, err
 	}
 	if err != nil {
@@ -94,6 +104,11 @@ func (f *finder) load(key string, read func() (*domain.Gateway, error)) (*domain
 	}
 	setGatewayCache(f.memoryCache, g)
 	return g, nil
+}
+
+func (f *finder) missedRecently(key string) bool {
+	_, missed := f.missCache.Get(key)
+	return missed
 }
 
 func (f *finder) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error) {
