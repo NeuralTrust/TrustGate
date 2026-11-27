@@ -56,9 +56,6 @@ type Metadata struct {
 	PrincipalSubject string
 	PrincipalMethod  string
 	PrincipalEmail   string
-	// PrincipalEmailConnected is true when PrincipalEmail came from the person's connected account rather than the
-	// authenticated credential, so PrincipalMethod does not vouch for it.
-	PrincipalEmailConnected bool
 	// EndUser is the person a client application says it was serving, read
 	// from the headers that application forwards. It is telemetry only and
 	// deliberately separate from the Principal* fields above: the principal is
@@ -207,13 +204,6 @@ func (t *RequestTrace) SetAuthKey(kind, groupID string) {
 
 func (t *RequestTrace) SetPrincipal(subject string) {
 	t.SetPrincipalIdentity(subject, "", "")
-}
-
-// MarkPrincipalEmailConnected records that the principal's email is the connected account's, not the credential's.
-func (t *RequestTrace) MarkPrincipalEmailConnected() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.meta.PrincipalEmailConnected = true
 }
 
 func (t *RequestTrace) SetPrincipalIdentity(subject, method, email string) {

@@ -124,8 +124,6 @@ func reasonOfError(ctx context.Context, err error) string {
 		return failureReasonAttachmentRejected
 	case errors.As(err, &unavailable):
 		return failureReasonEntitlementsUnavailable
-	case userTokenRefusal(err) != nil:
-		return failureReasonUserTokenRejected
 	case errors.As(err, &auth), errors.Is(err, errUnauthorized):
 		return failureReasonUnauthorized
 	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:

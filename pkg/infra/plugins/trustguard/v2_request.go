@@ -68,15 +68,10 @@ type v2Agent struct {
 	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
-// v2User is the end user. AuthMethod is the gateway's principal method (jwt, oauth, personal_key, api_key...): how it
-// authenticated the user, which TrustGuard v2 reads to decide whether the email is vouched for.
+// v2User is the end user the gateway authenticated.
 type v2User struct {
-	ID         string `json:"id,omitempty"`
-	Email      string `json:"email,omitempty"`
-	AuthMethod string `json:"auth_method,omitempty"`
-	// Token is the end user's ID token; TrustGuard verifies it against the integration's identity provider
-	// and takes the user from its claims.
-	Token string `json:"token,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // v2MCPServer carries TrustGuard v2's canonical id of the server: the catalog code, or
@@ -127,13 +122,6 @@ func toV2Request(body GuardRequest, request *infracontext.RequestContext) v2Requ
 		}
 		req.Attributes.ToolCall = toolCallOf(request)
 	}
-	if body.UserToken != "" {
-		// With no principal the token is the whole user: TrustGuard takes it from the claims.
-		if assets.User == nil {
-			assets.User = &v2User{}
-		}
-		assets.User.Token = body.UserToken
-	}
 	if assets != (v2Assets{}) {
 		req.Assets = &assets
 	}
@@ -157,7 +145,7 @@ func v2UserOf(user *GuardUser) *v2User {
 	if user == nil || *user == (GuardUser{}) {
 		return nil
 	}
-	return &v2User{ID: user.ID, Email: user.Email, AuthMethod: user.AuthMethod}
+	return &v2User{ID: user.ID, Email: user.Email}
 }
 
 // withInventory adds to a v1-shaped body what TrustGuard v2's inventory needs once the

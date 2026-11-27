@@ -105,7 +105,6 @@ func (p *Plugin) inspectSegment(
 	body := GuardRequest{
 		FailureMode:     cfg.FailureMode,
 		OriginalRequest: requestmeta.FromContext(ctx),
-		UserToken:       p.userToken(in.Request),
 		Payload:         payload,
 		Direction:       directionOutput,
 		Protocol:        protocolFor(in.Request.ConsumerType),
@@ -365,16 +364,6 @@ func (p *Plugin) segmentFailure(
 			Body:       pe.Body,
 			StatusCode: pe.StatusCode,
 			Headers:    pe.Headers,
-		}, nil
-	}
-	if refused := userTokenRefusal(err); refused != nil && appplugins.Blocks(in.Mode) {
-		pe := userTokenRefusedPluginError(refused)
-		return &appplugins.SegmentVerdict{
-			Block:      true,
-			Type:       pe.Type,
-			Message:    pe.Message,
-			Body:       pe.Body,
-			StatusCode: pe.StatusCode,
 		}, nil
 	}
 	reason := reasonOfError(ctx, err)

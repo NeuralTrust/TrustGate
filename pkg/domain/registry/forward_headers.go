@@ -55,7 +55,7 @@ var unforwardableHeaders = map[string]struct{}{
 	"Api-Key":              {},
 	"X-Goog-Api-Key":       {},
 	"X-Amz-Security-Token": {},
-	// The end user's ID token is for TrustGuard alone.
+	// An end user's ID token is never relayed upstream.
 	"X-Neuraltrust-User-Token": {},
 }
 

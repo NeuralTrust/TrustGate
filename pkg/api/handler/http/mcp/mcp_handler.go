@@ -322,16 +322,10 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 	if credential, ok := p.Claims[identity.ClaimCredentialSubject].(string); ok && credential != "" {
 		subject = credential
 	}
-	connected := false
 	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
 		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
-		connected = email != ""
 	}
 	rt.SetPrincipalIdentity(subject, string(p.Method), email)
-	if connected {
-		// The credential did not carry this email, so the method does not vouch for it: TrustGuard is told no method.
-		rt.MarkPrincipalEmailConnected()
-	}
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {

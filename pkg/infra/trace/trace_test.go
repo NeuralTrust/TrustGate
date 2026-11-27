@@ -343,10 +343,3 @@ func TestSpan_MCPPolicyScopeAbsentUntilStamped(t *testing.T) {
 	assert.Equal(t, trace.MCPPolicyScope{}, *attrs.PolicyScope,
 		"an empty decision is still a decision: zero scoped policies were evaluated")
 }
-
-func TestMarkPrincipalEmailConnected(t *testing.T) {
-	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
-	assert.False(t, rt.Metadata().PrincipalEmailConnected)
-	rt.MarkPrincipalEmailConnected()
-	assert.True(t, rt.Metadata().PrincipalEmailConnected)
-}
