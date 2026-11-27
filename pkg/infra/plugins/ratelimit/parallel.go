@@ -35,9 +35,8 @@ const (
 	// maxLeaseLife bounds the heartbeat so a request whose release never runs
 	// cannot hold a slot forever.
 	maxLeaseLife = time.Hour
-	// redisCallTimeout bounds every lease call: a stalled Redis fails the
-	// acquire open instead of holding the request, and the release and
-	// heartbeat outlive the request context.
+	// redisCallTimeout bounds every lease call's pool wait and retries; the
+	// release and heartbeat outlive the request context.
 	redisCallTimeout = 2 * time.Second
 	// maxPendingReleases bounds the releases in flight per pod. Past it a
 	// release is dropped and its lease frees on its TTL, so a Redis stall

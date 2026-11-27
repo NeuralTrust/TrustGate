@@ -83,6 +83,13 @@ type commandLog struct {
 	names         []string
 	failEval      error
 	failAfterEval error
+	evalDeadline  bool
+}
+
+func (c *commandLog) evalHadDeadline() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.evalDeadline
 }
 
 func (c *commandLog) DialHook(next redis.DialHook) redis.DialHook {
@@ -92,6 +99,13 @@ func (c *commandLog) DialHook(next redis.DialHook) redis.DialHook {
 func (c *commandLog) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		c.record(cmd.Name())
+		if strings.HasPrefix(cmd.Name(), "eval") {
+			if _, ok := ctx.Deadline(); ok {
+				c.mu.Lock()
+				c.evalDeadline = true
+				c.mu.Unlock()
+			}
+		}
 		if c.failEval != nil && strings.HasPrefix(cmd.Name(), "eval") {
 			return c.failEval
 		}
@@ -474,6 +488,7 @@ func TestPlugin_Parallel_StalledAcquireFailsOpen(t *testing.T) {
 	done, res, err := env.start(parallelSettings(1, nil), globalScope(), policy.ModeEnforce)
 	require.NoError(t, err, "a deadline of the acquire's own is not the caller leaving")
 	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.True(t, env.cmds.evalHadDeadline(), "the acquire runs under its own deadline")
 	done.Run()
 }
 

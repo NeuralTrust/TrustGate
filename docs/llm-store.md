@@ -526,7 +526,7 @@ A slot that is never released, such as one held by a pod that stopped, expires
 two minutes after its last heartbeat. The heartbeat keeps a slot for at most one
 hour, longer than any stream the gateway serves. If the counter store is
 unavailable the request is allowed through with decision `failed_open` and
-`failure_detail: acquire`; a stalled store fails the same way after two seconds.
+`failure_detail: acquire`.
 
 The cap counts only requests served by gateways that know `max_parallel`: while
 a rolling update replaces older pods, their requests take no slot and the cap
