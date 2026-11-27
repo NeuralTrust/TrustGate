@@ -35,6 +35,17 @@ The user TrustGuard sees (`assets.user`) is the principal the gateway authentica
 and `email`. The declared `X-NeuralTrust-End-User` header never reaches TrustGuard's gate
 attributes.
 
+Earlier releases also sent `assets.user.token` and `assets.user.auth_method`. TrustGuard
+accepts both and ignores them. It must keep accepting them until every data plane,
+hybrid deployments included, runs a release that no longer sends them: its evaluate
+decoder rejects unknown asset fields with 400 `unknown_asset_field`, and an older gateway
+treats that 400 like any other TrustGuard failure, so under the default open failure mode
+its traffic would pass uninspected. Drop the two fields from TrustGuard only after that.
+
+The plugin no longer reports the `user_token_rejected` failure reason. TrustGuard stopped
+returning the user-token refusals behind it, so the series was already empty; retire any
+alert or dashboard that still reads it.
+
 ## Trusted GCP ingress
 
 `ORIGINAL_REQUEST_IP_MODE=peer` is the default and ignores forwarding headers.
