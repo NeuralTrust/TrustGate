@@ -29,7 +29,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
-const failureWarnInterval = time.Minute
+const (
+	failureLogInterval = time.Minute
+	// The OTLP HTTP exporter puts up to 4 MiB of the collector's response body
+	// in its error, and a tenant chooses that collector.
+	maxLoggedErrorBytes = 512
+	maxThrottledErrors  = 64
+)
 
 // reportedError marks an export failure the reporting exporter already logged,
 // so the global OTel error handler, which the batch processor also hands every
@@ -40,9 +46,11 @@ func (e *reportedError) Error() string { return e.err.Error() }
 
 func (e *reportedError) Unwrap() error { return e.err }
 
-// reportingExporter logs export failures through slog. The batch processor
-// exports in the background and only hands failures to the OTel global error
-// handler, so without it a dead collector leaves no structured log line.
+func isReported(err error) bool {
+	var reported *reportedError
+	return errors.As(err, &reported)
+}
+
 type reportingExporter struct {
 	sdklog.Exporter
 	reporter *failureReporter
@@ -51,7 +59,7 @@ type reportingExporter struct {
 func newReportingExporter(inner sdklog.Exporter, logger *slog.Logger, endpoint string) *reportingExporter {
 	return &reportingExporter{
 		Exporter: inner,
-		reporter: newFailureReporter(logger, redactEndpoint(endpoint), failureWarnInterval, time.Now),
+		reporter: newFailureReporter(logger, redactEndpoint(endpoint), failureLogInterval, time.Now),
 	}
 }
 
@@ -68,8 +76,10 @@ func (e *reportingExporter) Export(ctx context.Context, records []sdklog.Record)
 	return nil
 }
 
-// failureReporter logs the first failure of a streak at once, then at most one
-// summary per interval, and the recovery when an export succeeds again.
+// failureReporter keeps every log line about one exporter at least interval
+// apart, so a collector that keeps failing, or alternates failures and
+// successes, costs one line per interval. What it holds back is folded into
+// the next line it writes.
 type failureReporter struct {
 	logger   *slog.Logger
 	endpoint string
@@ -79,11 +89,13 @@ type failureReporter struct {
 
 	mu             sync.Mutex
 	failing        bool
+	recoveryDue    bool
 	since          time.Time
-	lastWarn       time.Time
-	pendingBatches int
+	lastLog        time.Time
+	lastErr        string
+	pendingExports int
 	pendingRecords int
-	streakRecords  int
+	outageRecords  int
 }
 
 func newFailureReporter(logger *slog.Logger, endpoint string, interval time.Duration, now func() time.Time) *failureReporter {
@@ -104,70 +116,121 @@ func (r *failureReporter) dataClass() string {
 	return string(class)
 }
 
+func (r *failureReporter) canLog(now time.Time) bool {
+	return r.lastLog.IsZero() || now.Sub(r.lastLog) >= r.interval
+}
+
 func (r *failureReporter) failed(records int, err error) {
 	now := r.now()
 	r.mu.Lock()
-	if !r.failing {
-		r.failing = true
+	if !r.failing && !r.recoveryDue {
 		r.since = now
-		r.lastWarn = now
-		r.streakRecords = records
-		r.mu.Unlock()
-		r.logger.Warn("otlp export failed; records dropped",
-			slog.String("endpoint", r.endpoint),
-			slog.String("class", r.dataClass()),
-			slog.Int("dropped_records", records),
-			slog.String("error", err.Error()))
-		return
+		r.outageRecords = 0
 	}
-	r.streakRecords += records
-	r.pendingBatches++
+	r.failing = true
+	r.recoveryDue = false
+	r.lastErr = truncateError(err.Error())
+	r.pendingExports++
 	r.pendingRecords += records
-	if now.Sub(r.lastWarn) < r.interval {
+	r.outageRecords += records
+	if !r.canLog(now) {
 		r.mu.Unlock()
 		return
 	}
-	batches, dropped := r.pendingBatches, r.pendingRecords
-	r.pendingBatches, r.pendingRecords = 0, 0
-	r.lastWarn = now
-	failingFor := now.Sub(r.since)
+	attrs := r.takeFailureAttrs(now)
 	r.mu.Unlock()
-	r.logger.Warn("otlp export still failing; records dropped",
-		slog.String("endpoint", r.endpoint),
-		slog.String("class", r.dataClass()),
-		slog.Int("failed_batches", batches),
-		slog.Int("dropped_records", dropped),
-		slog.String("failing_for", roundDuration(failingFor)),
-		slog.String("error", err.Error()))
+	r.logger.Warn("otlp export failed; records dropped", attrs...)
 }
 
 func (r *failureReporter) succeeded() {
 	now := r.now()
 	r.mu.Lock()
-	if !r.failing {
+	if !r.failing && !r.recoveryDue {
 		r.mu.Unlock()
 		return
 	}
-	failingFor, dropped := now.Sub(r.since), r.streakRecords
 	r.failing = false
-	r.pendingBatches, r.pendingRecords, r.streakRecords = 0, 0, 0
+	r.recoveryDue = true
+	if !r.canLog(now) {
+		r.mu.Unlock()
+		return
+	}
+	attrs := r.takeRecoveryAttrs(now)
 	r.mu.Unlock()
-	r.logger.Info("otlp export recovered",
+	r.logger.Info("otlp export recovered", attrs...)
+}
+
+// flush writes whatever the interval held back. It runs when the exporter
+// closes, since no later export will carry it.
+func (r *failureReporter) flush() {
+	now := r.now()
+	r.mu.Lock()
+	var failure, recovery []any
+	if r.pendingExports > 0 {
+		failure = r.takeFailureAttrs(now)
+	}
+	if r.recoveryDue {
+		recovery = r.takeRecoveryAttrs(now)
+	}
+	r.mu.Unlock()
+	if failure != nil {
+		r.logger.Warn("otlp export failed; records dropped", failure...)
+	}
+	if recovery != nil {
+		r.logger.Info("otlp export recovered", recovery...)
+	}
+}
+
+func (r *failureReporter) takeFailureAttrs(now time.Time) []any {
+	attrs := []any{
 		slog.String("endpoint", r.endpoint),
 		slog.String("class", r.dataClass()),
-		slog.String("failing_for", roundDuration(failingFor)),
-		slog.Int("dropped_records", dropped))
+		slog.Int("failed_exports", r.pendingExports),
+		slog.Int("dropped_records", r.pendingRecords),
+		slog.String("failing_for", roundDuration(now.Sub(r.since))),
+		slog.String("error", r.lastErr),
+	}
+	r.pendingExports, r.pendingRecords = 0, 0
+	r.lastLog = now
+	return attrs
+}
+
+func (r *failureReporter) takeRecoveryAttrs(now time.Time) []any {
+	attrs := []any{
+		slog.String("endpoint", r.endpoint),
+		slog.String("class", r.dataClass()),
+		slog.String("failing_for", roundDuration(now.Sub(r.since))),
+		slog.Int("dropped_records", r.outageRecords),
+	}
+	r.recoveryDue = false
+	r.pendingExports, r.pendingRecords, r.outageRecords = 0, 0, 0
+	r.lastLog = now
+	return attrs
 }
 
 func roundDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
-// redactEndpoint keeps the scheme, host and path of an endpoint URL and drops
-// any user info, query or fragment, which may carry credentials.
+func truncateError(s string) string {
+	if len(s) <= maxLoggedErrorBytes {
+		return s
+	}
+	return s[:maxLoggedErrorBytes] + "…(truncated)"
+}
+
+// redactEndpoint keeps the scheme, host and path of an endpoint and drops any
+// user info, query or fragment, which may carry credentials.
 func redactEndpoint(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
 	if !hasScheme(endpoint) {
-		return endpoint
+		u, err := url.Parse("//" + endpoint)
+		if err != nil {
+			return ""
+		}
+		return u.Host + u.Path
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
@@ -176,15 +239,18 @@ func redactEndpoint(endpoint string) string {
 	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
 
-// errorHandler routes OTel SDK errors to slog at most once per interval. The
-// SDK's default handler prints them to stderr as plain text, which log
-// pipelines that parse JSON drop.
+// errorHandler exists because the SDK's default handler prints errors to
+// stderr as plain text, which log pipelines that parse JSON drop.
 type errorHandler struct {
 	logger   *slog.Logger
 	interval time.Duration
 	now      func() time.Time
 
-	mu         sync.Mutex
+	mu      sync.Mutex
+	entries map[string]*throttledError
+}
+
+type throttledError struct {
 	last       time.Time
 	suppressed int
 }
@@ -193,37 +259,55 @@ func newErrorHandler(logger *slog.Logger, interval time.Duration, now func() tim
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &errorHandler{logger: logger, interval: interval, now: now}
+	return &errorHandler{logger: logger, interval: interval, now: now, entries: map[string]*throttledError{}}
 }
 
 func (h *errorHandler) Handle(err error) {
-	if err == nil {
+	if err == nil || isReported(err) {
 		return
 	}
-	var reported *reportedError
-	if errors.As(err, &reported) {
-		return
-	}
+	msg := truncateError(err.Error())
 	now := h.now()
 	h.mu.Lock()
-	if !h.last.IsZero() && now.Sub(h.last) < h.interval {
-		h.suppressed++
+	entry, ok := h.entries[msg]
+	if !ok {
+		if len(h.entries) >= maxThrottledErrors {
+			h.evictExpired(now)
+		}
+		if len(h.entries) >= maxThrottledErrors {
+			h.mu.Unlock()
+			return
+		}
+		entry = &throttledError{}
+		h.entries[msg] = entry
+	}
+	if !entry.last.IsZero() && now.Sub(entry.last) < h.interval {
+		entry.suppressed++
 		h.mu.Unlock()
 		return
 	}
-	suppressed := h.suppressed
-	h.suppressed = 0
-	h.last = now
+	suppressed := entry.suppressed
+	entry.suppressed = 0
+	entry.last = now
 	h.mu.Unlock()
-	attrs := []any{slog.String("error", err.Error())}
+	attrs := []any{slog.String("error", msg)}
 	if suppressed > 0 {
 		attrs = append(attrs, slog.Int("suppressed", suppressed))
 	}
 	h.logger.Warn("opentelemetry sdk error", attrs...)
 }
 
+func (h *errorHandler) evictExpired(now time.Time) {
+	for msg, entry := range h.entries {
+		if now.Sub(entry.last) >= h.interval {
+			delete(h.entries, msg)
+		}
+	}
+}
+
 // InstallErrorHandler makes logger the destination of every error the OTel SDK
 // reports through its global handler, such as failed trace and metric exports.
+// Each distinct error is logged at most once per minute.
 func InstallErrorHandler(logger *slog.Logger) {
-	otel.SetErrorHandler(newErrorHandler(logger, failureWarnInterval, time.Now))
+	otel.SetErrorHandler(newErrorHandler(logger, failureLogInterval, time.Now))
 }

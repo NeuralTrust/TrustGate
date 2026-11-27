@@ -33,6 +33,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	msgExportFailed    = "otlp export failed; records dropped"
+	msgExportRecovered = "otlp export recovered"
+)
+
 type logSink struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -98,18 +103,20 @@ func TestReportingExporter_FirstFailureLogsWarnAndMarksError(t *testing.T) {
 	err := exp.Export(context.Background(), records(3))
 
 	require.ErrorIs(t, err, cause)
-	var reported *reportedError
-	require.ErrorAs(t, err, &reported)
+	assert.True(t, isReported(err))
 	lines := sink.lines(t)
 	require.Len(t, lines, 1)
 	assert.Equal(t, "WARN", lines[0]["level"])
-	assert.Equal(t, "otlp export failed; records dropped", lines[0]["msg"])
+	assert.Equal(t, msgExportFailed, lines[0]["msg"])
 	assert.Equal(t, "https://collector.example:4318/v1/logs", lines[0]["endpoint"])
+	assert.Equal(t, "metadata", lines[0]["class"])
+	assert.EqualValues(t, 1, lines[0]["failed_exports"])
 	assert.EqualValues(t, 3, lines[0]["dropped_records"])
+	assert.Equal(t, "0s", lines[0]["failing_for"])
 	assert.Equal(t, "connection refused", lines[0]["error"])
 }
 
-func TestReportingExporter_ThrottlesAStreakToOneSummaryPerInterval(t *testing.T) {
+func TestReportingExporter_ThrottlesAStreakToOneLinePerInterval(t *testing.T) {
 	t.Parallel()
 	logger, sink := newSinkLogger()
 	clock := &fakeClock{t: time.Unix(0, 0)}
@@ -127,15 +134,38 @@ func TestReportingExporter_ThrottlesAStreakToOneSummaryPerInterval(t *testing.T)
 
 	lines := sink.lines(t)
 	require.Len(t, lines, 2)
-	assert.Equal(t, "WARN", lines[1]["level"])
-	assert.Equal(t, "otlp export still failing; records dropped", lines[1]["msg"])
-	assert.EqualValues(t, 5, lines[1]["failed_batches"])
+	assert.Equal(t, msgExportFailed, lines[1]["msg"])
+	assert.EqualValues(t, 5, lines[1]["failed_exports"])
 	assert.EqualValues(t, 25, lines[1]["dropped_records"])
 	assert.Equal(t, "1m10s", lines[1]["failing_for"])
-	assert.Equal(t, "metadata", lines[1]["class"])
 }
 
-func TestReportingExporter_LogsRecoveryOnceWithStreakTotals(t *testing.T) {
+func TestReportingExporter_AlternatingOutcomesStayWithinTheInterval(t *testing.T) {
+	t.Parallel()
+	logger, sink := newSinkLogger()
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	stub := &stubExporter{}
+	exp := newTestReportingExporter(stub, logger, clock)
+
+	for i := range 120 {
+		if i%2 == 0 {
+			stub.err = errors.New("503")
+		} else {
+			stub.err = nil
+		}
+		_ = exp.Export(context.Background(), records(1))
+		clock.advance(time.Second)
+	}
+
+	lines := sink.lines(t)
+	require.Len(t, lines, 2, "120 exports over two minutes must log one line per minute")
+	assert.Equal(t, msgExportFailed, lines[0]["msg"])
+	assert.Equal(t, msgExportFailed, lines[1]["msg"])
+	assert.EqualValues(t, 30, lines[1]["failed_exports"])
+	assert.Equal(t, "1m0s", lines[1]["failing_for"])
+}
+
+func TestReportingExporter_LogsRecoveryWithOutageTotals(t *testing.T) {
 	t.Parallel()
 	logger, sink := newSinkLogger()
 	clock := &fakeClock{t: time.Unix(0, 0)}
@@ -148,14 +178,18 @@ func TestReportingExporter_LogsRecoveryOnceWithStreakTotals(t *testing.T) {
 	stub.err = nil
 	clock.advance(5 * time.Second)
 	require.NoError(t, exp.Export(context.Background(), records(1)))
+	require.Len(t, sink.lines(t), 1, "a recovery inside the interval waits")
+
+	clock.advance(time.Minute)
+	require.NoError(t, exp.Export(context.Background(), records(1)))
 	require.NoError(t, exp.Export(context.Background(), records(1)))
 
 	lines := sink.lines(t)
 	require.Len(t, lines, 2)
 	assert.Equal(t, "INFO", lines[1]["level"])
-	assert.Equal(t, "otlp export recovered", lines[1]["msg"])
+	assert.Equal(t, msgExportRecovered, lines[1]["msg"])
 	assert.EqualValues(t, 6, lines[1]["dropped_records"])
-	assert.Equal(t, "10s", lines[1]["failing_for"])
+	assert.Equal(t, "1m10s", lines[1]["failing_for"])
 }
 
 func TestReportingExporter_SuccessAndEmptyBatchesStaySilent(t *testing.T) {
@@ -166,13 +200,51 @@ func TestReportingExporter_SuccessAndEmptyBatchesStaySilent(t *testing.T) {
 
 	err := exp.Export(context.Background(), nil)
 	require.Error(t, err)
-	var reported *reportedError
-	assert.False(t, errors.As(err, &reported), "an empty batch reports nothing, so its error is not marked")
+	assert.False(t, isReported(err), "an empty batch reports nothing, so its error is not marked")
 
 	stub.err = nil
 	require.NoError(t, exp.Export(context.Background(), records(2)))
 
 	assert.Empty(t, sink.lines(t))
+}
+
+func TestFailureReporter_FlushWritesWhatTheIntervalHeldBack(t *testing.T) {
+	t.Parallel()
+	logger, sink := newSinkLogger()
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	stub := &stubExporter{err: errors.New("refused")}
+	exp := newTestReportingExporter(stub, logger, clock)
+
+	_ = exp.Export(context.Background(), records(1))
+	clock.advance(10 * time.Second)
+	_ = exp.Export(context.Background(), records(7))
+	stub.err = nil
+	clock.advance(time.Second)
+	_ = exp.Export(context.Background(), records(1))
+	exp.reporter.flush()
+	exp.reporter.flush()
+
+	lines := sink.lines(t)
+	require.Len(t, lines, 3)
+	assert.Equal(t, msgExportFailed, lines[1]["msg"])
+	assert.EqualValues(t, 7, lines[1]["dropped_records"])
+	assert.Equal(t, msgExportRecovered, lines[2]["msg"])
+	assert.EqualValues(t, 8, lines[2]["dropped_records"])
+}
+
+func TestReportingExporter_TruncatesLongErrors(t *testing.T) {
+	t.Parallel()
+	logger, sink := newSinkLogger()
+	body := strings.Repeat("x", 4096)
+	exp := newTestReportingExporter(&stubExporter{err: errors.New("body: " + body)}, logger, &fakeClock{t: time.Unix(0, 0)})
+
+	_ = exp.Export(context.Background(), records(1))
+
+	lines := sink.lines(t)
+	require.Len(t, lines, 1)
+	logged, _ := lines[0]["error"].(string)
+	assert.Less(t, len(logged), 600)
+	assert.True(t, strings.HasSuffix(logged, "(truncated)"))
 }
 
 func TestErrorHandler_SkipsErrorsTheExporterAlreadyLogged(t *testing.T) {
@@ -187,7 +259,7 @@ func TestErrorHandler_SkipsErrorsTheExporterAlreadyLogged(t *testing.T) {
 	assert.Empty(t, sink.lines(t))
 }
 
-func TestErrorHandler_LogsAndThrottlesOtherErrors(t *testing.T) {
+func TestErrorHandler_ThrottlesEachDistinctError(t *testing.T) {
 	t.Parallel()
 	logger, sink := newSinkLogger()
 	clock := &fakeClock{t: time.Unix(0, 0)}
@@ -197,33 +269,54 @@ func TestErrorHandler_LogsAndThrottlesOtherErrors(t *testing.T) {
 	clock.advance(20 * time.Second)
 	h.Handle(errors.New("traces export: context deadline exceeded"))
 	h.Handle(errors.New("metrics export: 401"))
-	clock.advance(41 * time.Second)
 	h.Handle(errors.New("metrics export: 401"))
+	clock.advance(41 * time.Second)
+	h.Handle(errors.New("traces export: context deadline exceeded"))
 
 	lines := sink.lines(t)
-	require.Len(t, lines, 2)
-	assert.Equal(t, "WARN", lines[0]["level"])
+	require.Len(t, lines, 3)
 	assert.Equal(t, "opentelemetry sdk error", lines[0]["msg"])
 	assert.Equal(t, "traces export: context deadline exceeded", lines[0]["error"])
 	assert.NotContains(t, lines[0], "suppressed")
 	assert.Equal(t, "metrics export: 401", lines[1]["error"])
-	assert.EqualValues(t, 2, lines[1]["suppressed"])
+	assert.Equal(t, "traces export: context deadline exceeded", lines[2]["error"])
+	assert.EqualValues(t, 1, lines[2]["suppressed"])
+}
+
+func TestErrorHandler_BoundsDistinctErrors(t *testing.T) {
+	t.Parallel()
+	logger, sink := newSinkLogger()
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	h := newErrorHandler(logger, time.Minute, clock.now)
+
+	for i := range maxThrottledErrors + 10 {
+		h.Handle(fmt.Errorf("error %d", i))
+	}
+	assert.Len(t, sink.lines(t), maxThrottledErrors)
+	assert.Len(t, h.entries, maxThrottledErrors)
+
+	clock.advance(time.Minute)
+	h.Handle(errors.New("a new error after the window"))
+	assert.Len(t, sink.lines(t), maxThrottledErrors+1)
+	assert.Len(t, h.entries, 1)
 }
 
 func TestRedactEndpoint(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
 		"https://user:pass@collector.example:4318/v1/logs?token=x#f": "https://collector.example:4318/v1/logs",
-		"http://collector:4318":   "http://collector:4318",
-		"collector.internal:4317": "collector.internal:4317",
-		"":                        "",
+		"http://collector:4318":            "http://collector:4318",
+		"collector.internal:4317":          "collector.internal:4317",
+		"user:pw@collector:4317?api_key=x": "collector:4317",
+		"collector:4318/v1/logs?token=x":   "collector:4318/v1/logs",
+		"":                                 "",
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, redactEndpoint(in), in)
 	}
 }
 
-func TestNewLoggerProvider_LogsWhenTheCollectorIsUnreachable(t *testing.T) {
+func TestOTLPExporter_LogsOnceWhenTheCollectorIsUnreachable(t *testing.T) {
 	t.Parallel()
 	logger, sink := newSinkLogger()
 	s := Settings{
@@ -232,24 +325,21 @@ func TestNewLoggerProvider_LogsWhenTheCollectorIsUnreachable(t *testing.T) {
 		Insecure: true,
 		Timeout:  200 * time.Millisecond,
 	}
-	provider, reporter, err := newLoggerProvider(context.Background(), s, logger)
+	exp, err := newOTLPExporter(context.Background(), s, logger)
 	require.NoError(t, err)
-
-	exp := newExporterWithProvider(provider, logger, time.Second)
-	exp.reporter = reporter
 	exp.SetDataClass(metrics.Raw)
-	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = provider.ForceFlush(ctx)
 
-	var warned bool
+	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
+	exp.Close()
+
+	var warned int
 	for _, line := range sink.lines(t) {
-		if line["msg"] == "otlp export failed; records dropped" {
-			warned = true
+		assert.NotEqual(t, "otlp exporter flush failed on close", line["msg"])
+		if line["msg"] == msgExportFailed {
+			warned++
 			assert.Equal(t, "http://127.0.0.1:1", line["endpoint"])
 			assert.Equal(t, "raw", line["class"])
 		}
 	}
-	assert.True(t, warned, "an unreachable collector must leave a WARN line")
+	assert.Equal(t, 1, warned, "an unreachable collector must leave exactly one WARN line")
 }

@@ -66,6 +66,16 @@ func newLoggerProvider(ctx context.Context, s Settings, logger *slog.Logger) (*s
 	return provider, reporting.reporter, nil
 }
 
+func newOTLPExporter(ctx context.Context, s Settings, logger *slog.Logger) (*Exporter, error) {
+	provider, reporter, err := newLoggerProvider(ctx, s, logger)
+	if err != nil {
+		return nil, err
+	}
+	exporter := newExporterWithProvider(provider, logger, s.Timeout)
+	exporter.reporter = reporter
+	return exporter, nil
+}
+
 func newResource() *resource.Resource {
 	return resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceNameKey.String(serviceName))
 }

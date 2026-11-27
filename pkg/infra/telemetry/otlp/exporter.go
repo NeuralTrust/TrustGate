@@ -138,11 +138,14 @@ func (e *Exporter) Close() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), e.shutdownTimeout)
 	defer cancel()
-	if err := e.provider.ForceFlush(ctx); err != nil {
+	if err := e.provider.ForceFlush(ctx); err != nil && !isReported(err) {
 		e.slog.Warn("otlp exporter flush failed on close", slog.String("error", err.Error()))
 	}
-	if err := e.provider.Shutdown(ctx); err != nil {
+	if err := e.provider.Shutdown(ctx); err != nil && !isReported(err) {
 		e.slog.Warn("otlp exporter shutdown failed", slog.String("error", err.Error()))
+	}
+	if e.reporter != nil {
+		e.reporter.flush()
 	}
 }
 

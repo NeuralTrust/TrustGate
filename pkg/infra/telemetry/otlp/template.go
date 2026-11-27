@@ -63,11 +63,9 @@ func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exp
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	provider, reporter, err := newLoggerProvider(context.Background(), s, t.logger)
+	exporter, err := newOTLPExporter(context.Background(), s, t.logger)
 	if err != nil {
 		return nil, err
 	}
-	exporter := newExporterWithProvider(provider, t.logger, s.Timeout)
-	exporter.reporter = reporter
 	return exporter, nil
 }
