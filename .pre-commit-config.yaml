@@ -1,0 +1,129 @@
+# Git hooks for TrustGate (public profile). Content checks run again at
+# pre-push because pushing a branch of a public repository publishes it.
+# Install with: make install-pre-commit
+minimum_pre_commit_version: "3.5.0"
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+exclude: ^(third_party|frontend|downloads)/
+
+repos:
+  # The NeuralTrust checks are built from tools/nt-hooks in this repository,
+  # so the hooks work for every contributor without access to private repos.
+  - repo: local
+    hooks:
+      - id: commit-msg
+        name: commit message is Conventional Commits
+        entry: go run ./tools/nt-hooks commit-msg
+        language: system
+        stages: [commit-msg]
+
+      - id: branch-name
+        name: branch name is <type>/<slug>
+        entry: go run ./tools/nt-hooks branch-name --created-after=2026-12-01
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+
+      - id: ticket-refs
+        name: no issue-tracker keys or links in content
+        entry: go run ./tools/nt-hooks ticket-refs
+        language: system
+        types_or: [go, markdown, yaml]
+        exclude: ^tools/nt-hooks/
+        stages: [pre-commit, pre-push, manual]
+
+      - id: spec-paths
+        name: no spec-driven development artifacts
+        entry: go run ./tools/nt-hooks spec-paths --public
+        language: system
+        stages: [pre-commit, pre-push, manual]
+
+      - id: comment-policy
+        name: no banner comments or commented-out Go code
+        entry: go run ./tools/nt-hooks comment-policy
+        language: system
+        types: [go]
+        stages: [pre-commit, manual]
+
+      - id: internal-hosts
+        name: no private addresses or cluster host names
+        entry: go run ./tools/nt-hooks internal-hosts --strict
+        language: system
+        types: [text]
+        exclude: (_test\.go$|/testdata/|^testdata/|^tools/nt-hooks/)
+        stages: [pre-commit, pre-push, manual]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: /testdata/
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+        exclude: /testdata/
+      - id: mixed-line-ending
+        exclude: /testdata/
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.14.0
+    hooks:
+      - id: golangci-lint-fmt
+        pass_filenames: true
+      - id: golangci-lint
+
+  - repo: local
+    hooks:
+      - id: golangci-lint-metrics
+        name: golangci-lint (pkg/metrics module)
+        entry: bash -c 'cd pkg/metrics && golangci-lint run --new-from-rev HEAD'
+        language: system
+        files: ^pkg/metrics/.*\.go$
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy leaves no diff
+        entry: bash -c 'go mod tidy && git diff --exit-code -- go.mod go.sum'
+        language: system
+        files: (\.go|^go\.mod|^go\.sum)$
+        pass_filenames: false
+
+      # G115 is excluded until the existing integer-conversion findings are
+      # fixed; CI still reports it through the shared SAST workflow.
+      - id: gosec
+        name: gosec (high severity)
+        entry: gosec -severity high -exclude-generated -exclude=G115 ./...
+        language: golang
+        additional_dependencies:
+          - github.com/securego/gosec/v2/cmd/gosec@v2.29.1-0.20261005092323-d2b649ec0182
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: unit-tests
+        name: unit tests
+        entry: make test
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: go-vet-functional
+        name: go vet (functional build tag)
+        entry: go vet -tags functional ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+        stages: [pre-push]

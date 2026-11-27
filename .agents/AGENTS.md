@@ -180,8 +180,9 @@ are forbidden; exported Go doc comments **are** allowed.
 - TODO / FIXME / XXX / HACK markers — open a Linear ticket instead.
 
 Rule of thumb: if a comment wouldn't survive review as adding real value, don't write it. The
-`scripts/check-comments.sh` guard (run from the pre-commit hook) blocks the mechanical offenders
-(banner dividers, commented-out code) on staged Go files while exempting license/directives/swagger.
+`comment-policy` pre-commit hook blocks the mechanical offenders (banner dividers, commented-out
+code) on added Go lines while exempting license/directives/swagger. The `ticket-refs` hook blocks
+issue-tracker keys in code and docs: they belong in branch names, commits and PRs.
 
 ## Where do I put …
 
@@ -392,12 +393,13 @@ make generate       # go generate (mocks etc.)
 make proto          # buf generate for snapshot proto
 make swagger        # regenerate Swagger 2.0 from handler annotations
 make docs           # Swagger 2.0 + OpenAPI 3
-make install-pre-commit  # install scripts/pre-commit.sh into .git/hooks
+make install-pre-commit  # install the pre-commit framework hooks (.pre-commit-config.yaml)
 ```
 
 ## Work gates
 
 - Feature branches only. **Never commit/push on `main`/`master`/`develop`.**
+- Never commit or push with `--no-verify`. When a hook fails, fix the cause.
   Branch: `type/<ticket>-<slug>` (`feat/`, `fix/`, `chore/`, …). Do **not** use
   Linear's `gitBranchName` (it prefixes the author's username).
 - **Commit only when the user explicitly asks.** Conventional Commits: `type(scope): subject`.
