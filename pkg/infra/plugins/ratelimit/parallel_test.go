@@ -84,6 +84,7 @@ type commandLog struct {
 	failEval      error
 	failAfterEval error
 	evalDeadline  bool
+	beforeEval    func()
 }
 
 func (c *commandLog) evalHadDeadline() bool {
@@ -105,6 +106,9 @@ func (c *commandLog) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 				c.evalDeadline = true
 				c.mu.Unlock()
 			}
+		}
+		if c.beforeEval != nil && strings.HasPrefix(cmd.Name(), "eval") {
+			c.beforeEval()
 		}
 		if c.failEval != nil && strings.HasPrefix(cmd.Name(), "eval") {
 			return c.failEval
@@ -457,6 +461,43 @@ func TestPlugin_Parallel_CounterErrorFailsOpen(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "acquire", data.FailureDetail)
 	assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+}
+
+func TestPlugin_Parallel_FailedAcquireStillCountsTheRequest(t *testing.T) {
+	env := newParallelEnv(t)
+	env.cmds.failEval = errors.New("redis down")
+	settings := limitSettings(1, "1m")
+	settings["max_parallel"] = 5
+
+	done, res, err := env.start(settings, globalScope(), policy.ModeEnforce)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, res.StatusCode, "the request failed open")
+	done.Run()
+
+	members, zerr := env.mr.ZMembers("ratelimit:plugin-1:global:gw-1")
+	require.NoError(t, zerr)
+	assert.Len(t, members, 1, "the admitted request is in the window")
+
+	_, _, err = env.start(settings, globalScope(), policy.ModeEnforce)
+	requireRefused(t, err)
+}
+
+func TestPlugin_Parallel_CanceledCallerDuringAcquireIsNotAnOutage(t *testing.T) {
+	env := newParallelEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	env.cmds.beforeEval = cancel
+	env.cmds.failEval = context.Canceled
+	done := appplugins.NewRequestDone()
+	in := execInput(parallelSettings(1, nil), globalScope())
+
+	_, err := env.p.Execute(done.Bind(ctx), in)
+
+	require.ErrorIs(t, err, context.Canceled)
+	done.Run()
+	members, zerr := env.mr.ZMembers("ratelimit:plugin-1:global:gw-1")
+	if zerr == nil {
+		assert.Empty(t, members, "a request the caller abandoned is not recorded")
+	}
 }
 
 func TestPlugin_Parallel_LostAcquireReplyDoesNotLeakTheSlot(t *testing.T) {

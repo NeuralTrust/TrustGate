@@ -234,8 +234,22 @@ func (p *Plugin) takeSlot(
 	if err != nil {
 		// The script may have added the member before the reply was lost.
 		held.schedule()
-		res, err = p.counterUnavailable(ctx, in, *data, nil, "acquire", err)
-		return res, true, err
+		if _, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+			Ctx:    ctx,
+			Plugin: PluginName,
+			Stage:  in.Stage,
+			Mode:   in.Mode,
+			Detail: "acquire",
+			Err:    err,
+			Event:  in.Event,
+		}); ferr != nil {
+			return nil, true, ferr
+		}
+		// The request still counts toward the window, as any admitted one does.
+		data.FailureReason = string(appplugins.FailureCounterUnavailable)
+		data.FailureDetail = "acquire"
+		data.FailureErrorClass = appplugins.CounterErrorClass(err)
+		return nil, false, nil
 	}
 	data.MaxParallel = cfg.MaxParallel
 	data.CurrentParallel = inFlight
