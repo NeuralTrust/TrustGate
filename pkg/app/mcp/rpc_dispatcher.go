@@ -434,9 +434,6 @@ func (d *RPCDispatcher) invokeTool(
 	name string,
 	arguments, meta json.RawMessage,
 ) (any, toolInvocation, error) {
-	done := appplugins.NewRequestDone()
-	defer done.Run()
-	ctx = done.Bind(ctx)
 	// The binding is fixed before any plugin sees the request, so the plan is
 	// chosen for the real destination and a body rewrite cannot reroute the call.
 	// A name nobody serves, a toolkit denial or a pending consent answers here,
@@ -456,6 +453,9 @@ func (d *RPCDispatcher) invokeResolved(
 	target *ResolvedTool,
 	arguments, meta json.RawMessage,
 ) (any, toolInvocation, error) {
+	done := appplugins.NewRequestDone()
+	defer done.Run()
+	ctx = done.Bind(ctx)
 	reached := toolInvocation{target: target}
 	if span := trace.SpanFromContext(ctx); span != nil {
 		annotateRegistry(span, target.Registry, target.Tool.Name)

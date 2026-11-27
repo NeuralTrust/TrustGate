@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +68,19 @@ func TestRPCDispatcher_CallTool_FreesPluginHoldWhenTheCallEnds(t *testing.T) {
 			require.EqualValues(t, 1, exec.released.Load())
 		})
 	}
+}
+
+func TestCodeMode_EachProgramCallFreesItsPluginHold(t *testing.T) {
+	exec := &holdingExecutor{}
+	w := newCodeWorld(t, exec)
+	w.rc.Policies = []*policy.Policy{{Enabled: true, Mode: policy.ModeEnforce, Stages: []policy.Stage{policy.StagePreRequest}}}
+
+	_, text, isError := w.program(t, gatewaydomain.MCPCodeModeOn, ExecuteToolName, `
+		await tools.`+w.n("list_issues")+`({});
+		await tools.`+w.n("list_issues")+`({});
+		return "ok";
+	`)
+
+	require.False(t, isError, text)
+	require.EqualValues(t, 2, exec.released.Load())
 }
