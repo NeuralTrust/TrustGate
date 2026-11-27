@@ -688,7 +688,7 @@ the counter store answered, and whatever the call already knew before it failed:
 | Key | Meaning |
 |-----|---------|
 | `failure_reason` | Always `counter_unavailable` |
-| `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
+| `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), plus `acquire` for `rate_limiter`'s `max_parallel` slot, or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
 | `failure_error_class` | What kind of failure it was, from a closed set. A Redis error reply gives its code in lowercase: `readonly` (a replica), `oom`, `misconf`, `noperm`, `noauth`, `wrongpass`, `loading`, `busy`, `masterdown`, `execabort`, `noscript`, `wrongtype`, `moved`, `ask`, `clusterdown`, `crossslot`, `tryagain`, `noreplicas` or `err`; any other code gives `redis_other`. Otherwise `timeout`, `connection` or `unknown`. Never the error text itself |
 
 `failure_error_class` is what tells a counter store that refuses writes apart from one that is
@@ -705,6 +705,12 @@ For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count`
 `limit` from the read that already succeeded, and `token_rate_limiter`'s keep `provider`,
 `model` and any cost-cap fields — a record failure never wipes out what the read (or the
 request itself) already established.
+
+With `max_parallel` set, `rate_limiter`'s extras also carry `max_parallel` (the cap),
+`current_parallel` (requests in progress for the same counter, this one included when it got a
+slot) and `parallel_exceeded` (`true` when the request went over the cap: refused in Enforce
+and Throttle, let through in Observe). All three are omitted when `max_parallel` is not set or
+the check did not run.
 
 ### Ran but had nothing to evaluate (`per_tool_rate_limiter`)
 

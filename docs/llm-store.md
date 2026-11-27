@@ -506,6 +506,32 @@ counter: a policy that sets it with another `limit_per` is refused, and
 `limit_per: header` needs `group_by: header` (or `group_by_header` alone, the
 older spelling).
 
+### Max parallel requests
+
+`max_parallel` on a `rate_limiter` policy caps how many requests are in
+progress at once, open streams included. Absent or `0` is no cap, and `limit`
+(Max Requests) stays required. The count is shared across gateway replicas and
+follows the policy's `limit_per`: one in-flight set per scope, subject and
+suffix of the request counter, under `ratelimit:parallel:`. A request the
+policy does not apply to takes no slot.
+
+A request over the cap is refused with `429` and no `Retry-After` header, in
+Enforce and Throttle; Observe lets it through and reports it in the event
+(`parallel_exceeded`, `current_parallel`, `max_parallel`). A slot is held until
+the response ends: a buffered answer, a stream (a long one keeps its slot with a
+heartbeat), a client that disconnects or another policy rejecting the request.
+A stream a guard cut frees its slot when the client has its response, without
+waiting for the gateway to finish reading the rest of the upstream.
+A slot that is never released, such as one held by a pod that stopped, expires
+two minutes after its last heartbeat. The heartbeat keeps a slot for at most one
+hour, longer than any stream the gateway serves. If the counter store is
+unavailable the request is allowed through with decision `failed_open` and
+`failure_detail: acquire`.
+
+The cap counts only requests served by gateways that know `max_parallel`: while
+a rolling update replaces older pods, their requests take no slot and the cap
+admits more than it should until the rollout ends.
+
 ## Group budgets
 
 A group budget caps what a directory group's keys spend in a UTC calendar

@@ -23,6 +23,11 @@ type RateLimiterData struct {
 	CurrentCount      int64  `json:"current_count"`
 	Limit             int    `json:"limit"`
 	Window            string `json:"window,omitempty"`
+	// MaxParallel, CurrentParallel and ParallelExceeded describe the in-flight
+	// cap, set only when max_parallel is configured and the check ran.
+	MaxParallel      int   `json:"max_parallel,omitempty"`
+	CurrentParallel  int64 `json:"current_parallel,omitempty"`
+	ParallelExceeded bool  `json:"parallel_exceeded,omitempty"`
 	// FailureReason, FailureDetail and FailureErrorClass are set only on a
 	// failed_open decision: the counter store (Redis) could not be read or
 	// written. FailureReason is always appplugins.FailureCounterUnavailable;

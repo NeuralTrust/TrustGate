@@ -453,6 +453,9 @@ func (d *RPCDispatcher) invokeResolved(
 	target *ResolvedTool,
 	arguments, meta json.RawMessage,
 ) (any, toolInvocation, error) {
+	done := appplugins.NewRequestDone()
+	defer done.Run()
+	ctx = done.Bind(ctx)
 	reached := toolInvocation{target: target}
 	if span := trace.SpanFromContext(ctx); span != nil {
 		annotateRegistry(span, target.Registry, target.Tool.Name)

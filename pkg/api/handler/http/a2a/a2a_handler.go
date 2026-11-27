@@ -121,6 +121,12 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 	if rpcErr != nil {
 		return send(c, id, nil, rpcErr)
 	}
+	handed := false
+	defer func() {
+		if !handed {
+			s.Discard()
+		}
+	}()
 	if err := c.Context().SetWriteDeadline(s.Deadline().Add(streamWriteGrace)); err != nil {
 		slog.WarnContext(ctx, "a2a stream write deadline not set", slog.String("error", err.Error()))
 	}
@@ -143,6 +149,7 @@ func stream(c *fiber.Ctx, id json.RawMessage, x *appa2a.Exchange) error {
 			return w.Flush()
 		})
 	})
+	handed = true
 	return nil
 }
 

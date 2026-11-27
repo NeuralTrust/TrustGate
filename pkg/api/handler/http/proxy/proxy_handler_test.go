@@ -30,6 +30,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -851,13 +852,17 @@ func TestHandle_ForwardContextEndsWithTheResponse(t *testing.T) {
 func TestHandle_ForwardContextWaitsForTheStreamToSettle(t *testing.T) {
 	app, fwd := newTestApp(t)
 	var forwardCtx context.Context
+	var released atomic.Bool
 	settled := make(chan struct{})
 	stream := func(yield func([]byte, error) bool) {
 		yield([]byte("data: [DONE]"), nil)
 	}
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.Anything).
-		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) {
+			forwardCtx = ctx
+			appplugins.RequestDoneFrom(ctx).OnDone(func() { released.Store(true) })
+		}).
 		Return(&appproxy.ForwardResult{
 			StatusCode:    200,
 			Stream:        stream,
@@ -872,6 +877,13 @@ func TestHandle_ForwardContextWaitsForTheStreamToSettle(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 	if forwardCtx.Err() != nil {
 		t.Fatal("the forward context ended before the stream settled")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !released.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("what plugins hold waited for the upstream drain, not the client")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	close(settled)
 	select {

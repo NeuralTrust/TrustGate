@@ -322,7 +322,13 @@ func (h *ForwardedHandler) handleStore(c *fiber.Ctx, route apiresolver.ProxyRout
 func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error {
 	// The user context is never cancelled when the client goes away, so the
 	// upstream request gets a context of its own that ends with the response.
-	ctx, cancel := context.WithCancel(c.UserContext())
+	ctx, cancelCtx := context.WithCancel(c.UserContext())
+	done := appplugins.NewRequestDone()
+	ctx = done.Bind(ctx)
+	cancel := context.CancelFunc(func() {
+		done.Run()
+		cancelCtx()
+	})
 	streaming := false
 	defer func() {
 		if !streaming {
@@ -342,7 +348,7 @@ func (h *ForwardedHandler) forward(c *fiber.Ctx, in appproxy.ForwardInput) error
 
 	if result.Stream != nil {
 		streaming = true
-		return writeStream(c, result, in.Request, cancel, h.logger)
+		return writeStream(c, result, in.Request, done.Run, cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -475,10 +481,11 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 }
 
 // writeStream relays result.Stream from the body stream writer and calls
-// cancel once the writer returns, which a client that went away makes happen
-// at the first write that fails. When the stream left an upstream read
-// running, as a stream guard cut does to charge the usage the rest of the
-// upstream carries, cancel waits for result.StreamSettled instead.
+// release and cancel once the writer returns, which a client that went away
+// makes happen at the first write that fails. When the stream left an upstream
+// read running, as a stream guard cut does to charge the usage the rest of the
+// upstream carries, cancel waits for result.StreamSettled instead; release
+// does not, since the client already has its whole response.
 //
 // fasthttp runs the writer on a goroutine of its own that does not recover,
 // so a panic from the stream, including one a Responses reader raises again,
@@ -488,6 +495,7 @@ func writeStream(
 	c *fiber.Ctx,
 	result *appproxy.ForwardResult,
 	req *infracontext.RequestContext,
+	release func(),
 	cancel context.CancelFunc,
 	logger *slog.Logger,
 ) error {
@@ -507,6 +515,7 @@ func writeStream(
 	c.Status(statusCode)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer cancelWhenSettled(result, cancel)
+		defer release()
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {

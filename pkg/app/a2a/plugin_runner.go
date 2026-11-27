@@ -146,7 +146,7 @@ func (r *PluginRunner) run(ctx context.Context, x *Exchange, stage policy.Stage,
 		}
 		in.Response = &infracontext.ResponseContext{GatewayID: in.Request.GatewayID, RegistryID: in.Request.RegistryID, Body: out}
 	}
-	outcome, err := r.executor.RunStage(ctx, in)
+	outcome, err := r.executor.RunStage(x.done.Bind(ctx), in)
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blocked(pe)
