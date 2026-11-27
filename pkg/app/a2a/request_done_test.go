@@ -59,3 +59,21 @@ func TestExchange_FreesPluginHoldWhenAPluginBlocks(t *testing.T) {
 	require.NotNil(t, rpcErr)
 	require.EqualValues(t, 1, released.Load())
 }
+
+func TestStream_DiscardFreesPluginHold(t *testing.T) {
+	ag, _ := sseAgent(t, fixtureEvents(t, "v10.stream.response.sse"), 0)
+	var released atomic.Int32
+	exec := func(ctx context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+		if in.Stage == "pre_request" {
+			require.True(t, appplugins.RequestDoneFrom(ctx).OnDone(func() { released.Add(1) }))
+		}
+		return &appplugins.StageOutcome{}, nil
+	}
+	h := newHarness(t, a2a.Version10, ag.URL, exec)
+	s := openStream(t, h, streamRequest(a2a.Version10))
+	require.Zero(t, released.Load())
+
+	s.Discard()
+
+	require.EqualValues(t, 1, released.Load())
+}

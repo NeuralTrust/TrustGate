@@ -188,6 +188,14 @@ func (x *Exchange) open(ctx context.Context) (*Stream, *RPCError) {
 	return &Stream{x: x, body: res.Body, cancel: cancel, deadline: time.Now().Add(streamMaxDuration), task: x.content.TaskID}, nil
 }
 
+// Discard closes a stream that Run will never relay and frees what plugins
+// hold for the call.
+func (s *Stream) Discard() {
+	_ = s.body.Close()
+	s.cancel()
+	s.x.done.Run()
+}
+
 // Deadline is when the stream ends at the latest.
 func (s *Stream) Deadline() time.Time {
 	return s.deadline
