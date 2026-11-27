@@ -1,0 +1,34 @@
+# AI review of pull requests: a confidentiality gate and an advisory quality
+# review. See NeuralTrust/workflows/.github/workflows/ai-review.yml.
+#
+# It lives apart from ci.yml so that applying the override label or editing
+# the PR body re-runs the gate without re-running the test suite.
+
+name: AI Review
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+
+# Code pushes and metadata events (body edits, labels) queue separately, so a
+# label added mid-review does not cancel the quality pass of the last push.
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}-${{ contains(fromJSON('["edited","labeled","unlabeled"]'), github.event.action) && 'meta' || 'code' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-review:
+    uses: NeuralTrust/workflows/.github/workflows/ai-review.yml@main
+    with:
+      plugin_ref: review-v0.1.1
+      mode: warn
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AGENTS_HUB_APP_ID: ${{ secrets.AGENTS_HUB_APP_ID }}
+      AGENTS_HUB_APP_PRIVATE_KEY: ${{ secrets.AGENTS_HUB_APP_PRIVATE_KEY }}
