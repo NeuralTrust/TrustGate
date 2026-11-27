@@ -195,7 +195,7 @@ license-check: ## Verify every source file has a license header
 install-pre-commit: ## Install the git hooks from .pre-commit-config.yaml
 	@$(info $(M) Installing git hooks ...)
 	@command -v pre-commit >/dev/null 2>&1 || { echo "pre-commit not found; install it with 'brew install pre-commit' or 'pipx install pre-commit'" >&2; exit 1; }
-	pre-commit install --install-hooks -t pre-commit -t commit-msg -t pre-push
+	pre-commit install -f --install-hooks -t pre-commit -t commit-msg -t pre-push
 
 docker-build: ## Build the production docker image
 	@$(info $(M) Building docker image $(DOCKER_IMAGE):$(DOCKER_TAG) ...)
