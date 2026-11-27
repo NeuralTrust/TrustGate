@@ -203,7 +203,7 @@ func resolvedModel(req *infracontext.RequestContext) string {
 // dodged by leaving the model out; every other policy keeps counting such a
 // request under the requested ref, as it always has.
 func modelFor(cfg *config, req *infracontext.RequestContext) string {
-	return chargedModel(req, cfg.keyPartitioned())
+	return chargedModel(req, cfg.keyPartitioned() || cfg.Mode() == limitper.Model)
 }
 
 // chargedModel is the model a request is counted against. With

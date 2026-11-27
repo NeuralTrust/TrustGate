@@ -133,28 +133,35 @@ func (c *config) counterFor(scope appplugins.RuntimeScope, req *infracontext.Req
 	case limitper.Application:
 		return c.Resolve(scope, nil)
 	case limitper.Model:
-		metaKey := "token_rate_limiter.model." + policyID
-		return c.Resolve(scope, func() string {
-			if req == nil {
-				return ""
-			}
-			if stage == policy.StagePostResponse {
-				if m, ok := req.Metadata[metaKey].(string); ok {
-					return m
-				}
-			}
-			m := limitper.RequestModel(req)
-			if stage == policy.StagePreRequest && m != "" {
-				if req.Metadata == nil {
-					req.Metadata = map[string]any{}
-				}
-				req.Metadata[metaKey] = m
-			}
-			return m
-		})
+		model := admittedModel(req, "token_rate_limiter.model."+policyID, stage)
+		if model == "" {
+			// A request that names no model still spends: it counts against
+			// the policy's own counter, so the aggregate and cost cap hold.
+			return limitper.Counter{Applies: true}
+		}
+		return c.Resolve(scope, func() string { return model })
 	default:
 		return limitper.Counter{Applies: true}
 	}
+}
+
+func admittedModel(req *infracontext.RequestContext, metaKey string, stage policy.Stage) string {
+	if req == nil {
+		return ""
+	}
+	if stage == policy.StagePostResponse {
+		if m, ok := req.Metadata[metaKey].(string); ok {
+			return m
+		}
+	}
+	m := limitper.RequestModel(req)
+	if stage == policy.StagePreRequest {
+		if req.Metadata == nil {
+			req.Metadata = map[string]any{}
+		}
+		req.Metadata[metaKey] = m
+	}
+	return m
 }
 
 func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {

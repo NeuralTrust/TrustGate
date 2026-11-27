@@ -496,7 +496,11 @@ request whose model does not match is not limited, and one that names none is
 counted under the route's default model. A model is matched and counted by its
 name without the `@provider/` prefix, in the request and in the patterns, so
 `@openai/gpt-6-luna` and `gpt-6-luna` share one counter; a bare
-`provider/model` is a native model id and is counted as written. `api_key` does not limit
+`provider/model` is a native model id and is counted as written. On
+`token_rate_limiter`, a request that names no model and has no default model
+counts against the policy's own counter, so the aggregate budget and cost cap
+still apply, and a `per_model` rule is chosen by the model the request is
+served with (the route's default for `auto`). `api_key` does not limit
 requests without a key, and `application` and `group` do not limit requests
 without an application. On `token_rate_limiter`, `limit_per: api_key` is `partition: key`, and
 `partition: key` cannot be combined with another `limit_per`. A counter's key

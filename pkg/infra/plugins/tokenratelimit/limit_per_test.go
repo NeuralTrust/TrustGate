@@ -63,7 +63,7 @@ func TestPlugin_LimitPer_CounterKeys(t *testing.T) {
 		{"model filter matches", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"@openai/*"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
 		{"model filter misses", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"claude-*"}}), aliceScope, model, nil},
 		{"model filter ignores the provider the request names", limitPerSettings(map[string]any{"limit_per": "model", "models": []string{"gpt-6-luna"}}), aliceScope, model, []string{"trl:tk-1:global:gw-1:mdl:gpt-6-luna"}},
-		{"model not named", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, "", nil},
+		{"model not named counts against the policy's own counter", limitPerSettings(map[string]any{"limit_per": "model"}), aliceScope, "", []string{"trl:tk-1:global:gw-1"}},
 		{"header through limit_per", limitPerSettings(map[string]any{"limit_per": "header", "group_by_header": "X-Team"}), consumer, "", []string{"trl:tk-1:consumer:p-1"}},
 	}
 	for _, tt := range tests {
@@ -163,4 +163,34 @@ func TestPlugin_LimitPer_ModelSpendStaysOnTheAdmittedCounterAfterDowngrade(t *te
 	spend(t, p, settings, aliceScope, req, 10)
 
 	assert.Equal(t, []string{"trl:tk-1:global:gw-1:mdl:gpt-4o"}, mr.Keys())
+}
+
+func TestPlugin_LimitPer_ModelLessRequestStillMeetsTheAggregate(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	p, _ := newClockedPlugin(t, &now)
+	settings := limitPerSettings(map[string]any{"limit_per": "model", "aggregate": map[string]any{"max": 50, "time_window": "1h"}})
+
+	spend(t, p, settings, aliceScope, llmRequest(`{}`, nil), 60)
+
+	assert.Equal(t, http.StatusTooManyRequests, admit(p, settings, aliceScope, llmRequest(`{}`, nil)))
+}
+
+func TestPlugin_LimitPer_AutoMeetsTheServedModelsRule(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	p, _ := newClockedPlugin(t, &now)
+	settings := limitPerSettings(map[string]any{
+		"limit_per": "model",
+		"per_model": true,
+		"rules":     []map[string]any{{"model": "gpt-default", "max": 50, "time_window": "1h"}},
+	})
+	auto := func() *infracontext.RequestContext {
+		req := llmRequest(`{}`, nil)
+		req.RequestedModel = "auto"
+		req.DefaultModel = "gpt-default"
+		return req
+	}
+
+	spend(t, p, settings, aliceScope, auto(), 60)
+
+	assert.Equal(t, http.StatusTooManyRequests, admit(p, settings, aliceScope, auto()))
 }
