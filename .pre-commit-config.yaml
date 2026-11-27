@@ -7,18 +7,52 @@ default_stages: [pre-commit]
 exclude: ^(third_party|frontend|downloads)/
 
 repos:
-  - repo: https://github.com/NeuralTrust/pre-commit-hooks
-    rev: v0.1.0
+  # The NeuralTrust checks are built from tools/nt-hooks in this repository,
+  # so the hooks work for every contributor without access to private repos.
+  - repo: local
     hooks:
       - id: commit-msg
+        name: commit message is Conventional Commits
+        entry: go run ./tools/nt-hooks commit-msg
+        language: system
+        stages: [commit-msg]
+
       - id: branch-name
-        args: [--created-after=2026-12-01]
+        name: branch name is <type>/<slug>
+        entry: go run ./tools/nt-hooks branch-name --created-after=2026-12-01
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+
       - id: ticket-refs
+        name: no issue-tracker keys or links in content
+        entry: go run ./tools/nt-hooks ticket-refs
+        language: system
+        types_or: [go, markdown, yaml]
+        exclude: ^tools/nt-hooks/
+        stages: [pre-commit, pre-push, manual]
+
       - id: spec-paths
-        args: [--public]
+        name: no spec-driven development artifacts
+        entry: go run ./tools/nt-hooks spec-paths --public
+        language: system
+        stages: [pre-commit, pre-push, manual]
+
       - id: comment-policy
+        name: no banner comments or commented-out Go code
+        entry: go run ./tools/nt-hooks comment-policy
+        language: system
+        types: [go]
+        stages: [pre-commit, manual]
+
       - id: internal-hosts
-        args: [--strict]
+        name: no private addresses or cluster host names
+        entry: go run ./tools/nt-hooks internal-hosts --strict
+        language: system
+        types: [text]
+        exclude: (_test\.go$|/testdata/|^testdata/|^tools/nt-hooks/)
+        stages: [pre-commit, pre-push, manual]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
