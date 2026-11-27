@@ -337,14 +337,44 @@ func TestTTLMap_RememberMiss(t *testing.T) {
 	t.Run("a full map is swept at most once per interval", func(t *testing.T) {
 		t.Parallel()
 		m := NewTTLMap(10 * time.Millisecond)
-		m.lastFullPurge.Store(time.Now().UnixNano())
 		m.Set("a", struct{}{})
 		time.Sleep(20 * time.Millisecond)
+		m.lastFullPurge.Store(time.Since(m.created).Nanoseconds() + 1)
 		if m.RememberMiss("b", m.Generation(), 1) {
 			t.Fatal("a sweep within the interval must be skipped")
 		}
 		if n := m.Len(); n != 1 {
 			t.Fatalf("expected the expired entry to stay until the next sweep, got %d", n)
+		}
+	})
+
+	t.Run("one sweep looks at a bounded number of entries", func(t *testing.T) {
+		t.Parallel()
+		const maxEntries = 3 * fullPurgeScanLimit
+		m := NewTTLMap(10 * time.Millisecond)
+		for i := range maxEntries {
+			m.Set(fmt.Sprintf("expired-%d", i), struct{}{})
+		}
+		time.Sleep(20 * time.Millisecond)
+		if !m.RememberMiss("new", m.Generation(), maxEntries) {
+			t.Fatal("a sweep of expired entries must make room")
+		}
+		if n := m.Len(); n < maxEntries-fullPurgeScanLimit+1 {
+			t.Fatalf("one sweep removed %d entries, more than the %d it may look at", maxEntries+1-n, fullPurgeScanLimit)
+		}
+	})
+
+	t.Run("a replaced value goes to onEvict", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Minute)
+		var evicted []any
+		m.SetOnEvict(func(v any) { evicted = append(evicted, v) })
+		m.Set("k", "resource")
+		if !m.RememberMiss("k", m.Generation(), 10) {
+			t.Fatal("expected the miss to be remembered")
+		}
+		if len(evicted) != 1 || evicted[0] != "resource" {
+			t.Fatalf("expected the replaced value to be evicted, got %v", evicted)
 		}
 	})
 
@@ -364,6 +394,29 @@ func TestTTLMap_RememberMiss(t *testing.T) {
 		wg.Wait()
 		if n := m.Len(); n != maxEntries {
 			t.Fatalf("expected exactly %d entries, got %d", maxEntries, n)
+		}
+	})
+}
+
+// BenchmarkTTLMap_RememberMissFull measures a miss offered to a map at its cap
+// of live entries: the bounded sweep when one is due, and the refusal.
+func BenchmarkTTLMap_RememberMissFull(b *testing.B) {
+	const maxEntries = 100_000
+	m := NewTTLMap(time.Hour)
+	for i := range maxEntries {
+		m.Set(fmt.Sprintf("live-%d", i), struct{}{})
+	}
+	b.Run("sweep", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			m.lastFullPurge.Store(0)
+			m.RememberMiss("new", m.Generation(), maxEntries)
+		}
+	})
+	b.Run("refuse", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			m.RememberMiss("new", m.Generation(), maxEntries)
 		}
 	})
 }

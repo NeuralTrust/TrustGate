@@ -69,8 +69,10 @@ func BenchmarkFinder_RememberedMiss(b *testing.B) {
 	mgr := cache.NewTTLMapManager(time.Hour)
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
 	ctx := context.Background()
-	_, _ = finder.FindByID(ctx, id)        // remembers the miss; the error is the expected not found
-	_, _ = finder.FindBySlug(ctx, "ghost") // same
+	// Each first lookup misses in the repository and is remembered; its error
+	// is the expected not found.
+	_, _ = finder.FindByID(ctx, id)
+	_, _ = finder.FindBySlug(ctx, "ghost")
 
 	b.Run("by_id", func(b *testing.B) {
 		b.ReportAllocs()
