@@ -520,11 +520,17 @@ Enforce and Throttle; Observe lets it through and reports it in the event
 (`parallel_exceeded`, `current_parallel`, `max_parallel`). A slot is held until
 the response ends: a buffered answer, a stream (a long one keeps its slot with a
 heartbeat), a client that disconnects or another policy rejecting the request.
+A stream a guard cut frees its slot when the client has its response, without
+waiting for the gateway to finish reading the rest of the upstream.
 A slot that is never released, such as one held by a pod that stopped, expires
 two minutes after its last heartbeat. The heartbeat keeps a slot for at most one
-hour, so a stream open longer than that no longer counts. If the counter store is unavailable the
-request is allowed through with decision `failed_open` and `failure_detail:
-acquire`.
+hour, longer than any stream the gateway serves. If the counter store is
+unavailable the request is allowed through with decision `failed_open` and
+`failure_detail: acquire`; a stalled store fails the same way after two seconds.
+
+The cap counts only requests served by gateways that know `max_parallel`: while
+a rolling update replaces older pods, their requests take no slot and the cap
+admits more than it should until the rollout ends.
 
 ## Group budgets
 

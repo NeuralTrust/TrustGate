@@ -434,7 +434,6 @@ func (d *RPCDispatcher) invokeTool(
 	name string,
 	arguments, meta json.RawMessage,
 ) (any, toolInvocation, error) {
-	// A plugin's per-request hold (a parallel slot) is freed on every exit.
 	done := appplugins.NewRequestDone()
 	defer done.Run()
 	ctx = done.Bind(ctx)

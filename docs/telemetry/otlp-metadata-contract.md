@@ -706,6 +706,12 @@ For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count`
 `model` and any cost-cap fields — a record failure never wipes out what the read (or the
 request itself) already established.
 
+With `max_parallel` set, `rate_limiter`'s extras also carry `max_parallel` (the cap),
+`current_parallel` (requests in progress for the same counter, this one included when it got a
+slot) and `parallel_exceeded` (`true` when the request went over the cap: refused in Enforce
+and Throttle, let through in Observe). All three are omitted when `max_parallel` is not set or
+the check did not run.
+
 ### Ran but had nothing to evaluate (`per_tool_rate_limiter`)
 
 A `policy_chain[]` entry normally exists only when the plugin recorded something: the builder
