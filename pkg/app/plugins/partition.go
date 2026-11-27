@@ -138,17 +138,19 @@ func (g GroupBy) KeySuffix(req *infracontext.RequestContext) string {
 		}
 	case GroupBySubject:
 		if v := strings.TrimSpace(req.CallerSubject); v != "" {
-			return ":sub:" + partitionValue(v)
+			return ":sub:" + PartitionValue(v)
 		}
 	case GroupByClaim:
 		if v, ok := claimPartitionValue(req.CallerClaims[g.Claim]); ok {
-			return ":clm:" + url.QueryEscape(g.Claim) + ":" + partitionValue(v)
+			return ":clm:" + url.QueryEscape(g.Claim) + ":" + PartitionValue(v)
 		}
 	}
 	return ""
 }
 
-func partitionValue(v string) string {
+// PartitionValue is a caller-supplied value as one counter key segment:
+// escaped, or keyed by its digest when longer than maxPartitionValueLength.
+func PartitionValue(v string) string {
 	if len(v) > maxPartitionValueLength {
 		sum := sha256.Sum256([]byte(v))
 		return "h" + hex.EncodeToString(sum[:])

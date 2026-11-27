@@ -291,7 +291,11 @@ func (g *GroupBudget) gate(ctx context.Context, run groupRun, req *infracontext.
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 	reset := g.base.resetSeconds(ctx, w.key, run.ttl)
-	return nil, groupExceededError(run, w, consumed[report], reset)
+	retryAfter := reset
+	if end := monthEnd(run.period); !end.IsZero() {
+		retryAfter = ceilSeconds(end.Sub(g.base.now()), 1)
+	}
+	return nil, groupExceededError(run, w, consumed[report], reset, retryAfter)
 }
 
 // charge adds the priced cost of the answer to the group's and the member's
@@ -431,14 +435,14 @@ func (g *GroupBudget) reached(ctx context.Context, run groupRun, w groupWindow, 
 
 // groupExceededError is the 429 a blocking budget answers once a limit is
 // reached, naming which one.
-func groupExceededError(run groupRun, w groupWindow, consumed int64, resetSeconds int) *appplugins.PluginError {
+func groupExceededError(run groupRun, w groupWindow, consumed int64, resetSeconds, retryAfterSeconds int) *appplugins.PluginError {
 	resetsAt := monthEnd(run.period)
 	spent, limit := float64(consumed)/1e6, w.limitUSD
 	message := fmt.Sprintf("The monthly budget of this key's group is spent ($%.2f of $%.2f). It resets on %s (UTC).", spent, limit, resetsAt.Format("2006-01-02"))
 	if w.scope == keygroupdomain.ScopeMember {
 		message = fmt.Sprintf("Your monthly budget in this key's group is spent ($%.2f of $%.2f). It resets on %s (UTC).", spent, limit, resetsAt.Format("2006-01-02"))
 	}
-	headers := dollarBudgetHeaders(w.max, consumed, w.scope, windowCalendarMonth, resetSeconds)
+	headers := withRetryAfter(dollarBudgetHeaders(w.max, consumed, w.scope, windowCalendarMonth, resetSeconds), retryAfterSeconds)
 	pe := budgetError(http.StatusTooManyRequests, groupBudgetExceeded, headers, map[string]any{
 		"code":      groupBudgetExceeded,
 		"message":   message,

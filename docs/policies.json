@@ -30,10 +30,16 @@
                 "required": true
               },
               {
+                "key": "max_parallel",
+                "label": "Max Parallel Requests",
+                "type": "integer",
+                "description": "Optional. Maximum number of requests in progress at once, open streams included, counted across gateway replicas per the same limit per as Max Requests. A request over it is rejected with 429 and no Retry-After header, in Enforce and Throttle; Observe only reports it. A slot is freed when the response ends or, if a gateway pod stops, after two minutes; a heartbeat keeps a slot for at most one hour. Empty or 0 means no limit."
+              },
+              {
                 "key": "retry_after",
                 "label": "Retry After",
                 "type": "string",
-                "description": "Value sent in the Retry-After header, in seconds, when the limit is exceeded.",
+                "description": "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Set to reset to send the seconds until the counter admits a request again.",
                 "default": "60"
               },
               {
@@ -41,6 +47,77 @@
                 "label": "Group By Header",
                 "type": "string",
                 "description": "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer."
+              },
+              {
+                "key": "limit_per",
+                "label": "Limit Per",
+                "type": "enum",
+                "description": "What each request counter belongs to. Absent is shared: one counter for the whole policy scope. application is one per application, api_key one per API key, group one per group of the group key (a request without a group counts toward its application), model one per model, and header one per value of group_by_header. api_key does not limit requests without a key, and application and group do not limit requests without an application.",
+                "default": "shared",
+                "enum": [
+                  {
+                    "value": "shared",
+                    "label": "Shared across all applications"
+                  },
+                  {
+                    "value": "application",
+                    "label": "Application"
+                  },
+                  {
+                    "value": "api_key",
+                    "label": "API key"
+                  },
+                  {
+                    "value": "group",
+                    "label": "Group"
+                  },
+                  {
+                    "value": "model",
+                    "label": "Model"
+                  },
+                  {
+                    "value": "header",
+                    "label": "Header (legacy)"
+                  }
+                ]
+              },
+              {
+                "key": "applies_to",
+                "label": "Applies To",
+                "type": "enum",
+                "description": "Whether application or group limiting covers all of them or only the ones in selected. A request without a group is never filtered by group selection: it counts toward its application. A request outside the selection is not limited by this policy.",
+                "enum": [
+                  {
+                    "value": "all",
+                    "label": "All"
+                  },
+                  {
+                    "value": "selected",
+                    "label": "Selected"
+                  }
+                ]
+              },
+              {
+                "key": "selected",
+                "label": "Selected",
+                "type": "array",
+                "description": "Application ids, or group ids with limit_per group, that applies_to selected limits. Required and non-empty with applies_to selected.",
+                "item": {
+                  "key": "id",
+                  "label": "ID",
+                  "type": "string"
+                }
+              },
+              {
+                "key": "models",
+                "label": "Only For Models",
+                "type": "array",
+                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. @openai/gpt-6-luna or gpt-5*). A model is counted per provider that serves it: gpt-6-luna through OpenAI and through Azure are two counters, whether or not the request names the provider. A pattern with @provider/ matches that provider only; one without matches the model on any provider. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
+                "item": {
+                  "key": "model",
+                  "label": "Model",
+                  "type": "string"
+                }
               }
             ]
           }
@@ -188,7 +265,7 @@
                       "key": "time_window",
                       "label": "Time Window",
                       "type": "string",
-                      "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
+                      "description": "Window duration such as 30s, 30m, 1h, or 1d, one second or longer. calendar_month and calendar_day reset at the start of each UTC month or day."
                     }
                   ]
                 }
@@ -210,7 +287,7 @@
                     "key": "time_window",
                     "label": "Time Window",
                     "type": "string",
-                    "description": "Window duration such as 30m, 1h, or 1d. Values below 60s are raised to 60s. calendar_month and calendar_day (partition key only) reset at the start of each UTC month or day."
+                    "description": "Window duration such as 30s, 30m, 1h, or 1d, one second or longer. calendar_month and calendar_day reset at the start of each UTC month or day."
                   }
                 ]
               },
@@ -292,6 +369,73 @@
                 "label": "Key Budgets",
                 "type": "boolean",
                 "description": "With partition key, hold each personal key to the budget it carries (set by the console per user) instead of aggregate, when the budget counts in this policy's unit; aggregate then becomes optional, and a key without a budget in this unit is held to aggregate or, without one, not counted. Only a policy with key_budgets reads key budgets."
+              },
+              {
+                "key": "limit_per",
+                "label": "Limit Per",
+                "type": "enum",
+                "description": "What each budget counter belongs to. Absent is shared: one counter for the whole policy scope. application is one per application, api_key one per API key, model one per model, and header one per value of group_by_header. api_key does not limit requests without a key, and application and group do not limit requests without an application.",
+                "default": "shared",
+                "enum": [
+                  {
+                    "value": "shared",
+                    "label": "Shared across all applications"
+                  },
+                  {
+                    "value": "application",
+                    "label": "Application"
+                  },
+                  {
+                    "value": "api_key",
+                    "label": "API key"
+                  },
+                  {
+                    "value": "model",
+                    "label": "Model"
+                  },
+                  {
+                    "value": "header",
+                    "label": "Header (legacy)"
+                  }
+                ]
+              },
+              {
+                "key": "applies_to",
+                "label": "Applies To",
+                "type": "enum",
+                "description": "Whether application limiting covers all applications or only the ones in selected. A request outside the selection is not limited by this policy.",
+                "enum": [
+                  {
+                    "value": "all",
+                    "label": "All"
+                  },
+                  {
+                    "value": "selected",
+                    "label": "Selected"
+                  }
+                ]
+              },
+              {
+                "key": "selected",
+                "label": "Selected",
+                "type": "array",
+                "description": "Application ids, or group ids with limit_per group, that applies_to selected limits. Required and non-empty with applies_to selected.",
+                "item": {
+                  "key": "id",
+                  "label": "ID",
+                  "type": "string"
+                }
+              },
+              {
+                "key": "models",
+                "label": "Only For Models",
+                "type": "array",
+                "description": "With limit_per model, limit only the models matching one of these patterns (* is a wildcard, e.g. @openai/gpt-6-luna or gpt-5*). A model is counted per provider that serves it: gpt-6-luna through OpenAI and through Azure are two counters, whether or not the request names the provider. A pattern with @provider/ matches that provider only; one without matches the model on any provider. Empty limits every model; a request whose model does not match is not limited by this policy, and one that names none is counted under the route's default model (on the LLM Budget, without a default it counts against the policy's own counter).",
+                "item": {
+                  "key": "model",
+                  "label": "Model",
+                  "type": "string"
+                }
               }
             ]
           }

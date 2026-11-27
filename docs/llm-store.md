@@ -458,10 +458,12 @@ report an aggregate. A budget change reaches the proxies as a rotation does: on
 the next `InvalidateGatewayDataEvent` on the full plane, and with the config
 snapshot on a DB-less proxy.
 
-`calendar_month` and `calendar_day` (UTC) are valid only with `partition: key`;
+`calendar_month` and `calendar_day` (UTC) are valid with any partition except a
+request header (`group_by_header`), which the client chooses: each new value would
+start a new period budget;
 `custom_pricing`, `group_by_header` and `behavior_on_exceeded: downgrade_model`
 are refused with it: a hard limit never serves past the budget. In a blocking
-mode, over budget answers 429, a Redis read error 503 `budget_unavailable` with
+mode, over budget answers 429 with `Retry-After` set to the seconds until the window resets, a Redis read error 503 `budget_unavailable` with
 `Retry-After: 5` (the default partition stays fail-open), and a dollar budget on
 a model without a price 403 `model_unpriced`. A `partition: key` policy counts
 the model that will be served: for a request with no model, `auto` or
@@ -473,6 +475,74 @@ request under the model it names, as before.
 A request is charged to the calendar period it was admitted in: a stream that
 starts on the last second of a month and ends in the next one counts in the
 month that admitted it.
+
+### Limit per
+
+`limit_per` chooses what each counter of a `rate_limiter` or `token_rate_limiter`
+policy belongs to. Absent is `shared`: one counter for the policy's scope.
+
+| `limit_per` | Counter | Offered on |
+| --- | --- | --- |
+| `shared` | one for the policy scope | both |
+| `application` | one per application | both |
+| `api_key` | one per API key (the owner's counter when the key has one) | both |
+| `group` | one per group of the group key; a request without a group counts toward its application | `rate_limiter` |
+| `model` | one per model named in the request | both |
+| `header` | one per value of `group_by_header` | both |
+
+`application` and `group` take `applies_to: all` (default) or `applies_to:
+selected` with a non-empty `selected` list of application or group ids; a request
+outside the list is not limited by the policy, except that a request without a group always counts toward its application under `group`. `model` takes an optional `models`
+list of patterns (`*` is a wildcard, for example `@openai/gpt-6-luna` or
+`gpt-5*`); a request whose model does not match is not limited, and one that
+names none is counted under the route's default model. A model is counted per
+provider that serves it, the provider of the registry the request is routed to:
+`gpt-6-luna` through OpenAI and through Azure are two counters, and naming the
+provider in the request (`@openai/gpt-6-luna`) or not counts the same. A pattern
+with `@provider/` matches that provider only; one without matches the model on
+any provider. A request that fails over to another provider stays on the
+counter it was admitted under. On
+`token_rate_limiter`, a request that names no model and has no default model
+counts against the policy's own counter, so the aggregate budget and cost cap
+still apply, and a `per_model` rule is chosen by the model the request is
+served with (the route's default for `auto`). `api_key` does not limit
+requests without a key, and `application` and `group` do not limit requests
+without an application. On `token_rate_limiter`, `limit_per: api_key` is `partition: key`, and
+`partition: key` cannot be combined with another `limit_per`. A counter's key
+gains `:app:<id>`, `:grp:<id>` or `:mdl:@<provider>/<model>` for these modes (and
+`:key:<kind>:<id>` on `rate_limiter`) and is unchanged for `shared`; a budget
+per API key keeps the `key:<kind>:<id>` layout above.
+
+`group_by` (`subject`, `claim` or `header`) splits only a `shared` or `header`
+counter: a policy that sets it with another `limit_per` is refused, and
+`limit_per: header` needs `group_by: header` (or `group_by_header` alone, the
+older spelling).
+
+### Max parallel requests
+
+`max_parallel` on a `rate_limiter` policy caps how many requests are in
+progress at once, open streams included. Absent or `0` is no cap, and `limit`
+(Max Requests) stays required. The count is shared across gateway replicas and
+follows the policy's `limit_per`: one in-flight set per scope, subject and
+suffix of the request counter, under `ratelimit:parallel:`. A request the
+policy does not apply to takes no slot.
+
+A request over the cap is refused with `429` and no `Retry-After` header, in
+Enforce and Throttle; Observe lets it through and reports it in the event
+(`parallel_exceeded`, `current_parallel`, `max_parallel`). A slot is held until
+the response ends: a buffered answer, a stream (a long one keeps its slot with a
+heartbeat), a client that disconnects or another policy rejecting the request.
+A stream a guard cut frees its slot when the client has its response, without
+waiting for the gateway to finish reading the rest of the upstream.
+A slot that is never released, such as one held by a pod that stopped, expires
+two minutes after its last heartbeat. The heartbeat keeps a slot for at most one
+hour, longer than any stream the gateway serves. If the counter store is
+unavailable the request is allowed through with decision `failed_open` and
+`failure_detail: acquire`.
+
+The cap counts only requests served by gateways that know `max_parallel`: while
+a rolling update replaces older pods, their requests take no slot and the cap
+admits more than it should until the rollout ends.
 
 ## Group budgets
 

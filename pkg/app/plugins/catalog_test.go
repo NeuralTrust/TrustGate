@@ -315,7 +315,28 @@ func TestTokenRateLimiterSchema_KeyPartition(t *testing.T) {
 	for _, window := range []Field{ruleWindow, aggregateWindow} {
 		assert.Contains(t, window.Description, "calendar_month")
 		assert.Contains(t, window.Description, "calendar_day")
+		assert.NotContains(t, window.Description, "partition key only")
 	}
+}
+
+func TestCatalog_RateLimiterRetryAfterDocumentsReset(t *testing.T) {
+	meta := pluginCatalogMeta["rate_limiter"]
+	retryAfter, ok := fieldByKey(meta.schema.Fields, "retry_after")
+	require.True(t, ok)
+	assert.Contains(t, retryAfter.Description, "reset")
+}
+
+func TestCatalog_RateLimiterMaxParallelIsOptional(t *testing.T) {
+	meta := pluginCatalogMeta["rate_limiter"]
+	maxParallel, ok := fieldByKey(meta.schema.Fields, "max_parallel")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeInteger, maxParallel.Type)
+	assert.False(t, maxParallel.Required)
+	assert.Contains(t, maxParallel.Description, "no Retry-After")
+	limit, ok := fieldByKey(meta.schema.Fields, "limit")
+	require.True(t, ok)
+	assert.True(t, limit.Required, "Max Requests stays required")
+	assert.Contains(t, meta.description, "Max Parallel Requests")
 }
 
 func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
@@ -877,4 +898,32 @@ func TestCatalogService_RetiredSlugIsNotOfferedButKeepsItsGroup(t *testing.T) {
 	_, registered := reg.Get("trustguard_v2")
 	assert.True(t, registered, "it still runs the policies that name it")
 	assert.Contains(t, RetiredCatalogSlugs()[groupGuardrails], "trustguard_v2")
+}
+
+func TestCatalog_LimitPerFields(t *testing.T) {
+	for slug, wantModes := range map[string][]string{
+		"rate_limiter":       {"shared", "application", "api_key", "group", "model", "header"},
+		"token_rate_limiter": {"shared", "application", "api_key", "model", "header"},
+	} {
+		t.Run(slug, func(t *testing.T) {
+			fields := pluginCatalogMeta[slug].schema.Fields
+			limitPer, ok := fieldByKey(fields, "limit_per")
+			require.True(t, ok)
+			assert.Equal(t, FieldTypeEnum, limitPer.Type)
+			assert.Equal(t, wantModes, enumValues(limitPer.Enum))
+			assert.Equal(t, "shared", limitPer.Default)
+
+			appliesTo, ok := fieldByKey(fields, "applies_to")
+			require.True(t, ok)
+			assert.Equal(t, []string{"all", "selected"}, enumValues(appliesTo.Enum))
+
+			selected, ok := fieldByKey(fields, "selected")
+			require.True(t, ok)
+			assert.Equal(t, FieldTypeArray, selected.Type)
+
+			models, ok := fieldByKey(fields, "models")
+			require.True(t, ok)
+			assert.Equal(t, FieldTypeArray, models.Type)
+		})
+	}
 }

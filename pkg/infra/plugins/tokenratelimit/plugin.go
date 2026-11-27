@@ -17,6 +17,7 @@ package tokenratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/redis/go-redis/v9"
@@ -98,11 +100,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if !counted {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+	counter := cfg.counterFor(in.Scope, in.Request, in.Config.ID, in.Stage)
+	if !counter.Applies {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
 	cfg = cfg.forKey(in.Scope.KeyBudget)
 	if !cfg.limits() {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
-	base := aggregateKey(in.Config.ID, dimension, subject, cfg.groupBy.KeySuffix(in.Request))
+	base := aggregateKey(in.Config.ID, dimension, subject, cfg.groupBy.KeySuffix(in.Request)) + counter.Suffix
+	if counter.Dimension != "" {
+		dimension = counter.Dimension
+	}
 
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -112,6 +121,47 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
+}
+
+// counterFor narrows the counter to one application or model. api_key is the
+// key partition, which counterSubject already resolves. A model counter is fixed
+// at pre-request and carried to post-response in the request metadata: a
+// downgrade rewrites the body in between, and the spend belongs to the counter
+// that admitted the request.
+func (c *config) counterFor(scope appplugins.RuntimeScope, req *infracontext.RequestContext, policyID string, stage policy.Stage) limitper.Counter {
+	switch c.Mode() {
+	case limitper.Application:
+		return c.Resolve(scope, nil)
+	case limitper.Model:
+		model := admittedModel(req, "token_rate_limiter.model."+policyID, stage)
+		if model == "" {
+			// A request that names no model still spends: it counts against
+			// the policy's own counter, so the aggregate and cost cap hold.
+			return limitper.Counter{Applies: true}
+		}
+		return c.Resolve(scope, func() string { return model })
+	default:
+		return limitper.Counter{Applies: true}
+	}
+}
+
+func admittedModel(req *infracontext.RequestContext, metaKey string, stage policy.Stage) string {
+	if req == nil {
+		return ""
+	}
+	if stage == policy.StagePostResponse {
+		if m, ok := req.Metadata[metaKey].(string); ok {
+			return m
+		}
+	}
+	m := limitper.RequestModelRef(req)
+	if stage == policy.StagePreRequest {
+		if req.Metadata == nil {
+			req.Metadata = map[string]any{}
+		}
+		req.Metadata[metaKey] = m
+	}
+	return m
 }
 
 func counterSubject(cfg *config, scope appplugins.RuntimeScope) (dimension, subject string, counted bool, err error) {
@@ -221,12 +271,34 @@ func applyCostCapTelemetry(data *TokenRateLimiterData, t *llmcost.Telemetry) {
 	data.MaxOutputPer1k = t.MaxOutput
 }
 
+// windowReset is the whole seconds, rounded up and at least 1, until w resets:
+// the end of its calendar period, or the expiry of its rolling counter.
+func (p *Plugin) windowReset(ctx context.Context, w budgetWindow, now time.Time) int {
+	if !w.resetAt.IsZero() {
+		return ceilSeconds(w.resetAt.Sub(now), 1)
+	}
+	return p.retryAfterFromCounter(ctx, w.key, w.windowSec)
+}
+
 func (p *Plugin) resetSeconds(ctx context.Context, counterKey string, fallbackSec int) int {
 	ttl, err := p.redis.TTL(ctx, counterKey).Result()
 	if err == nil && ttl > 0 {
 		return int(ttl / time.Second)
 	}
 	return fallbackSec
+}
+
+// retryAfterFromCounter is resetSeconds rounded up to a whole second, minimum 1.
+func (p *Plugin) retryAfterFromCounter(ctx context.Context, counterKey string, fallbackSec int) int {
+	ttl, err := p.redis.PTTL(ctx, counterKey).Result()
+	if err == nil && ttl > 0 {
+		return ceilSeconds(ttl, 1)
+	}
+	return max(fallbackSec, 1)
+}
+
+func ceilSeconds(d time.Duration, floor int) int {
+	return max(int(math.Ceil(d.Seconds())), floor)
 }
 
 func rateLimitHeaders(limit, remaining, resetSeconds int) map[string][]string {

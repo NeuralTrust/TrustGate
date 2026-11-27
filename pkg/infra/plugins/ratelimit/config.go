@@ -18,17 +18,24 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/limitper"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 const minWindow = time.Second
 
+// retryAfterReset makes Retry-After the seconds until the counter admits a
+// request again, instead of a fixed value.
+const retryAfterReset = "reset"
+
 // config is the rate_limiter settings. The limit is a single sliding window;
 // whether it is enforced gateway-wide or per consumer is decided by the policy's
-// gateway-wide placement (global or MCP-wide) at runtime, not by configuration.
+// gateway-wide placement (global or MCP-wide) at runtime. LimitPer narrows the
+// counter to one application, key, group or model within that scope.
 //
 // GroupBy optionally sub-partitions the counter within the policy scope, so
 // each caller gets its own budget: by the verified subject the request runs
@@ -44,9 +51,15 @@ type config struct {
 	GroupBy       string `mapstructure:"group_by"`
 	GroupByClaim  string `mapstructure:"group_by_claim"`
 	GroupByHeader string `mapstructure:"group_by_header"`
+	// MaxParallel caps the requests in progress at once, open streams included,
+	// across gateway replicas. Zero is no cap.
+	MaxParallel   int `mapstructure:"max_parallel"`
+	limitper.Spec `mapstructure:",squash"`
 
 	partition appplugins.GroupBy
 }
+
+var limitModes = []string{limitper.Shared, limitper.Application, limitper.APIKey, limitper.Group, limitper.Model, limitper.Header}
 
 func parseConfig(settings map[string]any) (*config, error) {
 	cfg, err := pluginutil.Parse[config](settings)
@@ -56,6 +69,7 @@ func parseConfig(settings map[string]any) (*config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	cfg.RetryAfter = canonicalRetryAfter(cfg.RetryAfter)
 	if cfg.RetryAfter == "" {
 		cfg.RetryAfter = defaultRetryAfter(cfg.Window)
 	}
@@ -74,9 +88,23 @@ func defaultRetryAfter(window string) string {
 	return strconv.FormatInt(seconds, 10)
 }
 
+// canonicalRetryAfter makes "Reset" and " reset " the reset mode and leaves a
+// fixed value as it is.
+func canonicalRetryAfter(v string) string {
+	if canonical := strings.ToLower(strings.TrimSpace(v)); canonical == retryAfterReset {
+		return canonical
+	}
+	return v
+}
+
+func (c *config) retryAfterResets() bool { return c.RetryAfter == retryAfterReset }
+
 func (c *config) validate() error {
 	if c.Limit <= 0 {
 		return fmt.Errorf("rate_limiter: limit must be positive")
+	}
+	if c.MaxParallel < 0 {
+		return fmt.Errorf("rate_limiter: max_parallel must not be negative")
 	}
 	if c.Window == "" {
 		return fmt.Errorf("rate_limiter: window is required")
@@ -96,5 +124,5 @@ func (c *config) validate() error {
 		return fmt.Errorf("rate_limiter: %w", err)
 	}
 	c.partition = partition
-	return nil
+	return c.Validate("rate_limiter", limitModes, partition)
 }

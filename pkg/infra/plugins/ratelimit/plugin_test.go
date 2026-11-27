@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -761,4 +762,118 @@ func TestPlugin_Execute_GroupByClaimIsolatesByClaimValue(t *testing.T) {
 	require.Error(t, err, "the same claim value shares a budget whatever the subject")
 	_, err = p.Execute(context.Background(), execInputAs(settings, consumerScope("c-1"), "s", map[string]any{"oid": "o-2"}))
 	require.NoError(t, err)
+}
+
+func newClockedPlugin(t *testing.T, start time.Time) (*Plugin, *time.Time) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	clock := start
+	seq := 0
+	p := New(rdb,
+		WithClock(func() time.Time { return clock }),
+		WithIDGenerator(func() string { seq++; return string(rune('a' + seq)) }),
+	)
+	return p, &clock
+}
+
+// retry_after "reset" tells the client when the counter admits a request
+// again: the moment the entry that keeps it at the limit leaves the window.
+func TestPlugin_Execute_RetryAfterResetIsTimeUntilCounterAllowsARequest(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	tests := []struct {
+		name     string
+		limit    int
+		window   string
+		requests []time.Duration // offsets at which requests are admitted
+		blockAt  time.Duration
+		want     string
+	}{
+		{name: "single entry, full window minus elapsed", limit: 1, window: "60s", requests: []time.Duration{0}, blockAt: 10 * time.Second, want: "51"},
+		{name: "same instant", limit: 1, window: "60s", requests: []time.Duration{0}, blockAt: 0, want: "61"},
+		{name: "limit 2 waits for the oldest entry", limit: 2, window: "10s", requests: []time.Duration{0, 4 * time.Second}, blockAt: 5 * time.Second, want: "6"},
+		{name: "sub-second remainder rounds up", limit: 1, window: "10s", requests: []time.Duration{0}, blockAt: 9500 * time.Millisecond, want: "2"},
+		{name: "one second window", limit: 1, window: "1s", requests: []time.Duration{0}, blockAt: 0, want: "2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, clock := newClockedPlugin(t, base)
+			settings := limitSettings(tt.limit, tt.window)
+			settings["retry_after"] = "reset"
+
+			for _, off := range tt.requests {
+				*clock = base.Add(off)
+				_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+				require.NoError(t, err)
+			}
+			*clock = base.Add(tt.blockAt)
+			_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+			require.Error(t, err)
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok)
+			assert.Equal(t, []string{tt.want}, pe.Headers["Retry-After"])
+
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(pe.Body, &payload))
+			assert.Contains(t, pe.Message, "Retry in "+tt.want+"s.")
+			want, _ := strconv.Atoi(tt.want)
+			assert.Equal(t, float64(want), payload["retry_after_seconds"])
+		})
+	}
+}
+
+// Waiting the advertised Retry-After must actually get the next request in.
+func TestPlugin_Execute_RetryAfterResetIsHonest(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0).Add(300 * time.Millisecond)
+	p, clock := newClockedPlugin(t, base)
+	settings := limitSettings(2, "10s")
+	settings["retry_after"] = "reset"
+
+	for _, off := range []time.Duration{0, 3700 * time.Millisecond} {
+		*clock = base.Add(off)
+		_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+		require.NoError(t, err)
+	}
+	*clock = base.Add(5 * time.Second)
+	_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+	pe, _ := appplugins.AsPluginError(err)
+	secs, convErr := strconv.Atoi(pe.Headers["Retry-After"][0])
+	require.NoError(t, convErr)
+
+	*clock = clock.Add(time.Duration(secs) * time.Second)
+	_, err = p.Execute(context.Background(), execInput(settings, globalScope()))
+	require.NoError(t, err)
+}
+
+func TestPlugin_Execute_FixedRetryAfterIgnoresReset(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	p, clock := newClockedPlugin(t, base)
+	settings := limitSettings(1, "60s")
+	settings["retry_after"] = "30"
+
+	_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+	require.NoError(t, err)
+	*clock = base.Add(10 * time.Second)
+	_, err = p.Execute(context.Background(), execInput(settings, globalScope()))
+	pe, _ := appplugins.AsPluginError(err)
+	assert.Equal(t, []string{"30"}, pe.Headers["Retry-After"])
+}
+
+func TestPlugin_Execute_RetryAfterResetIsCaseAndSpaceInsensitive(t *testing.T) {
+	for _, v := range []string{"Reset", " reset ", "RESET"} {
+		t.Run(v, func(t *testing.T) {
+			base := time.Unix(1_700_000_000, 0)
+			p, clock := newClockedPlugin(t, base)
+			settings := limitSettings(1, "60s")
+			settings["retry_after"] = v
+
+			_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+			require.NoError(t, err)
+			*clock = base.Add(10 * time.Second)
+			_, err = p.Execute(context.Background(), execInput(settings, globalScope()))
+			pe, _ := appplugins.AsPluginError(err)
+			assert.Equal(t, []string{"51"}, pe.Headers["Retry-After"])
+		})
+	}
 }
