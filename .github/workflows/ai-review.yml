@@ -26,9 +26,11 @@ jobs:
   ai-review:
     # Pinned: the shared workflow receives the API key and the App private key,
     # so a change to it lands here only through a reviewed bump of this SHA.
-    uses: NeuralTrust/workflows/.github/workflows/ai-review.yml@13a9975ba427804c64009ef09b53dbe2b97b1da1
+    uses: NeuralTrust/workflows/.github/workflows/ai-review.yml@2b461585786dbfdba4927ee5da0f9db833ca092e
     with:
-      plugin_ref: review-v0.1.1
+      plugin_ref: review-v0.1.2
+      # Commit review-v0.1.2 points to; a moved tag fails the run.
+      plugin_sha: 4ead4769bddc65d2f17e073b3a8b9bc917179a9f
       mode: warn
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
